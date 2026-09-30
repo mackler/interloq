@@ -110,6 +110,17 @@ describe("the pieces of a question", () => {
     expect(root.querySelector(".document h2")?.textContent).toBe("Title");
   });
 
+  // W1-R1-3 (S24): levels beyond what Markdown can express are normalized; nesting is never deeper than the items.
+  test("a list with unbounded levels renders nested no deeper than its items", () => {
+    const root = show({ blocks: [{ kind: "list", items: [{ level: 2147483647, pieces: [plain("a")] }, { level: -5, pieces: [plain("b")] }, { level: 2147483647, pieces: [plain("c")] }] }], explanations: [] });
+    const depth = (el: Element): number => (el.parentElement === null || el.parentElement === root ? 0 : (el.tagName === "UL" ? 1 : 0) + depth(el.parentElement));
+    const lis = [...root.querySelectorAll("li")];
+    const own = (li: Element) => [...li.childNodes].filter((n) => !(n instanceof HTMLUListElement)).map((n) => n.textContent).join("");
+    expect(lis.map(own)).toEqual(["a", "b", "c"]);
+    expect(Math.max(...lis.map(depth))).toBeLessThanOrEqual(3);
+    expect(own(root.querySelector("ul ul li")!)).toBe("c");
+  });
+
   test("no list of terms is rendered: an explanation costs no space until it is asked for", () => {
     const root = show({ pieces: [ref("SQLite", "s")], explanations: [sqlite, database] });
     expect(root.firstElementChild?.textContent).toBe("SQLite");

@@ -51,6 +51,16 @@ export const blockPieces = (blocks: readonly ShownBlock[]): readonly Piece[] =>
  */
 export const literalsOf = (blocks: readonly ShownBlock[]): readonly string[] =>
   blocks.flatMap((b) => (b.kind === "code" ? [b.text] : b.kind === "document" ? [] : blockPieces([b]).filter((p) => p.code).map((p) => p.text)));
+/**
+ * A list's items with levels Markdown can express (W1-R1-3): the first at 0, each at least 0 and at most one more than
+ * the previous item's. The schema's level is an unbounded integer; this keeps every rendering total.
+ */
+export const normalizedLevels = <T extends Readonly<{ level: number }>>(items: readonly T[]): readonly T[] =>
+  items.reduce<T[]>((acc, item, i) => {
+    const max = i === 0 ? 0 : acc[i - 1].level + 1;
+    const level = Number.isFinite(item.level) ? Math.min(max, Math.max(0, Math.trunc(item.level))) : 0;
+    return [...acc, { ...item, level }];
+  }, []);
 /** Every ref of the pieces, in order, with repetitions. */
 export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.filter((p) => p.ref !== "").map((p) => p.ref);
 
@@ -73,7 +83,7 @@ export const blocksMarkdown = (blocks: readonly ShownBlock[]): string =>
       b.kind === "paragraph"
         ? piecesMarkdown(b.pieces)
         : b.kind === "list"
-          ? b.items.map((i) => `${"  ".repeat(Math.max(0, i.level))}- ${piecesMarkdown(i.pieces)}`).join("\n")
+          ? normalizedLevels(b.items).map((i) => `${"  ".repeat(i.level)}- ${piecesMarkdown(i.pieces)}`).join("\n")
           : b.kind === "code"
             ? codeBlockMarkdown(b.text)
             : b.markdown.trim(),

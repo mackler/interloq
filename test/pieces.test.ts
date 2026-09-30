@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
+import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
 import type { Block, Piece } from "../src/schema.ts";
 
 const plain = (text: string): Piece => ({ text, ref: "", code: false });
@@ -64,7 +64,7 @@ const divided = fc.tuple(fc.string({ maxLength: 30 }), fc.array(fc.nat(30), { ma
 });
 const arbBlock: fc.Arbitrary<Block> = fc.oneof(
   divided.map(({ pieces }) => ({ kind: "paragraph" as const, pieces })),
-  fc.array(fc.record({ level: fc.nat(3), pieces: divided.map((d) => d.pieces) }), { maxLength: 3 }).map((items) => ({ kind: "list" as const, items })),
+  fc.array(fc.record({ level: fc.integer(), pieces: divided.map((d) => d.pieces) }), { maxLength: 3 }).map((items) => ({ kind: "list" as const, items })),
   fc.string({ maxLength: 10 }).map((text) => ({ kind: "code" as const, text })),
 );
 /** The same blocks with every piece divided again at its middle. */
@@ -114,6 +114,28 @@ test("property: literalsOf is unchanged by re-dividing the plain pieces, and eve
       blocksText(a);
       refsOf(blockPieces(a));
       return JSON.stringify(literalsOf(a)) === JSON.stringify(literalsOf(plainOnly(a)));
+    }),
+    { numRuns: 300 },
+  );
+});
+
+// W1-R1-3 (S24): a list's levels are normalized before rendering, so an unbounded level never throws.
+test("normalizedLevels: at least 0, at most one more than the previous item's, the first 0", () => {
+  const items = (levels: readonly number[]) => levels.map((level) => ({ level, pieces: [plain("x")] }));
+  assert.deepEqual(normalizedLevels(items([2147483647, -5])).map((i) => i.level), [0, 0]);
+  assert.deepEqual(normalizedLevels(items([0, 2147483647])).map((i) => i.level), [0, 1]);
+  assert.deepEqual(normalizedLevels(items([0, 1, 3, 1, 2])).map((i) => i.level), [0, 1, 2, 1, 2]);
+  for (const levels of [[2147483647, -5], [0, 2147483647]]) assert.doesNotThrow(() => blocksMarkdown([{ kind: "list", items: items(levels) }]));
+});
+
+test("property: any list levels render, indented no deeper than the items, and normalizing is idempotent", () => {
+  fc.assert(
+    fc.property(fc.array(fc.integer(), { maxLength: 8 }), (levels) => {
+      const items = levels.map((level) => ({ level, pieces: [plain("x")] }));
+      const once = normalizedLevels(items);
+      const md = blocksMarkdown([{ kind: "list", items }]);
+      const deepest = Math.max(0, ...md.split("\n").map((l) => l.length - l.trimStart().length));
+      return JSON.stringify(normalizedLevels(once)) === JSON.stringify(once) && deepest <= 2 * items.length;
     }),
     { numRuns: 300 },
   );

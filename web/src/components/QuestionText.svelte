@@ -7,7 +7,7 @@
   // Escape or leaving closes it [recognition rather than recall: the explanation is where the word is read; help and
   // documentation]. S42: Tab on the word enters the tooltip, Tab there leaves past the word, Shift+Tab and Escape return
   // to it. The explanation costs no space until the reader asks for it: there is no list of terms beside the question.
-  import type { Explanation, Piece, ShownBlock } from "../../../src/pieces.ts";
+  import { type Explanation, normalizedLevels, type Piece, type ShownBlock } from "../../../src/pieces.ts";
   import { render, renderInline } from "../markdown.ts";
   import { TOOLTIP_GRACE_MS } from "../time.ts";
   import TermTooltip from "./TermTooltip.svelte";
@@ -102,7 +102,7 @@
   const nest = (items: readonly Readonly<{ level: number; pieces: readonly Piece[] }>[]): Tree[] => {
     const root: Tree[] = [];
     const stack: { level: number; children: Tree[] }[] = [{ level: -1, children: root }];
-    for (const item of items) {
+    for (const item of normalizedLevels(items)) {
       while (stack.length > 1 && stack[stack.length - 1].level >= item.level) stack.pop();
       const node: Tree = { pieces: item.pieces, children: [] };
       stack[stack.length - 1].children.push(node);
