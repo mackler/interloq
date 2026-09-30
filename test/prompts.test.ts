@@ -406,7 +406,7 @@ test("stepWorkingLabel names the step's state as its mark says it and that an ag
 });
 
 // S34 (W1-R1-2, P2-R1-2): a tool's input as the user reads it.
-test("toolInputLines labels the known fields in plain words and keeps each unknown field's own name; toolInputTerms explains those", () => {
+test("toolInputBlocks labels the known fields in plain words and keeps each unknown field's own name; toolInputExplanations explains those", () => {
   const known = { file_path: "/a", old_string: "x", new_string: "y", replace_all: true, content: "c", command: "ls", description: "d", pattern: "p", path: "/p", url: "https://e" };
   const lines = inputLines(known);
   // No key is shown as an identifier ("file_path: …" or its quoted name); a label may use an English word such as "command".
