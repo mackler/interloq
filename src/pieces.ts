@@ -90,6 +90,22 @@ export const normalizedRuns = (blocks: readonly ShownBlock[]): readonly LaidBloc
   }, { out: [], run: null, pending: [] });
   return flushed(end);
 };
+/** A stretch of one sequence of pieces: a code piece on its own, or the joined text of consecutive non-code pieces. */
+export type PieceRun = Readonly<{ code: boolean; text: string }>;
+/**
+ * The runs of one sequence of pieces (a paragraph's, a list item's, a question's, a label's): each code piece is its own
+ * run and separates the words on either side of it; consecutive non-code pieces, plain or referring to an explanation,
+ * are joined into one run. A paragraph, list item or block boundary is the end of a sequence, so no run crosses it. The
+ * one definition shared by the bare-number check (W1-R1-2) and the value phrases (W2-R1-2).
+ */
+export const pieceRuns = (pieces: readonly Piece[]): readonly PieceRun[] =>
+  pieces.reduce<readonly PieceRun[]>((runs, p) => {
+    const last = runs[runs.length - 1];
+    if (p.code) return [...runs, { code: true, text: p.text }];
+    return last !== undefined && !last.code ? [...runs.slice(0, -1), { code: false, text: `${last.text}${p.text}` }] : [...runs, { code: false, text: p.text }];
+  }, []);
+/** The joined texts of the non-code runs of one sequence of pieces, the empty ones left out (W1-R1-2). */
+export const plainRuns = (pieces: readonly Piece[]): readonly string[] => pieceRuns(pieces).filter((r) => !r.code && r.text !== "").map((r) => r.text);
 /** A value of the details (W1-R1-1): a code piece's or code block's text, or a phrase in a plain piece that stands for one. */
 export type ValueToken = Readonly<{ kind: "code" | "phrase"; text: string }>;
 /** The value phrases of one plain text, left to right, the longest at each position (valuePhraseAt of src/prompts.ts). */
@@ -107,17 +123,16 @@ const phrasesIn = (text: string): readonly string[] => {
 };
 /**
  * Every value of blocks as one ordered sequence (W1-R1-1, decision F1): each code block and code piece as code, each value
- * phrase in a plain piece as a phrase, in document order. The kind keeps a code value and a phrase of the same words
+ * phrase in a run of non-code pieces (pieceRuns; W2-R1-2) as a phrase, in document order. The kind keeps a code value and a phrase of the same words
  * apart; the one sequence keeps their order. Reads no Markdown: a phrase is one the program itself writes.
  */
-export const valueTokensOf = (blocks: readonly ShownBlock[]): readonly ValueToken[] =>
-  blocks.flatMap((b): readonly ValueToken[] =>
-    b.kind === "code"
-      ? [{ kind: "code", text: b.text }]
-      : b.kind === "document"
-        ? []
-        : blockPieces([b]).flatMap((p): readonly ValueToken[] => (p.code ? [{ kind: "code", text: p.text }] : phrasesIn(p.text).map((text) => ({ kind: "phrase", text })))),
+export const valueTokensOf = (blocks: readonly ShownBlock[]): readonly ValueToken[] => {
+  const ofPieces = (pieces: readonly Piece[]): readonly ValueToken[] =>
+    pieceRuns(pieces).flatMap((r): readonly ValueToken[] => (r.code ? [{ kind: "code", text: r.text }] : phrasesIn(r.text).map((text) => ({ kind: "phrase", text }))));
+  return blocks.flatMap((b): readonly ValueToken[] =>
+    b.kind === "code" ? [{ kind: "code", text: b.text }] : b.kind === "document" ? [] : b.kind === "paragraph" ? ofPieces(b.pieces) : b.items.flatMap((i) => ofPieces(i.pieces)),
   );
+};
 /** Every ref of the pieces, in order, with repetitions. */
 export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.filter((p) => p.ref !== "").map((p) => p.ref);
 

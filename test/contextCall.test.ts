@@ -345,3 +345,46 @@ test("W1-R1-1 scenario: a reply that changes the timeout twice leaves Interloq's
   assert.equal(result.details, undefined, "Interloq's own details stand");
   assert.equal(probe.planner.contextPrompts[1], literalRepair);
 });
+
+// ---- W2-R1-2 (S27): value phrases are found in the joined runs of plain pieces --------------------------------------
+
+test("W2-R1-2 regression: a value phrase divided across two plain pieces is the same value", () => {
+  const request = permissionRequest("Bash", { run_in_background: false });
+  const reply = faithful(request);
+  const divided = {
+    ...reply,
+    details: mapPieces(reply.details, (ps) =>
+      ps.flatMap((p) => {
+        const at = p.code ? -1 : p.text.indexOf(prompts.NO_PHRASE);
+        return at < 0 ? [p] : [{ ...p, text: p.text.slice(0, at + 1) }, { ...p, text: p.text.slice(at + 1) }];
+      }),
+    ),
+  };
+  assert.ok(JSON.stringify(divided) !== JSON.stringify(reply), "the phrase was divided");
+  assert.ok(Result.isSuccess(contextValidation(request)(divided)));
+});
+
+test("property W2-R1-2: any re-division of the plain pieces, pieces that refer to explanations included, leaves the values unchanged", () => {
+  const value = fc.oneof(fc.string({ maxLength: 6 }), fc.string({ unit: fc.constantFrom(" ", "\t"), minLength: 1, maxLength: 3 }), fc.integer(), fc.boolean(), fc.constant(null), fc.constant([]), fc.constant({}));
+  const input = fc.dictionary(fc.constantFrom("command", "timeout", "flag", "some_name"), value, { minKeys: 1, maxKeys: 4 });
+  // Each non-code piece divided at the given cut points (in characters), each part keeping the piece's ref.
+  const redivide = (blocks: readonly Block[], cuts: readonly number[]): readonly Block[] => {
+    let k = 0;
+    return mapPieces(blocks, (ps) =>
+      ps.flatMap((p) => {
+        if (p.code || p.text.length < 2) return [p];
+        const cut = 1 + (cuts[k++ % cuts.length] % (p.text.length - 1));
+        return [{ ...p, text: p.text.slice(0, cut) }, { ...p, text: p.text.slice(cut) }];
+      }),
+    );
+  };
+  fc.assert(
+    fc.property(input, fc.array(fc.nat(), { minLength: 1, maxLength: 5 }), fc.boolean(), (tool, cuts, withRef) => {
+      const request = permissionRequest("FutureTool", tool);
+      // A piece that refers to an explanation joins the run like a plain piece.
+      const base = withRef ? mapPieces(request.details, (ps) => ps.map((p) => (!p.code && p.text.length > 0 ? { ...p, ref: "t" } : p))) : request.details;
+      return JSON.stringify(valueTokensOf(redivide(base, cuts))) === JSON.stringify(valueTokensOf(request.details));
+    }),
+    { numRuns: 300 },
+  );
+});

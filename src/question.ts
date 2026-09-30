@@ -3,7 +3,7 @@
 // pieces refer to; the checks are on data alone, and nothing reads Markdown. Pure; also imported by the browser.
 import { Result, Schema } from "effect";
 import { QuestionInvalid } from "./errors.ts";
-import { blockPieces, blocksText, piecesText, type ShownBlock } from "./pieces.ts";
+import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import type { QuestionProblem } from "./prompts.ts";
 import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption } from "./schema.ts";
 
@@ -41,12 +41,10 @@ export const questionPieces = (q: Question): readonly Piece[] => [
   ...q.options.flatMap((o) => [...o.label, ...o.description]),
 ];
 /**
- * The runs of consecutive plain pieces, each joined (W1-R1-2): a code piece is a literal value, never a bare number, and
- * it separates the words on either side of it.
+ * The plain runs of blocks (plainRuns of src/pieces.ts; W1-R1-2): a code piece is a literal value, never a bare number,
+ * and it separates the words on either side of it. Each paragraph's and list item's runs, a document's Markdown whole; a
+ * code block has none.
  */
-const plainRuns = (pieces: readonly Piece[]): readonly string[] =>
-  pieces.reduce<string[]>((runs, p) => (p.code ? [...runs, ""] : [...runs.slice(0, -1), `${runs[runs.length - 1]}${p.text}`]), [""]).filter((r) => r !== "");
-/** The plain runs of blocks: each paragraph's and list item's, a document's Markdown whole; a code block has none. */
 const blockRuns = (blocks: readonly ShownBlock[]): readonly string[] =>
   blocks.flatMap((b) => (b.kind === "paragraph" ? plainRuns(b.pieces) : b.kind === "list" ? b.items.flatMap((i) => plainRuns(i.pieces)) : b.kind === "document" ? [b.markdown] : []));
 /** A code piece that refers to an explanation, as a key: its words and its ref. */
