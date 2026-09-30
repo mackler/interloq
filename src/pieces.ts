@@ -3,7 +3,7 @@
 // Pure; also imported by the browser. prompts.ts never imports this module (it builds its pieces as literals), so that
 // the display of a literal value (exactCodeSpan, codeFence) can be shared from there without an import cycle.
 
-import { codeFence, exactCodeSpan } from "./prompts.ts";
+import { codeFence, exactCodeSpan, valuePhraseAt } from "./prompts.ts";
 import type { Block, Explanation, Piece, PieceOption } from "./schema.ts";
 
 export type { Block, Explanation, Piece, PieceOption };
@@ -61,6 +61,34 @@ export const normalizedLevels = <T extends Readonly<{ level: number }>>(items: r
     const level = Number.isFinite(item.level) ? Math.min(max, Math.max(0, Math.trunc(item.level))) : 0;
     return [...acc, { ...item, level }];
   }, []);
+/** A value of the details (W1-R1-1): a code piece's or code block's text, or a phrase in a plain piece that stands for one. */
+export type ValueToken = Readonly<{ kind: "code" | "phrase"; text: string }>;
+/** The value phrases of one plain text, left to right, the longest at each position (valuePhraseAt of src/prompts.ts). */
+const phrasesIn = (text: string): readonly string[] => {
+  const found: string[] = [];
+  for (let i = 0; i < text.length; ) {
+    const phrase = valuePhraseAt(text, i);
+    if (phrase === null) i += 1;
+    else {
+      found.push(phrase);
+      i += phrase.length;
+    }
+  }
+  return found;
+};
+/**
+ * Every value of blocks as one ordered sequence (W1-R1-1, decision F1): each code block and code piece as code, each value
+ * phrase in a plain piece as a phrase, in document order. The kind keeps a code value and a phrase of the same words
+ * apart; the one sequence keeps their order. Reads no Markdown: a phrase is one the program itself writes.
+ */
+export const valueTokensOf = (blocks: readonly ShownBlock[]): readonly ValueToken[] =>
+  blocks.flatMap((b): readonly ValueToken[] =>
+    b.kind === "code"
+      ? [{ kind: "code", text: b.text }]
+      : b.kind === "document"
+        ? []
+        : blockPieces([b]).flatMap((p): readonly ValueToken[] => (p.code ? [{ kind: "code", text: p.text }] : phrasesIn(p.text).map((text) => ({ kind: "phrase", text })))),
+  );
 /** Every ref of the pieces, in order, with repetitions. */
 export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.filter((p) => p.ref !== "").map((p) => p.ref);
 

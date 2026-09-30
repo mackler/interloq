@@ -6,7 +6,7 @@ import { Effect, Result } from "effect";
 import { QuestionInvalid, type RunError } from "./errors.ts";
 import { type ContextRequest, contextFallbackNote, contextPrompt, fallbackContext, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
 import { describe } from "./errors.ts";
-import { blockPieces, literalsOf, plainBlocks } from "./pieces.ts";
+import { blockPieces, plainBlocks, valueTokensOf } from "./pieces.ts";
 import { type ContextWritten, type Piece, questionPieces, questionProblems } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
@@ -30,7 +30,8 @@ export const contextValidation =
     const problems: readonly QuestionProblem[] = [
       ...questionProblems({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details }, supplied),
       ...(reply.options.length === request.options.length ? [] : [{ kind: "optionsChanged" as const, subject: "" }]),
-      ...(JSON.stringify(literalsOf(reply.details)) === JSON.stringify(literalsOf(request.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
+      // W1-R1-1: every value, code or phrase, kept in its kind and its order, none added.
+      ...(JSON.stringify(valueTokensOf(reply.details)) === JSON.stringify(valueTokensOf(request.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
       ...supplied.filter((p) => !shown.some((q) => q.code && q.text === p.text && q.ref === p.ref)).map((p) => ({ kind: "suppliedRefDropped" as const, subject: p.text })),
     ];
     if (problems.length === 0) return Result.succeed({ value: reply, notes: [] });

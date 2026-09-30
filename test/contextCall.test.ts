@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { Effect, Result } from "effect";
 import fc from "fast-check";
 import { askOffering, numberedOptions, permissionDraft, type QuestionDraft } from "../src/offer.ts";
-import { blockPieces, literalsOf, piecesText, plainBlocks } from "../src/pieces.ts";
+import { blockPieces, literalsOf, piecesText, plainBlocks, valueTokensOf } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { contextValidation, writeContext } from "../src/questionContext.ts";
 import type { Block, Piece, QuestionContext } from "../src/schema.ts";
@@ -218,4 +218,130 @@ test("a context call that changes a guarded record halts with RecordsChanged; th
 test("a context call that changes the project halts with ProjectChanged; the fallback does not catch it", async () => {
   const { written } = run({ contexts: [{ output: good, touchProject: true }] });
   await assert.rejects(written(), (e: unknown) => (e as { _tag?: string })._tag === "ProjectChanged");
+});
+
+// ---- W1-R1-1 (S22): every value of a tool's input, code or phrase, in one order, none added ------------------------
+
+/** A permission request as the context call is given it, from the input of a tool. */
+const permissionRequest = (tool: string, input: Record<string, unknown>): prompts.ContextRequest => {
+  const draft = permissionDraft(tool, input);
+  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: draft.details as readonly Block[], explanations: draft.explanations, facts: "" };
+};
+/** The reply a context call returns when it does exactly what its prompt says: the question as given. */
+const faithful = (request: prompts.ContextRequest): QuestionContext => scriptedContextReply(prompts.contextPrompt("t", request));
+/** The details with every piece passed through `f` (a list item's pieces too). */
+const mapPieces = (blocks: readonly Block[], f: (pieces: readonly Piece[]) => readonly Piece[]): readonly Block[] =>
+  blocks.map((b) => (b.kind === "paragraph" ? { ...b, pieces: f(b.pieces) } : b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: f(i.pieces) })) } : b));
+const literalRepair = repairOf({ kind: "literalChanged", subject: "" });
+
+test("W1-R1-1: a changed number, a changed yes or no, values exchanged between rows and an added value are each rejected", () => {
+  const request = permissionRequest("Bash", { command: "echo ok", timeout: 120000, run_in_background: false });
+  const reply = faithful(request);
+  const validate = contextValidation(request);
+  assert.ok(Result.isSuccess(validate(reply)));
+  assert.deepEqual(valueTokensOf(request.details), [
+    { kind: "code", text: "echo ok" },
+    { kind: "code", text: "120000" },
+    // The name of a setting Interloq has no label for is a literal too, before its value.
+    { kind: "code", text: "run_in_background" },
+    { kind: "phrase", text: prompts.NO_PHRASE },
+  ]);
+  const withDetails = (f: (ps: readonly Piece[]) => readonly Piece[]) => ({ ...reply, details: mapPieces(reply.details, f) });
+  const cases: Readonly<Record<string, QuestionContext>> = {
+    "the timeout changed": withDetails((ps) => ps.map((p) => (p.code && p.text === "120000" ? { ...p, text: "1" } : p))),
+    "the background setting changed": withDetails((ps) => ps.map((p) => (!p.code ? { ...p, text: p.text.replace(prompts.NO_PHRASE, prompts.YES_PHRASE) } : p))),
+    "the timeout and the background exchanged": withDetails((ps) =>
+      ps.map((p) => (p.code && p.text === "120000" ? { text: prompts.NO_PHRASE, ref: "", code: false } : !p.code && p.text.includes(prompts.NO_PHRASE) ? { text: p.text.replace(prompts.NO_PHRASE, ""), ref: "", code: false } : p)).concat(ps.some((p) => !p.code && p.text.includes(prompts.NO_PHRASE)) ? [{ text: "120000", ref: "", code: true }] : []),
+    ),
+    "a setting added": { ...reply, details: [...reply.details, { kind: "paragraph", pieces: plain(`Another setting: ${prompts.YES_PHRASE}`) }] },
+  };
+  for (const [what, changed] of Object.entries(cases)) {
+    const result = validate(changed);
+    assert.ok(Result.isFailure(result), what);
+    assert.equal(result.failure.repair, literalRepair, what);
+  }
+  assert.ok(literalRepair.includes(prompts.KEEP_LITERALS));
+});
+
+test("W1-R1-1 regressions: a code value turned into a plain phrase of the same words, and a whitespace phrase changed, are rejected", () => {
+  const collision = permissionRequest("Bash", { command: prompts.NO_PHRASE, run_in_background: false });
+  const reply = faithful(collision);
+  const plainCommand = { ...reply, details: mapPieces(reply.details, (ps) => ps.map((p) => (p.code && p.text === prompts.NO_PHRASE ? { ...p, code: false } : p))) };
+  assert.ok(Result.isFailure(contextValidation(collision)(plainCommand)));
+  const spaces = permissionRequest("FutureTool", { separator: " " });
+  const spaced = faithful(spaces);
+  const twoSpaces = { ...spaced, details: mapPieces(spaced.details, (ps) => ps.map((p) => (!p.code ? { ...p, text: p.text.replace("(1 space)", "(2 spaces)") } : p))) };
+  assert.ok(JSON.stringify(twoSpaces) !== JSON.stringify(spaced), "the phrase is in the details");
+  assert.ok(Result.isFailure(contextValidation(spaces)(twoSpaces)));
+});
+
+test("W1-R1-1 seam: every whitespace phrase the program shows is recognized as one value phrase; ordinary words are not", () => {
+  const ws = fc.string({ unit: fc.constantFrom(" ", "\t", "\n", "\r", "\u00a0", "\u2003"), minLength: 1, maxLength: 8 });
+  fc.assert(
+    fc.property(ws, (value) => {
+      const shown = prompts.shownValue(value);
+      return shown.kind === "phrase" && prompts.valuePhraseAt(shown.text, 0) === shown.text;
+    }),
+    { numRuns: 300 },
+  );
+  for (const phrase of [prompts.YES_PHRASE, prompts.NO_PHRASE, prompts.NONE_PHRASE, prompts.emptyTextPhrase, prompts.EMPTY_LIST_PHRASE, prompts.EMPTY_OBJECT_PHRASE, prompts.NO_INPUT_PHRASE]) assert.equal(prompts.valuePhraseAt(`a ${phrase} b`, 2), phrase);
+  for (const words of ["(one space)", "(yes please)", "(1 spaces)", "(2 space)", "(0 spaces)"]) assert.equal(prompts.valuePhraseAt(words, 0), null, words);
+});
+
+test("W1-R1-1 seam: the prompt carries KEEP_LITERALS, and a reply that rephrases only the labels passes", () => {
+  const request = permissionRequest("Bash", { command: "echo ok", timeout: 120000, run_in_background: false });
+  assert.ok(prompts.contextPrompt("t", request).includes(prompts.KEEP_LITERALS));
+  const reply = faithful(request);
+  const rephrased = { ...reply, details: mapPieces(reply.details, (ps) => ps.map((p, i) => (i === 0 && !p.code ? { ...p, text: `Setting, ${p.text}` } : p))) };
+  assert.ok(Result.isSuccess(contextValidation(request)(rephrased)));
+});
+
+test("property W1-R1-1: any change to a value of a tool's input is rejected; rephrasing the plain labels alone is accepted", () => {
+  const ws = fc.string({ unit: fc.constantFrom(" ", "\t", "\n"), minLength: 1, maxLength: 3 });
+  const value = fc.oneof(fc.string({ maxLength: 8 }), ws, fc.integer(), fc.boolean(), fc.constant(null), fc.constant([]), fc.constant({}), fc.array(fc.oneof(fc.integer(), fc.boolean(), fc.string({ maxLength: 4 })), { maxLength: 2 }));
+  const input = fc.dictionary(fc.constantFrom("command", "timeout", "flag", "mode", "items"), value, { minKeys: 1, maxKeys: 4 });
+  type Mutation = (blocks: readonly Block[]) => readonly Block[] | null;
+  const tokenPieces = (blocks: readonly Block[]) => blockPieces(blocks).filter((p) => p.code || valueTokensOf([{ kind: "paragraph", pieces: [p] }]).length > 0);
+  const once = (blocks: readonly Block[], target: Piece, to: readonly Piece[]): readonly Block[] => {
+    let done = false;
+    return mapPieces(blocks, (ps) => ps.flatMap((p) => (!done && p === target ? ((done = true), to) : [p])));
+  };
+  const mutations: readonly Mutation[] = [
+    // A value changed.
+    (b) => { const t = tokenPieces(b)[0]; return t === undefined ? null : once(b, t, [t.code ? { ...t, text: `${t.text}x` } : { ...t, text: `${t.text} ${prompts.YES_PHRASE}` }]); },
+    // A value removed.
+    (b) => { const t = tokenPieces(b)[0]; return t === undefined ? null : once(b, t, []); },
+    // A value added.
+    (b) => [...b, { kind: "paragraph", pieces: plain(prompts.NONE_PHRASE) }],
+    // A code value turned plain.
+    (b) => { const t = blockPieces(b).find((p) => p.code && p.ref === "" && p.text !== "" && valueTokensOf([{ kind: "paragraph", pieces: [{ ...p, code: false }] }]).length !== 1); return t === undefined ? null : once(b, t, [{ ...t, code: false }]); },
+    // Two values of different tokens exchanged.
+    (b) => {
+      const ts = tokenPieces(b);
+      const [x, y] = [ts[0], ts.find((p) => JSON.stringify(valueTokensOf([{ kind: "paragraph", pieces: [p] }])) !== JSON.stringify(valueTokensOf([{ kind: "paragraph", pieces: [ts[0]] }])))];
+      return x === undefined || y === undefined ? null : mapPieces(b, (ps) => ps.map((p) => (p === x ? y : p === y ? x : p)));
+    },
+  ];
+  fc.assert(
+    fc.property(input, fc.nat(mutations.length - 1), (tool, m) => {
+      const request = permissionRequest("FutureTool", tool);
+      const reply = faithful(request);
+      const details = mutations[m](reply.details as readonly Block[]);
+      const rephrased = { ...reply, details: mapPieces(reply.details, (ps) => ps.map((p) => (!p.code && p.ref === "" && valueTokensOf([{ kind: "paragraph", pieces: [p] }]).length === 0 ? { ...p, text: `Now ${p.text}` } : p))) };
+      const keeps = Result.isSuccess(contextValidation(request)(rephrased));
+      return keeps && (details === null || Result.isFailure(contextValidation(request)({ ...reply, details })));
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("W1-R1-1 scenario: a reply that changes the timeout twice leaves Interloq's own details", async () => {
+  const request = permissionRequest("Bash", { command: "echo ok", timeout: 120000, run_in_background: false });
+  const reply = faithful(request);
+  const changed = { ...reply, details: mapPieces(reply.details, (ps) => ps.map((p) => (p.code && p.text === "120000" ? { ...p, text: "1" } : p))) };
+  const { probe, written } = run({ contexts: [{ output: changed }, { output: changed }] }, request);
+  const result = await written();
+  assert.equal(result.context.by, "program");
+  assert.equal(result.details, undefined, "Interloq's own details stand");
+  assert.equal(probe.planner.contextPrompts[1], literalRepair);
 });

@@ -64,12 +64,13 @@ describe("a tool's input, rendered in the page", () => {
     expect(codes(rendered({ new_string: "" }))).toEqual([]);
   });
 
-  test("the labels, numbers and booleans are the program's own text", () => {
-    const el = rendered({ file_path: "/tmp/a", replace_all: true, timeout: 5 });
+  test("the labels are the program's own text, a number is code, and a boolean and null are the program's phrases (W1-R1-1)", () => {
+    const el = rendered({ file_path: "/tmp/a", replace_all: true, timeout: 5, run_in_background: false, mode: null });
     expect(el.textContent).toContain("The file:");
-    expect(el.textContent).toContain("Replace every occurrence: yes");
-    expect(el.textContent).toContain("5");
-    expect(codes(el)).toEqual(["/tmp/a"]);
+    expect(el.textContent).toContain(`Replace every occurrence: ${prompts.YES_PHRASE}`);
+    expect(el.textContent).toContain(prompts.NO_PHRASE);
+    expect(el.textContent).toContain(prompts.NONE_PHRASE);
+    expect(codes(el)).toEqual(["/tmp/a", "5", "run_in_background", "mode"]);
   });
 
   test("conversation.md carries the same text", () => {

@@ -195,7 +195,8 @@ const formatClauses = (ids: readonly string[]): string => QUESTION_FORMAT.filter
  * G-R1-1). The repair prompt cites them by id like the rules.
  */
 export const KEEP_WORDING = "Keep the wording of each agreed question exactly: every field's words, joined in order, and its blocks, their kinds and list levels, must be what plan-review/questions.json holds; only the division into pieces and the references to explanations are yours.";
-export const KEEP_LITERALS = "Keep every literal value exactly as it is (every code block and every code piece of the details), in its order, and add no explanation to any of them.";
+export const KEEP_LITERALS =
+  "Keep every value of the details exactly as it is, in its order and in its form, and add none: every code block and every code piece (a text, a number, a name), and every phrase in parentheses that stands for a value (yes or no, none, an empty list, object or text, whitespace alone), each still code or still a phrase as it was given. Add no explanation to any of them.";
 export const KEEP_OPTIONS = "Keep every option, in its position: you may rephrase its label and description, but not add, remove or reorder options.";
 export const KEEP_SUPPLIED_REFS = "Keep every code piece that Interloq supplied with a ref (the name of a tool's setting that Interloq explains) exactly as supplied, with its ref and with an explanation of that id; add no ref to any other code piece or code block.";
 const BOUND_CLAUSES: Readonly<Record<string, string>> = { keepWording: KEEP_WORDING, keepLiterals: KEEP_LITERALS, keepOptions: KEEP_OPTIONS, keepSuppliedRefs: KEEP_SUPPLIED_REFS };
@@ -1387,7 +1388,33 @@ const WHITESPACE_NAMES: Readonly<Record<string, readonly [string, string]>> = {
   "\r": ["carriage return", "carriage returns"],
   "\u00a0": ["non-breaking space", "non-breaking spaces"],
 };
+/**
+ * The phrases that stand for a value of a tool's input that is shown as plain text, not as code (W1-R1-1, S60): a
+ * boolean, null, the empty text, an empty list or object, an input with no settings. A number is shown as code.
+ */
+export const YES_PHRASE = "(yes)";
+export const NO_PHRASE = "(no)";
+export const NONE_PHRASE = "(none)";
+/** Every fixed value phrase; a function, since the S60 phrases are declared further down. */
+const fixedValuePhrases = (): readonly string[] => [YES_PHRASE, NO_PHRASE, NONE_PHRASE, emptyTextPhrase, EMPTY_LIST_PHRASE, EMPTY_OBJECT_PHRASE, NO_INPUT_PHRASE];
 const hex4 = (ch: string): string => (ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+const escapeRe = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The name of one run of whitespace, one or many, as whitespaceRuns writes it: from WHITESPACE_NAMES, or a code point. */
+const RUN_ONE = `(?:${[...Object.values(WHITESPACE_NAMES).map(([one]) => escapeRe(one)), "character U\\+[0-9A-F]{4,6}"].join("|")})`;
+const RUN_MANY = `(?:${[...Object.values(WHITESPACE_NAMES).map(([, many]) => escapeRe(many)), "characters U\\+[0-9A-F]{4,6}"].join("|")})`;
+const RUN = `(?:1 ${RUN_ONE}|(?:[2-9]|[1-9]\\d+) ${RUN_MANY})`;
+/** The phrases whitespaceRuns can write, and nothing else: "(1 space)", "(1 tab, then 2 spaces)". */
+const WHITESPACE_PHRASE = `\\(${RUN}(?:, then ${RUN})*\\)`;
+/**
+ * The value phrase that starts at position `at` of a text, the longest there, or null (W1-R1-1): one of the fixed phrases,
+ * or a phrase whitespaceRuns can write, whatever values a request holds, so that a value an agent adds is found too.
+ */
+export function valuePhraseAt(text: string, at: number): string | null {
+  const whitespace = new RegExp(WHITESPACE_PHRASE, "y");
+  whitespace.lastIndex = at;
+  const found = [...fixedValuePhrases().filter((p) => text.startsWith(p, at)), ...(whitespace.exec(text) ?? [])];
+  return found.reduce<string | null>((longest, p) => (longest === null || p.length > longest.length ? p : longest), null);
+}
 /** A value of whitespace alone, named as its runs in order (S48, P5-R1-1): "(1 tab, then 2 spaces)". */
 const whitespaceRuns = (value: string): string => {
   const runs = [...value.matchAll(/(\s)\1*/gu)].map((m) => {
@@ -1515,9 +1542,10 @@ export function toolInputBlocks(input: unknown): readonly Block[] {
     }
     if (Array.isArray(v) && v.length === 0) return [item(plainPiece(`${sep}${EMPTY_LIST_PHRASE}`))];
     if (isEmptyObject(v)) return [item(plainPiece(`${sep}${EMPTY_OBJECT_PHRASE}`))];
-    if (typeof v === "boolean") return [item(plainPiece(`${sep}${v ? "yes" : "no"}`))];
-    if (typeof v === "number") return [item(plainPiece(`${sep}${String(v)}`))];
-    if (v === null || v === undefined) return [item(plainPiece(`${sep}(none)`))];
+    // W1-R1-1: a number is a literal value, shown as code; a boolean and null are the program's phrases.
+    if (typeof v === "boolean") return [item(plainPiece(`${sep}${v ? YES_PHRASE : NO_PHRASE}`))];
+    if (typeof v === "number") return [item(plainPiece(sep), codePiece(String(v)))];
+    if (v === null || v === undefined) return [item(plainPiece(`${sep}${NONE_PHRASE}`))];
     const head = label.length === 0 ? [] : [item(plainPiece(sep.trimEnd()))];
     if (Array.isArray(v)) return [...head, ...v.flatMap((x, i) => rows([plainPiece(`${i + 1}.`)], " ", x, label.length === 0 ? level : level + 1))];
     return [...head, ...Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => rows(labelOf(k), ": ", x, label.length === 0 ? level : level + 1))];
@@ -1546,7 +1574,7 @@ export function toolInputProse(input: unknown): string {
 }
 /** One value of a tool's input in prose (S12); an empty list or object by its phrase (S60). */
 const proseValue = (v: unknown): string =>
-  typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : Array.isArray(v) && v.length === 0 ? EMPTY_LIST_PHRASE : isEmptyObject(v) ? EMPTY_OBJECT_PHRASE : Array.isArray(v) ? v.map(proseValue).join(", ") : v === null || v === undefined ? "(none)" : Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k} ${proseValue(x)}`).join("; ");
+  typeof v === "string" ? v : typeof v === "number" ? String(v) : typeof v === "boolean" ? (v ? YES_PHRASE : NO_PHRASE) : Array.isArray(v) && v.length === 0 ? EMPTY_LIST_PHRASE : isEmptyObject(v) ? EMPTY_OBJECT_PHRASE : Array.isArray(v) ? v.map(proseValue).join(", ") : v === null || v === undefined ? NONE_PHRASE : Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k} ${proseValue(x)}`).join("; ");
 /**
  * The question of a permission request (S12, S49): the tool and the kind of action, pointing at the input shown above it
  * under TOOL_INPUT_HEADING (the terminal prints the details before the question; the page shows them in the region above
