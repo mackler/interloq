@@ -35,6 +35,11 @@ Read both files again and review plan-review/${file} again under the same rules 
 
 /** The heading of the explanations of terms: in the terminal (decision Q6) and in a relayed question's text (S13). */
 export const TERMS_HEADING = "Terms:";
+/**
+ * The words an option's description must follow correctly (issue #59, S16 of the task of issue #36); never displayed.
+ * The rule for writing an option and the reviewer's criterion both quote it.
+ */
+export const OPTION_DIFFERENCE_PREAMBLE = "This choice differs from the others, because if you make this choice, then unlike any other choices, ...";
 /** One rule for a question put to the user: its id, the writer's imperative, and the reviewer's criterion (S1). */
 export type QuestionRule = Readonly<{ id: string; rule: string; criterion: string }>;
 /**
@@ -90,9 +95,29 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: "a question's context paragraph is missing, or omits one of its five points: the software components involved, each with a description of one to three words; what each does, or could do, in the situation the question and its options describe; where in the application they are; when, during the operation of the program, they act or would act; the purpose of that behavior, in computing terms and in human terms.",
   },
   {
+    id: "contextNoAnnouncement",
+    rule: "The context paragraph begins with the first thing it describes; never open it by counting or classifying what follows ('Two parts are involved', 'Three components take part'). An opening sentence is right when it says what kind of thing these are and how they concern the reader, as 'Interloq has two interfaces and you may use either' does.",
+    criterion: "a context paragraph opens by counting or classifying what follows ('Two parts are involved') instead of with the first thing it describes.",
+  },
+  {
+    id: "purposeOwner",
+    rule: "Where the context states a purpose, name what the purpose belongs to (the question, a component, or the program): not 'The point is that you can look a word up', but 'Binding each explanation to its word is what allows you to find out what a word means without leaving the question.'",
+    criterion: "a statement of purpose leaves unstated what the purpose belongs to, as 'The point is that …' or 'The purpose is that …' does.",
+  },
+  {
+    id: "askWhatUserWants",
+    rule: "Ask what the user wants, not how the program is: 'How do you want the terminal to show term explanations?', not 'How does the terminal show term explanations?'. The question is asked because the behavior has not been decided, so the present tense describes something that does not exist.",
+    criterion: "the question sentence asks about the program in the present tense ('How does …', 'What does … show') instead of asking what the user wants ('How do you want …').",
+  },
+  {
     id: "determinateOptions",
     rule: "Give every option a meaning that cannot be taken two ways and that says what produces its outcome, so that the arguments for and against it can be worked out from what the option says, as docs/decision-making.md requires of an analysis.",
     criterion: "an option could be taken two ways, or states an outcome without saying what produces it, so that the arguments for and against it cannot be worked out from what it says, as docs/decision-making.md requires of an analysis.",
+  },
+  {
+    id: "optionDifferences",
+    rule: `Write each option's description so that it states only how that option differs from the other options: it must read correctly after these words, which are never shown to the user: "${OPTION_DIFFERENCE_PREAMBLE}" An aspect that two options share is described in neither of them. Where an option differs from some of the others but not all, it names which ones before stating that difference. Where it has several differences, state them in descending order of how many other options they distinguish it from.`,
+    criterion: `an option's description does not read correctly after "${OPTION_DIFFERENCE_PREAMBLE}", describes an aspect it shares with another option, states a difference from only some options without naming them first, or does not order its differences by how many other options they distinguish it from.`,
   },
   {
     id: "terms",

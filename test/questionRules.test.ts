@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 
-const RULE_IDS = ["selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "determinateOptions", "terms"];
+const RULE_IDS = ["selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "purposeOwner", "askWhatUserWants", "determinateOptions", "optionDifferences", "terms"];
 
 test("QUESTION_RULES holds one entry per rule, with unique ids and a rule and a criterion each", () => {
   assert.deepEqual(prompts.QUESTION_RULES.map((r) => r.id), RULE_IDS);
@@ -57,4 +57,27 @@ test("the question list prompt carries the writer's rules and asks for a context
   assert.match(review, /a question is ambiguous or combines several decisions/);
   const respond = prompts.questionRespondPrompt(1);
   assert.ok(respond.includes(prompts.questionWritingRules()));
+});
+
+// S16 of the task of issue #36 (issue #59): what an option says, how the context paragraph is written, and what the
+// question sentence asks; each rule and its criterion from the one array, the preamble from one constant.
+test("S16: an option states only how it differs, by the preamble that is never displayed, in the rule and in the criterion", () => {
+  const rule = prompts.QUESTION_RULES.find((r) => r.id === "optionDifferences")!;
+  for (const text of [rule.rule, rule.criterion]) assert.ok(text.includes(prompts.OPTION_DIFFERENCE_PREAMBLE), text);
+  assert.equal(prompts.OPTION_DIFFERENCE_PREAMBLE, "This choice differs from the others, because if you make this choice, then unlike any other choices, ...");
+  assert.match(rule.rule, /shared? .*neither|described in neither/);
+  assert.match(rule.rule, /names? which ones/);
+  assert.match(rule.rule, /descending order of how many other options/);
+});
+
+test("S16: the context does not announce itself, a purpose names its owner, and the question asks what the user wants", () => {
+  const byId = (id: string) => prompts.QUESTION_RULES.find((r) => r.id === id)!;
+  assert.match(byId("contextNoAnnouncement").rule, /Two parts are involved/);
+  assert.match(byId("contextNoAnnouncement").rule, /begins with the first thing it describes/);
+  assert.match(byId("purposeOwner").rule, /is what allows you to/);
+  assert.match(byId("askWhatUserWants").rule, /How do you want/);
+  for (const id of ["contextNoAnnouncement", "purposeOwner", "askWhatUserWants", "optionDifferences"]) {
+    assert.ok(prompts.questionWritingRules().includes(byId(id).rule), id);
+    assert.ok(prompts.questionReviewCriteria().includes(byId(id).criterion), id);
+  }
 });
