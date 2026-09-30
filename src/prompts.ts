@@ -183,6 +183,13 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
     criterion: "",
   },
   {
+    // W3-R1-1 (S29): a code span shows a line break as a space, so a value of several lines is a code block.
+    id: "codeLine",
+    kind: "data",
+    text: "A code piece holds one line: a value of several lines is a code block, never a code piece.",
+    criterion: "",
+  },
+  {
     id: "inline",
     kind: "prose",
     text: "Formatting (emphasis, inline code, a link) begins and ends inside one plain piece, and a piece that refers to an explanation carries no formatting at all.",
@@ -224,6 +231,7 @@ export const QUESTION_PROBLEM_KINDS = [
   "blankExplanation",
   "blankTermPiece",
   "refOnCode",
+  "multiLineCode",
   "bareNumber",
   "unknownQuestion",
   "wordingChanged",
@@ -242,6 +250,7 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   blankExplanation: "terms",
   blankTermPiece: "refPiece",
   refOnCode: "code",
+  multiLineCode: "codeLine",
   bareNumber: "kindBeforeNumber",
   unknownQuestion: "keepWording",
   wordingChanged: "keepWording",
@@ -275,6 +284,8 @@ export function questionProblemText(problem: QuestionProblem): string {
       return `a piece that refers to ${subject} has no words`;
     case "refOnCode":
       return `the literal value ${subject} refers to an explanation`;
+    case "multiLineCode":
+      return `the code piece ${subject} holds more than one line`;
     case "bareNumber":
       return `${subject} is a number without the kind of thing it numbers before it`;
     case "unknownQuestion":

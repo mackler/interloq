@@ -69,6 +69,8 @@ export const questionProblems = (q: Question, supplied: readonly Piece[] = []): 
     ...[...new Set(pieces.filter((p) => p.ref !== "" && !ids.includes(p.ref)).map((p) => p.ref))].map((subject) => ({ kind: "unknownRef" as const, subject })),
     ...pieces.filter((p) => p.ref !== "" && p.text.trim() === "").map((p) => ({ kind: "blankTermPiece" as const, subject: p.ref })),
     ...pieces.filter((p) => p.code && p.ref !== "" && !allowed.has(codeRefKey(p))).map((p) => ({ kind: "refOnCode" as const, subject: p.text })),
+    // W3-R1-1: a code span shows a line break as a space; a value of several lines is a code block.
+    ...pieces.filter((p) => p.code && /[\r\n]/u.test(p.text)).map((p) => ({ kind: "multiLineCode" as const, subject: p.text })),
     ...q.explanations.flatMap((e, i): QuestionProblem[] => [
       ...(ids.indexOf(e.id) < i ? [{ kind: "duplicateExplanation" as const, subject: e.id }] : []),
       ...(e.term.trim() === "" ? [{ kind: "blankTerm" as const, subject: e.id }] : []),

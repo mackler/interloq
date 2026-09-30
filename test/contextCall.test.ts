@@ -13,6 +13,7 @@ import { askOffering, numberedOptions, permissionDraft, type QuestionDraft } fro
 import { blockPieces, literalsOf, piecesText, plainBlocks, valueTokensOf } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { contextValidation, writeContext } from "../src/questionContext.ts";
+import { questionProblems } from "../src/question.ts";
 import type { Block, Piece, QuestionContext } from "../src/schema.ts";
 import { Store, Ui } from "../src/services.ts";
 import { opt, para, plain, presentedQuestions, SCRIPTED_CONTEXT, scriptedContextReply, tempRepo, term, testLayer, type TestOptions } from "./helpers.ts";
@@ -233,6 +234,9 @@ const faithful = (request: prompts.ContextRequest): QuestionContext => scriptedC
 const mapPieces = (blocks: readonly Block[], f: (pieces: readonly Piece[]) => readonly Piece[]): readonly Block[] =>
   blocks.map((b) => (b.kind === "paragraph" ? { ...b, pieces: f(b.pieces) } : b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: f(i.pieces) })) } : b));
 const literalRepair = repairOf({ kind: "literalChanged", subject: "" });
+/** The details with every code block replaced by a paragraph holding one code piece of the same text. */
+const blocksAsPieces = (blocks: readonly Block[]): readonly Block[] => blocks.map((b): Block => (b.kind === "code" ? { kind: "paragraph", pieces: [{ text: b.text, ref: "", code: true }] } : b));
+const codeLineClause = prompts.QUESTION_FORMAT.find((c) => c.id === "codeLine");
 
 test("W1-R1-1: a changed number, a changed yes or no, values exchanged between rows and an added value are each rejected", () => {
   const request = permissionRequest("Bash", { command: "echo ok", timeout: 120000, run_in_background: false });
@@ -298,7 +302,7 @@ test("W1-R1-1 seam: the prompt carries KEEP_LITERALS, and a reply that rephrases
 
 test("property W1-R1-1: any change to a value of a tool's input is rejected; rephrasing the plain labels alone is accepted", () => {
   const ws = fc.string({ unit: fc.constantFrom(" ", "\t", "\n"), minLength: 1, maxLength: 3 });
-  const value = fc.oneof(fc.string({ maxLength: 8 }), ws, fc.integer(), fc.boolean(), fc.constant(null), fc.constant([]), fc.constant({}), fc.array(fc.oneof(fc.integer(), fc.boolean(), fc.string({ maxLength: 4 })), { maxLength: 2 }));
+  const value = fc.oneof(fc.string({ maxLength: 8 }), ws, fc.constant("printf a\nprintf b"), fc.integer(), fc.boolean(), fc.constant(null), fc.constant([]), fc.constant({}), fc.array(fc.oneof(fc.integer(), fc.boolean(), fc.string({ maxLength: 4 })), { maxLength: 2 }));
   const input = fc.dictionary(fc.constantFrom("command", "timeout", "flag", "mode", "items"), value, { minKeys: 1, maxKeys: 4 });
   type Mutation = (blocks: readonly Block[]) => readonly Block[] | null;
   const tokenPieces = (blocks: readonly Block[]) => blockPieces(blocks).filter((p) => p.code || valueTokensOf([{ kind: "paragraph", pieces: [p] }]).length > 0);
@@ -315,6 +319,8 @@ test("property W1-R1-1: any change to a value of a tool's input is rejected; rep
     (b) => [...b, { kind: "paragraph", pieces: plain(prompts.NONE_PHRASE) }],
     // A code value turned plain.
     (b) => { const t = blockPieces(b).find((p) => p.code && p.ref === "" && p.text !== "" && valueTokensOf([{ kind: "paragraph", pieces: [{ ...p, code: false }] }]).length !== 1); return t === undefined ? null : once(b, t, [{ ...t, code: false }]); },
+    // W3-R1-1: a code block turned into a code piece of the same text.
+    (b) => (b.some((x) => x.kind === "code") ? blocksAsPieces(b) : null),
     // Two values of different tokens exchanged.
     (b) => {
       const ts = tokenPieces(b);
@@ -387,4 +393,58 @@ test("property W2-R1-2: any re-division of the plain pieces, pieces that refer t
     }),
     { numRuns: 300 },
   );
+});
+
+// ---- W3-R1-1 (S29): a value of several lines is never a code piece ----------------------------------------------------
+
+
+test("W3-R1-1: a code block turned into a code piece of the same text is rejected, citing the one-line clause", () => {
+  const request = permissionRequest("Bash", { command: "printf a\nprintf b" });
+  assert.deepEqual(valueTokensOf(request.details), [{ kind: "block", text: "printf a\nprintf b" }], "a code block is its own kind of value");
+  const reply = faithful(request);
+  const inline = { ...reply, details: blocksAsPieces(reply.details as readonly Block[]) };
+  const result = contextValidation(request)(inline);
+  assert.ok(Result.isFailure(result));
+  assert.equal(result.failure.repair, repairOf({ kind: "multiLineCode", subject: "printf a\nprintf b" }, { kind: "literalChanged", subject: "" }));
+  assert.ok(codeLineClause !== undefined && codeLineClause.kind === "data");
+  assert.ok(result.failure.repair.includes(codeLineClause.text));
+});
+
+test("W3-R1-1: a code piece with a line break is a problem in any question; one of a single line is not", () => {
+  const withLabel = (text: string): QuestionContext => ({ ...good, options: [{ label: [{ text, ref: "", code: true }], description: plain("Runs it.") }, good.options[1]] });
+  const oneLine = contextValidation({ ...request, options: [{ label: [{ text: "npm ci", ref: "", code: true }], description: plain("Runs it.") }, request.options[1]] });
+  assert.ok(Result.isSuccess(oneLine(withLabel("npm ci"))));
+  const problems = questionProblems({ context: good.context, question: good.question, explanations: good.explanations, options: withLabel("a\nb").options, details: good.details });
+  assert.deepEqual(problems, [{ kind: "multiLineCode", subject: "a\nb" }]);
+  assert.deepEqual(questionProblems({ context: good.context, question: good.question, explanations: good.explanations, options: withLabel("a\r\nb").options }), [{ kind: "multiLineCode", subject: "a\r\nb" }]);
+});
+
+test("W3-R1-1 seam: the one-line clause is in the writer's format and is the rule the new problem's repair prompt quotes", () => {
+  assert.ok(codeLineClause !== undefined);
+  assert.equal(prompts.QUESTION_PROBLEM_RULE.multiLineCode, "codeLine");
+  assert.ok(prompts.QUESTION_TEXT_FORMAT.includes(codeLineClause.text));
+  assert.ok(repairOf({ kind: "multiLineCode", subject: "x\ny" }).includes(codeLineClause.text));
+});
+
+test("W3-R1-1 scenario (P4-R1-1): a reply that puts a two-line command in a code piece twice leaves Interloq's own code block", async () => {
+  const draft = permissionDraft("Bash", { command: "printf a\nprintf b" });
+  const req = permissionRequest("Bash", { command: "printf a\nprintf b" });
+  const reply = faithful(req);
+  const inline = { ...reply, details: blocksAsPieces(reply.details as readonly Block[]) };
+  const { layer, probe } = initialized({ answers: ["n"], contexts: [{ output: inline }, { output: inline }] });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* (yield* Store).init("the task");
+      const ui = yield* Ui;
+      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+    }).pipe(Effect.provide(layer)),
+  );
+  const problems = [...questionProblems({ ...inline }, []), { kind: "literalChanged" as const, subject: "" }];
+  assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");
+  assert.equal(probe.planner.contextPrompts[1], repairOf(...problems));
+  assert.ok(probe.planner.contextPrompts[1].includes(codeLineClause?.text ?? "missing"));
+  const [q] = presentedQuestions(probe.ui);
+  assert.equal(q.context.by, "program");
+  assert.deepEqual(q.details, draft.details);
+  assert.ok(q.details.some((b) => b.kind === "code" && b.text === "printf a\nprintf b"), "the command in a code block, its line break intact");
 });
