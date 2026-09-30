@@ -16,19 +16,28 @@ const Disposition = Schema.Struct({
   reverses: Str,
 });
 const SelfCorrection = Schema.Struct({ id: Str, new_action: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Str });
-// S3 of the task of issues #46 and #59 (29 Sep 2026): a question carries its context paragraph and its terms.
-const Term = Schema.Struct({ term: Str, explanation: Str });
-const QuestionOption = Schema.Struct({ label: Str, description: Str });
-const UserQuestion = Schema.Struct({ context: Str, question: Str, terms: Schema.Array(Term), options: Schema.Array(QuestionOption) });
+// Issue #36 (30 Sep 2026): a question's text is blocks and pieces, and its explanations a list the pieces refer to.
+const Piece = Schema.Struct({ text: Str, ref: Str, code: Schema.Boolean });
+const Pieces = Schema.Array(Piece);
+const Explanation = Schema.Struct({ id: Str, term: Str, explanation: Str });
+const Block = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("paragraph"), pieces: Pieces }),
+  Schema.Struct({ kind: Schema.Literal("list"), items: Schema.Array(Schema.Struct({ level: Schema.Int, pieces: Pieces })) }),
+  Schema.Struct({ kind: Schema.Literal("code"), text: Str }),
+]);
+const Blocks = Schema.Array(Block);
+const PieceOption = Schema.Struct({ label: Pieces, description: Pieces });
+const UserQuestion = Schema.Struct({ context: Blocks, question: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) });
 const plannerFields = { dispositions: Schema.Array(Disposition), self_corrections: Schema.Array(SelfCorrection), reviewer_feedback: Str, questions_for_user: Schema.Array(UserQuestion) };
 const QuestionEntry = Schema.Struct({
   id: Str,
-  context: Str,
-  question: Str,
-  reason: Str,
-  proposed_answers: Schema.Array(Schema.Struct({ label: Str, description: Str })),
+  context: Blocks,
+  question: Pieces,
+  reason: Blocks,
+  proposed_answers: Schema.Array(PieceOption),
   default_answer: Str,
 });
+const TermsEntry = Schema.Struct({ id: Str, explanations: Schema.Array(Explanation), context: Blocks, question: Pieces, reason: Blocks, proposed_answers: Schema.Array(PieceOption) });
 
 // Decision support (28 Sep 2026): the representation of docs/decision-making.md, recursive through Schema.suspend.
 type Argument = { readonly id: string; readonly text: string; readonly equivalent_to: string; readonly replies: readonly Argument[] };
@@ -69,17 +78,18 @@ export const protoSchemas: Record<string, Schema.Top> = {
   execReport: Schema.Struct({ status: Schema.Literals(["finished", "needs_input", "blocked"]), summary: Str, question: Str, remaining_work: Str }),
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
   questionListResponse: Schema.Struct({ ...plannerFields, questions: Schema.Array(QuestionEntry) }),
-  interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Str, text: Str, terms: Schema.Array(Term), options: Schema.Array(QuestionOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
+  interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
   decisionAnalysis: DecisionAnalysis,
   decisionResponse: Schema.Struct({ ...plannerFields, analysis: DecisionAnalysis }),
   decisionApplied: Schema.Struct({ analysis: DecisionAnalysis }),
   planReply: Schema.Struct({ plan: Plan, questions_for_user: Schema.Array(UserQuestion) }),
   planResponse: Schema.Struct({ ...plannerFields, plan: Plan }),
-  // S9: the reply of the call that writes the context paragraph and the terms of a question the program composes.
-  questionContext: Schema.Struct({ context: Str, terms: Schema.Array(Term) }),
-  // S17: the explanations of the agreed questions' terms, and a response to their review.
-  termsWrite: Schema.Struct({ entries: Schema.Array(Schema.Struct({ id: Str, terms: Schema.Array(Term) })) }),
-  termsResponse: Schema.Struct({ ...plannerFields, entries: Schema.Array(Schema.Struct({ id: Str, terms: Schema.Array(Term) })) }),
+  // S9: the reply of the call that writes the context paragraph of a question the program composes, with the whole
+  // question as pieces (issue #36, decisions G-R1-1 and F1).
+  questionContext: Schema.Struct({ context: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),
+  // S17: the explanations of the agreed questions' terms, each question divided into pieces (issue #36, decision Q1).
+  termsWrite: Schema.Struct({ entries: Schema.Array(TermsEntry) }),
+  termsResponse: Schema.Struct({ ...plannerFields, entries: Schema.Array(TermsEntry) }),
 };
 
 export type Json = Record<string, any>;

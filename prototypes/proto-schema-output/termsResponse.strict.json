@@ -76,16 +76,156 @@
         "type": "object",
         "properties": {
           "context": {
-            "type": "string"
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "paragraph"
+                      ]
+                    },
+                    "pieces": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "ref",
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "pieces"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "list"
+                      ]
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "level": {
+                            "type": "integer"
+                          },
+                          "pieces": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "code": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "text",
+                                "ref",
+                                "code"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "level",
+                          "pieces"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "items"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "code"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
           },
           "question": {
-            "type": "string"
-          },
-          "terms": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "ref",
+                "code"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "explanations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
                 "term": {
                   "type": "string"
                 },
@@ -94,6 +234,7 @@
                 }
               },
               "required": [
+                "id",
                 "term",
                 "explanation"
               ],
@@ -106,10 +247,50 @@
               "type": "object",
               "properties": {
                 "label": {
-                  "type": "string"
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "ref",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
                 },
                 "description": {
-                  "type": "string"
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "ref",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
@@ -123,7 +304,7 @@
         "required": [
           "context",
           "question",
-          "terms",
+          "explanations",
           "options"
         ],
         "additionalProperties": false
@@ -137,11 +318,14 @@
           "id": {
             "type": "string"
           },
-          "terms": {
+          "explanations": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
+                "id": {
+                  "type": "string"
+                },
                 "term": {
                   "type": "string"
                 },
@@ -150,8 +334,331 @@
                 }
               },
               "required": [
+                "id",
                 "term",
                 "explanation"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "paragraph"
+                      ]
+                    },
+                    "pieces": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "ref",
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "pieces"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "list"
+                      ]
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "level": {
+                            "type": "integer"
+                          },
+                          "pieces": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "code": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "text",
+                                "ref",
+                                "code"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "level",
+                          "pieces"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "items"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "code"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "question": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "text",
+                "ref",
+                "code"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "reason": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "paragraph"
+                      ]
+                    },
+                    "pieces": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string"
+                          },
+                          "ref": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "ref",
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "pieces"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "list"
+                      ]
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "level": {
+                            "type": "integer"
+                          },
+                          "pieces": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string"
+                                },
+                                "ref": {
+                                  "type": "string"
+                                },
+                                "code": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "text",
+                                "ref",
+                                "code"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "level",
+                          "pieces"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "items"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "code"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "proposed_answers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "ref",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "description": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": {
+                        "type": "string"
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "text",
+                      "ref",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "label",
+                "description"
               ],
               "additionalProperties": false
             }
@@ -159,7 +666,11 @@
         },
         "required": [
           "id",
-          "terms"
+          "explanations",
+          "context",
+          "question",
+          "reason",
+          "proposed_answers"
         ],
         "additionalProperties": false
       }

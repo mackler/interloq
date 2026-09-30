@@ -8,24 +8,39 @@ import * as legacy from "./fixtures/legacy-schemas.ts";
 
 // The seven schemas that an agent call passes as its output schema.
 // Decision Q1 of the decision-support task: questions_for_user is a list of structured questions; the legacy schemas stay frozen.
-// S3 (issues #36, #59): with its context paragraph and the explanations of its terms.
-const options = { type: "array", items: { type: "object", properties: { label: { type: "string" }, description: { type: "string" } } } };
-const terms = { type: "array", items: { type: "object", properties: { term: { type: "string" }, explanation: { type: "string" } } } };
+// S3 (issues #36, #59): with its context paragraph and the explanations of its terms. Issue #36 (30 Sep 2026): every text
+// is pieces, the context blocks of pieces (a paragraph, a list with levels, a code block), and the explanations a list.
+const pieces = { type: "array", items: { type: "object", properties: { text: { type: "string" }, ref: { type: "string" }, code: { type: "boolean" } } } };
+const blocks = {
+  type: "array",
+  items: {
+    anyOf: [
+      { type: "object", properties: { kind: { type: "string", enum: ["paragraph"] }, pieces } },
+      { type: "object", properties: { kind: { type: "string", enum: ["list"] }, items: { type: "array", items: { type: "object", properties: { level: { type: "integer" }, pieces } } } } },
+      { type: "object", properties: { kind: { type: "string", enum: ["code"] }, text: { type: "string" } } },
+    ],
+  },
+};
+const explanations = { type: "array", items: { type: "object", properties: { id: { type: "string" }, term: { type: "string" }, explanation: { type: "string" } } } };
+const options = { type: "array", items: { type: "object", properties: { label: pieces, description: pieces } } };
 const userQuestions = {
   type: "array",
   items: {
     type: "object",
-    properties: { context: { type: "string" }, question: { type: "string" }, terms, options },
+    properties: { context: blocks, question: pieces, explanations, options },
   },
 };
-/** The legacy question list with the context of each entry (S3), placed after its id. */
+/** The legacy question list with the context of each entry (S3), placed after its id, and its texts as pieces (issue #36). */
 const withContext = <T extends { properties: { questions: { items: { properties: object } } } }>(schema: T): T => ({
   ...schema,
   properties: {
     ...schema.properties,
     questions: {
       ...schema.properties.questions,
-      items: { ...schema.properties.questions.items, properties: (({ id, ...rest }) => ({ id, context: { type: "string" }, ...rest }))(schema.properties.questions.items.properties as { id: unknown }) },
+      items: {
+        ...schema.properties.questions.items,
+        properties: (({ id, default_answer }) => ({ id, context: blocks, question: pieces, reason: blocks, proposed_answers: options, default_answer }))(schema.properties.questions.items.properties as { id: unknown; default_answer: unknown }),
+      },
     },
   },
 });
@@ -45,8 +60,8 @@ const agentSchemas = {
       properties: (({ message_to_user, ...rest }) => ({
         message_to_user,
         // Issue #35 (Q5, Q6): the question the message asks now, its id and its text alone.
-        // S3: with its context, terms and options.
-        current_question: { type: "object", properties: { id: { type: "string" }, context: { type: "string" }, text: { type: "string" }, terms, options } },
+        // S3: with its context, explanations and options, as pieces (issue #36).
+        current_question: { type: "object", properties: { id: { type: "string" }, context: blocks, text: pieces, explanations, options } },
         asked_ids: { type: "array", items: { type: "string" } },
         ...rest,
       }))(legacy.interviewTurnSchema.properties),
