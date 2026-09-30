@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
+import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, normalizedRuns, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
 import type { Block, Piece } from "../src/schema.ts";
 
 const plain = (text: string): Piece => ({ text, ref: "", code: false });
@@ -136,6 +136,42 @@ test("property: any list levels render, indented no deeper than the items, and n
       const md = blocksMarkdown([{ kind: "list", items }]);
       const deepest = Math.max(0, ...md.split("\n").map((l) => l.length - l.trimStart().length));
       return JSON.stringify(normalizedLevels(once)) === JSON.stringify(once) && deepest <= 2 * items.length;
+    }),
+    { numRuns: 300 },
+  );
+});
+
+// W2-R1-1, P3-R1-1 (S26): the properties of S24 hold over a run of lists interrupted by code blocks and paragraphs:
+// normalizing twice equals normalizing once, nothing is nested deeper than its items, and every item and every
+// interrupting block keeps its order and its text.
+test("property: normalizedRuns is idempotent, keeps every block in order and nests no deeper than its items", () => {
+  const piece = fc.string({ maxLength: 4 }).map((text) => ({ text, ref: "", code: false }));
+  const block = fc.oneof(
+    fc.array(fc.record({ level: fc.integer(), pieces: fc.array(piece, { maxLength: 2 }) }), { maxLength: 4 }).map((items): ShownBlock => ({ kind: "list", items })),
+    fc.string({ maxLength: 6 }).map((text): ShownBlock => ({ kind: "code", text })),
+    fc.array(piece, { maxLength: 2 }).map((pieces): ShownBlock => ({ kind: "paragraph", pieces })),
+    fc.string({ maxLength: 6 }).map((markdown): ShownBlock => ({ kind: "document", markdown })),
+  );
+  fc.assert(
+    fc.property(fc.array(block, { maxLength: 8 }), (blocks) => {
+      const laid = normalizedRuns(blocks);
+      // Flattened back to blocks, in order, and laid out again: the same layout.
+      const flat = laid.flatMap((b): readonly ShownBlock[] =>
+        b.kind === "list" ? [{ kind: "list", items: [] }, ...b.items.flatMap((i): readonly ShownBlock[] => [{ kind: "list", items: [{ level: i.level, pieces: i.pieces }] }, ...i.attached, ...(i.attached.length > 0 ? [{ kind: "list" as const, items: [] }] : [])])] : [b],
+      );
+      const words = (bs: readonly ShownBlock[]) => blocksText(bs).filter((t) => t !== "");
+      const items = blocks.flatMap((b) => (b.kind === "list" ? b.items : []));
+      const levels = laid.flatMap((b) => (b.kind === "list" ? b.items.map((i) => i.level) : []));
+      return (
+        JSON.stringify(words(flat)) === JSON.stringify(words(blocks)) &&
+        JSON.stringify(normalizedRuns(laid.flatMap((b): readonly ShownBlock[] => (b.kind === "list" ? [{ kind: "list", items: b.items.map((i) => ({ level: i.level, pieces: i.pieces })) }] : [b])))
+          .flatMap((b) => (b.kind === "list" ? b.items.map((i) => i.level) : []))) === JSON.stringify(levels) &&
+        levels.every((l) => l >= 0 && l < Math.max(1, items.length)) &&
+        (() => {
+          blocksMarkdown(blocks);
+          return true;
+        })()
+      );
     }),
     { numRuns: 300 },
   );

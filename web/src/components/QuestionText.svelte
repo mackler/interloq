@@ -7,7 +7,7 @@
   // Escape or leaving closes it [recognition rather than recall: the explanation is where the word is read; help and
   // documentation]. S42: Tab on the word enters the tooltip, Tab there leaves past the word, Shift+Tab and Escape return
   // to it. The explanation costs no space until the reader asks for it: there is no list of terms beside the question.
-  import { type Explanation, normalizedLevels, type Piece, type ShownBlock } from "../../../src/pieces.ts";
+  import { type Attached, type Explanation, normalizedRuns, type Piece, type RunItem, type ShownBlock } from "../../../src/pieces.ts";
   import { render, renderInline } from "../markdown.ts";
   import { TOOLTIP_GRACE_MS } from "../time.ts";
   import TermTooltip from "./TermTooltip.svelte";
@@ -97,14 +97,17 @@
     stay();
     leaving = setTimeout(close, TOOLTIP_GRACE_MS);
   };
-  /** A list's items nested by their levels: each item with the items that follow it at a deeper level. */
-  type Tree = { pieces: readonly Piece[]; children: Tree[] };
-  const nest = (items: readonly Readonly<{ level: number; pieces: readonly Piece[] }>[]): Tree[] => {
+  /**
+   * A run of lists nested by their levels (normalizedRuns of src/pieces.ts): each item with the blocks that interrupt the
+   * list after it (a multi-line value, its escapes note; W2-R1-1, P3-R1-1) and the items that follow it at a deeper level.
+   */
+  type Tree = { pieces: readonly Piece[]; attached: readonly Attached[]; children: Tree[] };
+  const nest = (items: readonly RunItem[]): Tree[] => {
     const root: Tree[] = [];
     const stack: { level: number; children: Tree[] }[] = [{ level: -1, children: root }];
-    for (const item of normalizedLevels(items)) {
+    for (const item of items) {
       while (stack.length > 1 && stack[stack.length - 1].level >= item.level) stack.pop();
-      const node: Tree = { pieces: item.pieces, children: [] };
+      const node: Tree = { pieces: item.pieces, attached: item.attached, children: [] };
       stack[stack.length - 1].children.push(node);
       stack.push({ level: item.level, children: node.children });
     }
@@ -115,7 +118,8 @@
 <!-- A word that refers to an explanation takes focus, so that its explanation is reached by keyboard (S42): the anchor
      of a tooltip, as TermTooltip is focusable for scrolling. -->
 {#snippet line(ps: readonly Piece[])}{#each ps as p, i (i)}{#if p.ref !== "" && !p.code}<!-- svelte-ignore a11y_no_noninteractive_tabindex --><span class="term" data-ref={p.ref} tabindex="0">{p.text}</span>{:else if p.code}{#if p.ref !== ""}<!-- svelte-ignore a11y_no_noninteractive_tabindex --><code class="term" data-ref={p.ref} tabindex="0">{p.text}</code>{:else}<code>{p.text}</code>{/if}{:else}{@html renderInline(p.text)}{/if}{/each}{/snippet}
-{#snippet tree(nodes: readonly Tree[])}<ul>{#each nodes as node, i (i)}<li>{@render line(node.pieces)}{#if node.children.length > 0}{@render tree(node.children)}{/if}</li>{/each}</ul>{/snippet}
+{#snippet attachedBlock(block: Attached)}{#if block.kind === "paragraph"}<p>{@render line(block.pieces)}</p>{:else}<pre><code>{block.text}</code></pre>{/if}{/snippet}
+{#snippet tree(nodes: readonly Tree[])}<ul>{#each nodes as node, i (i)}<li>{@render line(node.pieces)}{#each node.attached as block, j (j)}{@render attachedBlock(block)}{/each}{#if node.children.length > 0}{@render tree(node.children)}{/if}</li>{/each}</ul>{/snippet}
 
 <svelte:element
   this={pieces !== undefined ? "span" : "div"}
@@ -126,7 +130,7 @@
   onfocusin={(e: FocusEvent) => onFocusIn(e.target)}
   onfocusout={onFocusOut}
   onkeydown={onKey}
-  >{#if pieces !== undefined}{@render line(pieces)}{:else}{#each blocks ?? [] as block, i (i)}{#if block.kind === "paragraph"}<p>{@render line(block.pieces)}</p>{:else if block.kind === "list"}{@render tree(nest(block.items))}{:else if block.kind === "code"}<pre><code>{block.text}</code></pre>{:else}<div class="document">{@html render(block.markdown)}</div>{/if}{/each}{/if}</svelte:element>{#if open !== null && entries.length > 0}<TermTooltip {id} {entries} anchor={open.anchor} onEnter={stay} onLeave={leave} onReturn={toAnchor} onPast={past} onFocusOut={leaveTip} />{/if}
+  >{#if pieces !== undefined}{@render line(pieces)}{:else}{#each normalizedRuns(blocks ?? []) as block, i (i)}{#if block.kind === "paragraph"}<p>{@render line(block.pieces)}</p>{:else if block.kind === "list"}{@render tree(nest(block.items))}{:else if block.kind === "code"}<pre><code>{block.text}</code></pre>{:else}<div class="document">{@html render(block.markdown)}</div>{/if}{/each}{/if}</svelte:element>{#if open !== null && entries.length > 0}<TermTooltip {id} {entries} anchor={open.anchor} onEnter={stay} onLeave={leave} onReturn={toAnchor} onPast={past} onFocusOut={leaveTip} />{/if}
 
 <style>
   /* A sentence of pieces sits in its line box as the text around it does, so that it adds no height of its own. */

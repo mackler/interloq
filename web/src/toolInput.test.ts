@@ -4,7 +4,8 @@
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
-import { blockPieces, plainBlocks } from "../../src/pieces.ts";
+import { blockPieces, blocksMarkdown, plainBlocks } from "../../src/pieces.ts";
+import fc from "fast-check";
 import { renderQuestionRecord } from "../../src/render.ts";
 import QuestionText from "./components/QuestionText.svelte";
 import { render, renderInline } from "./markdown.ts";
@@ -255,5 +256,73 @@ describe("empty containers in a tool's input", () => {
       expect(el.textContent).toContain(phrase);
       expect(codes(el).some((c) => c.includes(phrase))).toBe(false);
     }
+  });
+});
+
+// W2-R1-1 and P3-R1-1 (S26): a multi-line value (a code block) and its escapes note (a paragraph) sit inside the item of
+// their setting, and every setting is shown at its depth in the input: in the page's DOM, and in the Markdown of the
+// terminal and conversation.md as a Markdown renderer nests it.
+describe("the nesting of a tool's input around a multi-line value", () => {
+  /** The number of lists around an element, inside the rendered root. */
+  const depthIn = (root: HTMLElement, el: Element): number => {
+    let depth = -1;
+    for (let at: Element | null = el; at !== null && at !== root; at = at.parentElement) if (at.tagName === "UL") depth += 1;
+    return depth;
+  };
+  const codeNamed = (root: HTMLElement, text: string): HTMLElement => [...root.querySelectorAll<HTMLElement>("code")].find((c) => c.textContent === text)!;
+  const markdownShown = (input: Record<string, unknown>): HTMLElement => {
+    const el = document.createElement("div");
+    el.innerHTML = render(blocksMarkdown(prompts.toolInputBlocks(input)));
+    document.body.appendChild(el);
+    return el;
+  };
+  test.each([["a\nb"], ["a\nb\r"]])("the reproduction with the command %j", (command) => {
+    const input = { outer: { command, timeout: 12 }, timeout: 34 };
+    for (const root of [rendered(input), markdownShown(input)]) {
+      expect(depthIn(root, codeNamed(root, "12"))).toBe(1);
+      expect(depthIn(root, codeNamed(root, "34"))).toBe(0);
+      const block = root.querySelector("pre")!;
+      const item = block.closest("li")!;
+      expect(item.textContent).toContain("The command:");
+      expect(depthIn(root, block)).toBe(1);
+      if (command.includes("\r")) {
+        const note = [...root.querySelectorAll("p")].find((p) => p.textContent?.startsWith("(Characters that cannot be shown"))!;
+        expect(note.closest("li")).toBe(item);
+      }
+    }
+  });
+  test("property: every setting is shown at its depth in the input", () => {
+    type Tree = { readonly [k: string]: Tree | string | number };
+    const leaf = fc.oneof(fc.constant(0), fc.constantFrom("a\nb", "a\nb\r", "one", "x\n\ty​"));
+    const { tree } = fc.letrec<{ tree: Tree }>((tie) => ({
+      tree: fc.dictionary(fc.stringMatching(/^k[a-z]{1,3}$/), fc.oneof({ depthSize: "small" }, leaf, tie("tree")), { minKeys: 1, maxKeys: 3 }) as fc.Arbitrary<Tree>,
+    }));
+    fc.assert(
+      fc.property(tree, (t) => {
+        // Each number leaf gets a unique value, so that its code element can be found; its depth is recorded.
+        let next = 1000;
+        const depths = new Map<string, number>();
+        const numbered = (node: Tree, depth: number): Tree =>
+          Object.fromEntries(Object.entries(node).map(([k, v]) => {
+            if (typeof v === "number") {
+              const n = next++;
+              depths.set(String(n), depth);
+              return [k, n];
+            }
+            return [k, typeof v === "string" ? v : numbered(v, depth + 1)];
+          }));
+        const input = numbered(t, 0);
+        for (const root of [rendered(input), markdownShown(input)]) {
+          for (const [n, depth] of depths) expect(depthIn(root, codeNamed(root, n)), `${n} in ${JSON.stringify(input)}`).toBe(depth);
+          // A block between two lists belongs to the item before it; one after the last list stands after the list.
+          const all = [...root.querySelectorAll("pre, li")];
+          for (const pre of root.querySelectorAll("pre")) if (all.slice(all.indexOf(pre) + 1).some((e) => e.tagName === "LI")) expect(pre.closest("li")).not.toBe(null);
+        }
+        for (const m of mounted) unmount(m);
+        mounted = [];
+        document.body.innerHTML = "";
+      }),
+      { numRuns: 60 },
+    );
   });
 });

@@ -682,3 +682,18 @@ test("S17: the options Interloq composes do not repeat what they share", () => {
     assert.ok(!group.every((d) => /continues/.test(d)), group.join(" | "));
   }
 });
+
+// W2-R1-1 and P3-R1-1 (S26): a multi-line value is a code block, and a value that needs escapes is followed by the
+// escapes note; neither ends the tool's input as a list. They sit inside the item of their setting, and the settings after
+// them keep their nesting: the inner timeout under `outer`, the outer one at the top level.
+test("a multi-line value and its escapes note keep the nesting of the settings after them", () => {
+  const timeout = "The time limit in milliseconds";
+  assert.equal(
+    inputLines({ outer: { command: "a\nb", timeout: 12 }, timeout: 34 }),
+    `- The tool's setting named \`outer\`:\n  - The command:\n\n    \`\`\`\n    a\n    b\n    \`\`\`\n\n  - ${timeout}: \`12\`\n- ${timeout}: \`34\``,
+  );
+  assert.equal(
+    inputLines({ outer: { command: "a\nb\r", timeout: 12 }, timeout: 34 }),
+    `- The tool's setting named \`outer\`:\n  - The command:\n\n    \`\`\`\n    a\n    b\\r\n    \`\`\`\n\n    ${prompts.ESCAPED_VALUE_NOTE}\n\n  - ${timeout}: \`12\`\n- ${timeout}: \`34\``,
+  );
+});

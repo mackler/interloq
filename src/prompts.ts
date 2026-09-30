@@ -152,6 +152,13 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
     criterion: "",
   },
   {
+    // W2-R1-1, P3-R1-1 (S26): how normalizedRuns of src/pieces.ts lays out a list interrupted by other blocks.
+    id: "interrupted",
+    kind: "data",
+    text: "A code block or a paragraph that stands between two lists is shown inside the last item of the list before it, and the list after it continues that list at its levels: to show a multi-line value of a list item, put its code block right after the list that ends with that item, and continue the remaining items in a new list.",
+    criterion: "",
+  },
+  {
     id: "pieces",
     kind: "data",
     text: 'Write every text (the question, each paragraph and list item, each option\'s label and description) as a sequence of pieces, each with text, ref and code. A plain piece has ref "" and code false; the pieces\' texts, joined one after another, are the sentence.',

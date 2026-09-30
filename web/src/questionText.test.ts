@@ -204,3 +204,31 @@ test("property: the inline renderer never produces an element outside the inline
     { numRuns: 200 },
   );
 });
+
+// W2-R1-1 and P3-R1-1 (S26), the seam of the format and the rendering: blocks written as the clause "interrupted" of
+// QUESTION_FORMAT describes them (a code block and a paragraph between two lists) are shown inside the list's last item
+// before them, and the list after them continues at its levels.
+describe("a list interrupted by blocks (the format's clause and the rendering)", () => {
+  test("the clause is in the format the writers read, and the rendering does what it says", async () => {
+    const prompts = await import("../../src/prompts.ts");
+    const clause = prompts.QUESTION_FORMAT.find((c) => c.id === "interrupted");
+    expect(clause?.text).toBeTruthy();
+    expect(prompts.QUESTION_TEXT_FORMAT).toContain(clause!.text);
+    const root = show({
+      blocks: [
+        { kind: "list", items: [{ level: 0, pieces: [plain("outer")] }, { level: 1, pieces: [plain("command")] }] },
+        { kind: "code", text: "a\nb" },
+        { kind: "paragraph", pieces: [plain("A note.")] },
+        { kind: "list", items: [{ level: 1, pieces: [plain("inner")] }, { level: 0, pieces: [plain("after")] }] },
+      ],
+      explanations: [],
+    });
+    const own = (li: Element) => [...li.childNodes].filter((n) => n instanceof Text || (n instanceof HTMLElement && !["UL", "PRE", "P"].includes(n.tagName))).map((n) => n.textContent).join("");
+    const command = [...root.querySelectorAll("li")].find((li) => own(li) === "command")!;
+    expect(command.querySelector("pre code")?.textContent).toBe("a\nb");
+    expect(command.querySelector("p")?.textContent).toBe("A note.");
+    expect(root.querySelectorAll(":scope > div > ul").length).toBe(1);
+    expect([...root.querySelectorAll(":scope > div > ul > li")].map(own)).toEqual(["outer", "after"]);
+    expect([...root.querySelectorAll(":scope > div > ul > li > ul > li")].map(own)).toEqual(["command", "inner"]);
+  });
+});

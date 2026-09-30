@@ -61,6 +61,35 @@ export const normalizedLevels = <T extends Readonly<{ level: number }>>(items: r
     const level = Number.isFinite(item.level) ? Math.min(max, Math.max(0, Math.trunc(item.level))) : 0;
     return [...acc, { ...item, level }];
   }, []);
+/** A block that may interrupt a list and then belongs to the item before it: a code block or a paragraph. */
+export type Attached = Extract<Block, { kind: "code" | "paragraph" }>;
+/** A list item of a run, with its normalized level and the blocks that interrupt the list after it. */
+export type RunItem = Readonly<{ level: number; pieces: readonly Piece[]; attached: readonly Attached[] }>;
+/** A block as it is laid out: a list is a whole run, its items carrying the blocks that interrupt it. */
+export type LaidBlock = Exclude<ShownBlock, { kind: "list" }> | Readonly<{ kind: "list"; items: readonly RunItem[] }>;
+const isAttached = (b: ShownBlock): b is Attached => b.kind === "code" || b.kind === "paragraph";
+/**
+ * Blocks laid out for display (W2-R1-1, P3-R1-1): every code block and paragraph that stands between two lists belongs to
+ * the last item of the list before it, and the list after them continues that list, so that one run of lists is one list
+ * whose levels are normalized as a whole (normalizedLevels): the continuing list's first item is at most one level deeper
+ * than the item before the interruption, not forced to 0. A run ends at the first block after a list that no later list
+ * follows; a document block always ends it.
+ */
+export const normalizedRuns = (blocks: readonly ShownBlock[]): readonly LaidBlock[] => {
+  type State = Readonly<{ out: readonly LaidBlock[]; run: readonly RunItem[] | null; pending: readonly Attached[] }>;
+  const flushed = (s: State): readonly LaidBlock[] => (s.run === null ? s.out : [...s.out, { kind: "list", items: normalizedLevels(s.run) }, ...s.pending]);
+  const end = blocks.reduce<State>((s, b) => {
+    if (b.kind === "list") {
+      const items = b.items.map((it): RunItem => ({ level: it.level, pieces: it.pieces, attached: [] }));
+      if (s.run === null || s.run.length === 0) return { out: flushed(s), run: items, pending: [] };
+      const last = s.run[s.run.length - 1];
+      return { out: s.out, run: [...s.run.slice(0, -1), { ...last, attached: [...last.attached, ...s.pending] }, ...items], pending: [] };
+    }
+    if (isAttached(b)) return s.run === null ? { ...s, out: [...s.out, b] } : { ...s, pending: [...s.pending, b] };
+    return { out: [...flushed(s), b], run: null, pending: [] };
+  }, { out: [], run: null, pending: [] });
+  return flushed(end);
+};
 /** A value of the details (W1-R1-1): a code piece's or code block's text, or a phrase in a plain piece that stands for one. */
 export type ValueToken = Readonly<{ kind: "code" | "phrase"; text: string }>;
 /** The value phrases of one plain text, left to right, the longest at each position (valuePhraseAt of src/prompts.ts). */
@@ -104,14 +133,29 @@ const codeBlockMarkdown = (text: string): string => {
   const fence = codeFence(text);
   return `${fence}\n${text}\n${fence}`;
 };
-/** Blocks as Markdown, separated by blank lines: paragraphs, lists (two spaces per level), fenced code, documents whole. */
+/** Every line of a text indented by `n` spaces, blank lines left empty. */
+const indented = (text: string, n: number): string => text.split("\n").map((l) => (l === "" ? l : `${" ".repeat(n)}${l}`)).join("\n");
+/** A code block or a paragraph as Markdown. */
+const attachedMarkdown = (b: Attached): string => (b.kind === "code" ? codeBlockMarkdown(b.text) : piecesMarkdown(b.pieces));
+/**
+ * Blocks as Markdown, separated by blank lines: paragraphs, lists (two spaces per level), fenced code, documents whole. A
+ * block that interrupts a list (normalizedRuns) is indented to the content column of the item it belongs to, so that it
+ * nests there, and the list continues at its levels (W2-R1-1, P3-R1-1).
+ */
 export const blocksMarkdown = (blocks: readonly ShownBlock[]): string =>
-  blocks
+  normalizedRuns(blocks)
     .map((b) =>
       b.kind === "paragraph"
         ? piecesMarkdown(b.pieces)
         : b.kind === "list"
-          ? normalizedLevels(b.items).map((i) => `${"  ".repeat(i.level)}- ${piecesMarkdown(i.pieces)}`).join("\n")
+          ? b.items
+              .map((i, n) => {
+                const line = `${"  ".repeat(i.level)}- ${piecesMarkdown(i.pieces)}`;
+                const inner = i.attached.map((a) => `\n\n${indented(attachedMarkdown(a), 2 * i.level + 2)}`).join("");
+                const gap = n > 0 && b.items[n - 1].attached.length > 0 ? "\n\n" : n > 0 ? "\n" : "";
+                return `${gap}${line}${inner}`;
+              })
+              .join("")
           : b.kind === "code"
             ? codeBlockMarkdown(b.text)
             : b.markdown.trim(),
