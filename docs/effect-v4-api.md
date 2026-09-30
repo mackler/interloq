@@ -166,14 +166,14 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Schema.suspend` (read 28 Sep 2026, decision support step 1.2) | 4061 | `suspend(() => schema)`: a recursive schema; `toJsonSchemaDocument` generates a `$defs` definition that refers to itself (observed; `prototypes/proto-recursive-schema.ts`). The recursive `Argument` of `src/schema.ts` annotates the thunk's result as `Schema.Codec<Argument>` |
 | `Schema.Codec` (read 28 Sep 2026) | 816 | `interface Codec<T, E = T, RD = never, RE = never>`: the type of a recursive schema's declaration (`const Argument: Schema.Codec<Argument> = …`) |
 | `Schema.Array` | 3679 (`ArraySchema as Array`) | `Array(item)` |
-| `Schema.NullOr` / `Union` | — / 3921 | `Union(members, options?)` |
+| `Schema.NullOr` / `Union` | — / 3921 | `Union(members, options?)`; a union of structs tagged by a literal `kind` generates an `anyOf` of closed objects (observed for `Column`, and for `Block` of issue #36, 30 Sep 2026, in `test/jsonSchema.test.ts`) |
 | `Schema.Int` / `Schema.NonEmptyString` (verified 25 Sep, review stage 1) | 5812 / 6335 | integers (no NaN/Infinity); non-empty strings. Used for the program's own records only |
 | `.check(...checks)` on a schema (verified 25 Sep) | 141 | `check(...checks: [Check<Type>, ...]) => Rebuild`; the filters are `Schema.isGreaterThanOrEqualTo(min)` (5694), `isLessThanOrEqualTo(max)` (5732), `isBetween` (5754), `isGreaterThan` (5675), `isFinite` (5573); they correspond to JSON Schema `minimum`/`maximum`. There is no `greaterThanOrEqualTo` without the `is` prefix in v4. |
 | `Schema.brand` | 4151 | `brand(identifier)(schema)`: `NonEmptyString.pipe(Schema.brand("IssueId"))` gives `Type = string & Brand<"IssueId">` (no runtime check beyond the schema's); `IssueId` in src/schema.ts (review stage 4.5) |
 | `Brand.Branded<A, Key>` | Brand.d.ts:171 | `A & Brand<Key>`; `export * as Brand` in index.d.ts:48. Used for `ProjectPath` / `RecordPath` (review stage 4.7) |
 | `Schema.optionalKey` | 1888 | `optionalKey(schema)`: the key may be absent (the `?:` of `LogEntry`) |
 | `Schema.declare` | 399 | `declare(is: (u) => u is T, annotations?)`, used for the stage 1 scaffolding |
-| `Schema.fromJsonString` | 6729 | `fromJsonString(schema, options?)`: a string decoded as JSON, then as `schema`. Used for Codex's `finalResponse` and for JSON files. |
+| `Schema.fromJsonString` | 6729 | `fromJsonString(schema, options?)`: a string decoded as JSON, then as `schema`. Used for Codex's `finalResponse` and for JSON files. Since 30 Sep 2026 also `parseRelayedQuestion` of `src/question.ts`, with `decodeUnknownResult`, over the JSON text of a relayed question (issue #36). |
 | `Schema.decodeUnknownEffect` | 1170 | `(schema, options?: ParseOptions) => (input, options?) => Effect<Type, SchemaError, R>` |
 | `Schema.decodeUnknownExit` | 1223 | `(schema, options?) => (input) => Exit<Type, SchemaError>` |
 | `Schema.decodeUnknownSync` | 1460 | throws `SchemaError` |

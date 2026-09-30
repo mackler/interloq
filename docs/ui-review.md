@@ -179,24 +179,31 @@ only names the program chooses (a phase's heading, a file's name, an agent). The
 the call and asks whether to retry; the attempts and the last fault are in its details, the fault shown literally as
 code, since it is the SDK's text and not Markdown (P6-R1-1). At an execution stop without a question, Claude Code's
 description is in the details, as Markdown like all of Claude's prose. The question pane's bottom region is at least
-5rem high, so that an option card of two lines is seen whole in a short window (L23: a fault of 2,500 characters at
-390 × 844 and 640 × 400) [visibility of system status; recognition rather than recall].
+6rem high (5rem before the option labels took a line of their own, below), so that an option card is seen whole in a
+short window (L23: a fault of 2,500 characters at 390 × 844 and 640 × 400) [visibility of system status; recognition
+rather than recall].
 
 **Explanations of terms.** m3-svelte has no rich tooltip, so the one of a term is built by hand (`TermTooltip`), as
-the plan step's is. It asserts only the explanation the agents wrote and Codex reviewed: plain text, nothing more.
-Every case-sensitive, whole-word occurrence of a term is marked (decision Q5) in the context, the details, the
-question, the options, the answered question in the transcript and the question beside an analysis. The analysis
-text is not marked. A marked word is focusable. Its tooltip opens on hover and on keyboard focus, closes on Escape or
-when the pointer or focus leaves, stays inside the viewport, and scrolls when long [help and documentation;
-flexibility and efficiency of use]. The marking is applied to the sanitized DOM and inserts a term's text as text, so
-no markup of an agent passes into the page unsanitized. The terminal prints the terms as a "Terms:" block above the
-question (decision Q6).
+the plan step's is. It asserts only the explanation the agents wrote and Codex reviewed: plain text, nothing more, and
+not the term's name, since the words themselves are its anchor. Since 30 Sep 2026 (issue #36) a question's text is a
+sequence of pieces written by the agent, and a piece that refers to an explanation is a focusable word in the context,
+the details, the question, the options, the answered question in the transcript and the question beside an analysis;
+a plural or a capitalized word refers to the same explanation as the exact one. The analysis text carries none. The
+tooltip opens on hover and on keyboard focus, closes on Escape or when the pointer or focus leaves, stays inside the
+viewport, and scrolls when long [help and documentation; flexibility and efficiency of use]. The page searches for
+nothing and converts nothing: each piece is rendered on its own, a plain piece as inline Markdown through its own
+sanitizer that allows inline elements alone, so no markup of an agent passes into the page unsanitized and no piece
+opens a block. The list of terms that the question pane showed above the question is removed: an explanation costs no
+screen space until the reader asks for it [aesthetic and minimalist design]. The terminal prints the terms as a "Terms:"
+block above the question, one line per explanation labeled with its term (decision Q6).
 
-A term split by inline Markdown, such as "cache key" in "The cache **key** identifies the saved result", is marked and
-explained as one occurrence (S59, W8-R1-1 of work review 8). The validation and the page read the same text, the one
-the reader sees, and match only within one inline run, so a term never matches across two paragraphs, two list items
-or a nested quotation. The context beside an analysis is rendered as Markdown, as it is in the question pane and the
-transcript, so its emphasis and its terms read the same everywhere [consistency and standards; help and documentation].
+**Option cards (issue #59).** Each option's label is in bold on a line of its own, its description below it, as separate
+elements, in the question pane, beside an analysis and in the transcript, so that the options can be compared by their
+labels alone [recognition rather than recall]. To keep a card of three lines as tall as one of two was, a card's
+vertical padding is 12 dp in the pane and 8 dp beside an analysis, instead of the card's 16 dp; this changes only
+spacing and asserts nothing the card does not. The question pane's bottom region is at least 6rem high, so that such a
+card is seen whole in a short window (L23), and beside an analysis the answers scroll within 15 % of the window's height,
+at least 3.75rem and at most 7rem (L14, L20, L21).
 
 The answered question in the transcript keeps the exact text of its plain fields (S62, W9-R1-1 of work review 9): the
 question, the options and the terms are plain text in the pane, and they are encoded so that no character of them is

@@ -419,6 +419,34 @@ The work review found five gaps, all corrected:
 - A context call's terms were checked against facts the user never sees.
 - "Help me decide" dropped the context and terms the question had been shown with.
 
+## A question's terms as pieces of its text (issues #36, #59 and #66, 30 Sep 2026)
+
+Three ways of binding an explanation to the words it explains were considered, and the reasons are recorded here so that a
+fourth change is argued rather than guessed at (issue #36 asked for this).
+
+- **Exact words** (decision Q5 of the run of 29-30 Sep 2026, built). The agent supplied `{ term, explanation }` and the
+  page marked every case-sensitive, whole-word occurrence after sanitizing. It worked, but it cost ten of the fifty-six
+  review issues of that run, every one of them the renderer failing to find or reach an occurrence in real HTML: an
+  empty explanation passing the checks, a link holding several terms exposing only the first, focus routing that missed
+  tooltips, a code span collapsing line breaks, a term split by inline Markdown, text nodes joined across a nested
+  element. A plural or a capitalized first word was never explained at all, because its words differ from the term's.
+- **Markers in prose** (chosen 30 Sep 2026, never built). The agent would mark each term where it occurs and the page
+  convert the markers after sanitizing. Planning phase 11 of that run spent all five of its cycles on it without
+  converging, four of them on one objection: the placement rules still accepted markers that rendering or sanitizing
+  removes (inside HTML comments, `<script>`, `<pre>`, link-reference titles, HTML blocks across blank lines). The class
+  of such cases could not be enumerated, only discovered.
+- **Pieces** (chosen and built 30 Sep 2026). Both earlier mechanisms tried to recover a position after the text had been
+  flattened into one string; here the agent creates the position. A question's text is a sequence of pieces, a piece
+  with a `ref` carries the words as they stand in the sentence, and the explanations are a list the pieces refer to, so
+  "execution calls" and "Execution call" are two pieces with one explanation. Validation is checks on data, and nothing
+  reads Markdown to find anything. The price is a larger agent schema (blocks of pieces everywhere a question's text
+  was a string), which awaits the schema acceptance proof.
+
+In the same task the rules of issue #59 for what an option says (only how it differs from the others, after a preamble
+that is never shown), how the context paragraph opens and names the owner of a purpose, and that the question asks
+what the user wants joined `QUESTION_RULES`; and the rule of issue #66 replaced the restriction of `fast-check` to the
+properties recommendation E of `docs/functional-design-review.md` named.
+
 ## Rejected or deferred
 
 - `--permission-mode plan` and `plansDirectory` for the planning phases: the location of the
