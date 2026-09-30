@@ -12,6 +12,7 @@ import type { QuestionsFile, TermsEntry } from "./schema.ts";
 import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNormalize.ts";
 import { type Services, Store, Ui } from "./services.ts";
 import { agentContext, askOffering, numberedOptions, programContext, type QuestionDraft } from "./offer.ts";
+import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
 import type { QuestionOrigin } from "./question.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 
@@ -27,7 +28,7 @@ export const turnValidation =
     // S35 (W1-R1-3): only a turn that asks nothing, or asks an agreed question by its id, is not checked.
     if (asksNothing(current) || (current.id.trim() !== "" && recorded.includes(current.id))) return Result.succeed({ value: turn, notes: [] });
     const where = current.id.trim() === "" ? "the current question" : current.id;
-    return questionsValidation((t: S.InterviewTurn) => [{ where, question: { context: t.current_question.context, question: t.current_question.text, terms: t.current_question.terms, options: t.current_question.options } }])(turn);
+    return questionsValidation((t: S.InterviewTurn) => [{ where, question: { context: t.current_question.context, question: t.current_question.text, explanations: t.current_question.explanations, options: t.current_question.options } }])(turn);
   };
 
 /**
@@ -35,30 +36,39 @@ export const turnValidation =
  * presents exactly such a turn as a reply to Claude Code's message, and turnValidation checks every other one.
  */
 export const asksNothing = (current: S.InterviewTurn["current_question"]): boolean =>
-  current.id.trim() === "" && current.context.trim() === "" && current.text.trim() === "" && current.terms.length === 0 && current.options.length === 0;
+  current.id.trim() === "" && blocksText(current.context).join("").trim() === "" && piecesText(current.text).trim() === "" && current.explanations.length === 0 && current.options.length === 0;
 
 /** The reviewed records an interview presents its agreed questions from (S18): questions.json and terms.json. */
 export type AgreedRecords = Readonly<{ questions: QuestionsFile["questions"]; terms: readonly TermsEntry[] }>;
 
+/** The default's mark on a proposed answer's description (S18): after its last piece, as the program's words. */
+const markedDefault = (description: readonly Piece[]): readonly Piece[] => {
+  const marked = prompts.defaultMarked(piecesText(description));
+  const words = piecesText(description);
+  return [...description, ...plainPieces(marked.slice(words.length))];
+};
+
 /**
  * The question an interview turn asks (S7, S18). A question of questions.json is presented from the reviewed records
- * alone: its context, text and reason as agreed, its proposed answers as options with the default marked, and its terms
- * from terms.json; what the turn writes beside the id is ignored, so no term shown can lose its explanation. Any other
- * question (a follow-up, an accepted requirements issue) is presented from the turn, as validated (S16). A turn that
- * names none asks for the user's reply to its message, which is then the context.
+ * alone: its entry in terms.json, divided into pieces that refer to its explanations (decision Q1), or where there is
+ * none the agreed entry's plain pieces; its reason as details and its proposed answers as options with the default
+ * marked; what the turn writes beside the id is ignored, so no word shown can lose its explanation. Any other question (a
+ * follow-up, an accepted requirements issue) is presented from the turn, as validated (S16). A turn that names none asks
+ * for the user's reply to its message, which is then the context, shown whole (S7).
  */
 export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDraft => {
   const current = turn.current;
   const agreed = records.questions.find((q) => q.id === current.id && current.id !== "");
   if (agreed !== undefined) {
     const origin: QuestionOrigin = { kind: "clarification", id: agreed.id };
-    const options = numberedOptions(agreed.proposed_answers.map((a) => ({ label: a.label, description: a.label === agreed.default_answer ? prompts.defaultMarked(a.description) : a.description })));
-    const terms = records.terms.find((t) => t.id === agreed.id)?.terms ?? [];
-    return { origin, context: agentContext(agreed.context, origin), terms, question: agreed.question, options, details: prompts.agreedDetails(agreed.reason), decision: null };
+    const divided = records.terms.find((t) => t.id === agreed.id);
+    const entry = divided ?? { ...agreed, explanations: [] };
+    const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description })));
+    return { origin, context: agentContext(entry.context, origin), explanations: entry.explanations, question: entry.question, options, details: prompts.agreedDetails(entry.reason), decision: null };
   }
-  if (asksNothing(current)) return { origin: { kind: "reply" }, context: { text: turn.message, by: "agent" }, terms: [], question: prompts.REPLY_QUESTION, options: [], decision: null };
+  if (asksNothing(current)) return { origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: turn.message }], by: "agent" }, explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null };
   const origin: QuestionOrigin = { kind: "followUp", id: current.id };
-  return { origin, context: agentContext(current.context, origin), terms: current.terms, question: current.text, options: numberedOptions(current.options), decision: null };
+  return { origin, context: agentContext(current.context, origin), explanations: current.explanations, question: current.text, options: numberedOptions(current.options), decision: null };
 };
 
 /**
@@ -89,7 +99,7 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
       if (turn.kind === "summary_proposed") {
         // S7: the summary is read beside the question that confirms it, after the program's paragraph.
         const origin: QuestionOrigin = { kind: "confirmSummary" };
-        const draft: QuestionDraft = { origin, context: programContext(origin), terms: [], question: prompts.CONFIRM_SUMMARY_QUESTION, options: [], details: turn.summary.trim(), decision: null };
+        const draft: QuestionDraft = { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], details: [{ kind: "document", markdown: turn.summary.trim() }], decision: null };
         const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.confirmSummaryPrompt, draft));
         if (reply.kind !== "text") {
           yield* store.writeRequirements(turn.summary.trimEnd() + "\n");

@@ -73,15 +73,17 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("unchanged"), ...withHeading, fileLabel: Str, accepted: Schema.Array(Str) }),
   Schema.Struct({ kind: Schema.Literal("transport"), agent: AgentSchema, what: Str, attempts: Int, fault: Str }),
 ]);
-/** PresentedQuestion of src/question.ts (S5). */
+/** ShownBlock of src/pieces.ts: an agent's block, or the program's own document shown whole. */
+const ShownBlockSchema = Schema.Union([S.ParagraphBlock, S.ListBlock, S.CodeBlock, Schema.Struct({ kind: Schema.Literal("document"), markdown: Str })]);
+/** PresentedQuestion of src/question.ts (S5; S12 of the task of issue #36: blocks, pieces and explanations). */
 export const PresentedQuestionSchema = Schema.Struct({
   number: Int,
   origin: QuestionOriginSchema,
-  context: Schema.Struct({ text: Str, by: Schema.Literals(["agent", "program"]) }),
-  terms: Schema.Array(S.Term),
-  question: Str,
-  options: Schema.Array(Schema.Struct({ label: Str, description: Str, answer: Schema.Union([Schema.Struct({ token: Str }), Schema.Struct({ numeric: Schema.Literal(true) })]) })),
-  details: Str,
+  context: Schema.Struct({ blocks: Schema.Array(ShownBlockSchema), by: Schema.Literals(["agent", "program"]) }),
+  explanations: Schema.Array(S.Explanation),
+  question: Schema.Array(S.Piece),
+  options: Schema.Array(Schema.Struct({ label: Schema.Array(S.Piece), description: Schema.Array(S.Piece), answer: Schema.Union([Schema.Struct({ token: Str }), Schema.Struct({ numeric: Schema.Literal(true) })]) })),
+  details: Schema.Array(ShownBlockSchema),
   decision: Schema.NullOr(Int),
 });
 

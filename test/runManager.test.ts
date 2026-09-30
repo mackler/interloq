@@ -13,7 +13,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type Listener, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring } from "./helpers.ts";
+import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -78,7 +78,7 @@ test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identica
 
 test("a question is answered through the manager, with the same text the terminal would send", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [{ context: "c", question: "Which database?", terms: [], options: [] }] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] }]);
+  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] }]);
   const id = await started(h, repo);
   const asked = await pendingAsk(h, id);
   assert.equal(asked.kind, "decision");
@@ -105,7 +105,7 @@ test("start while a run is active is refused; a bad project path is refused with
 
 test("stop interrupts the run like Ctrl+C; answers and stops naming an ended run are refused; a new run gets a new id", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [{ context: "c", question: "Which?", terms: [], options: [] }] }, plan: "v1" }] }, converging]);
+  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }] }, converging]);
   const first = await started(h, repo);
   const asked = await pendingAsk(h, first);
   assert.equal(await run(h.manager.stop(h.manager.incarnation, first)), null);
@@ -143,8 +143,8 @@ test("the replay during a run holds the last run and the current one", async () 
 
 test("an interview's numbered answer sent through the manager reaches Claude Code as the terminal's text", async () => {
   const repo = tempRepo();
-  const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: "", text: "", terms: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
-  const database = { id: "F1", context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", text: "Which database should the service use?", terms: [], options: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }] };
+  const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete, summary });
+  const database = currentOf({ id: "F1", context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", text: "Which database should the service use?", terms: [], options: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }] });
   const h = await harness(repo, [
     {
       config: { questionPhase: true },
@@ -162,7 +162,7 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
   // S5: the turn's question is presented before the prompt, its options with the answers that choose them.
   const presented = eventsOf(h, id).flatMap((e) => (e._tag === "Notified" && e.event._tag === "QuestionPresented" ? [e.event.question] : [])).at(-1);
   const choice = presented?.options[1];
-  assert.deepEqual(choice, { label: "SQLite", description: "no server needed", answer: { token: "2" } });
+  assert.deepEqual(choice, { label: plain("SQLite"), description: plain("no server needed"), answer: { token: "2" } });
   await run(h.manager.answer(h.manager.incarnation, id, you.prompt, "token" in choice.answer ? choice.answer.token : ""));
   const confirm = await pendingAsk(h, id);
   assert.equal(confirm.kind, "confirmSummary");
@@ -271,7 +271,7 @@ test("start interrupted while Started is being delivered leaves a run that can b
 // Finding 12 of docs/gui-review.md: an action of another incarnation is refused even when its numbers match.
 test("a stop and an answer with the current run's numbers but another incarnation are refused, and the run continues", async () => {
   const repo = tempRepo();
-  const withQuestion: TestOptions = { steps: [{ output: { questions_for_user: [{ context: "c", question: "Which?", terms: [], options: [] }] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
+  const withQuestion: TestOptions = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
   const h = await harness(repo, [withQuestion]);
   const id = await started(h, repo);
   const asked = await pendingAsk(h, id);
@@ -338,7 +338,7 @@ test("append and end stamp every event with the Clock's time; the replay holds t
 // S24: End the run in the page (the answer q, which the page confirms itself, S25) ends the run with code 130.
 test("End the run in the page ends the run with code 130 as an interruption, and the server keeps running", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [{ context: "c", question: "Which?", terms: [], options: [] }] }, plan: "v1" }] }, converging]);
+  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }] }, converging]);
   const first = await started(h, repo);
   const asked = await pendingAsk(h, first);
   await run(h.manager.answer(h.manager.incarnation, first, asked.prompt, "q"));

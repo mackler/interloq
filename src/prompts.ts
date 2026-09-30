@@ -1,7 +1,8 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, recordPath } from "./artifacts.ts";
-import { FILE_CHANGE_FIELD, type LogEntry, type Review } from "./schema.ts";
+import { FILE_CHANGE_FIELD, type Block, type Explanation, type LogEntry, type Piece, type PieceOption, type Review } from "./schema.ts";
+import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { PauseOrigin, QuestionOrigin } from "./question.ts";
 
@@ -95,60 +96,164 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
   },
   {
     id: "terms",
-    rule: "List in terms every word or phrase that a reader who has never seen this codebase may not know (the program's vocabulary, an SDK's, a third-party library's), each with its exact words as they appear in the text and a plain, non-empty explanation: a definition in ordinary words, not a cross-reference.",
-    criterion: "a word or phrase that a reader who has never seen this codebase may not know is not listed in terms, or its explanation is empty, a cross-reference, or does not make it intelligible.",
+    rule: "List in explanations every word or phrase that a reader who has never seen this codebase may not know (the program's vocabulary, an SDK's, a third-party library's), each with a plain, non-empty explanation: a definition in ordinary words, not a cross-reference; and let every piece of the text that uses it, wherever it occurs, refer to that explanation.",
+    criterion: "a word or phrase that a reader who has never seen this codebase may not know has no explanation, or a piece that uses it does not refer to it, or its explanation is empty, a cross-reference, or does not make it intelligible.",
   },
 ];
 /** The rules as the writer of a question reads them. */
 export function questionWritingRules(): string {
-  return `Rules for every question put to the user. A reader who has never seen this codebase must be able to understand and answer it; the rules apply to its context, its question, its options and its terms alike.
+  return `Rules for every question put to the user. A reader who has never seen this codebase must be able to understand and answer it; the rules apply to its context, its question, its options and its explanations alike.
 ${QUESTION_RULES.map((r) => `- ${r.rule}`).join("\n")}`;
 }
 /** The rules as the reviewer of a question reads them. */
 export function questionReviewCriteria(): string {
   return `A reader who has never seen this codebase must be able to understand and answer every question put to the user. Raise an issue when:
-${QUESTION_RULES.map((r) => `- ${r.criterion}`).join("\n")}`;
+${QUESTION_RULES.map((r) => `- ${r.criterion}`).join("\n")}
+${QUESTION_FORMAT.filter((c) => c.kind === "prose").map((c) => `- ${c.criterion}`).join("\n")}`;
 }
 
 /**
- * The mechanically checkable part of the rules (S2): each kind of problem that `validateQuestion` in src/question.ts finds,
- * with the id of the rule of QUESTION_RULES it breaks. The repair prompt cites that rule's text.
+ * One clause of how a question's text is written as pieces (S4 of the task of issue #36): a data clause the validation
+ * of src/question.ts enforces, or a prose clause that is stated to the writers and to the reviewers and not checked,
+ * since checking it would mean reading Markdown (its effect on the display is tested in the page).
  */
-export const QUESTION_PROBLEM_KINDS = ["blankContext", "notLast", "blankTerm", "blankExplanation", "termAbsent", "duplicateTerm", "bareNumber", "unknownQuestion"] as const;
+export type FormatClause = Readonly<{ id: string; kind: "data" | "prose"; text: string; criterion: string }>;
+/** The one statement of how a question's text is written as pieces and blocks (S4; decisions Q1 and Q2 of the task). */
+export const QUESTION_FORMAT: readonly FormatClause[] = [
+  {
+    id: "blocks",
+    kind: "data",
+    text: 'Write a context (and any details) as a list of blocks, each with its kind: a paragraph (kind "paragraph", with its pieces), a bulleted list (kind "list", with its items, each with its level, 0 at the top and one more per nesting, and its pieces), or a code block (kind "code", with its text, a value shown exactly).',
+    criterion: "",
+  },
+  {
+    id: "pieces",
+    kind: "data",
+    text: 'Write every text (the question, each paragraph and list item, each option\'s label and description) as a sequence of pieces, each with text, ref and code. A plain piece has ref "" and code false; the pieces\' texts, joined one after another, are the sentence.',
+    criterion: "",
+  },
+  {
+    id: "refPiece",
+    kind: "data",
+    text: "A word or phrase that needs an explanation is a piece of its own whose ref is the id of that explanation and whose text is the words exactly as they stand in the sentence, never empty: \"execution calls\" and \"Execution call\" are two pieces that refer to one explanation.",
+    criterion: "",
+  },
+  {
+    id: "explanations",
+    kind: "data",
+    text: "explanations: one list per question, referred to from all of its parts. Each entry has an id unique in the question, term (the name of the word or phrase, as a reader would look it up) and explanation, neither empty, and at least one piece refers to it. Every question carries all of its own explanations, even where an earlier question explained the same term.",
+    criterion: "",
+  },
+  {
+    id: "code",
+    kind: "data",
+    text: "A piece with code true, and a code block, shows a literal value (a command, a file name, a setting) exactly as it is; never add a ref to it.",
+    criterion: "",
+  },
+  {
+    id: "inline",
+    kind: "prose",
+    text: "Formatting (emphasis, inline code, a link) begins and ends inside one plain piece, and a piece that refers to an explanation carries no formatting at all.",
+    criterion: "a piece's formatting (emphasis, inline code, a link) does not begin and end inside that one plain piece, or a piece that refers to an explanation carries formatting.",
+  },
+];
+/** The format as the writer of a question reads it (S4). */
+export const QUESTION_TEXT_FORMAT = `How the text of a question is written:
+${QUESTION_FORMAT.map((c) => `- ${c.text}`).join("\n")}`;
+
+/** Some clauses of the format, by id, as a writer reads them. */
+const formatClauses = (ids: readonly string[]): string => QUESTION_FORMAT.filter((c) => ids.includes(c.id)).map((c) => `- ${c.text}`).join("\n");
+
+/**
+ * The clauses that bind one kind of reply beyond the format (S6, S9): an agreed question's wording kept by the call that
+ * divides it into pieces (decision Q1), and a context call's literals, options and supplied references (decisions F1 and
+ * G-R1-1). The repair prompt cites them by id like the rules.
+ */
+export const KEEP_WORDING = "Keep the wording of each agreed question exactly: every field's words, joined in order, and its blocks, their kinds and list levels, must be what plan-review/questions.json holds; only the division into pieces and the references to explanations are yours.";
+export const KEEP_LITERALS = "Keep every literal value exactly as it is (every code block and every code piece of the details), in its order, and add no explanation to any of them.";
+export const KEEP_OPTIONS = "Keep every option, in its position: you may rephrase its label and description, but not add, remove or reorder options.";
+export const KEEP_SUPPLIED_REFS = "Keep every code piece that Interloq supplied with a ref (the name of a tool's setting that Interloq explains) exactly as supplied, with its ref and with an explanation of that id; add no ref to any other code piece or code block.";
+const BOUND_CLAUSES: Readonly<Record<string, string>> = { keepWording: KEEP_WORDING, keepLiterals: KEEP_LITERALS, keepOptions: KEEP_OPTIONS, keepSuppliedRefs: KEEP_SUPPLIED_REFS };
+/** The text of a rule, a format clause or a bound clause, by its id. */
+const ruleTextOf = (id: string): string => QUESTION_RULES.find((r) => r.id === id)?.rule ?? QUESTION_FORMAT.find((c) => c.id === id)?.text ?? BOUND_CLAUSES[id] ?? "";
+
+/**
+ * The mechanically checkable part of the rules (S2, S3 of the task of issue #36): each kind of problem that the
+ * validation finds, with the id of the rule, format clause or bound clause it breaks. The repair prompt cites its text.
+ */
+export const QUESTION_PROBLEM_KINDS = [
+  "blankContext",
+  "notLast",
+  "unknownRef",
+  "unusedExplanation",
+  "duplicateExplanation",
+  "blankTerm",
+  "blankExplanation",
+  "blankTermPiece",
+  "refOnCode",
+  "bareNumber",
+  "unknownQuestion",
+  "wordingChanged",
+  "literalChanged",
+  "optionsChanged",
+  "suppliedRefDropped",
+] as const;
 export type QuestionProblemKind = (typeof QUESTION_PROBLEM_KINDS)[number];
 export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>> = {
   blankContext: "context",
   notLast: "questionLast",
-  blankTerm: "terms",
+  unknownRef: "refPiece",
+  unusedExplanation: "explanations",
+  duplicateExplanation: "explanations",
+  blankTerm: "explanations",
   blankExplanation: "terms",
-  termAbsent: "terms",
-  duplicateTerm: "terms",
+  blankTermPiece: "refPiece",
+  refOnCode: "code",
   bareNumber: "kindBeforeNumber",
-  unknownQuestion: "terms",
+  unknownQuestion: "keepWording",
+  wordingChanged: "keepWording",
+  literalChanged: "keepLiterals",
+  optionsChanged: "keepOptions",
+  suppliedRefDropped: "keepSuppliedRefs",
 };
-/** One problem of a question: its kind and what it concerns (a term, the bare reference), or "". */
+/** One problem of a question: its kind and what it concerns (an explanation, a field, the bare reference), or "". */
 export type QuestionProblem = Readonly<{ kind: QuestionProblemKind; subject: string }>;
 /** The problems of the questions of one reply, each question named by where it is ("questions_for_user 1", "Q3"). */
 export type QuestionProblems = readonly Readonly<{ where: string; problems: readonly QuestionProblem[] }>[];
 /** One problem in one sentence. */
 export function questionProblemText(problem: QuestionProblem): string {
+  const subject = JSON.stringify(problem.subject);
   switch (problem.kind) {
     case "blankContext":
       return "the context paragraph is empty";
     case "notLast":
       return "the question does not end with its interrogative sentence and a question mark";
+    case "unknownRef":
+      return `a piece refers to ${subject}, which is the id of no entry of explanations`;
+    case "unusedExplanation":
+      return `the explanation of ${subject} is referred to by no piece`;
+    case "duplicateExplanation":
+      return `the id ${subject} is given to more than one explanation`;
     case "blankTerm":
-      return "a listed term is empty";
+      return `the explanation ${subject} has an empty term`;
     case "blankExplanation":
-      return `the term ${JSON.stringify(problem.subject)} has an empty explanation`;
-    case "termAbsent":
-      return `the term ${JSON.stringify(problem.subject)} does not occur, with exactly those words, in the context, the question or the options`;
-    case "duplicateTerm":
-      return `the term ${JSON.stringify(problem.subject)} is listed more than once`;
+      return `the term ${subject} has an empty explanation`;
+    case "blankTermPiece":
+      return `a piece that refers to ${subject} has no words`;
+    case "refOnCode":
+      return `the literal value ${subject} refers to an explanation`;
     case "bareNumber":
-      return `${JSON.stringify(problem.subject)} is a number without the kind of thing it numbers before it`;
+      return `${subject} is a number without the kind of thing it numbers before it`;
     case "unknownQuestion":
-      return `the explanations name ${JSON.stringify(problem.subject)}, which is not the id of a question of plan-review/questions.json`;
+      return `the explanations name ${subject}, which is not the id of a question of plan-review/questions.json`;
+    case "wordingChanged":
+      return `the words or blocks of its field ${subject} differ from the agreed question`;
+    case "literalChanged":
+      return "a literal value of the details was changed, removed, added or moved";
+    case "optionsChanged":
+      return "the options were added, removed or reordered";
+    case "suppliedRefDropped":
+      return `the name ${subject}, which Interloq supplied with its explanation, lost its reference`;
   }
 }
 const questionProblemLines = (questions: QuestionProblems): readonly string[] => questions.map((q) => `${q.where}: ${q.problems.map(questionProblemText).join("; ")}.`);
@@ -159,7 +264,7 @@ export function questionInvalidText(questions: QuestionProblems): string {
 /** The validation repair turn of a reply whose questions break a rule (S2): what was wrong, and the rules broken, verbatim. */
 export function questionRepairPrompt(questions: QuestionProblems): string {
   const ids = [...new Set(questions.flatMap((q) => q.problems.map((p) => QUESTION_PROBLEM_RULE[p.kind])))];
-  const rules = QUESTION_RULES.filter((r) => ids.includes(r.id)).map((r) => `- ${r.rule}`);
+  const rules = ids.map(ruleTextOf).filter((t) => t !== "").map((t) => `- ${t}`);
   return `Your structured output matched the schema, but the program cannot accept its questions for the user:
 ${questionProblemLines(questions).join("\n")}
 The rules they break:
@@ -168,7 +273,8 @@ Return the complete output again, corrected. Do not modify any file.`;
 }
 
 /** How a question for the user is filled (decision Q1 of the decision-support task), with the rules of every question (S1). */
-export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a question and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.
+export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a context, a question, explanations and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.
+${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}`;
 
 /** Rules for Claude Code's answer to a review. 'amendment' names what an accepted issue requires. */
@@ -204,9 +310,12 @@ export function questionListPrompt(task: string): string {
   return `Do not write a plan yet. Read the task below and inspect the codebase without changing anything.
 Return in 'questions' the questions whose answers you need from the user before you can write an implementation plan for the task.
 Include a question only if its answer affects the plan and neither the task text nor the codebase nor the project documentation determines it.
-Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it. question: one decision per question. reason: why the plan depends on the answer, and why the codebase does not determine it, with the files you inspected. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description. default_answer: the label of the proposed answer that you would assume if the user expressed no preference.
+Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. question: one decision per question, as pieces. reason: why the plan depends on the answer, and why the codebase does not determine it, with the files you inspected, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
+How the text of an entry is written:
+${formatClauses(["blocks", "pieces", "code", "inline"])}
+- Every piece is plain here: ref "" everywhere. The explanations are written after the list is agreed, by dividing its text into pieces that refer to them, its wording unchanged.
 ${questionWritingRules()}
-The rules apply to the question, its reason, its proposed answers and its default alike. The explanations of the terms are written after the list is agreed; write the list so that it needs as few of them as possible.
+The rules apply to the question, its reason, its proposed answers and its default alike. Write the list so that it needs as few explanations as possible.
 Return an empty list if no question is needed. Do not modify any file. Do not use the AskUserQuestion tool.
 Task: ${task}`;
 }
@@ -237,30 +346,34 @@ const termsRule = (): string => QUESTION_RULES.find((r) => r.id === "terms")?.ru
  * question review has converged, against the final wording. The entry of each question lists its terms.
  */
 export function termsPrompt(task: string): string {
-  return `plan-review/questions.json contains the task and the question list that Claude Code and Codex have agreed. The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. Do not change the questions. You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.
+  return `plan-review/questions.json contains the task and the question list that Claude Code and Codex have agreed. The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.
 ${termsRule()}
-A term may occur in a question's context, its text, its reason, its proposed answers or its default; list it once for its question, and again for every other question in which it occurs, since each question is read on its own. The explanations are shown on the words themselves, so name each term exactly as it is written there.
+Return in 'entries' one entry per question of the list: its id; its explanations; and its context, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it. A term may occur in any of these fields; each question carries all of its own explanations, since each question is read on its own. The explanations are shown on the words themselves.
+${KEEP_WORDING}
+${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}
-Return in 'entries' one entry per question of the list, with its id and its terms; an empty terms list where a question needs none.
+An entry whose question needs no explanation has an empty explanations list and its fields as they are.
 Task: ${task}`;
 }
 /** Codex's review of the explanations (S17): the criteria of every question, as they apply to the terms. */
 export function termsReviewPrompt(round: number): string {
   if (round > 1) return laterRound(pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round);
   return `Review the explanations of terms in plan-review/terms.json against the agreed question list in plan-review/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
-Each entry of terms.json names a question by its id and lists its terms, each with the exact words in which it occurs in the question, its context, its reason, its proposed answers or its default, and its explanation. The user reads each explanation on the words themselves while he answers the question; he may never have seen this codebase.
+Each entry of terms.json names a question by its id and holds its explanations, each with its id, term and explanation, and the question's context, question, reason and proposed answers divided into pieces; a piece whose ref is an explanation's id is the words that explanation explains. The user reads each explanation on those words while he answers the question; he may never have seen this codebase. The wording of the question is agreed and cannot change; only its division into pieces and the explanations can.
 ${questionReviewCriteria()}
-Raise an issue about the explanations only: a term the reader may not know that is not listed for a question in which it occurs; an explanation that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
+Raise an issue about the explanations only: a word or phrase the reader may not know that has no explanation in a question in which it occurs, or a piece that uses it and does not refer to it; an explanation that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
 Put the question id, with the term, in the location field.
 ${logRules(pathOf({ kind: "log", subject: "terms" }), "T", round)}`;
 }
 export function termsRespondPrompt(round: number): string {
   return `${recordPath({ kind: "review", subject: "terms", round })} contains a review of the explanations of terms in plan-review/terms.json.
 ${respondRules("you amend the explanations for it")}
-Return in 'entries' the complete explanations after your amendments, including the entries that did not change; the program writes them. Do not modify any file.`;
+Return in 'entries' the complete explanations after your amendments, including the entries that did not change, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
+${KEEP_WORDING}`;
 }
 export const termsApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file.
-Return in 'entries' the complete explanations of plan-review/terms.json, amended where a decision requires it; the program writes them. Do not modify any file.`;
+Return in 'entries' the complete explanations of plan-review/terms.json, amended where a decision requires it, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
+${KEEP_WORDING}`;
 
 export const questionApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file.
 Return in 'questions' the complete question list of plan-review/questions.json, amended where a decision requires it. Do not modify any file.`;
@@ -269,7 +382,8 @@ Return in 'questions' the complete question list of plan-review/questions.json, 
 
 const INTERVIEW_RULES = `Rules for the interview.
 Each of your turns produces these output fields. message_to_user: what you say to the user in this turn, in plain text without Markdown tables: the record of his earlier answer, an answer to his question, a remark. The question you ask now is not repeated in it; the program shows that question below your message.
-current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of plan-review/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its text, its terms and its options: the context paragraph, the question alone (without the record of an earlier answer, without the options and without the default), the terms with their explanations, and each option with a short label and a description, the default marked in its description; all of them under the rules below.
+current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of plan-review/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its text, its explanations and its options: the context paragraph as blocks, the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+${QUESTION_TEXT_FORMAT}
 asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that you assign to each follow-up question. answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far. complete: true only when every agreed question has been answered and you need nothing further from the user. summary: an empty string while complete is false.
 When complete is true, summary contains the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
 Ask one question per message. The user may answer with the number of an option, its label, or free text.
@@ -417,17 +531,38 @@ Return the complete output again, corrected. Do not modify any file.`;
  * so a step resumed after another was started is reported started again.
  */
 export const resumeStepSentence = `When you resume a step after you have started another, report it with the status '${REPORT_STEP_STATUSES[0]}' again.`;
-/** A relayed question's text as its shape composes it (S13, G-R1-2): the context, the terms block when there are terms, the question. */
-export function relayedQuestionText(parts: Readonly<{ context: string; terms: readonly Readonly<{ term: string; explanation: string }>[]; question: string }>): string {
-  const terms = parts.terms.length === 0 ? [] : [`${TERMS_HEADING}\n${parts.terms.map((t) => `${t.term}: ${t.explanation}`).join("\n")}`];
-  return [parts.context, ...terms, parts.question].join("\n\n");
-}
 /**
- * The shape of a question Claude Code asks with AskUserQuestion (S13, decision G-R1-2): its context and terms travel in
- * the question's text, which parseRelayedQuestion in src/question.ts reads; the example is the composer's own output.
+ * A relayed question's text as its shape composes it (S8 of the task of issue #36; behavior 4): the question as a JSON
+ * object with its context, its question, its explanations and its options, as pieces.
  */
-export const RELAYED_SHAPE = `Write the text of each question you ask with the AskUserQuestion tool in this shape, the parts separated by blank lines: first the context paragraph; then, when the question uses words a reader may not know, a block that begins with the line "${TERMS_HEADING}" and has one line per term, the term in the exact words it has in the text, a colon and its explanation; then the question itself, its interrogative sentence last. For example:
-${relayedQuestionText({ context: "<context>", terms: [{ term: "<term>", explanation: "<explanation>" }], question: "<question>" })}`;
+export type RelayedParts = Readonly<{ context: readonly Block[]; question: readonly Piece[]; explanations: readonly Explanation[]; options: readonly PieceOption[] }>;
+export function relayedQuestionText(parts: RelayedParts): string {
+  return JSON.stringify({ context: parts.context, question: parts.question, explanations: parts.explanations, options: parts.options });
+}
+/** The example of RELAYED_SHAPE: a question with one explanation and two options, in the shape it states. */
+export const RELAYED_EXAMPLE: RelayedParts = {
+  context: [{ kind: "paragraph", pieces: [{ text: "<the context paragraph>", ref: "", code: false }] }],
+  question: [
+    { text: "<the question, where a word such as ", ref: "", code: false },
+    { text: "<a term>", ref: "t1", code: false },
+    { text: " needs its explanation>?", ref: "", code: false },
+  ],
+  explanations: [{ id: "t1", term: "<a term>", explanation: "<its explanation>" }],
+  options: [
+    { label: [{ text: "<the first option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }] },
+    { label: [{ text: "<the second option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }] },
+  ],
+};
+/**
+ * The shape of a question Claude Code asks with AskUserQuestion (S8, behavior 4): the whole question travels as a JSON
+ * object in the question's text, which parseRelayedQuestion in src/question.ts reads; the example is the composer's own
+ * output.
+ */
+export const RELAYED_SHAPE = `Write the text of each question you ask with the AskUserQuestion tool as one JSON object, and nothing else, with the fields context, question, explanations and options:
+${QUESTION_TEXT_FORMAT}
+- options: the same options as the tool's options, in the same order, each with its label and description as pieces whose words, joined, are exactly the tool option's label and description.
+For example:
+${relayedQuestionText(RELAYED_EXAMPLE)}`;
 export const executePrompt = `The plan in plan-review/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
 Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, call it with the step's id and the status '${REPORT_STEP_STATUSES[0]}'; when the step is complete and verified, call it with the step's id and the status '${REPORT_STEP_STATUSES[1]}'. ${resumeStepSentence} The program records the status in plan-review/plan.json; do not edit plan-review/plan.json or plan-review/plan.md, and do not change the plan.
 If you need information or a decision from the user, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.
@@ -945,8 +1080,8 @@ export type DecisionPromptQuestion = Readonly<{
   label: string;
   question: string;
   options: readonly Readonly<{ label: string; description: string }>[];
-  /** What the user was shown with the question (S37): its context, terms and details. */
-  shown?: Readonly<{ context: string; terms: readonly Readonly<{ term: string; explanation: string }>[]; details: string }>;
+  /** What the user was shown with the question (S37): its context and details as Markdown, and its explanations. */
+  shown?: Readonly<{ context: string; explanations: readonly Explanation[]; details: string }>;
 }>;
 /** What the user was shown with a question, as the analysis prompt carries it under the options (S37); "" when nothing. */
 export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): string {
@@ -954,7 +1089,7 @@ export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): strin
   const parts = [
     ...(shown.context.trim() === "" ? [] : [`The context paragraph:\n${shown.context.trim()}`]),
     ...(shown.details.trim() === "" ? [] : [shown.details.trim()]),
-    ...(shown.terms.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.terms.map((t) => `${t.term}: ${t.explanation}`).join("\n")}`]),
+    ...(shown.explanations.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.explanations.map((e) => `${e.term}: ${e.explanation}`).join("\n")}`]),
   ];
   return parts.length === 0 ? "" : `\nWhat the user was shown with the question:\n${parts.join("\n\n")}\n`;
 }
@@ -1292,51 +1427,87 @@ export function codeSpan(value: string): string {
 export function codeFence(value: string): string {
   return "`".repeat(Math.max(3, longestRun(value, "`") + 1));
 }
-/** A text shown exactly, as code (S45, S48): a span for one line, a fenced block for several, with the escapes' note where needed. */
-export const literalText = (v: string): string => stringValue(v);
-const stringValue = (v: string): string => {
-  const shown = shownValue(v);
-  const note = shown.kind === "escaped" ? ` ${ESCAPED_VALUE_NOTE}` : "";
-  if (shown.kind === "phrase" || !shown.text.includes("\n")) return `${codeSpan(v)}${note}`;
-  return `\n\n${codeFence(shown.text)}\n${shown.text}\n${codeFence(shown.text)}\n${note === "" ? "" : `\n${ESCAPED_VALUE_NOTE}\n`}`;
-};
+/**
+ * A code piece's text as a Markdown code span, exactly as it is (S9 of the task of issue #36): the program escapes a
+ * value before it becomes a piece (`shownValue`), so the span adds nothing; the empty text is its phrase.
+ */
+export function exactCodeSpan(text: string): string {
+  return text === "" ? emptyTextPhrase : spanOf(text);
+}
 /** The phrases of containers without content (S60, W8-R1-2): plain text, never code, so none looks like a string value. */
 export const EMPTY_LIST_PHRASE = "(empty list)";
 export const EMPTY_OBJECT_PHRASE = "(empty object)";
 export const NO_INPUT_PHRASE = "(no settings)";
 const isEmptyObject = (v: unknown): boolean => v !== null && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0;
-const inputValue = (v: unknown, depth: number): string => {
-  if (typeof v === "string") return stringValue(v);
-  if (Array.isArray(v) && v.length === 0) return EMPTY_LIST_PHRASE;
-  if (isEmptyObject(v)) return EMPTY_OBJECT_PHRASE;
-  if (typeof v === "boolean") return v ? "yes" : "no";
-  if (typeof v === "number") return String(v);
-  if (v === null || v === undefined) return "(none)";
-  if (Array.isArray(v)) return v.map((x, i) => `\n${"  ".repeat(depth)}- ${i + 1}.${inputValue(x, depth + 1).startsWith("\n") ? "" : " "}${inputValue(x, depth + 1)}`).join("");
-  return Object.entries(v as Record<string, unknown>).map(([k, x]) => `\n${"  ".repeat(depth)}- ${fieldLabel(k)}: ${inputValue(x, depth + 1)}`).join("");
-};
 /** The plain label of a field, looked up by own properties only (S55: "constructor" is no label). */
 const knownLabel = (key: string): string | null => (Object.hasOwn(TOOL_INPUT_LABELS, key) ? TOOL_INPUT_LABELS[key] : null);
 const fieldLabel = (key: string): string => knownLabel(key) ?? unknownSettingLabel(key);
-/** A tool's input as the user reads it (S34): each field under its plain label, or its own name when it has none. */
-export function toolInputLines(input: unknown): string {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) return inputValue(input, 0).trim();
-  if (isEmptyObject(input)) return NO_INPUT_PHRASE;
-  return Object.entries(input as Record<string, unknown>).map(([k, v]) => `- ${fieldLabel(k)}: ${inputValue(v, 1)}`).join("\n");
-}
 /** The keys of a tool's input, nested ones included, that have no plain label, each once, in order. */
 const unknownKeys = (v: unknown): readonly string[] =>
   v === null || typeof v !== "object" ? [] : Array.isArray(v) ? v.flatMap(unknownKeys) : Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => [...(knownLabel(k) !== null ? [] : [k]), ...unknownKeys(x)]);
-/** One term per field without a plain label (P2-R1-2): its name, with the fixed explanation. */
-export function toolInputTerms(input: unknown): readonly Readonly<{ term: string; explanation: string }>[] {
-  // S55: the term is the name as displayed, so that it is found where the page and the validation look for it.
-  return [...new Set(unknownKeys(input).filter((k) => k !== "").map(shownName))].flatMap((shown, i, all) =>
-    all.findIndex((o) => o.text === shown.text) === i ? [{ term: shown.text, explanation: shown.kind === "literal" ? unknownSettingExplanation : unknownSettingEscapedExplanation }] : [],
-  );
+/** The names of the fields without a plain label, as displayed (S55), each once, with the id of its explanation. */
+const unknownNames = (input: unknown): readonly Readonly<{ id: string; shown: ShownValue }>[] =>
+  [...new Set(unknownKeys(input).filter((k) => k !== "").map(shownName))]
+    .filter((shown, i, all) => all.findIndex((o) => o.text === shown.text) === i)
+    .map((shown, i) => ({ id: `${TOOL_SETTING_REF}${i + 1}`, shown }));
+/** The prefix of the ids of the program's own explanations of a tool's settings, which a context call keeps (S9). */
+export const TOOL_SETTING_REF = "setting-";
+/** One explanation per field without a plain label (P2-R1-2): its name as displayed, with the fixed explanation. */
+export function toolInputExplanations(input: unknown): readonly Explanation[] {
+  return unknownNames(input).map(({ id, shown }) => ({ id, term: shown.text, explanation: shown.kind === "literal" ? unknownSettingExplanation : unknownSettingEscapedExplanation }));
+}
+const plainPiece = (text: string): Piece => ({ text, ref: "", code: false });
+const codePiece = (text: string): Piece => ({ text, ref: "", code: true });
+/** A row of a tool's input: a list item at its level, a multi-line value as a code block, or the escapes' note below it. */
+type InputRow = Readonly<{ kind: "item"; level: number; pieces: readonly Piece[] }> | Readonly<{ kind: "code"; text: string }> | Readonly<{ kind: "note" }>;
+/**
+ * A tool's input as the user reads it (S34, S45 to S60), as blocks of the details (S9 of the task of issue #36): each
+ * field a list item under its plain label, or its own name as code that refers to its explanation (S55); every text value
+ * a code piece shown exactly, or with escapes and their note (S48), a multi-line one a code block (S45); the empty text,
+ * whitespace alone, an empty list or object and an input with no settings named by their phrases, as plain text (S60).
+ */
+export function toolInputBlocks(input: unknown): readonly Block[] {
+  const ids = new Map(unknownNames(input).map(({ id, shown }) => [shown.text, id]));
+  const labelOf = (key: string): readonly Piece[] => {
+    const known = knownLabel(key);
+    if (known !== null) return [plainPiece(known)];
+    if (key === "") return [plainPiece(EMPTY_NAME_LABEL)];
+    const shown = shownName(key);
+    return [plainPiece("The tool's setting named "), { text: shown.text, ref: ids.get(shown.text) ?? "", code: true }, ...(shown.kind === "escaped" ? [plainPiece(` ${ESCAPED_VALUE_NOTE}`)] : [])];
+  };
+  const rows = (label: readonly Piece[], sep: string, v: unknown, level: number): readonly InputRow[] => {
+    const item = (...pieces: readonly Piece[]): InputRow => ({ kind: "item", level, pieces: [...label, ...pieces].filter((p) => p.code || p.text !== "") });
+    if (typeof v === "string") {
+      const shown = shownValue(v);
+      if (shown.kind === "phrase") return [item(plainPiece(`${sep}${shown.text}`))];
+      const note: readonly InputRow[] = shown.kind === "escaped" ? [{ kind: "note" }] : [];
+      if (!shown.text.includes("\n")) return [item(plainPiece(sep), codePiece(shown.text), ...(shown.kind === "escaped" ? [plainPiece(` ${ESCAPED_VALUE_NOTE}`)] : []))];
+      return [item(plainPiece(sep.trimEnd())), { kind: "code", text: shown.text }, ...note];
+    }
+    if (Array.isArray(v) && v.length === 0) return [item(plainPiece(`${sep}${EMPTY_LIST_PHRASE}`))];
+    if (isEmptyObject(v)) return [item(plainPiece(`${sep}${EMPTY_OBJECT_PHRASE}`))];
+    if (typeof v === "boolean") return [item(plainPiece(`${sep}${v ? "yes" : "no"}`))];
+    if (typeof v === "number") return [item(plainPiece(`${sep}${String(v)}`))];
+    if (v === null || v === undefined) return [item(plainPiece(`${sep}(none)`))];
+    const head = label.length === 0 ? [] : [item(plainPiece(sep.trimEnd()))];
+    if (Array.isArray(v)) return [...head, ...v.flatMap((x, i) => rows([plainPiece(`${i + 1}.`)], " ", x, label.length === 0 ? level : level + 1))];
+    return [...head, ...Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => rows(labelOf(k), ": ", x, label.length === 0 ? level : level + 1))];
+  };
+  if (isEmptyObject(input)) return [{ kind: "paragraph", pieces: [plainPiece(TOOL_INPUT_HEADING)] }, { kind: "paragraph", pieces: [plainPiece(NO_INPUT_PHRASE)] }];
+  const all = rows([], "", input, 0);
+  // Consecutive items form one list; a code block or the escapes' note ends it.
+  const blocks = all.reduce<readonly Block[]>((acc, row) => {
+    if (row.kind === "code") return [...acc, { kind: "code", text: row.text }];
+    if (row.kind === "note") return [...acc, { kind: "paragraph", pieces: [plainPiece(ESCAPED_VALUE_NOTE)] }];
+    const last = acc[acc.length - 1];
+    const it = { level: row.level, pieces: row.pieces };
+    return last?.kind === "list" ? [...acc.slice(0, -1), { kind: "list", items: [...last.items, it] }] : [...acc, { kind: "list", items: [it] }];
+  }, []);
+  return [{ kind: "paragraph", pieces: [plainPiece(TOOL_INPUT_HEADING)] }, ...blocks];
 }
 /** What the context call is asked about the fields without a plain label (P2-R1-2). */
 export function unknownSettingsRequest(keys: readonly string[]): string {
-  return `Interloq has no description of the settings ${keys.map((k) => `"${k}"`).join(", ")}; they are shown to the user under their own names. List each of them in terms, with the exact name, and explain in ordinary words what the setting does in this request.`;
+  return `Interloq has no description of the settings ${keys.map((k) => `"${k}"`).join(", ")}; they are shown to the user under their own names, each a code piece that refers to Interloq's explanation of it. Keep each of those pieces with its ref, and rewrite the explanation of that id to say in ordinary words what the setting does in this request.`;
 }
 /** A tool's input in prose (S12): each field on its own line, values as text, never the input's JSON. */
 export function toolInputProse(input: unknown): string {
@@ -1369,7 +1540,7 @@ export function permissionQuestion(tool: string, input: unknown): string {
 export function permissionFacts(tool: string, input: unknown): string {
   const fields = input !== null && typeof input === "object" && !Array.isArray(input) ? Object.entries(input as Record<string, unknown>) : [];
   const lines = fields.length === 0 ? toolInputProse(input) : fields.map(([k, v]) => `${k}${knownLabel(k) !== null ? ` (${knownLabel(k)})` : ""}: ${proseValue(v)}`).join("\n");
-  const unknown = toolInputTerms(input).map((t) => t.term);
+  const unknown = toolInputExplanations(input).map((t) => t.term);
   return `Claude Code, while it carries out the plan, asks to use its tool ${tool} with this input:\n${lines}\nIf the user allows it, the tool runs in the project; if not, Claude Code is told so and continues without it. The user is shown the input under the heading "${TOOL_INPUT_HEADING}".${unknown.length === 0 ? "" : `\n${unknownSettingsRequest(unknown)}`}`;
 }
 /** The facts of the cycle limit a context call is given (S12). */
@@ -1474,8 +1645,17 @@ export const TRANSPORT_FAULT_HEADING = "Why the agent could not be reached:";
  * The exhaustion pause's details (S52, P6-R1-1): the attempts in the program's words, and the last fault. The fault is
  * text of the SDK or the CLI, not Markdown, so it is shown literally, as a tool's input is (S45, S48).
  */
-export function transportDetails(attempts: number, fault: string): string {
-  return `${TRANSPORT_FAULT_HEADING}\n\nInterloq tried ${attempts} ${attempts === 1 ? "time" : "times"}, waiting longer before each new attempt. The last error, as reported:${literalText(fault).startsWith("\n") ? "" : " "}${literalText(fault)}`;
+export function transportDetails(attempts: number, fault: string): readonly Block[] {
+  const shown = shownValue(fault);
+  const lead = `Interloq tried ${attempts} ${attempts === 1 ? "time" : "times"}, waiting longer before each new attempt. The last error, as reported:`;
+  const note: readonly Block[] = shown.kind === "escaped" ? [{ kind: "paragraph", pieces: [plainPiece(ESCAPED_VALUE_NOTE)] }] : [];
+  const fault_: readonly Block[] =
+    shown.kind === "phrase"
+      ? [{ kind: "paragraph", pieces: [plainPiece(`${lead} ${shown.text}`)] }]
+      : shown.text.includes("\n")
+        ? [{ kind: "paragraph", pieces: [plainPiece(lead)] }, { kind: "code", text: shown.text }, ...note]
+        : [{ kind: "paragraph", pieces: [plainPiece(`${lead} `), codePiece(shown.text), ...(shown.kind === "escaped" ? [plainPiece(` ${ESCAPED_VALUE_NOTE}`)] : [])] }];
+  return [{ kind: "paragraph", pieces: [plainPiece(TRANSPORT_FAULT_HEADING)] }, ...fault_];
 }
 export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" | "codex", what: string): string {
   return `**User decision:** ${answer === "retry" ? "retry again" : "stop the run"} after ${agentName(agent)} could not be reached for ${what}.\n\n`;
@@ -1633,9 +1813,11 @@ export function defaultMarked(description: string): string {
   return description.trim() === "" ? "(the default)" : `${description} (the default)`;
 }
 /** What the user reads of an agreed question beside its context (S18): why the plan needs the answer. */
-export function agreedDetails(reason: string): string {
-  return reason.trim() === "" ? "" : `Why the plan needs your answer: ${reason.trim()}`;
+export function agreedDetails(reason: readonly Block[]): readonly Block[] {
+  return reason.length === 0 ? [] : [{ kind: "paragraph", pieces: [{ text: AGREED_REASON_HEADING, ref: "", code: false }] }, ...reason];
 }
+/** The heading of an agreed question's reason in its details (S18). */
+export const AGREED_REASON_HEADING = "Why the plan needs your answer:";
 /** The question of a clarification turn that asks no particular question: its context is Claude Code's message. */
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
 /** The question of the summary's confirmation. */
@@ -1651,8 +1833,11 @@ export function execStopQuestion(): string {
 export const EXEC_STOP_HEADING = "Why Claude Code stopped, in its own words:";
 export const EXEC_STOP_NO_DESCRIPTION = "Claude Code gave no description of why it stopped.";
 /** An execution stop's details (S52): Claude Code's description, its own prose, rendered as Markdown like all of it (issue #7). */
-export function execStopDetails(description: string): string {
-  return `${EXEC_STOP_HEADING}\n\n${description.trim() === "" ? EXEC_STOP_NO_DESCRIPTION : description.trim()}`;
+export function execStopDetails(description: string): readonly ShownBlock[] {
+  return [
+    { kind: "paragraph", pieces: [{ text: EXEC_STOP_HEADING, ref: "", code: false }] },
+    description.trim() === "" ? { kind: "paragraph", pieces: [{ text: EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] } : { kind: "document", markdown: description.trim() },
+  ];
 }
 
 /**
@@ -1771,39 +1956,43 @@ export const IDLE_ISSUES_HEADING = "The issues of the last cycle that led to no 
 export type ContextRequest = Readonly<{
   origin: QuestionOrigin;
   decision: number | null;
-  question: string;
-  options: readonly Readonly<{ label: string; description: string }>[];
-  /** What the question is about, as the program records it (a pause's facts, S11), or "". */
-  details: string;
+  question: readonly Piece[];
+  options: readonly PieceOption[];
+  /** What the question is about, as the program records it (a pause's facts, S11), as blocks; empty when none. */
+  details: readonly Block[];
+  /** The program's own explanations (of a tool's settings, S55), which the pieces of the details refer to. */
+  explanations: readonly Explanation[];
   /** Further facts of the case in prose (the tool and its input, the counts), or "". */
   facts: string;
 }>;
+/** Whether the request holds a code piece with a ref, which the reply must keep (S9, KEEP_SUPPLIED_REFS). */
+const suppliesRefs = (request: ContextRequest): boolean =>
+  [...request.question, ...request.options.flatMap((o) => [...o.label, ...o.description]), ...request.details.flatMap((b) => (b.kind === "paragraph" ? b.pieces : b.kind === "list" ? b.items.flatMap((i) => i.pieces) : []))].some(
+    (p) => p.code && p.ref !== "",
+  );
 /**
- * The call that writes the context paragraph and the terms of a question the program composed (S9, decision Q1): a fresh
- * session that may read the project and change nothing (S33), with the rules of every question; the question and its options are fixed. `validateQuestion`
- * checks the reply's context and terms under the same rules (questionProblems, scope "context").
+ * The call that writes the context paragraph of a question the program composed, and returns the whole question as
+ * pieces (S9; decisions G-R1-1 and F1): a fresh session that may read the project and change nothing (S33), with the
+ * rules of every question and the format of its text. It may rephrase the question, the options and the details; it
+ * keeps the options in their positions and every literal value exactly, and the references the program supplied.
+ * `contextValidation` in src/questionContext.ts checks the reply against the same clauses.
  */
-/**
- * Where a context call's terms may occur (S36, W1-R1-4): only in what the user is shown, which `contextValidation` in
- * src/questionContext.ts checks; the facts are for the agent's understanding.
- */
-export const CONTEXT_TERMS_RULE =
-  "Every term you list must occur, in exactly those words, in your paragraph, the question, the options or what the user is shown with the question; the facts for your understanding are not shown to the user, so a word that occurs only there cannot be a term.";
+/** The line before the question as data in a context call's prompt; the JSON follows it on the next line, to the end. */
+export const CONTEXT_REQUEST_HEADING = "The question as Interloq wrote it, as data (question, options, details, explanations):";
 export function contextPrompt(task: string, request: ContextRequest): string {
-  const options = request.options.length === 0 ? "(none: the user answers in his own words)" : request.options.map((o, i) => optionLine(i, o)).join("\n");
-  const shown = request.details.trim() === "" ? "" : `What the user is shown with the question:\n${request.details}\n`;
   const facts = request.facts.trim() === "" ? "" : `Facts for your understanding, not shown to the user:\n${request.facts}\n`;
-  return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and list the terms in it that a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer or change the question.
+  const question = JSON.stringify({ question: request.question, options: request.options, details: request.details, explanations: request.explanations });
+  return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and return the whole question as pieces, with the explanations of the words a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer the question.
 ${questionWritingRules()}
-The question and its options are fixed and are shown after your paragraph; the paragraph places the reader before he is asked. Return in context the paragraph and in terms each term with its explanation. ${CONTEXT_TERMS_RULE}
+${QUESTION_TEXT_FORMAT}
+Return in context your paragraph, which places the reader before he is asked. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
 
 The task of the run: ${task}
 
 Where the question arises: ${originLine(request.origin, request.decision)}
-${shown}${facts}
-The question: ${request.question}
-The options, in this order:
-${options}`;
+${facts}
+${CONTEXT_REQUEST_HEADING}
+${question}`;
 }
 /** The fallback's note in conversation.md when no context could be written (S10): the question is shown with the program's paragraph. */
 export function contextFallbackNote(reason: string): string {

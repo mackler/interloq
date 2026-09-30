@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import type { PresentedQuestion } from "../src/question.ts";
 import { confirmingRead } from "../src/confirmEnd.ts";
 import { programWritten } from "../src/questionContext.ts";
-import { permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { CONTEXT_REQUEST_HEADING, permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { type Block, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
 import { askOffering, permissionDraft } from "../src/offer.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { execFileSync } from "node:child_process";
@@ -151,7 +152,79 @@ export class ScriptedUi implements UiShape {
 /** The questions presented to the user, in order, each time it is presented (S5). */
 export const presentedQuestions = (ui: ScriptedUi): PresentedQuestion[] => ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
 /** What each presented question is about, as its decision is recorded (S7): the subject of user-decisions.md, then the question. */
-export const presentedSubjects = (ui: ScriptedUi): string[] => presentedQuestions(ui).map((q) => `${recordSubject(q.origin, q.question)} | ${q.question}`);
+export const presentedSubjects = (ui: ScriptedUi): string[] => presentedQuestions(ui).map((q) => `${recordSubject(q.origin, piecesText(q.question))} | ${piecesText(q.question)}`);
+/** The words of a presented question's text, its context, its details and its options' labels (issue #36: pieces). */
+export const questionText = (q: PresentedQuestion): string => piecesText(q.question);
+export const contextText = (q: PresentedQuestion): string => q.context.blocks.map((b) => (b.kind === "paragraph" ? piecesText(b.pieces) : b.kind === "list" ? b.items.map((i) => piecesText(i.pieces)).join("\n") : b.kind === "code" ? b.text : b.markdown)).join("\n\n");
+export const detailsText = (q: PresentedQuestion): string => q.details.map((b) => (b.kind === "paragraph" ? piecesText(b.pieces) : b.kind === "list" ? b.items.map((i) => piecesText(i.pieces)).join("\n") : b.kind === "code" ? b.text : b.markdown)).join("\n\n");
+export const optionLabels = (q: PresentedQuestion): string[] => q.options.map((o) => piecesText(o.label));
+
+// ---- a question's text as pieces (issue #36): builders for the tests ------------------------------------------------
+
+/** Plain pieces of a text; a paragraph of it; an option of plain pieces. */
+export const plain = (text: string): readonly Piece[] => plainPieces(text);
+export const para = (...texts: readonly string[]): readonly Block[] => plainBlocks(...texts);
+export const opt = (label: string, description = ""): PieceOption => plainOption(label, description);
+/** A piece that refers to an explanation. */
+export const term = (text: string, ref: string): Piece => ({ text, ref, code: false });
+/** A question for the user (UserQuestion) of plain words, with its options and, optionally, pieces and explanations of its own. */
+export const userQuestion = (
+  question: string | readonly Piece[],
+  options: readonly (string | readonly [string, string])[] = [],
+  extra: Partial<Readonly<{ context: readonly Block[]; explanations: readonly Explanation[] }>> = {},
+): S.UserQuestion => ({
+  context: extra.context ?? para("Interloq, the orchestrator, asks this question on behalf of the run."),
+  question: typeof question === "string" ? plain(question) : question,
+  explanations: extra.explanations ?? [],
+  options: options.map((o) => (typeof o === "string" ? opt(o, "") : opt(o[0], o[1]))),
+});
+/** Legacy-shaped words of a question, as the tests write them: strings, and terms bound to their words in the text. */
+type Words = Readonly<{ context: string; terms?: readonly Readonly<{ term: string; explanation: string }>[]; options: readonly Readonly<{ label: string; description: string }>[] }>;
+/** A text as pieces, each occurrence of a term's words a piece that refers to that term's explanation (t1, t2, …). */
+const withTerms = (text: string, terms: readonly Readonly<{ term: string; explanation: string }>[]): readonly Piece[] => {
+  if (terms.length === 0 || text === "") return plain(text);
+  const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${terms.map((t) => escape(t.term)).join("|")})`, "u"));
+  return parts.flatMap((part) => {
+    const i = terms.findIndex((t) => t.term === part);
+    return i >= 0 ? [term(part, `t${i + 1}`)] : plain(part);
+  });
+};
+const explanationsOf = (terms: readonly Readonly<{ term: string; explanation: string }>[], used: readonly Piece[]): readonly Explanation[] =>
+  terms.map((t, i) => ({ id: `t${i + 1}`, term: t.term, explanation: t.explanation })).filter((e) => used.some((p) => p.ref === e.id));
+const piecesOfWords = (w: Words, text: string) => {
+  const terms = w.terms ?? [];
+  const context = withTerms(w.context, terms);
+  const question = withTerms(text, terms);
+  const options = w.options.map((o) => ({ label: withTerms(o.label, terms), description: withTerms(o.description, terms) }));
+  const used = [...context, ...question, ...options.flatMap((o) => [...o.label, ...o.description])];
+  return { context: context.length === 0 ? [] : [{ kind: "paragraph" as const, pieces: context }], question, options, explanations: explanationsOf(terms, used) };
+};
+/** A question for the user (UserQuestion) from words written as strings; each term's words become pieces that refer to it. */
+export const questionOf = (w: Words & Readonly<{ question: string }>): S.UserQuestion => piecesOfWords(w, w.question);
+/** An interview turn's current question from words written as strings. */
+export const currentOf = (w: Words & Readonly<{ id: string; text: string }>): S.InterviewTurn["current_question"] => {
+  const { question, ...rest } = piecesOfWords(w, w.text);
+  return { id: w.id, ...rest, text: question };
+};
+/** An agreed question-list entry from words written as strings. */
+export const entryOf = (w: Readonly<{ id: string; context: string; question: string; reason: string; proposed_answers: readonly Readonly<{ label: string; description: string }>[]; default_answer: string }>): S.QuestionEntry => ({
+  id: w.id,
+  context: para(w.context),
+  question: plain(w.question),
+  reason: para(w.reason),
+  proposed_answers: w.proposed_answers.map((a) => opt(a.label, a.description)),
+  default_answer: w.default_answer,
+});
+/** An agreed question-list entry of plain words. */
+export const questionEntry = (id: string, question: string, answers: readonly (readonly [string, string])[] = [], extra: Partial<Readonly<{ context: string; reason: string; default_answer: string }>> = {}): S.QuestionEntry => ({
+  id,
+  context: para(extra.context ?? `Context of ${id}.`),
+  question: plain(question),
+  reason: para(extra.reason ?? "r"),
+  proposed_answers: answers.map(([l, d]) => opt(l, d)),
+  default_answer: extra.default_answer ?? answers[0]?.[0] ?? "",
+});
 
 /** `hang` makes the call wait until it is interrupted, recording the abort signal it was given. */
 /** `onCall` runs when the call begins, before anything else (a test captures the state the call finds). */
@@ -167,8 +240,16 @@ export type PlanningStep = { fault?: string; output?: unknown; /** The text of t
 /** `permission`: a permission request the call makes before its reports, asked as the adapter asks it (S49); the answer is recorded in `permissionAnswers`. */
 export type ExecScript = { reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
 
-/** The reply of a context call that a test does not script (S9): a paragraph that keeps the rules, and no term. */
-export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks this question on behalf of the run.", terms: [] };
+/** The paragraph of a context call's reply that a test does not script (S9): it keeps the rules. */
+export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks this question on behalf of the run." };
+/**
+ * The reply of a context call that a test does not script (S9, G-R1-1): the scripted paragraph, and the question, the
+ * options, the details and the explanations as the prompt gives them, unchanged.
+ */
+export const scriptedContextReply = (prompt: string): S.QuestionContext => {
+  const data = JSON.parse(prompt.slice(prompt.indexOf(CONTEXT_REQUEST_HEADING) + CONTEXT_REQUEST_HEADING.length)) as Omit<S.QuestionContext, "context">;
+  return { context: para(SCRIPTED_CONTEXT.context), question: data.question, options: data.options, details: data.details, explanations: data.explanations };
+};
 
 export class ScriptedPlanner implements PlannerShape {
   readonly prompts: string[] = [];
@@ -228,7 +309,7 @@ export class ScriptedPlanner implements PlannerShape {
         if (step?.editRecord !== undefined) fs.writeFileSync(path.join(path.dirname(this.state.plan), step.editRecord.file), step.editRecord.content ?? "");
         if (step?.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
         if (step?.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
-        return Effect.succeed({ output: step === undefined ? SCRIPTED_CONTEXT : step.output, resultText: "", costUsd: 0.01 });
+        return Effect.succeed({ output: step === undefined ? scriptedContextReply(prompt) : typeof step.output === "function" ? (step.output as (p: string) => unknown)(prompt) : step.output, resultText: "", costUsd: 0.01 });
       });
     }
     return Effect.suspend(() => {

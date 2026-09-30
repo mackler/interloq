@@ -17,7 +17,7 @@ import { decodeRecord, parseJson } from "../src/state.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { renderUsage, summarizeUsage } from "../src/usage.ts";
-import { faultyPlatform, tempRepo } from "./helpers.ts";
+import { faultyPlatform, tempRepo, questionOf, entryOf } from "./helpers.ts";
 
 /** The store of a repository, built on the live platform services. */
 const store = (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => Effect.runPromise(makeStore(repo, ignorePaths).pipe(Effect.provide(platformLayer)));
@@ -76,7 +76,7 @@ test("questions.json without questions fails with StateFileInvalid", async () =>
 
 test("loadQuestions returns the agreed list", async () => {
   const s = await initialised();
-  const question = { id: "Q1", context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }], default_answer: "A" };
+  const question = entryOf({ id: "Q1", context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }], default_answer: "A" });
   fs.writeFileSync(s.questions, JSON.stringify({ version: 2, task: "t", questions: [question] }));
   assert.deepEqual((await Effect.runPromise(s.loadQuestions())).questions, [question]);
 });
@@ -123,8 +123,8 @@ test("fileHash by subject; the save operations create their directories", async 
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, "planning-2", "review-1.json"), "utf8")), { issues: [] });
   await Effect.runPromise(s.saveExecution(3, { status: "finished", summary: "s", question: "", remainingWork: "", userInput: null }));
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, "execution-3", "result.json"), "utf8")).status, "finished");
-  await Effect.runPromise(s.savePlanWrite(4, { questions_for_user: [{ context: "c", question: "q?", terms: [], options: [] }] }));
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, "planning-4", "cc-0.json"), "utf8")), { questions_for_user: [{ context: "c", question: "q?", terms: [], options: [] }] });
+  await Effect.runPromise(s.savePlanWrite(4, { questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] }));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, "planning-4", "cc-0.json"), "utf8")), { questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] });
   await Effect.runPromise(s.writeRequirements("# R\n"));
   assert.equal(fs.readFileSync(s.requirements, "utf8"), "# R\n");
 });

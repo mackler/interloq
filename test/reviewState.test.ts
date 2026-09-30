@@ -3,13 +3,15 @@ import { test } from "node:test";
 import type { RunError } from "../src/errors.ts";
 import { describe } from "../src/errors.ts";
 import { pauseProse } from "../src/render.ts";
+import { blocksMarkdown } from "../src/pieces.ts";
 import { advance, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, subjectOf, type Transition } from "../src/reviewState.ts";
 import type { LogEntry } from "../src/schema.ts";
-import { issue, respond } from "./helpers.ts";
+import { issue, respond, questionOf } from "./helpers.ts";
 import * as prompts from "../src/prompts.ts";
+import { piecesText } from "../src/pieces.ts";
 
 /** What the user reads of a pause the loop asks (S11): its facts as prose. */
-const askedProse = (c: ReviewCommand): string => (c.kind === "AskDecision" && c.asks.kind === "pause" ? pauseProse(c.asks.facts) : "");
+const askedProse = (c: ReviewCommand): string => (c.kind === "AskDecision" && c.asks.kind === "pause" ? blocksMarkdown(pauseProse(c.asks.facts)) : "");
 /** The record's subject of a decision the loop asks (S7): composed from what it asks by the one function. */
 const askedSubject = (c: ReviewCommand, state: ReviewState): string => {
   assert.equal(c.kind, "AskDecision");
@@ -118,7 +120,7 @@ test("accepted without a change of the file is the pause; Stop halts", () => {
 test("the pauses ask in the decided order and a decision leads to ApplyDecisions before the log", () => {
   const log = [entry("C", "accepted"), entry("O", "rejected")];
   const dispositions = respond([["A", "clarification_requested"], ["B", "rejected"], ["N", "rejected"]]).dispositions.map((d) => (d.id === "B" ? { ...d, reverses: "C" } : d.id === "N" ? { ...d, duplicate_of: "O" } : d));
-  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }], questions_for_user: [{ context: "c", question: "Which?", terms: [], options: [] }] };
+  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }], questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] };
   const t = run(afterReview([...log, entry("A", "clarification_requested")], [issue("A"), issue("B"), issue("N")]), { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
   const subjects: string[] = [];
   let step = t;
@@ -399,7 +401,7 @@ test("each disputed pause offers the two positions; a question offers its option
     { id: "B", action: "rejected" as const, rationale: "C must stay", duplicate_of: "", reverses: "C" },
     { id: "N", action: "rejected" as const, rationale: "as before", duplicate_of: "O", reverses: "" },
   ];
-  const question = { context: "c", question: "Which?", terms: [], options: [{ label: "X", description: "x" }, { label: "Y", description: "y" }] };
+  const question = questionOf({ context: "c", question: "Which?", terms: [], options: [{ label: "X", description: "x" }, { label: "Y", description: "y" }] });
   const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "C was wrong" }], questions_for_user: [question] };
   let step = run(afterReview(log.map((e) => (e.id === "O" ? { ...e, rationale: "O is fine" } : e.id === "C" ? { ...e, problem: "C was missing" } : e)), issues), { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
   const seen: (readonly { label: string; description: string }[])[] = [];
@@ -413,7 +415,7 @@ test("each disputed pause offers the two positions; a question offers its option
     positions("C was missing", "C was wrong"),
     positions("undo C e", "C must stay"),
     positions("O again e", "O is fine"),
-    question.options,
+    question.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) })),
   ]);
   // The unexplained change, identical content and the idle pause.
   const unexplained = run(afterReview(), response([["A", "rejected"]]), { kind: "FileObserved", hash: "h1", text: "" });

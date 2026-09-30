@@ -6,7 +6,7 @@ import { Effect, Layer, Result } from "effect";
 import { UserStopped } from "../src/errors.ts";
 import { decodeValidating, decodeWithRepair, planningCall, type Repair } from "../src/review.ts";
 import { Planner } from "../src/services.ts";
-import { noDecider, pathsOf, ScriptedPlanner, ScriptedUi } from "./helpers.ts";
+import { noDecider, pathsOf, ScriptedPlanner, ScriptedUi, questionOf } from "./helpers.ts";
 import * as S from "../src/schema.ts";
 import { Decider, RunConfig, Store, type StoreShape, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
@@ -38,21 +38,21 @@ test("planningCall reports whether a repair turn was needed", async () => {
   const repo = tempRepo();
   const s = await Effect.runPromise(makeStore(repo, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(s.init("task"));
-  const planner = new ScriptedPlanner(pathsOf(repo), [{ output: { questions_for_user: "x" } }, { output: { questions_for_user: [] } }, { output: { questions_for_user: [{ context: "c", question: "q", terms: [], options: [] }] } }], []);
+  const planner = new ScriptedPlanner(pathsOf(repo), [{ output: { questions_for_user: "x" } }, { output: { questions_for_user: [] } }, { output: { questions_for_user: [questionOf({ context: "c", question: "q", terms: [], options: [] })] } }], []);
   const layer = Layer.mergeAll(Layer.succeed(Store, s), Layer.succeed(Planner, planner), Layer.succeed(Decider, noDecider), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
   const repaired = await Effect.runPromise(planningCall("first", S.PlanWriteResult).pipe(Effect.provide(layer)));
   assert.equal(repaired.repaired, true);
   assert.deepEqual(repaired.output, { questions_for_user: [] });
   const direct = await Effect.runPromise(planningCall("second", S.PlanWriteResult).pipe(Effect.provide(layer)));
   assert.equal(direct.repaired, false);
-  assert.deepEqual(direct.output, { questions_for_user: [{ context: "c", question: "q", terms: [], options: [] }] });
+  assert.deepEqual(direct.output, { questions_for_user: [questionOf({ context: "c", question: "q", terms: [], options: [] })] });
 });
 
 // Plan step S10 (issue #30): one kind of second turn for a defective reply, the Repair, whose kind names its budget.
 test("decodeValidating hands its repair a Repair of kind schema, then of kind validation, each budget once", async () => {
   const s = await store();
   const kinds: string[] = [];
-  const replies: unknown[] = [{ questions_for_user: [{ context: "c", question: "q", terms: [], options: [] }] }, { questions_for_user: [] }];
+  const replies: unknown[] = [{ questions_for_user: [questionOf({ context: "c", question: "q", terms: [], options: [] })] }, { questions_for_user: [] }];
   const repair = (r: Repair) => Effect.sync(() => (kinds.push(r.kind), replies.shift()));
   const validate = (v: { questions_for_user: readonly unknown[] }) =>
     v.questions_for_user.length === 0 ? Result.succeed({ value: v, notes: [] }) : Result.fail({ error: new UserStopped({ where: "x" }), repair: "no questions, please" });

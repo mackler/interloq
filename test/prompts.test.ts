@@ -3,6 +3,10 @@ import * as fs from "node:fs";
 import { test } from "node:test";
 import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
+import { blocksMarkdown } from "../src/pieces.ts";
+import { para, plain } from "./helpers.ts";
+/** A tool's input as the terminal and conversation.md print it (S34): its blocks as Markdown, without the heading. */
+const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input).slice(1));
 import { appendRound } from "../src/issueLog.ts";
 import type { IssueId } from "../src/round.ts";
 import * as S from "../src/schema.ts";
@@ -39,7 +43,7 @@ test("the interview prompts ask for the current question's parts under the rules
   for (const text of texts) {
     assert.ok(text.includes(prompts.questionWritingRules()));
     assert.match(text, /For an agreed question of plan-review\/questions\.json, give only its id/);
-    assert.match(text, /For any other question, give its context, its text, its terms and its options/);
+    assert.match(text, /For any other question, give its context, its text, its explanations and its options/);
     assert.doesNotMatch(text, /show each proposed answer on its own line/);
   }
 });
@@ -404,17 +408,17 @@ test("stepWorkingLabel names the step's state as its mark says it and that an ag
 // S34 (W1-R1-2, P2-R1-2): a tool's input as the user reads it.
 test("toolInputLines labels the known fields in plain words and keeps each unknown field's own name; toolInputTerms explains those", () => {
   const known = { file_path: "/a", old_string: "x", new_string: "y", replace_all: true, content: "c", command: "ls", description: "d", pattern: "p", path: "/p", url: "https://e" };
-  const lines = prompts.toolInputLines(known);
+  const lines = inputLines(known);
   // No key is shown as an identifier ("file_path: …" or its quoted name); a label may use an English word such as "command".
   for (const key of Object.keys(known)) assert.ok(!new RegExp(`(^|\\n)\\s*- ${key}:`).test(lines) && !lines.includes(`"${key}"`), `${key} in ${lines}`);
   for (const key of ["file_path", "old_string", "new_string", "replace_all"]) assert.ok(!lines.includes(key), key);
-  assert.deepEqual(prompts.toolInputTerms(known), []);
-  assert.notEqual(prompts.toolInputLines({ overwrite: true }), prompts.toolInputLines({ dry_run: true }));
-  assert.match(prompts.toolInputLines({ overwrite: true }), /`overwrite`/);
-  assert.deepEqual(prompts.toolInputTerms({ overwrite: true, edits: [{ old_string: "a", mode: "m" }] }).map((t) => t.term), ["overwrite", "mode"]);
+  assert.deepEqual(prompts.toolInputExplanations(known), []);
+  assert.notEqual(inputLines({ overwrite: true }), inputLines({ dry_run: true }));
+  assert.match(inputLines({ overwrite: true }), /`overwrite`/);
+  assert.deepEqual(prompts.toolInputExplanations({ overwrite: true, edits: [{ old_string: "a", mode: "m" }] }).map((t) => t.term), ["overwrite", "mode"]);
   assert.ok(prompts.unknownSettingExplanation.trim() !== "");
   // A multi-line value stays readable, and nested fields are labeled too.
-  assert.ok(!prompts.toolInputLines({ edits: [{ old_string: "a", new_string: "b" }] }).includes("old_string"));
+  assert.ok(!inputLines({ edits: [{ old_string: "a", new_string: "b" }] }).includes("old_string"));
 });
 
 // S45 (P4-R1-1): the code span of a single-line value: its delimiter one backtick longer than the value's longest run,
@@ -458,11 +462,11 @@ test("codeSpan escapes carriage returns, controls, invisible characters and spec
 });
 
 test("an escaped field carries ESCAPED_VALUE_NOTE once, in the lines the terminal and conversation.md print; a literal one none", () => {
-  const escaped = prompts.toolInputLines({ old_string: "a\rb", new_string: "c\u200b" });
+  const escaped = inputLines({ old_string: "a\rb", new_string: "c\u200b" });
   assert.equal(escaped.split(prompts.ESCAPED_VALUE_NOTE).length - 1, 2);
   assert.ok(!escaped.includes("\r") && !escaped.includes("\u200b"));
-  assert.ok(!prompts.toolInputLines({ new_string: "plain" }).includes(prompts.ESCAPED_VALUE_NOTE));
-  const block = prompts.toolInputLines({ content: "line 1\r\nline 2" });
+  assert.ok(!inputLines({ new_string: "plain" }).includes(prompts.ESCAPED_VALUE_NOTE));
+  const block = inputLines({ content: "line 1\r\nline 2" });
   assert.ok(block.includes("line 1\\r\nline 2"), block);
   assert.equal(block.split(prompts.ESCAPED_VALUE_NOTE).length - 1, 1);
 });
@@ -504,7 +508,7 @@ test("the questions the program composes embed no agent-written or SDK-written t
 });
 test("the transport pause's details hold the attempts and the whole fault under their heading; the fallback context points to them", () => {
   const fault = `read ECONNRESET ${"z".repeat(2500)}`;
-  const details = prompts.transportDetails(4, fault);
+  const details = blocksMarkdown(prompts.transportDetails(4, fault));
   assert.ok(details.startsWith(prompts.TRANSPORT_FAULT_HEADING));
   assert.ok(details.includes("4"));
   assert.ok(details.includes(fault));
@@ -514,20 +518,22 @@ test("the transport pause's details hold the attempts and the whole fault under 
 });
 test("an execution stop's details hold Claude Code's description under their heading", () => {
   const description = "The build needs a decision about **the cache**.";
-  assert.ok(prompts.execStopDetails(description).startsWith(prompts.EXEC_STOP_HEADING));
-  assert.ok(prompts.execStopDetails(description).includes(description));
-  assert.ok(prompts.execStopDetails("  ").includes(prompts.EXEC_STOP_NO_DESCRIPTION));
+  const shown = (d: string) => blocksMarkdown(prompts.execStopDetails(d));
+  assert.ok(shown(description).startsWith(prompts.EXEC_STOP_HEADING));
+  assert.ok(shown(description).includes(description));
+  assert.deepEqual(prompts.execStopDetails(description)[1], { kind: "document", markdown: description }, "Claude Code's prose is shown whole");
+  assert.ok(shown("  ").includes(prompts.EXEC_STOP_NO_DESCRIPTION));
 });
 
 // S54: the terminal's lines and conversation.md carry the edge line breaks as escapes, as the page does.
 test("a multi-line value's edge line breaks are escaped in the terminal's lines and the record", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
-  const lines = prompts.toolInputLines({ content: "a\nb\n" });
+  const lines = inputLines({ content: "a\nb\n" });
   assert.ok(lines.includes("a\nb\\n"), lines);
   assert.ok(lines.includes(prompts.ESCAPED_VALUE_NOTE));
   assert.ok(prompts.ESCAPED_VALUE_NOTE.includes("`\\n`"));
-  assert.notEqual(prompts.toolInputLines({ content: "a\nb" }), lines);
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: lines, decision: null });
+  assert.notEqual(inputLines({ content: "a\nb" }), lines);
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks({ content: "a\nb\n" }), decision: null });
   assert.ok(record.includes("a\nb\\n"));
 });
 
@@ -537,13 +543,13 @@ test("an unknown field's name is shown literally and looked up by own properties
   const { renderQuestionRecord } = await import("../src/render.ts");
   const own = (key: string) => Object.defineProperty({}, key, { value: 1, enumerable: true });
   for (const key of ["constructor", "toString", "__proto__"]) {
-    const lines = prompts.toolInputLines(own(key));
+    const lines = inputLines(own(key));
     assert.ok(lines.includes(prompts.unknownSettingLabel(key)), lines);
     assert.doesNotMatch(lines, /function|native code/);
   }
   assert.equal(prompts.unknownSettingLabel("**mode**"), "The tool's setting named `**mode**`");
-  assert.ok(prompts.toolInputLines(own("a\nb")).includes("`a\\nb`"));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: prompts.toolInputLines(own("<target>")), decision: null });
+  assert.ok(inputLines(own("a\nb")).includes("`a\\nb`"));
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks(own("<target>")), decision: null });
   assert.ok(record.includes("`<target>`"));
 });
 
@@ -572,9 +578,9 @@ test("S57: the names of each group display differently, each non-empty one with 
     assert.equal(new Set(shown).size, shown.length, JSON.stringify(group));
     const labels = group.map((k) => prompts.unknownSettingLabel(k));
     assert.equal(new Set(labels).size, labels.length, JSON.stringify(group));
-    const lines = prompts.toolInputLines(input);
+    const lines = inputLines(input);
     for (const label of labels) assert.ok(lines.includes(label), label);
-    const terms = prompts.toolInputTerms(input);
+    const terms = prompts.toolInputExplanations(input);
     assert.equal(terms.length, group.filter((k) => k !== "").length, JSON.stringify(group));
     assert.equal(new Set(terms.map((t) => t.term)).size, terms.length);
     for (const t of terms) {
@@ -601,8 +607,8 @@ test("S57: shownName is one-to-one over non-empty names, never blank, and the em
 
 test("S57: conversation.md carries the labels and notes of escaped names", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
-  const details = prompts.toolInputLines(withKeys([`a${BS}nb`, SP]));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details, decision: null });
+  const details = prompts.toolInputBlocks(withKeys([`a${BS}nb`, SP]));
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details, decision: null });
   assert.ok(record.includes(prompts.unknownSettingLabel(`a${BS}nb`)));
   assert.ok(record.includes(prompts.unknownSettingLabel(SP)));
 });
@@ -612,7 +618,7 @@ test("S57: conversation.md carries the labels and notes of escaped names", async
 test("S60: empty lists, empty objects, the empty text and null display differently, nested too; no fields has its phrase", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const inputs = [{ settings: [] }, { settings: {} }, { settings: "" }, { settings: null }];
-  const lines = inputs.map((i) => prompts.toolInputLines(i));
+  const lines = inputs.map((i) => inputLines(i));
   assert.equal(new Set(lines).size, inputs.length, JSON.stringify(lines));
   const facts = inputs.map((i) => prompts.permissionFacts("T", i));
   assert.equal(new Set(facts).size, inputs.length, JSON.stringify(facts));
@@ -621,10 +627,10 @@ test("S60: empty lists, empty objects, the empty text and null display different
   assert.ok(facts[0].includes(prompts.EMPTY_LIST_PHRASE));
   assert.ok(facts[1].includes(prompts.EMPTY_OBJECT_PHRASE));
   const nested = [{ edits: [{}] }, { edits: [[]] }];
-  assert.notEqual(prompts.toolInputLines(nested[0]), prompts.toolInputLines(nested[1]));
+  assert.notEqual(inputLines(nested[0]), inputLines(nested[1]));
   assert.notEqual(prompts.permissionFacts("T", nested[0]), prompts.permissionFacts("T", nested[1]));
-  assert.equal(prompts.toolInputLines({}), prompts.NO_INPUT_PHRASE);
+  assert.equal(inputLines({}), prompts.NO_INPUT_PHRASE);
   assert.ok(prompts.permissionFacts("T", {}).includes(prompts.NO_INPUT_PHRASE));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: lines[0], decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks(inputs[0]), decision: null });
   assert.ok(record.includes(prompts.EMPTY_LIST_PHRASE));
 });

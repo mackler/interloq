@@ -1,61 +1,89 @@
-// S2: validateQuestion checks the mechanical part of QUESTION_RULES, and its repair prompt cites the rules it found broken,
-// from the same array the writing prompts are rendered from (rules for changes: a prompt and its validation together).
+// S3 of the task of issue #36: validateQuestion checks a question's text as data: every ref names an explanation, every
+// explanation is referred to, none blank, no ref on a literal value, and the mechanical part of QUESTION_RULES; the
+// repair prompt cites the rule or format clause it found broken, from the same arrays the writing prompts are rendered
+// from (rules for changes: a prompt and its validation together). Nothing reads Markdown.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
+import fc from "fast-check";
 import { decodeRunError, haltMessage } from "../src/errors.ts";
+import { piecesText } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
-import { type Question, questionProblems, termOccurrences, validateQuestion, validateQuestions } from "../src/question.ts";
+import { type Piece, type Question, questionProblems, validateQuestion, validateQuestions } from "../src/question.ts";
+import type { Block, Explanation } from "../src/schema.ts";
+import { opt, para, plain, term } from "./helpers.ts";
 
+const zod: Explanation = { id: "t1", term: "zod", explanation: "A library that checks that data has the expected shape." };
 const good: Question = {
-  context: "Interloq, the orchestrator, runs Claude Code, a coding agent, when a phase begins; zod, a validation library, checks what it returns.",
-  question: "The input of a tool is described with zod. Should zod be declared as a dependency?",
-  terms: [{ term: "zod", explanation: "A library that checks that data has the expected shape." }],
+  context: [
+    {
+      kind: "paragraph",
+      pieces: [...plain("Interloq, the orchestrator, runs Claude Code, a coding agent, when a phase begins; "), term("Zod", "t1"), ...plain(", a validation library, checks what it returns.")],
+    },
+  ],
+  question: [...plain("The input of a tool is described with "), term("zod", "t1"), ...plain(". Should it be declared as a dependency?")],
+  explanations: [zod],
   options: [
-    { label: "Declare zod", description: "Add zod to package.json." },
-    { label: "Leave it", description: "Keep it as a dependency of the SDK only." },
+    { label: plain("Declare it"), description: [...plain("Add "), term("zod", "t1"), ...plain(" to package.json.")] },
+    opt("Leave it", "Keep it as a dependency of the SDK only."),
   ],
 };
-const kinds = (q: Question) => questionProblems(q).map((p) => p.kind);
+const kinds = (q: Question, supplied: readonly Piece[] = []) => questionProblems(q, supplied).map((p) => p.kind);
 
-test("a question that keeps every mechanical rule passes", () => {
+test("a question that keeps every mechanical rule passes, a plural and a capitalized word referring to one explanation", () => {
   assert.deepEqual(questionProblems(good), []);
   assert.ok(Result.isSuccess(validateQuestion(good)));
+  const plural: Question = { ...good, question: [...plain("Which "), term("Execution calls", "e"), ...plain(" may resume an "), term("execution call", "e"), ...plain("?")], explanations: [...good.explanations, { id: "e", term: "execution call", explanation: "The part of the run in which Claude Code carries out the plan." }] };
+  assert.deepEqual(questionProblems(plural), []);
 });
 
 test("an empty context, a question that does not end with its interrogative sentence, and a bare number are found", () => {
-  assert.deepEqual(kinds({ ...good, context: "  " }), ["blankContext"]);
-  assert.deepEqual(kinds({ ...good, question: "Should zod be declared? It is used by the SDK." }), ["notLast"]);
-  assert.deepEqual(kinds({ ...good, context: `${good.context} See #53.` }), ["bareNumber"]);
-  assert.deepEqual(questionProblems({ ...good, options: [{ label: "Later (#14, #6)", description: "" }] }).map((p) => p.subject), ["#14", "#6"]);
+  assert.deepEqual(kinds({ ...good, context: para("  ") }), ["blankContext"]);
+  assert.deepEqual(kinds({ ...good, context: [] }), ["blankContext"]);
+  assert.deepEqual(kinds({ ...good, question: [term("zod", "t1"), ...plain(" is used. It is used by the SDK.")] }), ["notLast"]);
+  assert.deepEqual(kinds({ ...good, context: [...good.context, ...para("See #53.")] }), ["bareNumber"]);
+  assert.deepEqual(questionProblems({ ...good, options: [...good.options, opt("Later (#14, #6)")] }).map((p) => p.subject), ["#14", "#6"]);
 });
 
 test("a number with its kind before it is not bare, in a list too", () => {
-  for (const text of ["Issue #6 says so.", "Issues #6, #33 and #28 say so.", "As issues #14 or #6 say."]) assert.deepEqual(kinds({ ...good, context: `${good.context} ${text}` }), [], text);
+  for (const text of ["Issue #6 says so.", "Issues #6, #33 and #28 say so.", "As issues #14 or #6 say."]) assert.deepEqual(kinds({ ...good, context: [...good.context, ...para(text)] }), [], text);
 });
 
-test("terms: blank names and explanations, absent and repeated terms are found; an explanation need not occur", () => {
-  assert.deepEqual(kinds({ ...good, terms: [{ term: " ", explanation: "x" }] }), ["blankTerm"]);
-  assert.deepEqual(kinds({ ...good, terms: [{ term: "zod", explanation: "  " }] }), ["blankExplanation"]);
-  assert.deepEqual(kinds({ ...good, terms: [{ term: "Zod", explanation: "A library." }] }), ["termAbsent"]);
-  assert.deepEqual(kinds({ ...good, terms: [{ term: "zo", explanation: "Part of a word." }] }), ["termAbsent"]);
-  assert.deepEqual(kinds({ ...good, terms: [...good.terms, ...good.terms] }), ["duplicateTerm"]);
-  assert.deepEqual(kinds({ ...good, terms: [{ term: "Declare", explanation: "Occurs in an option's label only." }] }), []);
+test("the data clauses: dangling and unused refs, duplicate ids, blank terms, explanations and referring pieces", () => {
+  assert.deepEqual(kinds({ ...good, question: [...plain("Is "), term("zod", "t2"), ...plain(" needed?")] }), ["unknownRef"]);
+  assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { id: "t9", term: "SDK", explanation: "A kit." }] }), ["unusedExplanation"]);
+  assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { ...zod }] }), ["duplicateExplanation"]);
+  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, term: " " }] }), ["blankTerm"]);
+  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, explanation: "  " }] }), ["blankExplanation"]);
+  assert.deepEqual(kinds({ ...good, question: [term(" ", "t1"), ...good.question] }), ["blankTermPiece"]);
 });
 
-test("termOccurrences finds every case-sensitive, whole-word occurrence, phrases and identifiers included", () => {
-  assert.deepEqual(termOccurrences("zod, zodiac and zod.", "zod"), [0, 16]);
-  assert.deepEqual(termOccurrences("call report_step; report_steps", "report_step"), [5]);
-  assert.deepEqual(termOccurrences("a transport fault, then transport faults", "transport fault"), [2]);
-  assert.deepEqual(termOccurrences("Zod", "zod"), []);
+test("a ref in any part counts: the details, a list item and an option's label", () => {
+  const onlyIn = (q: Question) => kinds({ ...q, explanations: [zod] });
+  const bare: Question = { ...good, context: para("Interloq asks this."), question: plain("Should it be declared?"), options: [opt("A"), opt("B")] };
+  assert.deepEqual(onlyIn(bare), ["unusedExplanation"]);
+  assert.deepEqual(onlyIn({ ...bare, details: [{ kind: "list", items: [{ level: 1, pieces: [term("zod", "t1")] }] }] }), []);
+  assert.deepEqual(onlyIn({ ...bare, options: [{ label: [term("zod", "t1")], description: [] }, opt("B")] }), []);
 });
 
-test("every problem kind names a rule of QUESTION_RULES, and the repair prompt cites that rule verbatim", () => {
+test("a literal value never refers to an explanation, except a code piece the program supplied with its ref", () => {
+  const code: Piece = { text: "max_tokens", ref: "t1", code: true };
+  const withCode: Question = { ...good, details: [{ kind: "list", items: [{ level: 0, pieces: [...plain("The setting "), code] }] }] };
+  assert.deepEqual(kinds(withCode), ["refOnCode"]);
+  assert.deepEqual(kinds(withCode, [code]), []);
+  assert.deepEqual(kinds(withCode, [{ ...code, ref: "t2" }]), ["refOnCode"], "the supplied piece is keyed by its words and its ref");
+});
+
+test("every problem kind names a rule or clause, and the repair prompt cites its text verbatim", () => {
+  const textOf = (id: string) =>
+    prompts.QUESTION_RULES.find((r) => r.id === id)?.rule ??
+    prompts.QUESTION_FORMAT.find((c) => c.id === id)?.text ??
+    ({ keepWording: prompts.KEEP_WORDING, keepLiterals: prompts.KEEP_LITERALS, keepOptions: prompts.KEEP_OPTIONS, keepSuppliedRefs: prompts.KEEP_SUPPLIED_REFS } as Record<string, string>)[id];
   for (const kind of prompts.QUESTION_PROBLEM_KINDS) {
-    const rule = prompts.QUESTION_RULES.find((r) => r.id === prompts.QUESTION_PROBLEM_RULE[kind]);
-    assert.ok(rule !== undefined, kind);
+    const rule = textOf(prompts.QUESTION_PROBLEM_RULE[kind]);
+    assert.ok(rule !== undefined && rule !== "", kind);
     const repair = prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [{ kind, subject: "zod" }] }]);
-    assert.ok(repair.includes(rule.rule), kind);
+    assert.ok(repair.includes(rule), kind);
     assert.ok(repair.includes(prompts.questionProblemText({ kind, subject: "zod" })), kind);
   }
 });
@@ -63,7 +91,7 @@ test("every problem kind names a rule of QUESTION_RULES, and the repair prompt c
 test("validateQuestions names each failing question and fails with QuestionInvalid, which decodes and halts", () => {
   const result = validateQuestions([
     { where: "questions_for_user 1", question: good },
-    { where: "questions_for_user 2", question: { ...good, terms: [{ term: "zod", explanation: "" }] } },
+    { where: "questions_for_user 2", question: { ...good, explanations: [{ ...zod, explanation: "" }] } },
   ]);
   assert.ok(Result.isFailure(result));
   assert.deepEqual(result.failure.questions, [{ where: "questions_for_user 2", problems: [{ kind: "blankExplanation", subject: "zod" }] }]);
@@ -77,60 +105,129 @@ test("questionsValidation passes a reply whose questions keep the rules, and fai
   const ok = validate([good]);
   assert.ok(Result.isSuccess(ok));
   assert.deepEqual(ok.success, { value: [good], notes: [] });
-  const bad = validate([{ ...good, context: "" }]);
+  const bad = validate([{ ...good, context: [] }]);
   assert.ok(Result.isFailure(bad));
   assert.equal(bad.failure.error._tag, "QuestionInvalid");
   assert.equal(bad.failure.repair, prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [{ kind: "blankContext", subject: "" }] }]));
 });
 
-// S13 (G-R1-2): a question Claude Code relays through AskUserQuestion carries its context and terms in its text, in the
-// shape executePrompt states; the parser reads what the prompt describes, both from RELAYED_SHAPE of src/prompts.ts.
-test("the relayed shape: executePrompt states it with the rules, and parseRelayedQuestion reads what it states", async () => {
+// S4: the format is one statement; the prompt that states it and the validation that checks its data clauses agree.
+test("S4: a question written exactly as QUESTION_TEXT_FORMAT describes it passes, and each data clause's violation is rejected", () => {
+  for (const clause of prompts.QUESTION_FORMAT) assert.ok(prompts.QUESTION_TEXT_FORMAT.includes(clause.text), clause.id);
+  // The format's own example: a plural and a capitalized form, two pieces that refer to one explanation.
+  assert.ok(prompts.QUESTION_TEXT_FORMAT.includes('"execution calls" and "Execution call" are two pieces that refer to one explanation'));
+  const violations: Readonly<Record<string, Question>> = {
+    refPiece: { ...good, question: [...good.question.slice(0, -1), term("", "t1"), ...good.question.slice(-1)] },
+    explanations: { ...good, explanations: [...good.explanations, { id: "t2", term: "SDK", explanation: "A kit." }] },
+    code: { ...good, context: [...good.context, { kind: "paragraph", pieces: [{ text: "npm", ref: "t1", code: true }] }] },
+  };
+  for (const [id, q] of Object.entries(violations)) {
+    const found = questionProblems(q).map((p) => prompts.QUESTION_PROBLEM_RULE[p.kind]);
+    assert.ok(found.includes(id), `${id}: ${found.join(", ")}`);
+  }
+});
+
+test("S4: the prose clauses reach the writers and the reviewers from the one constant", () => {
+  for (const clause of prompts.QUESTION_FORMAT.filter((c) => c.kind === "prose")) {
+    assert.ok(prompts.QUESTION_TEXT_FORMAT.includes(clause.text), clause.id);
+    assert.ok(prompts.questionReviewCriteria().includes(clause.criterion), clause.id);
+    assert.ok(prompts.QUESTION_OPTIONS_RULE.includes(clause.text), clause.id);
+  }
+  for (const clause of prompts.QUESTION_FORMAT.filter((c) => c.kind === "data")) assert.equal(clause.criterion, "", `${clause.id} is checked by the program, not asked of the reviewer`);
+});
+
+// ---- properties (issue #66) ----------------------------------------------------------------------------------------
+
+const word = fc.string({ minLength: 1, maxLength: 8 }).filter((s) => s.trim() !== "" && !s.includes("#"));
+const arbPiece = (refs: readonly string[]): fc.Arbitrary<Piece> =>
+  fc.oneof(
+    word.map((text) => ({ text, ref: "", code: false })),
+    word.map((text) => ({ text, ref: "", code: true })),
+    ...(refs.length === 0 ? [] : [fc.tuple(word, fc.constantFrom(...refs)).map(([text, ref]) => ({ text, ref, code: false }))]),
+  );
+const arbBlock = (refs: readonly string[]): fc.Arbitrary<Block> =>
+  fc.oneof(
+    fc.array(arbPiece(refs), { minLength: 1, maxLength: 4 }).map((pieces) => ({ kind: "paragraph" as const, pieces })),
+    fc.array(fc.record({ level: fc.nat(3), pieces: fc.array(arbPiece(refs), { maxLength: 3 }) }), { maxLength: 3 }).map((items) => ({ kind: "list" as const, items })),
+    word.map((text) => ({ kind: "code" as const, text })),
+  );
+/** A question whose refs all resolve, every explanation used, nothing blank: the valid half of the data clauses. */
+const arbValid: fc.Arbitrary<Question> = fc.uniqueArray(fc.constantFrom("a", "b", "c", "d"), { maxLength: 4 }).chain((ids) =>
+  fc.record({
+    context: fc.tuple(word, fc.array(arbBlock(ids), { maxLength: 3 })).map(([w, rest]) => [{ kind: "paragraph" as const, pieces: [{ text: w, ref: "", code: false }] }, ...rest]),
+    question: fc.array(arbPiece(ids), { maxLength: 4 }).map((ps) => [...ps, ...ids.map((ref) => ({ text: `w${ref}`, ref, code: false })), { text: "?", ref: "", code: false }]),
+    explanations: fc.constant(ids.map((id) => ({ id, term: `term ${id}`, explanation: `explains ${id}` }))),
+    options: fc.array(fc.record({ label: fc.array(arbPiece(ids), { maxLength: 2 }), description: fc.array(arbPiece(ids), { maxLength: 2 }) }), { maxLength: 3 }),
+  }),
+);
+const REFERENCE_KINDS = ["unknownRef", "unusedExplanation", "duplicateExplanation", "blankTerm", "blankExplanation", "blankTermPiece", "refOnCode"];
+
+test("property: the validation is total, and a question keeping the data clauses has no reference problem", () => {
+  fc.assert(
+    fc.property(arbValid, (q) => questionProblems(q).every((p) => !REFERENCE_KINDS.includes(p.kind))),
+    { numRuns: 200 },
+  );
+});
+
+test("property: removing a referred explanation always yields unknownRef; adding an unused one always yields unusedExplanation", () => {
+  fc.assert(
+    fc.property(arbValid, (q) => {
+      const removed = q.explanations.length === 0 || questionProblems({ ...q, explanations: q.explanations.slice(1) }).some((p) => p.kind === "unknownRef" && p.subject === q.explanations[0].id);
+      const added = questionProblems({ ...q, explanations: [...q.explanations, { id: "unused", term: "x", explanation: "y" }] }).some((p) => p.kind === "unusedExplanation" && p.subject === "x");
+      return removed && added;
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("property: re-dividing a question's plain pieces keeps its words and its problems", () => {
+  const split = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => (p.ref === "" && !p.code && p.text.length > 1 ? [{ ...p, text: p.text.slice(0, 1) }, { ...p, text: p.text.slice(1) }] : [p]));
+  fc.assert(
+    fc.property(arbValid, (q) => {
+      const again = { ...q, question: split(q.question) };
+      return piecesText(again.question) === piecesText(q.question) && JSON.stringify(questionProblems(again)) === JSON.stringify(questionProblems(q));
+    }),
+    { numRuns: 200 },
+  );
+});
+
+// ---- the relayed question (S8; behavior 4) -------------------------------------------------------------------------
+
+test("S8: executePrompt states the relayed shape with the rules, and parseRelayedQuestion reads its own example", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
   assert.ok(prompts.executePrompt.includes(prompts.RELAYED_SHAPE));
   assert.ok(prompts.executePrompt.includes(prompts.questionWritingRules()));
-  const parts = { context: good.context, terms: good.terms, question: good.question };
-  const text = prompts.relayedQuestionText(parts);
-  assert.ok(prompts.RELAYED_SHAPE.includes(prompts.relayedQuestionText({ context: "<context>", terms: [{ term: "<term>", explanation: "<explanation>" }], question: "<question>" })), "the prompt's example is the composer's");
-  assert.deepEqual(parseRelayedQuestion(text, good.options), { ...parts, options: good.options });
-  // Without terms the block may be left out; several paragraphs of context stay together.
-  assert.deepEqual(parseRelayedQuestion(`First part.\n\nSecond part.\n\n${good.question}`, [])?.context, "First part.\n\nSecond part.");
-  assert.equal(parseRelayedQuestion(`${good.context}\n\n${good.question}`, good.options)?.terms.length, 0);
+  assert.ok(prompts.RELAYED_SHAPE.includes(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE)), "the prompt's example is the composer's");
+  const options = prompts.RELAYED_EXAMPLE.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
+  assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE), options), prompts.RELAYED_EXAMPLE);
+  const parts = { context: good.context as readonly Block[], question: good.question, explanations: good.explanations, options: good.options };
+  const toolOptions = good.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
+  assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(parts), toolOptions), parts);
+  assert.deepEqual(parseRelayedQuestion(`\n  ${prompts.relayedQuestionText(parts)}\n`, toolOptions), parts, "surrounding whitespace is allowed");
 });
 
-test("a relayed text that does not follow the shape or breaks a rule is not read as one", async () => {
+test("S8: a relayed text that is not the shape, breaks a rule, or has other options than the tool's is not read as one", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
-  assert.equal(parseRelayedQuestion(good.question, good.options), null, "no context");
-  assert.equal(parseRelayedQuestion(`${good.context}\n\nShould zod be declared as a dependency? It is used by the SDK.`, good.options), null, "the question is not last");
-  assert.equal(parseRelayedQuestion(prompts.relayedQuestionText({ context: good.context, terms: [{ term: "Zod", explanation: "a library" }], question: good.question }), good.options), null, "a term that does not occur");
-  assert.equal(parseRelayedQuestion(`${good.context}\n\n${prompts.TERMS_HEADING}\nzod\n\n${good.question}`, good.options), null, "a term without its explanation");
+  const parts = { context: good.context as readonly Block[], question: good.question, explanations: good.explanations, options: good.options };
+  const toolOptions = good.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
+  assert.equal(parseRelayedQuestion(piecesText(good.question), toolOptions), null, "plain text");
+  assert.equal(parseRelayedQuestion(`Context.\n\n${prompts.TERMS_HEADING}\nzod: a library\n\nShould it?`, toolOptions), null, "the former Terms block");
+  assert.equal(parseRelayedQuestion(prompts.relayedQuestionText({ ...parts, explanations: [] }), toolOptions), null, "a dangling ref");
+  assert.equal(parseRelayedQuestion(prompts.relayedQuestionText(parts), [toolOptions[1], toolOptions[0]]), null, "the options reordered");
+  assert.equal(parseRelayedQuestion(prompts.relayedQuestionText(parts), toolOptions.slice(0, 1)), null, "another count of options");
+  assert.equal(parseRelayedQuestion(prompts.relayedQuestionText({ ...parts, options: [opt("Declare zod", "Add zod to package.json."), parts.options[1]] }), toolOptions), null, "a label with other words");
 });
 
-// S59 (W8-R1-1, P9-R1-1, P9-R1-2): the validation reads a Markdown field as the reader sees it, inline run by inline run.
-test("markdownRuns: the inline runs of a Markdown field as the reader sees them", async () => {
-  const { markdownRuns } = await import("../src/question.ts");
-  assert.deepEqual(markdownRuns("The cache **key** identifies it."), ["The cache key identifies it."]);
-  assert.deepEqual(markdownRuns("a `a  b` and ` x `"), ["a a  b and x"]);
-  assert.deepEqual(markdownRuns("Use [zod](https://zod.dev) now."), ["Use zod now."]);
-  assert.deepEqual(markdownRuns("\\*x\\* and a_b_c"), ["*x* and a_b_c"]);
-  assert.deepEqual(markdownRuns("one\ntwo\n\nthree"), ["one\ntwo", "three"]);
-  assert.deepEqual(markdownRuns("- first\n- second"), ["first", "second"]);
-  assert.deepEqual(markdownRuns("# Head\n\ntext"), ["Head", "text"]);
-  assert.deepEqual(markdownRuns("```\na  b\n**c**\n```"), ["a  b\n**c**\n"]);
-  assert.deepEqual(markdownRuns("> cache\n>\n> > unrelated paragraph\n>\n> key"), ["cache", "unrelated paragraph", "key"]);
-  assert.deepEqual(markdownRuns("<blockquote>cache <p>unrelated paragraph</p>key</blockquote>"), ["cache ", "unrelated paragraph", "key"]);
-  assert.deepEqual(markdownRuns("*a **b** c*"), ["a b c"]);
-  assert.deepEqual(markdownRuns("2 * 3 * 4"), ["2 * 3 * 4"]);
-});
-
-test("S59: a term split by inline markup passes the validation; a term across blocks does not", () => {
-  const split: Question = { context: "The cache **key** identifies the saved result.", question: "Should we keep it?", terms: [{ term: "cache key", explanation: "The name of a saved result." }], options: [] };
-  assert.deepEqual(questionProblems(split), []);
-  const soft = { ...split, context: "The cache\nkey identifies it.", terms: [{ term: "cache\nkey", explanation: "x" }] };
-  assert.deepEqual(questionProblems(soft), []);
-  for (const context of ["The cache\n\nkey identifies it.", "> cache\n>\n> > unrelated paragraph\n>\n> key", "- cache\n- key"]) {
-    assert.deepEqual(kinds({ ...soft, context }), ["termAbsent"], context);
-  }
-  // The plain fields are read as they are: a term inside asterisks of the question is not split.
-  assert.deepEqual(kinds({ ...split, context: "c", question: "Keep the cache **key**?" }), ["termAbsent"]);
+test("property S8: any valid question encoded as the shape parses back to itself; any string returns without throwing", async () => {
+  const { parseRelayedQuestion } = await import("../src/question.ts");
+  fc.assert(
+    fc.property(arbValid, (q) => {
+      const parts = { context: q.context as readonly Block[], question: q.question, explanations: q.explanations, options: q.options };
+      const toolOptions = q.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
+      const parsed = parseRelayedQuestion(prompts.relayedQuestionText(parts), toolOptions);
+      return questionProblems(q).length > 0 ? parsed === null : JSON.stringify(parsed) === JSON.stringify(parts);
+    }),
+    { numRuns: 200 },
+  );
+  fc.assert(fc.property(fc.string(), (text) => parseRelayedQuestion(text, []) === null || typeof parseRelayedQuestion(text, []) === "object"), { numRuns: 200 });
 });

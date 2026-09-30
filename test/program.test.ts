@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
-import { finished, tempRepo, testWiring, type WiringProbe } from "./helpers.ts";
+import { finished, tempRepo, testWiring, type WiringProbe, questionOf, currentOf } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const runProgram = (args: readonly string[], wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(args, wiring)));
@@ -121,7 +121,7 @@ test("exitCodeOf: the program's own code, 130 for an interruption, 1 for a defec
 
 // S24 (issue #25; the user's decision at the stop of execution phase 1): End the run is an interruption with exit code
 // 130, like Stop task and Ctrl+C; Stop at the cycle limit stays a halt with exit code 1. Each confirmation says so.
-const withQuestion = { steps: [{ output: { questions_for_user: [{ context: "c", question: "Which?", terms: [], options: [] }] }, plan: "v1" }], reviews: [{ issues: [] }] };
+const withQuestion = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] };
 const statedCode = (text: string): number => Number(/exit code (\d+)/.exec(text)?.[1]);
 
 test("q at a question, confirmed, ends the run as an interruption with exit code 130", async () => {
@@ -138,7 +138,7 @@ test("q at a question, confirmed, ends the run as an interruption with exit code
 });
 
 test("/quit in the clarification, confirmed, ends the run with exit code 130", async () => {
-  const turn = { message_to_user: "Tell me more.", current_question: { id: "", context: "", text: "", terms: [], options: [] }, asked_ids: [], answered_ids: [], complete: false, summary: "" };
+  const turn = { message_to_user: "Tell me more.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: false, summary: "" };
   const { wiring, probe } = testWiring(tempRepo(), {
     config: { questionPhase: true },
     steps: [{ output: { questions: [] } }, { output: turn }],

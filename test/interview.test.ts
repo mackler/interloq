@@ -4,13 +4,14 @@ import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
 import * as prompts from "../src/prompts.ts";
-import { finished, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, plain, questionEntry, questionText, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { piecesText } from "../src/pieces.ts";
 
 // Step 4.6 (finding 8; Q4): the interview matches on turn variants, and the question list is normalised.
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const noQuestions = { questions_for_user: [] };
-const q = (id: string, defaultAnswer = "A"): QuestionEntry => ({ id, context: "c", question: `question ${id}?`, reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: defaultAnswer });
-const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: "", text: "", terms: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
+const q = (id: string, defaultAnswer = "A"): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: defaultAnswer });
+const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
 
 test("a turn that is complete with a blank summary continues the conversation instead of proposing a summary", async () => {
@@ -93,8 +94,8 @@ test("the question phase notifies its beginning and end and every interview turn
   // The terminal line of a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
   assert.ok(probe.ui.said.includes("\nAnything to add?\n"));
   const confirm = presentedQuestions(probe.ui).find((q) => q.origin.kind === "confirmSummary");
-  assert.match(confirm?.details ?? "", /# Requirements\n\nNone\./);
-  assert.equal(confirm?.question, prompts.CONFIRM_SUMMARY_QUESTION);
+  assert.deepEqual(confirm?.details, [{ kind: "document", markdown: "# Requirements\n\nNone." }]);
+  assert.equal(confirm === undefined ? null : questionText(confirm), prompts.CONFIRM_SUMMARY_QUESTION);
 });
 
 // Finding 8 of docs/gui-review.md: the interview's opening help is a structured event, rendered per interface.
@@ -113,17 +114,16 @@ test("the interview's opening is an InterviewOpened event, not a terminal-only s
 
 // Decision support, plan step 3.5, and S18: an agreed question is presented from questions.json, its proposed answers its
 // options, which carry the offer; the decision is in the requirements phase, and the chosen answer goes on to Claude Code.
-const db: QuestionEntry = {
-  id: "Q1",
-  context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.",
-  question: "Which database should the service use?",
-  reason: "the schema depends on it",
-  proposed_answers: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }, { label: "Both, chosen by configuration", description: "either, by a setting" }],
-  default_answer: "PostgreSQL",
-};
-const labels = db.proposed_answers.map((a) => a.label);
+const db: QuestionEntry = questionEntry(
+  "Q1",
+  "Which database should the service use?",
+  [["PostgreSQL", "already in the container"], ["SQLite", "no server needed"], ["Both, chosen by configuration", "either, by a setting"]],
+  { context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", reason: "the schema depends on it", default_answer: "PostgreSQL" },
+);
+const dbQuestion = piecesText(db.question);
+const labels = db.proposed_answers.map((a) => piecesText(a.label));
 /** A turn that asks the agreed question by its id alone (S16, S18). */
-const asksAgreed = (id: string, text = "") => ({ ...turn("Next question.", false, ""), current_question: { id, context: "", text, terms: [], options: [] }, asked_ids: [id] });
+const asksAgreed = (id: string, text = "") => ({ ...turn("Next question.", false, ""), current_question: { id, context: [], text: plain(text), explanations: [], options: [] }, asked_ids: [id] });
 const el = { text: "t", counterarguments: [] };
 const entry = (id: string) => ({ id, title: id, comparative_condition: el, starting_cause: el, intermediate_steps: el, threshold: el, effect_on_persons: el, reason_the_effect_matters: el, extent: { per_person: el, persons_affected: el, likelihood: el, timing: el } });
 const analysis = { decision: "d", columns: labels.map((option, i) => ({ kind: "argued", option, advantages: [entry(`E${i + 1}`)], disadvantages: [] })), recommendation: { option: "", reason: "" } };
@@ -168,10 +168,10 @@ test("an agreed question answered /decide, then a label, records that option; th
 test("Help me decide on an agreed question names the question as reviewed, not the turn's text or its message", async () => {
   const { layer, probe } = decided(["/decide", "2", ""], { ...asksAgreed("Q1", "Some other wording?"), message_to_user: "Q3 recorded: changed flag." });
   await runTask(layer);
-  assert.equal(JSON.parse(read(probe.dir, "decision-1/question.json")).question, db.question);
+  assert.equal(JSON.parse(read(probe.dir, "decision-1/question.json")).question, dbQuestion);
   const analyzed = probe.ui.notified.find((e) => e._tag === "DecisionAnalyzed");
-  assert.equal(analyzed?._tag === "DecisionAnalyzed" ? analyzed.question : null, db.question);
-  assert.match(probe.planner.prompts[2], new RegExp(`The decision: ${db.question.replace(/[?]/g, "\\?")}\n`));
+  assert.equal(analyzed?._tag === "DecisionAnalyzed" ? analyzed.question : null, dbQuestion);
+  assert.match(probe.planner.prompts[2], new RegExp(`The decision: ${dbQuestion.replace(/[?]/g, "\\?")}\n`));
   // The user still reads Claude's message in the interview.
   assert.ok(probe.ui.said.some((line) => line.includes("Q3 recorded")), probe.ui.said.join("\n"));
 });
@@ -186,6 +186,6 @@ test("a turn without a current question asks for the user's reply, its message t
   });
   await runTask(layer);
   const [reply] = presentedQuestions(probe.ui);
-  assert.deepEqual([reply.origin, reply.context, reply.question, reply.options], [{ kind: "reply" }, { text: "Tell me about the deployment.", by: "agent" }, prompts.REPLY_QUESTION, []]);
+  assert.deepEqual([reply.origin, reply.context, questionText(reply), reply.options], [{ kind: "reply" }, { blocks: [{ kind: "document", markdown: "Tell me about the deployment." }], by: "agent" }, prompts.REPLY_QUESTION, []]);
   assert.ok(!probe.ui.asked[0].startsWith(prompts.OFFER_LINE));
 });

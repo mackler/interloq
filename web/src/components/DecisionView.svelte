@@ -18,9 +18,7 @@
   import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type EntryView, viewOf } from "../../../src/analysisView.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
-  import { textHtml } from "../terms.ts";
-  import { render } from "../markdown.ts";
-  import TermText from "./TermText.svelte";
+  import QuestionText from "./QuestionText.svelte";
 
   type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; onShowConversation: () => void };
   let { event, narrow, onShowConversation }: Props = $props();
@@ -72,11 +70,11 @@
     <div class="question-context m3-font-body-medium">
       <!-- S59 (P9-R2-1): the context is Markdown, as in QuestionPane and the transcript, so a term split by inline
            markup is marked here too. -->
-      <TermText class="context-text markdown" html={render(event.presented.context.text)} terms={event.presented.terms} />
+      <QuestionText class="context-text markdown" blocks={event.presented.context.blocks} explanations={event.presented.explanations} />
       {#if event.presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
-      {#if event.presented.details.trim() !== ""}<TermText class="details markdown" html={render(event.presented.details)} terms={event.presented.terms} />{/if}
+      {#if event.presented.details.length > 0}<QuestionText class="details markdown" blocks={event.presented.details} explanations={event.presented.explanations} />{/if}
     </div>
-    <p class="question-text m3-font-title-small"><TermText inline html={textHtml(event.presented.question)} terms={event.presented.terms} /></p>
+    <p class="question-text m3-font-title-small"><QuestionText class="markdown" pieces={event.presented.question} explanations={event.presented.explanations} /></p>
   </div>
   {#if narrow}
     <p class="narrow m3-font-body-medium" role="alert">{ENLARGE_WINDOW_NOTICE}</p>

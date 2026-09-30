@@ -1,14 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { analysisLines, interviewSays, recordHeading, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
-import { issue, respond } from "./helpers.ts";
+import { issue, para, plain, questionEntry, respond, term } from "./helpers.ts";
+import { blocksMarkdown, piecesText } from "../src/pieces.ts";
+import type { PresentedQuestion } from "../src/question.ts";
 import { viewOf } from "../src/analysisView.ts";
 import type { Argument, DecisionAnalysis, Entry, LogEntry } from "../src/schema.ts";
 import { OPPOSES_MARKER } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 
 /** A question as the user was shown it, for an analysis's header (S22). */
-const presentedOf = (question: string, number: number) => ({ number, origin: { kind: "relayed" as const }, context: { text: "Claude Code, the coding agent, asks.", by: "agent" as const }, terms: [{ term: "Claude Code", explanation: "the coding agent" }], question, options: [], details: "", decision: null });
+const presentedOf = (question: string, number: number): PresentedQuestion => ({
+  number,
+  origin: { kind: "relayed" },
+  context: { blocks: [{ kind: "paragraph", pieces: [term("Claude Code", "t1"), ...plain(", the coding agent, asks.")] }], by: "agent" },
+  explanations: [{ id: "t1", term: "Claude Code", explanation: "the coding agent" }],
+  question: plain(question),
+  options: [],
+  details: [],
+  decision: null,
+});
 
 // Finding 27 / recommendation D: the Store writes; the text of the records is composed here.
 test("subject headings", () => {
@@ -38,7 +49,7 @@ test("renderDecision gives the record line and the conversation line of one deci
 test("renderFeedback and renderQuestions", () => {
   assert.equal(renderFeedback("Planning phase 1", 2, "too strict"), "## Planning phase 1, round 2\ntoo strict\n\n");
   assert.equal(renderQuestions({ questions: [] }), "The list is empty.\n");
-  const list = { questions: [{ id: "Q1", context: "c", question: "A or B?", reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: "B" }] };
+  const list = { questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { default_answer: "B" })] };
   assert.equal(renderQuestions(list), "- **[Q1]** A or B?\n  Reason: r\n  - A: a\n  - B: b (default)\n");
   assert.match(renderQuestions({ questions: [{ ...list.questions[0], default_answer: null }] }), /- B: b\n$/);
 });
@@ -160,36 +171,45 @@ test("analysisLines marks exactly the texts that oppose the column's option, and
 // context set apart and indented, the terms, the question itself apart from the context, the options with their answers.
 test("questionLines prints the heading, the origin, the context, the terms, the question and the options, in that order", async () => {
   const { questionLines } = await import("../src/render.ts");
-  const q = {
+  const q: PresentedQuestion = {
     number: 4,
-    origin: { kind: "relayed" as const },
-    context: { text: "Claude Code, the coding agent, is writing the tool's input check.", by: "agent" as const },
-    terms: [{ term: "zod", explanation: "a library that checks the shape of data" }],
-    question: "Should zod be declared as a dependency?",
+    origin: { kind: "relayed" },
+    context: { blocks: para("Claude Code, the coding agent, is writing the tool's input check."), by: "agent" },
+    explanations: [{ id: "z", term: "zod", explanation: "a library that checks the shape of data" }],
+    question: [...plain("Should "), term("Zod's package", "z"), ...plain(" be declared as a dependency?")],
     options: [
-      { label: "Declare it", description: "add it to package.json", answer: { token: "1" } },
-      { label: "More cycles", description: "", answer: { numeric: true as const } },
+      { label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } },
+      { label: plain("More cycles"), description: [], answer: { numeric: true } },
     ],
-    details: "",
+    details: [],
     decision: null,
   };
   const lines = questionLines(q);
   const at = (text: string) => lines.findIndex((l) => l.includes(text));
+  const question = "Should Zod's package be declared as a dependency?";
   assert.equal(lines.find((l) => l.trim() !== ""), prompts.questionTitle(4));
-  const order = [prompts.originLine(q.origin, null).slice(0, 30), q.context.text, prompts.TERMS_HEADING, "zod: a library", q.question, "1. Declare it — add it to package.json", "More cycles (type the number)"].map(at);
+  const order = [prompts.originLine(q.origin, null).slice(0, 30), "is writing the tool's input check", prompts.TERMS_HEADING, "zod: a library", question, "1. Declare it", "add it to package.json", "More cycles (type the number)"].map(at);
   assert.ok(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1])), JSON.stringify({ order, lines }));
+  // S11 (issue #36): the Terms line is labeled with the explanation's term, not with the words of the piece.
+  assert.ok(!lines.some((l) => l.includes("Zod's package:")), JSON.stringify(lines));
+  // S11 (issue #59): the label on its own line, the description on the next, indented under the label.
+  assert.equal(lines[at("1. Declare it")], "  1. Declare it");
+  assert.equal(lines[at("1. Declare it") + 1], "     add it to package.json");
   // The context is indented and set apart by blank lines; the question is not indented.
-  assert.match(lines[at(q.context.text)], /^ {4}\S/);
-  assert.equal(lines[at(q.context.text) - 1], "");
-  assert.equal(lines[at(q.question)], q.question);
-  assert.equal(lines[at(q.question) - 1], "");
+  assert.match(lines[at("is writing the tool's input check")], /^ {4}\S/);
+  assert.equal(lines[at("is writing the tool's input check") - 1], "");
+  assert.equal(lines[at(question)], question);
+  assert.equal(lines[at(question) - 1], "");
   // S11: what the question is about follows the context, before the terms and the question.
-  const withDetails = questionLines({ ...q, details: "Codex says: the migration is missing." });
+  const withDetails = questionLines({ ...q, details: para("Codex says: the migration is missing.") });
   const d = withDetails.findIndex((l) => l.includes("Codex says"));
-  assert.ok(d > withDetails.findIndex((l) => l.includes(q.context.text)) && d < withDetails.findIndex((l) => l.includes(prompts.TERMS_HEADING)));
+  assert.ok(d > withDetails.findIndex((l) => l.includes("is writing the tool's input check")) && d < withDetails.findIndex((l) => l.includes(prompts.TERMS_HEADING)));
   // A context the program wrote is marked as the program's.
-  assert.ok(questionLines({ ...q, context: { text: "x", by: "program" } }).some((l) => l.includes(prompts.CONTEXT_BY_PROGRAM)));
+  assert.ok(questionLines({ ...q, context: { blocks: para("x"), by: "program" } }).some((l) => l.includes(prompts.CONTEXT_BY_PROGRAM)));
   assert.ok(!lines.some((l) => l.includes(prompts.CONTEXT_BY_PROGRAM)));
+  // A document block, Claude Code's message, is printed whole.
+  const doc = questionLines({ ...q, context: { blocks: [{ kind: "document", markdown: "# Title\n\n- one\n- two" }], by: "agent" } });
+  for (const line of ["    # Title", "    - one", "    - two"]) assert.ok(doc.includes(line), line);
 });
 
 test("a question inside a decision says in its origin line that it belongs to that decision and why it is asked (issue #57)", () => {
@@ -202,8 +222,12 @@ test("a question inside a decision says in its origin line that it belongs to th
 
 test("conversation.md records a question under its displayed number with the record's id beside it (S6)", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
-  const q = { number: 3, origin: { kind: "clarification" as const, id: "Q1" }, context: { text: "c", by: "agent" as const }, terms: [], question: "Which?", options: [], details: "", decision: null };
+  const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], details: [], decision: null };
   assert.match(renderQuestionRecord(q), /^### Question 3 \(Q1\)\n/);
+  // S11 (issue #59): each option's label in bold on its own line, the description on the next.
+  const record = renderQuestionRecord({ ...q, explanations: [{ id: "t", term: "zod", explanation: "a library" }], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
+  assert.ok(record.includes("- 1. **Declare it**  \n  add it to package.json"), record);
+  assert.ok(record.includes("- zod: a library"), record);
   assert.match(renderQuestionRecord({ ...q, origin: { kind: "relayed" } }), /^### Question 3\n/);
   assert.match(renderQuestionRecord({ ...q, origin: { kind: "pause", heading: "Planning phase 1", pause: "reraised", id: "P1-R1-2" } }), /^### Question 3 \(P1-R1-2\)\n/);
 });
@@ -228,16 +252,20 @@ test("pauseProse writes every kind of pause as prose, without the record's field
     pauseProse({ pause: "identical", fileLabel: "plan.json", round: 3, seen: "cycle 1" }),
     pauseProse({ pause: "idle", idle: 2, round: 2, issues: [earlier[0]] }),
   ];
-  for (const text of all) {
+  for (const text of all.map(blocksMarkdown)) {
     assert.ok(text.trim() !== "");
     for (const forbidden of ["{", "duplicate_of", "reverses:", "superseded", "\\n", "null", "decided_by_user", "partially_accepted"]) assert.ok(!text.includes(forbidden), `${forbidden} in: ${text}`);
   }
-  assert.match(all[0], /The plan omits the migration\./);
-  assert.match(all[0], /Codex says: Still no migration\.\n\nS3 is unchanged\./);
-  assert.match(all[0], /Codex raised it: The plan omits the migration\. — Claude Code rejected it: The migration is in S4\./);
-  assert.match(all[0], /you decided: Add it to S3\./);
-  assert.match(all[1], /accepted it in part: Only the index\./);
-  assert.match(all[5], /I tidied it\./);
+  const shown = all.map(blocksMarkdown);
+  assert.match(shown[0], /The plan omits the migration\./);
+  assert.match(shown[0], /Codex says: Still no migration\.\n\nS3 is unchanged\./);
+  assert.match(shown[0], /Codex raised it: The plan omits the migration\. — Claude Code rejected it: The migration is in S4\./);
+  assert.match(shown[0], /you decided: Add it to S3\./);
+  assert.match(shown[1], /accepted it in part: Only the index\./);
+  assert.match(shown[5], /I tidied it\./);
+  // S9: the facts are blocks of plain pieces, the history a list, and no piece refers to an explanation.
+  assert.ok(all[0].some((b) => b.kind === "list"));
+  assert.ok(all.flat().every((b) => b.kind !== "paragraph" || b.pieces.every((p) => p.ref === "" && !p.code)));
 });
 
 // S22: the question beside its analysis is the one the user was shown: its number, its context and its terms.
@@ -258,7 +286,7 @@ test("questionLines prints a permission's input before its question", async () =
   const q = presentedQuestion(permissionDraft("Bash", { command: "rm -rf build" }), 1);
   const lines = questionLines(q);
   const input = lines.findIndex((l) => l.includes("rm -rf build"));
-  const asked = lines.indexOf(q.question);
+  const asked = lines.indexOf(piecesText(q.question));
   assert.ok(input > 0 && asked > input, JSON.stringify(lines));
   assert.ok(lines.some((l) => l.includes(prompts.TOOL_INPUT_HEADING)));
 });

@@ -6,6 +6,7 @@ import { describe, type RunError } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { questionPhase } from "./interview.ts";
 import { execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkReviewEnd } from "./prompts.ts";
+import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
 import type { QuestionOrigin } from "./question.ts";
@@ -89,7 +90,7 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
           // A stop is handled as before the work review existed: its input is recorded first.
           yield* ui.say(`Remaining work: ${outcome.remainingWork || "not reported"}`);
           const origin: QuestionOrigin = { kind: "execStop", phase: k, status: outcome.status };
-          const draft = { origin, context: programContext(origin), terms: [], question: execStopQuestion(), options: [], details: execStopDetails(outcome.question), decision: null };
+          const draft = { origin, context: programContext(origin), explanations: [], question: plainPieces(execStopQuestion()), options: [], details: execStopDetails(outcome.question), decision: null };
           const input = outcome.userInput ?? (yield* askOffering((p) => ui.ask(p), execInputPrompt, draft, (a) => a !== ""));
           const question = outcome.question.replace(/\s+/g, " ");
           yield* store.appendDecision({ subject: `stop in execution phase ${k} (${outcome.status}): ${question}`, id: null, decision: input, phase: k, round: 0 });

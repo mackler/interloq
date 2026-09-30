@@ -11,6 +11,7 @@ import * as S from "./schema.ts";
 import type { DecisionAnalysis, DecisionApplied, DecisionResponse, Plan, PlannerResponse, PlanResponse, PlanWrite, PlanWriteResult, QuestionList, QuestionListResponse, QuestionsFile, RecordedPlan, TermsEntry, TermsResponse, TermsWrite } from "./schema.ts";
 import { QuestionInvalid } from "./errors.ts";
 import type { QuestionProblem } from "./prompts.ts";
+import { sameBlocks, samePieces } from "./pieces.ts";
 import { questionProblems } from "./question.ts";
 import { validatePlan } from "./plan.ts";
 import { normalizeQuestionList } from "./schemaNormalize.ts";
@@ -32,7 +33,7 @@ export const writeQuestions = (task: string, list: QuestionList): Effect.Effect<
  */
 export const questionListValidation = <T extends Readonly<{ questions: readonly QuestionList["questions"][number][] }>>(): Validation<T> =>
   questionsValidation((output: T) =>
-    output.questions.map((e, i) => ({ where: e.id.trim() === "" ? `question ${i + 1}` : e.id, question: { context: e.context, question: e.question, terms: [], options: e.proposed_answers } })),
+    output.questions.map((e, i) => ({ where: e.id.trim() === "" ? `question ${i + 1}` : e.id, question: { context: e.context, question: e.question, explanations: [], options: e.proposed_answers, details: e.reason } })),
   );
 
 /** The question list. Claude Code returns the amended list, and the program writes it to questions.json. */
@@ -55,12 +56,20 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
   };
 }
 
-/** The kinds of problem that concern the terms of a question (S17), the ones the explanations can have. */
-const TERM_PROBLEMS: readonly QuestionProblem["kind"][] = ["blankTerm", "blankExplanation", "termAbsent", "duplicateTerm"];
+/** The kinds of problem of the question list itself, which its own review settled: not the explanations' to repair. */
+const LIST_PROBLEMS: readonly QuestionProblem["kind"][] = ["blankContext", "notLast", "bareNumber"];
+/** The fields of an agreed entry whose wording the division into pieces keeps (decision Q1), each compared by its words and blocks. */
+const wordingChanges = (agreed: QuestionsFile["questions"][number], entry: TermsEntry): readonly QuestionProblem[] => [
+  ...(sameBlocks(entry.context, agreed.context) ? [] : ["context"]),
+  ...(samePieces(entry.question, agreed.question) ? [] : ["question"]),
+  ...(sameBlocks(entry.reason, agreed.reason) ? [] : ["reason"]),
+  ...(entry.proposed_answers.length === agreed.proposed_answers.length && entry.proposed_answers.every((a, i) => samePieces(a.label, agreed.proposed_answers[i].label) && samePieces(a.description, agreed.proposed_answers[i].description)) ? [] : ["proposed_answers"]),
+].map((subject) => ({ kind: "wordingChanged" as const, subject }));
 /**
- * The validation of the explanations (S17): every entry names a question of the agreed list, and its terms are non-blank,
- * unique and occur, in their exact words, in that question's context, text, reason, proposed answers or default; an
- * explanation need not occur. Inside behaviour 10's validation budget, like the list's own validation.
+ * The validation of the explanations (S17; S6 of the task of issue #36, decision Q1): every entry names a question of the
+ * agreed list, keeps its wording (its fields' words and blocks), and holds its explanations under the data clauses of
+ * the format: every ref names an explanation, every explanation is referred to, none blank. Inside behaviour 10's
+ * validation budget, like the list's own validation.
  */
 export const termsValidation =
   <T extends Readonly<{ entries: readonly TermsEntry[] }>>(questions: QuestionsFile["questions"]): Validation<T> =>
@@ -68,7 +77,10 @@ export const termsValidation =
     const failing = output.entries.flatMap((entry): { where: string; problems: readonly QuestionProblem[] }[] => {
       const q = questions.find((x) => x.id === entry.id);
       if (q === undefined) return [{ where: entry.id, problems: [{ kind: "unknownQuestion", subject: entry.id }] }];
-      const problems = questionProblems({ context: q.context, question: q.question, terms: entry.terms, options: q.proposed_answers, details: `${q.reason}\n${q.default_answer ?? ""}` }, "context").filter((p) => TERM_PROBLEMS.includes(p.kind));
+      const problems = [
+        ...wordingChanges(q, entry),
+        ...questionProblems({ context: entry.context, question: entry.question, explanations: entry.explanations, options: entry.proposed_answers, details: entry.reason }).filter((p) => !LIST_PROBLEMS.includes(p.kind)),
+      ];
       return problems.length === 0 ? [] : [{ where: entry.id, problems }];
     });
     if (failing.length === 0) return Result.succeed({ value: output, notes: [] });

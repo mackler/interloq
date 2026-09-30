@@ -11,7 +11,8 @@ import { withOffer } from "../src/prompts.ts";
 import type { RunError } from "../src/errors.ts";
 import type { ArguedColumn, Column, DecisionAnalysis, Entry } from "../src/schema.ts";
 import { Decider, type DecisionQuestion, type Services, Store, Ui } from "../src/services.ts";
-import { issue, respond, tempRepo, testLayer, type TestOptions, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { issue, opt, para, plain, questionEntry, respond, tempRepo, term, testLayer, type TestOptions, presentedQuestions, presentedSubjects, userQuestion, questionOf } from "./helpers.ts";
+import { piecesText } from "../src/pieces.ts";
 
 /** The column as an argued one (a test fails on an unclear column). */
 const argued = (column: Column): ArguedColumn => {
@@ -127,7 +128,7 @@ test("0 at the cycle limit halts with RoundLimitStop; p proceeds to the choice",
   assert.equal((await Effect.runPromise(loop(proceeding.layer))).result, "proceed");
   // S5: the proceed choice is an option of the presented question, described in the subject's words.
   const limit = proceeding.probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "limit" ? [e.question] : []));
-  assert.ok(limit.some((q) => q.options.some((o) => /proceed to your choice with the analysis as it is/i.test(o.description))));
+  assert.ok(limit.some((q) => q.options.some((o) => /proceed to your choice with the analysis as it is/i.test(piecesText(o.description)))));
 });
 
 test("an invalid analysis gets one repair turn; a second invalid reply halts", async () => {
@@ -172,7 +173,7 @@ test("the Decider of a phase runs a decision loop recorded in that phase", async
 // Decision support, plan step 3.4 (D2, P1-R1-3, P1-R1-4): the ask that carries the offer.
 const offered = numberedOptions(question.options);
 /** A question as askOffering takes it (S7): a relayed question with the given text and options. */
-const draftOf = (q: Readonly<{ question: string; options: readonly OfferedOption[] }>): QuestionDraft => ({ origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: q.question, options: q.options, decision: null });
+const draftOf = (q: Readonly<{ question: string; options: readonly OfferedOption[] }>): QuestionDraft => ({ origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain(q.question), options: q.options, decision: null });
 const offering = (layer: Layer.Layer<Services>, q: Readonly<{ question: string; options: readonly OfferedOption[] }>, prompt = "Pick > ") =>
   Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
@@ -192,7 +193,7 @@ test("/decide runs a decision, shows it, restores the presentation and asks agai
   const { presented, ...rest } = shown[0] as Extract<UiEvent, { _tag: "DecisionAnalyzed" }>;
   assert.deepEqual(rest, { _tag: "DecisionAnalyzed", decision: 1, question: question.question, options: question.options, analysis: analysis() });
   // S22: the analysis is shown beside the question as the user was shown it.
-  assert.equal(presented.question, question.question);
+  assert.equal(piecesText(presented.question), question.question);
   assert.equal(presented.number, 1);
   assert.deepEqual(json(probe.dir, "decision-1/chosen.json"), { version: 2, decision: 1, answer: "2", option: "PostgreSQL" });
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*User choice\*\* after decision 1: 2 \(PostgreSQL\)/);
@@ -270,7 +271,7 @@ test("a disputed pause offers Help me decide; the analysis runs in the phase, an
   // S5: the options are presented with the question, each with the number that chooses it.
   const presented = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "pause" ? [e.question] : []));
   assert.ok(presented.length > 0);
-  assert.deepEqual(presented[0].options[0], { label: prompts.REVIEWER_POSITION, description: "p e", answer: { token: "1" } });
+  assert.deepEqual(presented[0].options[0], { label: plain(prompts.REVIEWER_POSITION), description: plain("p e"), answer: { token: "1" } });
   assert.deepEqual(json(probe.dir, "decision-1/question.json").phase, { kind: "planning", n: 1 });
   assert.equal(json(probe.dir, "decision-1/chosen.json").option, prompts.REVIEWER_POSITION);
   assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), new RegExp(`Decision: ${prompts.REVIEWER_POSITION.replace(/[()]/g, "\\$&")}: p e`));
@@ -283,7 +284,7 @@ test("a decision inside a decision: a pause of decision 1 opens decision 2 in th
     // "" is no decision at decision 1's idle pause (two cycles without an amendment).
     answers: ["/decide", "/decide", "2", "", "1"],
     steps: [
-      { output: { questions_for_user: [{ context: "c", question: "Which database?", terms: [], options: question.options }] }, plan: "v1" },
+      { output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: question.options })] }, plan: "v1" },
       { output: analysis() },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
       { output: twoColumns(prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION) },
@@ -379,7 +380,7 @@ test("a review response with an invalid analysis gets the validation repair turn
 });
 
 test("the application of the user's decisions with an invalid analysis gets the validation repair turn", async () => {
-  const withQuestion = { ...decisionResponse([["D1-R1-1", "accepted"]], analysis("second")), questions_for_user: [{ context: "c", question: "Which one?", terms: [], options: [] }] };
+  const withQuestion = { ...decisionResponse([["D1-R1-1", "accepted"]], analysis("second")), questions_for_user: [userQuestion("Which one?")] };
   const { layer, probe } = await setUp({
     answers: ["the first"],
     steps: [{ output: analysis() }, { output: withQuestion }, { output: { analysis: misnamed() } }, { output: { analysis: analysis("third") } }],
@@ -431,7 +432,7 @@ test("a decision names its phase by the run's count: Planning in a run of one it
   const { countOfKind, foreseenPhases, phaseName } = await import("../src/uiEvents.ts");
   const { finished } = await import("./helpers.ts");
   const noQuestions = { questions_for_user: [] };
-  const asking = { questions_for_user: [{ context: "c", question: question.question, terms: [], options: question.options }] };
+  const asking = { questions_for_user: [userQuestion(question.question, question.options.map((o) => [o.label, o.description] as const))] };
   const expected = (iterations: number, n: number) => `The run is in ${phaseName({ kind: "planning", n }, countOfKind(foreseenPhases(false, iterations), "planning"))}.`;
   const analysisPrompt = (prompts: readonly string[]) => prompts.find((p) => p.includes(prompts_.DECISION_FORMAT_AUTHORITY)) ?? "";
   const prompts_ = prompts;
@@ -460,7 +461,7 @@ test("a decision names its phase by the run's count: Planning in a run of one it
 // S20 (issue #57): a question Claude Code raises inside decision k (an option it cannot argue from) is presented as
 // belonging to decision k, with the reason it is asked, and still offers Help me decide (behavior 13 unchanged).
 test("a question raised inside a decision says that it belongs to that decision and why, and keeps the offer", async () => {
-  const unclear = { context: "Claude Code, the planning agent, is working out the arguments for the options of Decision 1 now, for your choice.", question: "Option 2 does not say what the agent is told about the order of the steps. Which is meant?", terms: [], options: [{ label: "Any order", description: "the agent is told it may work the steps in any order" }, { label: "In order", description: "the agent is told to work the steps in their order" }] };
+  const unclear = userQuestion("Option 2 does not say what the agent is told about the order of the steps. Which is meant?", [["Any order", "the agent is told it may work the steps in any order"], ["In order", "the agent is told to work the steps in their order"]], { context: para("Claude Code, the planning agent, is working out the arguments for the options of Decision 1 now, for your choice.") });
   const withQuestion = { ...decisionResponse([["D1-R1-1", "accepted"]], analysis("second")), questions_for_user: [unclear] };
   const { layer, probe } = await setUp({
     answers: ["1"],
@@ -468,7 +469,7 @@ test("a question raised inside a decision says that it belongs to that decision 
     reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [] }],
   });
   await Effect.runPromise(loop(layer));
-  const inside = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : [])).find((q) => q.question === unclear.question);
+  const inside = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : [])).find((q) => piecesText(q.question) === piecesText(unclear.question));
   assert.ok(inside !== undefined);
   assert.equal(inside.decision, 1);
   assert.deepEqual(inside.origin, { kind: "planner", heading: "Decision 1" });
@@ -508,11 +509,16 @@ const decideOn = async (draft: QuestionDraft) => {
 
 test("a relayed question in the shape gives the analysis its context paragraph and its terms", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
-  const text = prompts.relayedQuestionText({ context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with it.", terms: [{ term: "service", explanation: "The program this task builds." }], question: "Which database should the service use?" });
+  const text = prompts.relayedQuestionText({
+    context: [{ kind: "paragraph", pieces: [...plain("The "), term("service", "s"), ...plain(" keeps its data in a database, which Interloq, the orchestrator, starts with it.")] }],
+    question: plain("Which database should the service use?"),
+    explanations: [{ id: "s", term: "service", explanation: "The program this task builds." }],
+    options: question.options.map((o) => opt(o.label, o.description)),
+  });
   const parsed = parseRelayedQuestion(text, question.options);
   assert.ok(parsed !== null);
-  const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { text: parsed.context, by: "agent" }, terms: parsed.terms, question: parsed.question, options: offered, decision: null });
-  assert.ok(prompt.includes(parsed.context), prompt.slice(-1500));
+  const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: parsed.context, by: "agent" }, explanations: parsed.explanations, question: parsed.question, options: offered, decision: null });
+  assert.ok(prompt.includes("The service keeps its data in a database"), prompt.slice(-1500));
   assert.ok(prompt.includes("service: The program this task builds."));
   const { shown: _shown, ...recorded } = json(probe.dir, "decision-1/question.json");
   assert.deepEqual(Object.keys(recorded).sort(), ["decision", "label", "options", "phase", "question", "version"]);
@@ -521,13 +527,44 @@ test("a relayed question in the shape gives the analysis its context paragraph a
 test("an agreed question gives the analysis its reviewed context, reason and terms; a pause its details", async () => {
   const { turnDraft } = await import("../src/conversation.ts");
   const { normalizeTurn } = await import("../src/schemaNormalize.ts");
-  const agreed = { id: "Q1", context: "The service stores orders in a database.", question: "Which database?", reason: "the schema depends on it", proposed_answers: question.options, default_answer: "SQLite" };
-  const turn = normalizeTurn({ message_to_user: "", current_question: { id: "Q1", context: "", text: "", terms: [], options: [] }, asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" });
-  const draft = turnDraft(turn, { questions: [agreed], terms: [{ id: "Q1", terms: [{ term: "orders", explanation: "What customers buy." }] }] });
+  const agreed = questionEntry("Q1", "Which database?", question.options.map((o) => [o.label, o.description] as const), { context: "The service stores orders in a database.", reason: "the schema depends on it", default_answer: "SQLite" });
+  const turn = normalizeTurn({ message_to_user: "", current_question: { id: "Q1", context: [], text: [], explanations: [], options: [] }, asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" });
+  const divided = { ...agreed, explanations: [{ id: "o", term: "orders", explanation: "What customers buy." }], context: [{ kind: "paragraph" as const, pieces: [...plain("The service stores "), term("orders", "o"), ...plain(" in a database.")] }] };
+  const draft = turnDraft(turn, { questions: [agreed], terms: [divided] });
   const { prompt } = await decideOn(draft);
-  for (const part of [agreed.context, "the schema depends on it", "orders: What customers buy."]) assert.ok(prompt.includes(part), part);
+  for (const part of ["The service stores orders in a database.", "the schema depends on it", "orders: What customers buy."]) assert.ok(prompt.includes(part), part);
   const { decisionDraft } = await import("../src/review.ts");
   const facts = { pause: "reraised" as const, id: "P1-R1-1", history: [], issue: { id: "P1-R1-1", severity: "major" as const, location: "S1", problem: "The migration is missing.", evidence: "S1 never migrates." } };
   const pause = await decideOn({ ...decisionDraft("Planning phase 1", { kind: "pause", facts }, question.options, null), explain: undefined });
   assert.ok(pause.prompt.includes("Codex says: The migration is missing."), pause.prompt.slice(-1500));
+});
+
+// S10 of the task of issue #36: the context call may rephrase a question the program composed (G-R1-1); Help me decide
+// then analyzes the question as the user was shown it, and the answer is still chosen and recorded by the program's own
+// option, paired by position.
+test("S10: after a context call rephrases a permission question, the analysis argues about the shown wording; the choice is the program's", async () => {
+  const { permissionDraft } = await import("../src/offer.ts");
+  const { scriptedContextReply } = await import("./helpers.ts");
+  const shownLabels = ["Let it run the command", "Stop it from running the command"];
+  const rephrase = (prompt: string) => ({
+    ...scriptedContextReply(prompt),
+    question: plain("Do you want Claude Code to run the command shown above?"),
+    options: [opt(shownLabels[0], "The listing is made."), opt(shownLabels[1], "Nothing is listed.")],
+  });
+  const twoShown: DecisionAnalysis = { ...analysis(), columns: shownLabels.map((option, i) => ({ kind: "argued" as const, option, advantages: [entry(`E${i + 1}`)], disadvantages: [] })) };
+  const { layer, probe } = await setUp({ answers: ["/decide", "y"], contexts: [{ output: rephrase }], steps: [{ output: twoShown }], reviews: [{ issues: [] }] });
+  const answer = await Effect.runPromise(
+    Effect.gen(function* () {
+      const ui = yield* Ui;
+      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, permissionDraft("Bash", { command: "ls" }));
+    }).pipe(Effect.provide(layer)),
+  );
+  assert.equal(answer, "y");
+  const prompt = analysisPromptOf(probe.planner.prompts);
+  assert.match(prompt, /The decision: Do you want Claude Code to run the command shown above\?\n/);
+  for (const label of shownLabels) assert.ok(prompt.includes(JSON.stringify(label)), label);
+  assert.deepEqual(json(probe.dir, "decision-1/question.json").options.map((o: { label: string }) => o.label), shownLabels);
+  assert.deepEqual(json(probe.dir, "decision-1/chosen.json"), { version: 2, decision: 1, answer: "y", option: prompts.PERMISSION_ALLOW });
+  const analyzed = probe.ui.notified.find((e) => e._tag === "DecisionAnalyzed");
+  assert.deepEqual(analyzed?._tag === "DecisionAnalyzed" ? analyzed.presented.question : null, plain("Do you want Claude Code to run the command shown above?"));
 });

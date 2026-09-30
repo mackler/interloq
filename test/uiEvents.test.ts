@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { countOfKind, describeEvent, foreseenPhases, phaseName, type UiEvent } from "../src/uiEvents.ts";
+import { para, plain } from "./helpers.ts";
 
 const review = { issues: [] };
 const response = { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
@@ -27,10 +28,10 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   InterviewOpened: [{ _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 3 }, /Clarification opened, 3 questions/],
   ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done" }, /Claude Code said: done/],
   QuestionPresented: [
-    { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Which?", options: [{ label: "A", description: "", answer: { token: "1" } }, { label: "B", description: "", answer: { token: "2" } }], details: "", decision: null } },
+    { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], answer: { token: "1" } }, { label: plain("B"), description: [], answer: { token: "2" } }], details: [], decision: null } },
     /question 3: Which\? \(2 options\)/,
   ],
-  DecisionAnalyzed: [{ _tag: "DecisionAnalyzed", decision: 2, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: "", decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } }, /decision 2 analyzed: Which\? \(0 columns\)/],
+  DecisionAnalyzed: [{ _tag: "DecisionAnalyzed", decision: 2, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: [], decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } }, /decision 2 analyzed: Which\? \(0 columns\)/],
   AnswerRejected: [{ _tag: "AnswerRejected" }, /answer rejected, asked again/],
   PhasesForeseen: [{ _tag: "PhasesForeseen", phases: [{ kind: "planning", n: 1 }, { kind: "execution", n: 1 }] }, /phases foreseen: Planning 1, Implementation 1/],
   PlanChanged: [{ _tag: "PlanChanged", phase: 2, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "", status: "done" }, { id: "S2", number: 2, label: "l", text: "", status: "started" }] }] }, step: null }, /plan of phase 2 changed: 1 of 2 steps done/],

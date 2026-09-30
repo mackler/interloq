@@ -7,7 +7,7 @@ import { describe, type StateFileInvalid } from "../src/errors.ts";
 import { platformLayer } from "../src/platform.ts";
 import { AnalysisFile, ChoiceFile, DecisionQuestionFile, readCheckpoint, readLog, readQuestions, readUsage } from "../src/records.ts";
 import { Schema } from "effect";
-import { finished, issue, respond, runTask, tempRepo, testLayer } from "./helpers.ts";
+import { finished, issue, respond, runTask, tempRepo, testLayer, entryOf } from "./helpers.ts";
 
 // Decision Q5: tagged version-2 records. Only the current shape is read (the developer removed the old-shape
 // readers and the converter on 25 Sep 2026); a file of the old shape is StateFileInvalid.
@@ -61,7 +61,7 @@ test("readUsage reads version-2 lines and rejects a line of the old shape, namin
 });
 
 test("readQuestions reads the version-2 file and rejects one without the version marker", () => {
-  const file = { version: 2, task: "t", questions: [{ id: "Q1", context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }], default_answer: null }] };
+  const file = { version: 2, task: "t", questions: [{ ...entryOf({ id: "Q1", context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }], default_answer: "" }), default_answer: null }] };
   assert.deepEqual(ok(readQuestions("questions.json", JSON.stringify(file))), file);
   const { version: _v, ...old } = file;
   assert.match(failureText(readQuestions("questions.json", JSON.stringify(old))), /questions\.json could not be read/);

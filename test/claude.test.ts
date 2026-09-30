@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { programWritten } from "../src/questionContext.ts";
-import { questionMarkdown } from "../src/render.ts";
+import { questionLines } from "../src/render.ts";
+import { blocksMarkdown, piecesText, plainBlocks } from "../src/pieces.ts";
 import type { ContextRequest } from "../src/prompts.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -17,7 +18,7 @@ import { Decider, type DeciderShape, type PlannerShape, RunConfig, Sdk, Store, t
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, messages, reportStep, success, type Script } from "./fakeSdk.ts";
-import { noDecider, noReporter, ScriptedUi, tempRepo } from "./helpers.ts";
+import { noDecider, noReporter, ScriptedUi, tempRepo, questionOf, plain, term } from "./helpers.ts";
 
 /** Runs an effect with a Decider that no test here expects to be used, unless a test gives its own. */
 const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape = noDecider): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Decider, decider)));
@@ -58,10 +59,10 @@ const aborted = (options: Options): Promise<void> => {
 };
 
 test("a planning call returns the structured output and records usage", async () => {
-  const fake = await planner([messages(init("session-7"), assistantTool("Read", { file_path: "/x" }), success({ questions_for_user: [{ context: "c", question: "q?", terms: [], options: [] }] }, "done"))]);
+  const fake = await planner([messages(init("session-7"), assistantTool("Read", { file_path: "/x" }), success({ questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] }, "done"))]);
   const call = await run(fake.planner.planning("write the plan", schema));
 
-  assert.deepEqual(call.output, { questions_for_user: [{ context: "c", question: "q?", terms: [], options: [] }] });
+  assert.deepEqual(call.output, { questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] });
   assert.equal(call.resultText, "done");
   assert.equal(call.costUsd, 0.25);
   assert.equal(Effect.runSync(fake.planner.sessionId), "session-7");
@@ -494,9 +495,9 @@ test("a relayed question is notified with its options before the user is asked",
   const presented = activity(fake.ui).filter((e) => e._tag === "QuestionPresented");
   assert.equal(presented.length, 1);
   const q = presented[0]._tag === "QuestionPresented" ? presented[0].question : null;
-  assert.equal(q?.question, "A or B?");
+  assert.equal(q === null ? null : piecesText(q.question), "A or B?");
   assert.deepEqual(q?.origin, { kind: "relayed" });
-  assert.deepEqual(q?.options, [{ label: "A", description: "a", answer: { token: "1" } }, { label: "B", description: "b", answer: { token: "2" } }]);
+  assert.deepEqual(q?.options, [{ label: plain("A"), description: plain("a"), answer: { token: "1" } }, { label: plain("B"), description: plain("b"), answer: { token: "2" } }]);
 });
 
 // S8: the terminal prints a relayed question from its QuestionPresented event, so the adapter says none of its lines.
@@ -578,10 +579,10 @@ test("a relayed question with options offers Help me decide, presents the questi
   const fake = await planner([script], ["/decide", "2"]);
   const { decider, requests } = recordingDecider();
   await run(fake.planner.planning("write the plan", schema), decider);
-  const [{ shown, ...request }] = requests as { shown: { context: string; terms: unknown[]; details: string } }[];
+  const [{ shown, ...request }] = requests as { shown: { context: string; explanations: unknown[]; details: string } }[];
   assert.deepEqual(request, { question: "A or B?", options: questions[0].options, number: 1 });
   // S37: the analysis is given the question as the user was shown it.
-  assert.deepEqual(shown, { context: prompts.fallbackContext({ kind: "relayed" }), terms: [], details: "" });
+  assert.deepEqual(shown, { context: prompts.fallbackContext({ kind: "relayed" }), explanations: [], details: "" });
   assert.ok(fake.ui.asked.every((a) => a.startsWith(prompts.OFFER_LINE)));
   assert.equal(fake.ui.notified.filter((e) => e._tag === "QuestionPresented").length, 2, "the question is presented again after the analysis");
   assert.ok(fake.ui.notified.some((e) => e._tag === "DecisionAnalyzed"));
@@ -863,8 +864,15 @@ test("faults beyond the retries, then Stop at the exhaustion pause: executing fa
 // S14 (Q2, G-R1-2): a relayed question in the shape of RELAYED_SHAPE is shown from its own parts; any other is not denied,
 // and a context call writes its context and terms while the execution call waits.
 test("a relayed question in the shape is presented from its own parts, with no context call", async () => {
-  const text = prompts.relayedQuestionText({ context: "Claude Code, the coding agent, checks the input of a tool with zod, a library, now, while it carries out the plan, so that bad input is refused.", terms: [{ term: "zod", explanation: "A library that checks the shape of data." }], question: "Should zod be declared as a dependency?" });
-  const questions = [{ question: text, options: [{ label: "Declare it", description: "add it to package.json" }, { label: "Leave it", description: "keep it the SDK's" }] }];
+  const zod = { id: "z", term: "zod", explanation: "A library that checks the shape of data." };
+  const options = [{ label: "Declare it", description: "add it to package.json" }, { label: "Leave it", description: "keep it the SDK's" }];
+  const text = prompts.relayedQuestionText({
+    context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, checks the input of a tool with "), term("Zod", "z"), ...plain(", a library, now, while it carries out the plan, so that bad input is refused.")] }],
+    question: [...plain("Should "), term("zod", "z"), ...plain(" be declared as a dependency?")],
+    explanations: [zod],
+    options: [{ label: plain("Declare it"), description: [...plain("add it to package.json")] }, { label: plain("Leave it"), description: plain("keep it the SDK's") }],
+  });
+  const questions = [{ question: text, options }];
   const script: Script = (call) => (async function* () {
     yield init();
     await permission(call.options)("AskUserQuestion", { questions }, callContext());
@@ -875,10 +883,11 @@ test("a relayed question in the shape is presented from its own parts, with no c
   await run(fake.planner.executing("implement the plan", noReporter), decider);
   assert.deepEqual(explained, []);
   const [q] = fake.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
-  assert.equal(q.question, "Should zod be declared as a dependency?");
+  assert.equal(piecesText(q.question), "Should zod be declared as a dependency?");
   assert.equal(q.context.by, "agent");
-  assert.match(q.context.text, /^Claude Code, the coding agent/);
-  assert.deepEqual(q.terms, [{ term: "zod", explanation: "A library that checks the shape of data." }]);
+  assert.match(blocksMarkdown(q.context.blocks), /^Claude Code, the coding agent/);
+  assert.deepEqual(q.explanations, [zod]);
+  assert.deepEqual(q.options.map((o) => piecesText(o.label)), ["Declare it", "Leave it"]);
 });
 
 test("a relayed question without the shape is not denied: a context call writes its context from the question and the plan", async () => {
@@ -893,11 +902,11 @@ test("a relayed question without the shape is not denied: a context call writes 
   const { decider, explained } = recordingDecider();
   const outcome = await run(fake.planner.executing("implement the plan", noReporter), decider);
   assert.equal(explained.length, 1);
-  assert.equal(explained[0].question, "A or B?");
+  assert.equal(piecesText(explained[0].question), "A or B?");
   assert.deepEqual(explained[0].origin, { kind: "relayed" });
   assert.match(explained[0].facts, /# The plan\n\n1\. Build it\./);
   const [q] = fake.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
-  assert.equal(q.question, "A or B?");
+  assert.equal(piecesText(q.question), "A or B?");
   assert.match(outcome.userInput ?? "", /A or B\? -> B/, "the recorded stop and its answer are unchanged");
 });
 
@@ -934,7 +943,7 @@ const permissionAsked = async (tool: string, input: Record<string, unknown>, exp
 test("an Edit permission shows the file and both texts under plain labels, never the raw keys, with the program's context", async () => {
   const { q, conversation } = await permissionAsked("Edit", { file_path: "/tmp/config", old_string: "safe", new_string: "unsafe" });
   assert.equal(q.context.by, "program");
-  for (const text of [q.details, questionMarkdown(q), conversation]) {
+  for (const text of [blocksMarkdown(q.details), questionLines(q).join("\n"), conversation]) {
     for (const shown of ["/tmp/config", "safe", "unsafe", prompts.TOOL_INPUT_HEADING]) assert.ok(text.includes(shown), `${shown} in ${text}`);
     for (const raw of ["file_path", "old_string", "new_string"]) assert.ok(!text.includes(raw), `${raw} in ${text}`);
   }
@@ -944,12 +953,15 @@ test("an unknown field keeps its own name, explained as a term, with and without
   const overwrite = await permissionAsked("FutureTool", { overwrite: true });
   const dryRun = await permissionAsked("FutureTool", { dry_run: true });
   assert.notEqual(overwrite.q.details, dryRun.q.details);
-  assert.deepEqual(overwrite.q.terms, [{ term: "overwrite", explanation: prompts.unknownSettingExplanation }]);
-  assert.deepEqual(dryRun.q.terms, [{ term: "dry_run", explanation: prompts.unknownSettingExplanation }]);
-  const agent = await permissionAsked("FutureTool", { overwrite: true }, (request) =>
-    Effect.succeed({ context: { text: "Written by Claude Code.", by: "agent" as const }, terms: [{ term: "overwrite", explanation: "Replaces the file if it exists." }, { term: "FutureTool", explanation: "A tool." }] }),
+  assert.deepEqual(overwrite.q.explanations, [{ id: "setting-1", term: "overwrite", explanation: prompts.unknownSettingExplanation }]);
+  assert.deepEqual(dryRun.q.explanations, [{ id: "setting-1", term: "dry_run", explanation: prompts.unknownSettingExplanation }]);
+  // The context call rewrites the explanation of the same id, which the name's code piece keeps referring to.
+  const agent = await permissionAsked("FutureTool", { overwrite: true }, () =>
+    Effect.succeed({ context: { blocks: plainBlocks("Written by Claude Code."), by: "agent" as const }, explanations: [{ id: "setting-1", term: "overwrite", explanation: "Replaces the file if it exists." }] }),
   );
-  assert.deepEqual(agent.q.terms, [{ term: "overwrite", explanation: "Replaces the file if it exists." }, { term: "FutureTool", explanation: "A tool." }]);
+  assert.deepEqual(agent.q.explanations, [{ id: "setting-1", term: "overwrite", explanation: "Replaces the file if it exists." }]);
+  const named = agent.q.details.flatMap((b) => (b.kind === "list" ? b.items.flatMap((i) => i.pieces) : [])).find((p) => p.code && p.ref !== "");
+  assert.deepEqual(named, { text: "overwrite", ref: "setting-1", code: true });
 });
 
 test("the context call's facts name the unknown fields and ask for each to be explained as a term", async () => {

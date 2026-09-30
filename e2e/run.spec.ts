@@ -1,6 +1,6 @@
 import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
-import { agreedDetails, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, stageHeading, stepLabel } from "../src/prompts.ts";
+import { AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -346,7 +346,8 @@ test("(15) a rejected empty reply keeps the analysis shown; the answer that foll
   // S46 (W3-R1-3): the agreed question's reason, its details, is shown with its context beside the analysis.
   const context = analysis.locator(".question-context");
   await context.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-  await expect(context).toContainText(agreedDetails("r"));
+  await expect(context).toContainText(AGREED_REASON_HEADING);
+  await expect(context).toContainText("r");
   await page.locator("textarea[name=answer]").press("Enter");
   // The Help me decide answer and the empty one.
   await expect(page.locator("[data-author=user]")).toHaveCount(2);
@@ -419,6 +420,11 @@ test("(19) a term's explanation is reached by keyboard in the question pane", as
   await expect(page.getByRole("tooltip")).toHaveCount(0);
   // Shift+Tab reaches the term before it, "database", whose explanation opens in turn.
   await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("tooltip")).toContainText("The database of this task");
+  // Issue #36: a plural with a capital, "Databases", refers to the same explanation; exact words never explained it.
+  await page.keyboard.press("Escape");
+  const plural = pane(page).locator(".context .term", { hasText: "Databases" });
+  await plural.hover();
   await expect(page.getByRole("tooltip")).toContainText("The database of this task");
   await continueWithoutDeciding(page).click();
   await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();

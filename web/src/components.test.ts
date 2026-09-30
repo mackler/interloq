@@ -18,6 +18,8 @@ import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
 import { clockTime, fullTime, TOOLTIP_GRACE_MS } from "./time.ts";
 import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
+import { plainBlocks, plainPieces } from "../../src/pieces.ts";
+const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
 let mounted: ReturnType<typeof mount>[] = [];
@@ -581,7 +583,7 @@ describe("App and the draft", () => {
   // W2-R1-3: the conversation shown for run 1's decision 1 does not hide run 2's decision 1.
   test("the conversation toggle of one run's decision leaves the next run's decision of the same number displayed", async () => {
     const { root, ws } = await openPage();
-    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: "", decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
+    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
     ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
     one(root, "button[name=conversation]").click();
@@ -596,7 +598,7 @@ describe("App and the draft", () => {
   // analysis's "Show the conversation" shows the conversation itself.
   test("beside an analysis the pane shows only its answers; the analysis's Show the conversation shows the transcript", async () => {
     const { root, ws } = await openPage();
-    const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: "", decision: null };
+    const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null };
     const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: presentedQ, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
     ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question: presentedQ } }, analyzed, asked(1)]) }] });
     expect(root.querySelector(".pane")).not.toBe(null);
@@ -738,7 +740,7 @@ describe("DecisionView", () => {
     extent: { per_person: el(`pp ${id}`), persons_affected: el(`pa ${id}`), likelihood: el(`l ${id}`), timing: el(`w ${id}`) },
   });
   const arg = (id: string, equivalent_to = "", replies: unknown[] = []) => ({ id, text: `But ${id}.`, equivalent_to, replies });
-  const presented = { number: 4, origin: { kind: "relayed" }, context: { text: "The service keeps its data in a database.", by: "agent" }, terms: [], question: "Which database?", options: [], details: "", decision: null };
+  const presented = { number: 4, origin: { kind: "relayed" }, context: { blocks: plainBlocks("The service keeps its data in a database."), by: "agent" }, explanations: [], question: plainPieces("Which database?"), options: [], details: [], decision: null };
   const event = {
     _tag: "DecisionAnalyzed" as const,
     decision: 2,
@@ -784,11 +786,11 @@ describe("DecisionView", () => {
   });
 
   // S46 (W3-R1-3): the question's details are shown with its context beside the analysis, as in the terminal.
-  test("the question's details are shown in the context region, as Markdown with its terms marked, the question outside", async () => {
+  test("the question's details are shown in the context region, their pieces marked, the question outside", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const { analysisLines } = await import("../../src/render.ts");
-    const details = `${prompts.TOOL_INPUT_HEADING}\n\n${prompts.toolInputLines({ command: "rm -rf build" })}\n\nThe **build** directory holds the bundle.`;
-    const withDetails = { ...presented, details, terms: [{ term: "bundle", explanation: "The built page." }] };
+    const details = [...prompts.toolInputBlocks({ command: "rm -rf build" }), { kind: "paragraph" as const, pieces: [...plainPieces("The **build** directory holds the "), ref("bundle", "b"), ...plainPieces(".")] }];
+    const withDetails = { ...presented, details, explanations: [{ id: "b", term: "bundle", explanation: "The built page." }] };
     const root = show(DecisionView, { event: { ...(event as object), presented: withDetails } as never, narrow: false, onShowConversation: () => undefined });
     const context = one(root, ".question-context");
     expect(context.textContent).toContain(prompts.TOOL_INPUT_HEADING);
@@ -1227,14 +1229,14 @@ describe("QuestionPane's regions", () => {
   const question: PresentedQuestion = {
     number: 4,
     origin: { kind: "relayed" },
-    context: { text: "The service keeps its data in a database.", by: "agent" },
-    terms: [{ term: "service", explanation: "The program this task builds." }],
-    question: "Which database should the service use?",
+    context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The "), ref("service", "s"), ...plainPieces(" keeps its data in a database.")] }], by: "agent" },
+    explanations: [{ id: "s", term: "service", explanation: "The program this task builds." }],
+    question: [...plainPieces("Which database should the "), ref("service", "s"), ...plainPieces(" use?")],
     options: [
-      { label: "SQLite", description: "a file", answer: { token: "1" } },
-      { label: "More cycles", description: "go on", answer: { numeric: true } },
+      { label: plainPieces("SQLite"), description: plainPieces("a file"), answer: { token: "1" } },
+      { label: plainPieces("More cycles"), description: plainPieces("go on"), answer: { numeric: true } },
     ],
-    details: "**The facts** of the case.",
+    details: plainBlocks("**The facts** of the case."),
     decision: null,
   };
   const withQuestion = (q: PresentedQuestion = question, text = prompts.optionOrTextPrompt): Widget => ({ ...widget(text), question: q, presentedAt: null });
@@ -1244,12 +1246,13 @@ describe("QuestionPane's regions", () => {
     expect(one(root, "h2").textContent?.trim()).toBe(prompts.questionTitle(4));
     expect(one(root, ".origin").textContent?.trim()).toBe(prompts.originLine(question.origin, null));
     const top = one(root, ".top");
-    expect(one(top, ".context").textContent).toContain(question.context.text);
+    expect(one(top, ".context").textContent).toContain("The service keeps its data in a database.");
     expect(one(top, ".details").innerHTML).toContain("<strong>The facts</strong>");
-    expect(one(top, ".terms").textContent).toContain("service");
-    expect(one(top, ".terms").textContent).toContain("The program this task builds.");
+    // The explanation costs no space until it is asked for: no list of terms (task of issue #36).
+    expect(top.querySelector(".terms, dl")).toBe(null);
+    expect(top.textContent).not.toContain("The program this task builds.");
     const asked = one(root, ".question-text");
-    expect(asked.textContent?.trim()).toBe(question.question);
+    expect(asked.textContent?.trim()).toBe("Which database should the service use?");
     expect(asked.closest(".top, .bottom")).toBe(null);
     const bottom = one(root, ".bottom");
     const cards = [...bottom.querySelectorAll<HTMLButtonElement>(".options button")];
@@ -1269,7 +1272,7 @@ describe("QuestionPane's regions", () => {
   });
 
   test("a context the program wrote carries the note; the summary to confirm is inside the pane", () => {
-    const summary: PresentedQuestion = { ...question, origin: { kind: "confirmSummary" }, context: { text: "Interloq asks.", by: "program" }, options: [], terms: [], details: "# Requirements\n\nUse SQLite.", question: prompts.CONFIRM_SUMMARY_QUESTION };
+    const summary: PresentedQuestion = { ...question, origin: { kind: "confirmSummary" }, context: { blocks: plainBlocks("Interloq asks."), by: "program" }, options: [], explanations: [], details: [{ kind: "document", markdown: "# Requirements\n\nUse SQLite." }], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION) };
     const root = show(QuestionPane, { widget: withQuestion(summary, prompts.confirmSummaryPrompt), onAnswer: () => undefined });
     expect(one(root, ".context").textContent).toContain(prompts.PROGRAM_CONTEXT_NOTE);
     expect(one(root, ".top .details").textContent).toContain("Use SQLite.");
@@ -1280,7 +1283,7 @@ describe("QuestionPane's regions", () => {
   test("a term's occurrences open its tooltip on focus and on hover; Escape closes it", () => {
     const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
     const marks = [...root.querySelectorAll<HTMLElement>(".term")];
-    expect(marks.map((m) => m.closest(".context, .question-text")?.className.split(" ")[0])).toEqual(["context", "question-text"]);
+    expect(marks.map((m) => (m.closest(".context") !== null ? "context" : m.closest("p.question-text") !== null ? "question" : "?"))).toEqual(["context", "question"]);
     marks[1].focus();
     marks[1].dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
     flushSync();
@@ -1298,11 +1301,11 @@ describe("QuestionPane's regions", () => {
   test("a term in the numeric option's label and description is marked and opens its explanation", () => {
     const limit: PresentedQuestion = {
       ...question,
-      terms: [{ term: "cycles", explanation: "Rounds of review and response." }, { term: "reviewer", explanation: "Codex, which checks the plan." }],
-      question: "Should the review stop?",
-      context: { text: "The review has reached its limit.", by: "agent" },
-      details: "",
-      options: [{ label: "More cycles", description: "let the reviewer go on", answer: { numeric: true } }],
+      explanations: [{ id: "c", term: "cycles", explanation: "Rounds of review and response." }, { id: "r", term: "reviewer", explanation: "Codex, which checks the plan." }],
+      question: plainPieces("Should the review stop?"),
+      context: { blocks: plainBlocks("The review has reached its limit."), by: "agent" },
+      details: [],
+      options: [{ label: [...plainPieces("More "), ref("cycles", "c")], description: [...plainPieces("let the "), ref("reviewer", "r"), ...plainPieces(" go on")], answer: { numeric: true } }],
     };
     const root = show(QuestionPane, { widget: withQuestion(limit), onAnswer: () => undefined });
     const numeric = one(root, ".numeric");
@@ -1321,7 +1324,7 @@ describe("QuestionPane's regions", () => {
   // S44 (W3-R1-1): a term's tooltip is never inside the card it explains, so a click in it answers nothing.
   test("a click in the tooltip of a term in an option card sends nothing; the tooltip is in no button", () => {
     const sent: string[] = [];
-    const q: PresentedQuestion = { ...question, terms: [{ term: "file", explanation: "A file on the disk." }], options: [{ label: "SQLite", description: "one file", answer: { token: "1" } }] };
+    const q: PresentedQuestion = { ...question, explanations: [{ id: "f", term: "file", explanation: "A file on the disk." }], options: [{ label: plainPieces("SQLite"), description: [...plainPieces("one "), ref("file", "f")], answer: { token: "1" } }] };
     const root = show(QuestionPane, { widget: withQuestion(q), onAnswer: (_p: number, t: string) => void sent.push(t) });
     const mark = one(root, ".options .term");
     mark.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -1432,12 +1435,17 @@ test("the question pane and the terminal's confirmation both take endingOf from 
   for (const source of [pane, terminal]) expect(source).toMatch(/import \{[^}]*\bendingOf\b[^}]*\} from "(\.\.\/\.\.\/\.\.\/src|\.)\/input\.ts"/);
 });
 
-// S28: the terms of an answered question in the transcript, and of the question beside its analysis, are marked.
-test("a transcript message with terms marks them; the question beside an analysis marks its terms", async () => {
-  const root = show(MessageView, { message: { key: "k", author: "program", heading: null, body: "Should **zod** be used?", format: "markdown", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null, terms: [{ term: "zod", explanation: "A library." }] } });
-  expect(one(root, ".term").textContent).toBe("zod");
+// S28: the words of an answered question in the transcript, and of the question beside its analysis, carry their
+// explanations; the transcript shows the question whole, its options' labels on their own lines (S14).
+test("an answered question in the transcript marks its words; the question beside an analysis marks its words", async () => {
+  const zod = [{ id: "z", term: "zod", explanation: "A library." }];
+  const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), answer: { token: "1" } }], details: [], decision: null };
+  const root = show(MessageView, { message: { key: "k", author: "program", heading: null, body: "Use zod?", format: "text", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null, question: asked } });
+  expect([...root.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["Zod", "zod"]);
+  expect(one(root, ".option-label").textContent).toContain("Yes");
+  expect(one(root, ".option-description").textContent).toBe("declare it");
   const { default: DecisionView } = await import("./components/DecisionView.svelte");
-  const presented = { number: 2, origin: { kind: "relayed" }, context: { text: "zod checks data.", by: "agent" }, terms: [{ term: "zod", explanation: "A library." }], question: "Use zod?", options: [], details: "", decision: null };
+  const presented = asked;
   const analyzed = { _tag: "DecisionAnalyzed", decision: 1, question: "Use zod?", presented, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } as never;
   const view = show(DecisionView, { event: analyzed, narrow: false, onShowConversation: () => undefined });
   expect([...view.querySelectorAll(".question .term")].length).toBe(2);
@@ -1470,13 +1478,13 @@ describe("the shared rule for code in rendered Markdown", () => {
     }
   });
   test("QuestionPane, DecisionView and Message render their code inside .markdown", async () => {
-    const details = prompts.toolInputLines({ command: " a " });
-    const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { text: "Run `x`.", by: "agent" }, terms: [], question: "Q?", options: [], details, decision: null };
+    const details = prompts.toolInputBlocks({ command: " a " });
+    const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("Run `x`."), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details, decision: null };
     const pane = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
     const beside = one(show(DecisionView, { event, narrow: false, onShowConversation: () => undefined }), ".question-context");
-    const message = show(MessageView, { message: { key: "1-1", author: "program", heading: "", body: details, format: "markdown", time: "2026-09-30T10:00:00.000Z", showTime: false, band: null } });
+    const message = show(MessageView, { message: { key: "1-1", author: "program", heading: "", body: "Q?", format: "text", time: "2026-09-30T10:00:00.000Z", showTime: false, band: null, question: presented } });
     for (const [what, root] of [["the pane", pane], ["beside an analysis", beside], ["the transcript", message]] as const) {
       const codes = [...root.querySelectorAll("code")].filter((c) => c.textContent === " a ");
       expect(codes.length, what).toBe(1);
@@ -1485,21 +1493,21 @@ describe("the shared rule for code in rendered Markdown", () => {
   });
 });
 
-// S59 (P9-R2-1): the context is Markdown in the question pane and beside an analysis, and a term split by inline markup
-// is marked in it and explained.
-describe("a term split by inline markup in the context", () => {
-  const presented = { number: 3, origin: { kind: "relayed" }, context: { text: "The cache **key** identifies the saved result.", by: "agent" }, terms: [{ term: "cache key", explanation: "The name of a saved result." }], question: "Should we keep it?", options: [], details: "", decision: null } as const;
+// Issue #36 (replacing S59's marking of a split term): a piece that refers to an explanation sits beside inline
+// formatting in the question pane and beside an analysis; the formatting is rendered and the word carries its explanation.
+describe("a word that refers to an explanation beside inline formatting in the context", () => {
+  const presented: PresentedQuestion = { number: 3, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The **saved** "), ref("cache key", "k"), ...plainPieces(" identifies the result.")] }], by: "agent" }, explanations: [{ id: "k", term: "cache key", explanation: "The name of a saved result." }], question: plainPieces("Should we keep it?"), options: [], details: [], decision: null };
   const check = (region: Element) => {
-    expect(region.querySelector("strong")?.textContent).toBe("key");
+    expect(region.querySelector("strong")?.textContent).toBe("saved");
     expect(region.textContent).not.toContain("*");
-    const [first] = region.querySelectorAll<HTMLElement>(".term");
-    expect([...region.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["cache ", "key"]);
-    first.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    const words = [...region.querySelectorAll<HTMLElement>(".term")];
+    expect(words.map((m) => m.textContent)).toEqual(["cache key"]);
+    words[0].dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
     flushSync();
     expect(one(document.body, "[role=tooltip]").textContent).toContain("The name of a saved result.");
   };
   test("in the question pane", () => {
-    const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented as never, presentedAt: null }, onAnswer: () => undefined });
+    const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
     check(one(root, ".context"));
   });
   test("beside an analysis", async () => {
@@ -1508,4 +1516,20 @@ describe("a term split by inline markup in the context", () => {
     const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
     check(one(root, ".question-context"));
   });
+});
+
+// S14 (issue #59): an option's label is set apart from its text: in bold, on its own line, a separate element.
+test("each option card shows its label in bold as its own element and its description as another", () => {
+  const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Which?"), options: [{ label: plainPieces("SQLite"), description: plainPieces("one file, no server"), answer: { token: "1" } }, { label: plainPieces("More cycles"), description: plainPieces("go on"), answer: { numeric: true } }], details: [], decision: null };
+  const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
+  for (const option of [one(root, ".options button"), one(root, ".numeric")]) {
+    const label = one(option, ".option-label");
+    const description = one(option, ".option-description");
+    expect(label.querySelector("strong")).not.toBe(null);
+    expect(label.contains(description)).toBe(false);
+    expect(description.contains(label)).toBe(false);
+    expect(label.textContent).not.toContain("—");
+  }
+  expect(one(root, ".options button .option-label strong").textContent).toBe("SQLite");
+  expect(one(root, ".options button .option-description").textContent).toBe("one file, no server");
 });

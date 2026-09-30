@@ -8,7 +8,7 @@ import type { UiShape } from "../src/services.ts";
 import * as prompts from "../src/prompts.ts";
 import { terminalUi } from "../src/ui.ts";
 import { program } from "../src/program.ts";
-import { finished, tempRepo, testWiring } from "./helpers.ts";
+import { finished, tempRepo, testWiring, questionOf, para, plain } from "./helpers.ts";
 
 type Streams = { input: PassThrough; output: PassThrough; written: () => string };
 const streams = (): Streams => {
@@ -155,7 +155,7 @@ test("notify renders Claude Code's prose in the terminal with the [claude] prefi
 test("notify prints a decision's analysis in the terminal", async () => {
   const io = streams();
   const analysis = { decision: "d", columns: [{ kind: "argued" as const, option: "A", advantages: [], disadvantages: [] }, { kind: "argued" as const, option: "B", advantages: [], disadvantages: [] }], recommendation: { option: "", reason: "" } };
-  await withUi(io, (ui) => ui.notify({ _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: "", decision: null }, options: [], analysis }));
+  await withUi(io, (ui) => ui.notify({ _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: [], decision: null }, options: [], analysis }));
   // S22: the heading names the question's number, and the question as the user was shown it precedes the options.
   assert.equal(io.written(), ["", prompts.decisionViewHeading(1, 1), "", "    c", "", "Q?", "", "Option 1: A", "", "  Advantages:", "", "  Disadvantages:", "", "Option 2: B", "", "  Advantages:", "", "  Disadvantages:", ""].join("\n") + "\n");
 });
@@ -191,7 +191,7 @@ test("a run with the terminal Ui prints every line of a multiline analysis text 
     ],
     recommendation: { option: "", reason: "" },
   };
-  const question = { context: "c", question: "Which database?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] };
+  const question = questionOf({ context: "c", question: "Which database?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] });
   const io = streams();
   const { wiring } = testWiring(tempRepo(), {
     steps: [{ output: { questions_for_user: [question] }, plan: "1. [ ] the step\n" }, { output: analysis }, { output: { questions_for_user: [] } }],

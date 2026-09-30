@@ -7,7 +7,7 @@ import type { AgentUnreachable, CodexCallFailed, FileSystemError, GitError, RunE
 import type { SubjectId } from "./artifacts.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
-import type { Config, DecisionAnalysis, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionsFile, RecordedPlan, Review, TermsWrite, UserQuestion } from "./schema.ts";
+import type { Config, DecisionAnalysis, ExecOutcome, Explanation, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
@@ -21,8 +21,8 @@ export type StoreError = FileSystemError | StateFileInvalid | GitError;
  * What the user was shown with a question beside its text and options (S37, W1-R1-5): its context paragraph, its terms
  * and its details. The analysis prompt carries it; decision-<k>/question.json does not.
  */
-export type ShownWithQuestion = Readonly<{ context: string; terms: readonly Readonly<{ term: string; explanation: string }>[]; details: string }>;
-export type DecisionQuestion = Readonly<{ phase: Phase; label: string; question: string; options: UserQuestion["options"]; shown?: ShownWithQuestion }>;
+export type ShownWithQuestion = Readonly<{ context: string; explanations: readonly Explanation[]; details: string }>;
+export type DecisionQuestion = Readonly<{ phase: Phase; label: string; question: string; options: readonly QuestionOption[]; shown?: ShownWithQuestion }>;
 /** The user's answer after an analysis, and the option it chose (null for free text; decision Q4). */
 export type Choice = Readonly<{ answer: string; option: string | null }>;
 /** A planning or execution call can also end in a decision loop's error: a relayed question or a permission request carries the offer. */
@@ -172,7 +172,7 @@ export interface StoreShape {
 export class Store extends Context.Service<Store, StoreShape>()("plan-review/Store") {}
 
 /** A question a decision analyzes, without its phase: the Decider adds the phase it is bound to. */
-export type DecisionRequest = Readonly<{ question: string; options: UserQuestion["options"]; /** What the user was shown with the question (S37). */ shown?: ShownWithQuestion; /** The displayed number of the question (S21), for the progress the user reads; no record keeps it. */ number?: number | null }>;
+export type DecisionRequest = Readonly<{ question: string; options: readonly QuestionOption[]; /** What the user was shown with the question (S37). */ shown?: ShownWithQuestion; /** The displayed number of the question (S21), for the progress the user reads; no record keeps it. */ number?: number | null }>;
 /** How a decision loop ended: its number, the analysis as it stands, and the loop's result. */
 export type DecisionOutcome = Readonly<{ decision: number; analysis: DecisionAnalysis; result: LoopResult }>;
 /**

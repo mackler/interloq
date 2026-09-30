@@ -6,6 +6,7 @@ import { agentReconnectingLine, cycleHeading, phaseLabel, transportRecoveredLine
 import type { PresentedQuestion } from "./question.ts";
 import type { TermsResponse } from "./schema.ts";
 import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion } from "./schema.ts";
+import { piecesText } from "./pieces.ts";
 
 /** A phase of the run as the progress display names it. */
 export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work"; n: number }>;
@@ -121,7 +122,7 @@ export const describeEvent = (event: UiEvent): string => {
     case "ClaudeSaid":
       return `Claude Code said: ${event.text}`;
     case "QuestionPresented":
-      return `question ${event.question.number}: ${event.question.question} (${plural(event.question.options.length, "option")})`;
+      return `question ${event.question.number}: ${piecesText(event.question.question)} (${plural(event.question.options.length, "option")})`;
     case "DecisionAnalyzed":
       return `decision ${event.decision} analyzed: ${event.question} (${plural(event.analysis.columns.length, "column")})`;
     case "AnswerRejected":

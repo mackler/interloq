@@ -5,6 +5,7 @@ import fc from "fast-check";
 import * as log from "../src/issueLog.ts";
 import { type IssueId, validateReview, validateRound } from "../src/round.ts";
 import type { Action, LogEntry, PlannerResponse, Review } from "../src/schema.ts";
+import { questionOf } from "./helpers.ts";
 
 // Properties of round validation, the log transitions, detection and counting: rows 1 and 2 of the table in
 // recommendation E of docs/functional-design-review.md. Valid rounds are generated directly; invalid boundary
@@ -33,7 +34,7 @@ const arbResponse = (review: Review, history: LogEntry[]): fc.Arbitrary<PlannerR
     dispositions: fc.tuple(...review.issues.map((i) => record({ id: fc.constant(i.id), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: ref, reverses: ref }))),
     self_corrections: fc.array(record({ id: fc.oneof(fc.constant(""), arbId), new_action: fc.constantFrom(...NEW_ACTIONS), explanation: fc.string() }), { maxLength: 2 }),
     reviewer_feedback: fc.string(),
-    questions_for_user: fc.array(record({ context: fc.string(), question: fc.string(), terms: fc.constant([]), options: fc.array(record({ label: fc.string(), description: fc.string() }), { maxLength: 2 }) }), { maxLength: 2 }),
+    questions_for_user: fc.array(fc.record({ context: fc.string(), question: fc.string(), options: fc.array(fc.record({ label: fc.string(), description: fc.string() }), { maxLength: 2 }) }).map((w) => questionOf(w)), { maxLength: 2 }),
   });
 };
 const arbRound = fc.tuple(arbReview, arbLog).chain(([review, history]) => arbResponse(review, history).map((response) => ({ review, history, response })));

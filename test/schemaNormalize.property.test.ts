@@ -3,6 +3,8 @@ import { test } from "node:test";
 import { Result } from "effect";
 import fc from "fast-check";
 import { normalizeQuestionList } from "../src/schemaNormalize.ts";
+import { entryOf } from "./helpers.ts";
+import { piecesText } from "../src/pieces.ts";
 
 // Row 5 of the table in recommendation E (moved to step 4.6): the question-list normalisation.
 const RUNS = { numRuns: 200, seed: 20260925 };
@@ -15,7 +17,7 @@ const arbQuestion = record({
   reason: fc.string(),
   proposed_answers: fc.array(record({ label, description: fc.string() }), { maxLength: 3 }),
   default_answer: fc.oneof(label, fc.constant("")),
-});
+}).map(entryOf);
 
 test("property: a default is kept exactly when it names a proposed answer, else it is null with one note; ids are unique or the list is invalid", () => {
   fc.assert(
@@ -35,7 +37,7 @@ test("property: a default is kept exactly when it names a proposed answer, else 
       result.success.questions.forEach((normalized, i) => {
         const original = questions[i];
         assert.deepEqual({ ...normalized, default_answer: original.default_answer }, original);
-        if (original.proposed_answers.some((a) => a.label === original.default_answer)) assert.equal(normalized.default_answer, original.default_answer);
+        if (original.proposed_answers.some((a) => piecesText(a.label) === original.default_answer)) assert.equal(normalized.default_answer, original.default_answer);
         else {
           assert.equal(normalized.default_answer, null);
           notes++;

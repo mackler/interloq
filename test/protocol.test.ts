@@ -11,6 +11,7 @@ import { decisionSubject, planSubject, questionSubject, requirementsSubject, wor
 import type { UiEvent } from "../src/uiEvents.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import * as prompts from "../src/prompts.ts";
+import { entryOf } from "./helpers.ts";
 
 // Plan step 3.1: both sides decode with the same schemas; every variant survives the JSON round trip.
 const nat = fc.nat({ max: 10_000 });
@@ -20,7 +21,18 @@ const phase = fc.oneof(fc.constant({ kind: "questions" as const }), fc.record({ 
 const agent = fc.constantFrom("claude" as const, "codex" as const);
 const reviewIssue = fc.record({ id: fc.string({ minLength: 1, maxLength: 8 }), severity: fc.constantFrom("blocking" as const, "major" as const, "minor" as const), location: text, problem: text, evidence: text });
 const review = fc.record({ issues: fc.array(reviewIssue, { maxLength: 3 }) });
-const userQuestion = fc.record({ context: text, question: text, terms: fc.array(fc.record({ term: text, explanation: text }), { maxLength: 2 }), options: fc.array(fc.record({ label: text, description: text }), { maxLength: 2 }) });
+// Issue #36: a question's text as pieces and blocks, every kind of block included.
+const piece = fc.record({ text, ref: text, code: fc.boolean() });
+const pieces = fc.array(piece, { maxLength: 3 });
+const block = fc.oneof(
+  fc.record({ kind: fc.constant("paragraph" as const), pieces }),
+  fc.record({ kind: fc.constant("list" as const), items: fc.array(fc.record({ level: fc.nat(3), pieces }), { maxLength: 2 }) }),
+  fc.record({ kind: fc.constant("code" as const), text }),
+);
+const shownBlock = fc.oneof(block, fc.record({ kind: fc.constant("document" as const), markdown: text }));
+const explanation = fc.record({ id: text, term: text, explanation: text });
+const pieceOption = fc.record({ label: pieces, description: pieces });
+const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
 const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text });
 const plannerResponse = fc.record({
   dispositions: fc.array(disposition, { maxLength: 3 }),
@@ -52,11 +64,11 @@ const origin = fc.oneof(
 const presentedQuestion = fc.record({
   number: nat,
   origin,
-  context: fc.record({ text, by: fc.constantFrom("agent" as const, "program" as const) }),
-  terms: fc.array(fc.record({ term: text, explanation: text }), { maxLength: 2 }),
-  question: text,
-  options: fc.array(fc.record({ label: text, description: text, answer: fc.oneof(fc.record({ token: text }), fc.constant({ numeric: true as const })) }), { maxLength: 3 }),
-  details: text,
+  context: fc.record({ blocks: fc.array(shownBlock, { maxLength: 2 }), by: fc.constantFrom("agent" as const, "program" as const) }),
+  explanations: fc.array(explanation, { maxLength: 2 }),
+  question: pieces,
+  options: fc.array(fc.record({ label: pieces, description: pieces, answer: fc.oneof(fc.record({ token: text }), fc.constant({ numeric: true as const })) }), { maxLength: 3 }),
+  details: fc.array(shownBlock, { maxLength: 2 }),
   decision: fc.option(nat, { nil: null }),
 });
 const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
@@ -202,7 +214,7 @@ const questionListResponse: QuestionListResponse = {
   self_corrections: [],
   reviewer_feedback: "",
   questions_for_user: [],
-  questions: [{ id: "Q1", context: "c", question: "Which database?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }], default_answer: "PostgreSQL" }],
+  questions: [entryOf({ id: "Q1", context: "c", question: "Which database?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }], default_answer: "PostgreSQL" })],
 };
 const responseEvent = (subject: SubjectId, response: QuestionListResponse | Omit<QuestionListResponse, "questions"> | DecisionResponse): RunEvent => ({ _tag: "Notified", event: { _tag: "ResponseReceived", subject, round: 1, response, resultText: "" } });
 

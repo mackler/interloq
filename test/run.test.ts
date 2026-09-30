@@ -10,6 +10,7 @@ import { Effect, Fiber } from "effect";
 import { run } from "../src/run.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
 const noQuestions = { questions_for_user: [] };
 
@@ -68,7 +69,7 @@ test("a pause shows the log entries without file_change, while issue-log.json ke
   });
   await runTask(layer);
   // S11: the pause shows the point's history as prose; the measurement is not in it.
-  const details = presentedQuestions(probe.ui).map((q) => q.details).join("\n");
+  const details = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.details)).join("\n");
   assert.match(details, /Claude Code rejected it: rationale B/, "the pause showed no log entry");
   assert.equal([...probe.ui.said, details].some((line) => line.includes(S.FILE_CHANGE_FIELD) || /lines? added/.test(line)), false, "the user was shown file_change");
   assert.ok((await probe.loadLog()).some((e) => S.FILE_CHANGE_FIELD in e), "issue-log.json lacks file_change");
@@ -182,8 +183,8 @@ test("the round limit offers to proceed to implementation", async () => {
   assert.equal(probe.ui.asked[0], withOffer(prompts.limitPrompt));
   // S5: the question says how many cycles were completed, and the proceed option says what proceeding does.
   const limit = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []))[0];
-  assert.equal(limit.question, prompts.limitQuestion("Planning phase 1", 1));
-  assert.match(limit.options[0].description, /proceed to implementation with the plan as it is/i);
+  assert.equal(piecesText(limit.question), prompts.limitQuestion("Planning phase 1", 1));
+  assert.match(piecesText(limit.options[0].description), /proceed to implementation with the plan as it is/i);
 });
 
 test("a reversal and a disputed self-correction each produce a prompt and a decided_by_user entry", async () => {
@@ -298,7 +299,7 @@ test("the identical-content message names the round after which the content was 
     config: { maxIdleRounds: 1, maxRounds: 6 },
   });
   assert.equal(await runTask(layer), 1);
-  const identical = presentedQuestions(probe.ui).map((q) => q.details).filter((line) => /is identical to plan\.json after/.test(line));
+  const identical = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.details)).filter((line) => /is identical to plan\.json after/.test(line));
   assert.equal(identical.length, 1, presentedSubjects(probe.ui).join("\n"));
   assert.match(identical[0], /identical to plan\.json after cycle 2\b/);
 });
@@ -624,6 +625,6 @@ test("a stop without a question presents Claude Code's description in the detail
   });
   assert.equal(await runTask(layer), 2);
   const [q] = presentedQuestions(probe.ui).filter((p) => p.origin.kind === "execStop");
-  assert.equal(q.question, prompts.execStopQuestion());
-  assert.equal(q.details, prompts.execStopDetails(description));
+  assert.equal(piecesText(q.question), prompts.execStopQuestion());
+  assert.deepEqual(q.details, prompts.execStopDetails(description));
 });

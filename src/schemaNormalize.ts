@@ -3,6 +3,7 @@
 
 import { Result } from "effect";
 import { QuestionListInvalid } from "./errors.ts";
+import { piecesText } from "./pieces.ts";
 import type { ExecReport, InterviewTurn, QuestionList, QuestionsFile } from "./schema.ts";
 
 /** The questions asked and answered so far, as Claude Code reports them in each turn (issue #21), and the question asked now (S3: with its context, terms and options). */
@@ -44,7 +45,7 @@ export const normalizeQuestionList = (list: QuestionList): Result.Result<Normali
   if (duplicateIds.length > 0 || emptyIds > 0) return Result.fail(new QuestionListInvalid({ duplicateIds, emptyIds }));
   const notes: string[] = [];
   const questions = list.questions.map((q) => {
-    if (q.proposed_answers.some((a) => a.label === q.default_answer)) return { ...q, id: q.id, default_answer: q.default_answer as string | null };
+    if (q.proposed_answers.some((a) => piecesText(a.label) === q.default_answer)) return { ...q, id: q.id, default_answer: q.default_answer as string | null };
     notes.push(`The default answer of question ${q.id}, ${JSON.stringify(q.default_answer)}, names none of its proposed answers; the question has no default.`);
     return { ...q, id: q.id, default_answer: null };
   });

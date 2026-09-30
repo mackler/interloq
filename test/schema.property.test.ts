@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import fc from "fast-check";
 import { normalizeLabel } from "../src/analysis.ts";
 import * as S from "../src/schema.ts";
+import { entryOf } from "./helpers.ts";
 
 // Row 5 of the table in recommendation E of docs/functional-design-review.md: the program's own record schemas.
 const RUNS = { numRuns: 200, seed: 20260925 };
@@ -38,7 +39,7 @@ const arbUsage: fc.Arbitrary<S.UsageRecord> = fc.oneof(arbClaudeUsage, arbCodexU
 const arbQuestions = record<S.QuestionsFile>({
   version: fc.constant(2),
   task: fc.string(),
-  questions: fc.array(record({ id: nonEmpty, context: fc.string(), question: fc.string(), reason: fc.string(), proposed_answers: fc.array(record({ label: fc.string(), description: fc.string() })), default_answer: fc.string() })),
+  questions: fc.array(fc.record({ id: nonEmpty, context: fc.string(), question: fc.string(), reason: fc.string(), proposed_answers: fc.array(fc.record({ label: fc.string(), description: fc.string() })), default_answer: fc.string() }).map(entryOf)),
 });
 
 const roundTrips = <T>(schema: Schema.Codec<T>, value: T): void => {

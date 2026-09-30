@@ -235,7 +235,9 @@ for (const [width, height] of [
       // S8, S18: each card shows the answer that chooses it and the agreed answer, the default marked.
       const [label, ...rest] = LONG_ANSWERS[i].replace(/^\d+\. /, "").split(": ");
       const description = rest.join(": ");
-      await expect(card).toHaveText(`${i + 1}. ${label}${description === "" && i > 0 ? "" : ` — ${description}${i === 0 ? " (the default)" : ""}`}`.replace(" —  (the default)", " — (the default)"));
+      // S14 (issue #59): the label on its own line, the description below it, as separate elements.
+      await expect(card).toHaveText(`${i + 1}. ${label}${description === "" && i > 0 ? "" : ` ${description}${i === 0 ? " (the default)" : ""}`}`.replace(/ {2}\(the default\)/, " (the default)"));
+      await expect(card.locator(".option-label strong")).toHaveText(label);
       const fits = await card.evaluate((el) => ({ height: el.scrollHeight <= el.clientHeight, width: el.scrollWidth <= el.clientWidth }));
       expect(fits, `answer ${i + 1} fits its card`).toEqual({ height: true, width: true });
       const b = await box(card);

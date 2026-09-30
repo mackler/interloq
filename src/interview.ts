@@ -5,6 +5,7 @@ import type { RunError } from "./errors.ts";
 import { interview } from "./conversation.ts";
 import { askOffering, programContext } from "./offer.ts";
 import * as prompts from "./prompts.ts";
+import { plainPieces } from "./pieces.ts";
 import { planningCall, reviewLoop } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
 import * as S from "./schema.ts";
@@ -51,7 +52,7 @@ export const questionPhase = (task: string): Effect.Effect<void, RunError, Servi
 
     if (agreed.length === 0) {
       const origin = { kind: "startOrTalk" } as const;
-      const first = yield* askOffering((m) => ui.askMessage(m), prompts.startOrTalkPrompt, { origin, context: programContext(origin), terms: [], question: prompts.START_OR_TALK_QUESTION, options: [], decision: null });
+      const first = yield* askOffering((m) => ui.askMessage(m), prompts.startOrTalkPrompt, { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.START_OR_TALK_QUESTION), options: [], decision: null });
       if (first === "" || first === "/done") {
         yield* store.writeRequirements(`# Requirements\n\n## Task\n\n${task}\n\nNo question was needed, and the user added no information.\n`);
         yield* store.converse("**User:** started planning without a conversation.\n\n");

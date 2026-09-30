@@ -5,7 +5,8 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, ServerMessage, Stamped } from "../../src/protocol.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
-import { interviewSays, questionMarkdown, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
+import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
+import { piecesText } from "../../src/pieces.ts";
 import { correctionCount } from "../../src/issueLog.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { Choice } from "../../src/userPrompts.ts";
@@ -16,8 +17,11 @@ export type Author = "program" | "user" | "codex" | "claude";
  * One chat message. `markdown` is rendered and sanitised; a program's plain text is shown as it is. `time` is the ISO
  * time its event was published (issue #1); `showTime` whether the time is shown, or only given to assistive technology.
  */
-/** `terms`: the explanations of the words of an answered question (S28), marked where the message shows them. */
-export type Message = Readonly<{ key: string; author: Author; heading: string | null; body: string; format: "text" | "markdown"; time: string; showTime: boolean; band: Band | null; terms?: readonly Readonly<{ term: string; explanation: string }>[] }>;
+/**
+ * `question`: an answered question as it was presented (S26, S28; S12 of the task of issue #36), which the message shows
+ * whole, its pieces carrying their explanations; its `body` is the question's words, for search and announcements.
+ */
+export type Message = Readonly<{ key: string; author: Author; heading: string | null; body: string; format: "text" | "markdown"; time: string; showTime: boolean; band: Band | null; question?: PresentedQuestion }>;
 /**
  * The phase a message belongs to, as its panel shows it (issue #15): a band of one tone per kind of phase, opened by a
  * label with the phase's name and the time it began. `key` is unique per phase of a run; null before any phase.
@@ -523,7 +527,11 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return {
         ...run,
         presented: { question: event.question, time },
-        questionOptions: event.question.options.flatMap((o) => ("token" in o.answer ? [{ label: o.description === "" ? o.label : `${o.label} — ${o.description}`, sends: o.answer.token }] : [])),
+        questionOptions: event.question.options.flatMap((o) => {
+          const label = piecesText(o.label);
+          const description = piecesText(o.description);
+          return "token" in o.answer ? [{ label: description === "" ? label : `${label} — ${description}`, sends: o.answer.token }] : [];
+        }),
       };
     case "AnalysisProgress": {
       // S21 (Q4): one plain status while the analysis is prepared, updated in place; the terminal's line of it that
@@ -583,7 +591,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const dismissed = dismisses ? r.analysis : r.dismissed;
         // S26: the question joins the transcript with its answer, as an ordinary exchange.
         const own = r.pending !== null && r.pending.asked.prompt === event.prompt ? r.pending : null;
-        const asked = own === null ? r : own.question !== null ? withLeft(r, { ...message(r, own.presentedAt ?? time, "program", questionMarkdown(own.question), "markdown"), key: `${r.id}-${r.nextSeq}-question`, terms: own.question.terms }) : withLeft(r, { ...message(r, own.presentedAt ?? time, "program", own.hint, "text"), key: `${r.id}-${r.nextSeq}-question` });
+        const asked = own === null ? r : own.question !== null ? withLeft(r, { ...message(r, own.presentedAt ?? time, "program", piecesText(own.question.question), "text"), key: `${r.id}-${r.nextSeq}-question`, question: own.question }) : withLeft(r, { ...message(r, own.presentedAt ?? time, "program", own.hint, "text"), key: `${r.id}-${r.nextSeq}-question` });
         return { ...withLeft(asked, message(asked, time, "user", chosen?.label ?? event.text, "markdown")), pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed };
       }
       case "Notified":

@@ -7,20 +7,22 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { questionLines } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { finished, issue, presentedQuestions, respond, runTask, tempRepo, testLayer } from "./helpers.ts";
+import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf } from "./helpers.ts";
+import { piecesText } from "../src/pieces.ts";
+import type { Piece, TermsEntry } from "../src/schema.ts";
 
 const noQuestions = { questions_for_user: [] };
-const entry = (id: string) => ({ id, context: "c", question: `question ${id}?`, reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: "A" });
+const entry = (id: string) => entryOf({ id, context: "c", question: `question ${id}?`, reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: "A" });
 const asking = (id: string, answered: string[]) => ({
   message_to_user: `Next: ${id}.`,
-  current_question: { id, context: `The context of ${id}.`, text: `question ${id}?`, terms: [], options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] },
+  current_question: currentOf({ id, context: `The context of ${id}.`, text: `question ${id}?`, terms: [], options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }),
   asked_ids: [...answered, id],
   answered_ids: answered,
   complete: false,
   summary: "",
 });
-const done = { message_to_user: "Done.", current_question: { id: "", context: "", text: "", terms: [], options: [] }, asked_ids: ["Q1", "Q2"], answered_ids: ["Q1", "Q2"], complete: true, summary: "# Requirements\n\nA and B." };
-const plannerQuestion = { context: "Claude Code, the planning agent, writes the plan.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] };
+const done = { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1", "Q2"], answered_ids: ["Q1", "Q2"], complete: true, summary: "# Requirements\n\nA and B." };
+const plannerQuestion = questionOf({ context: "Claude Code, the planning agent, writes the plan.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] });
 
 /** A run with two clarification questions, the summary's confirmation, a question of the plan writer and a pause. */
 const scenario = () =>
@@ -76,14 +78,14 @@ test("S7: every ask is preceded by the presentation of its question, and every k
   const questions = presentedQuestions(probe.ui);
   // S19: the plan writer's question reaches the user once, as its presented question; nothing else announces it.
   assert.equal(questions.filter((q) => q.origin.kind === "planner").length, 1);
-  assert.ok(!probe.ui.said.some((line) => line.includes(plannerQuestion.question)), "the terminal announced the question in its own way");
+  assert.ok(!probe.ui.said.some((line) => line.includes(piecesText(plannerQuestion.question))), "the terminal announced the question in its own way");
   const shape = (q: PresentedQuestion) => Object.keys(q).sort();
   for (const q of questions) {
     assert.deepEqual(shape(q), shape(questions[0]));
     const lines = questionLines(q).filter((l) => l !== "");
     assert.equal(lines[0], prompts.questionTitle(q.number));
-    assert.ok(lines.includes(q.question.split("\n")[0]));
-    assert.ok(q.context.text.trim() !== "", `question ${q.number} has no context`);
+    assert.ok(lines.includes(questionText(q).split("\n")[0]));
+    assert.ok(contextText(q).trim() !== "", `question ${q.number} has no context`);
   }
 });
 
@@ -92,24 +94,25 @@ test("S11: a pause reaches the user as prose: no line said and no question shown
   await runTask(layer);
   const pause = presentedQuestions(probe.ui).find((q) => q.origin.kind === "pause");
   assert.ok(pause !== undefined);
-  assert.match(pause.details, new RegExp(`^${prompts.pauseLead({ pause: "reraised", id: "P1-R1-1" })}`));
-  assert.match(pause.details, /Codex says: p\n\ne/);
-  const shown = [...probe.ui.said, ...presentedQuestions(probe.ui).flatMap((q) => [q.context.text, q.details, q.question, ...q.options.map((o) => o.description)])];
+  assert.match(detailsText(pause), new RegExp(`^${prompts.pauseLead({ pause: "reraised", id: "P1-R1-1" })}`));
+  assert.match(detailsText(pause), /Codex says: p\n\ne/);
+  const shown = [...probe.ui.said, ...presentedQuestions(probe.ui).flatMap((q) => [contextText(q), detailsText(q), questionText(q), ...q.options.map((o) => piecesText(o.description))])];
   for (const text of shown) for (const forbidden of ["{\n", '"duplicate_of"', "duplicate_of:", "superseded", "\\n"]) assert.ok(!text.includes(forbidden), `${forbidden} in: ${text}`);
 });
 
 // S12 (decision Q1): every question the program composes is explained by a context call, which the user reads as an
 // agent's paragraph; the program's fixed question and options stand as the program wrote them.
 test("S12: a pause, the cycle limit and the unchanged pause are presented with the context call's paragraph and terms", async () => {
-  const explained = { context: "Codex, the reviewing agent, checks the plan that Claude Code, the planning agent, writes; this happens now, before the plan is carried out, so that the plan is right.", terms: [{ term: "Codex", explanation: "An AI agent that reviews the work." }] };
+  const context = [{ kind: "paragraph" as const, pieces: [term("Codex", "c"), ...plain(", the reviewing agent, checks the plan that Claude Code, the planning agent, writes; this happens now, before the plan is carried out, so that the plan is right.")] }];
+  const explanations = [{ id: "c", term: "Codex", explanation: "An AI agent that reviews the work." }];
   const pause = scenario();
-  pause.probe.planner.contexts = [{ output: explained }];
+  pause.probe.planner.contexts = [{ output: (prompt: string) => ({ ...scriptedContextReply(prompt), context, explanations }) }];
   await runTask(pause.layer);
   const paused = presentedQuestions(pause.probe.ui).find((q) => q.origin.kind === "pause");
-  assert.deepEqual([paused?.context, paused?.terms], [{ text: explained.context, by: "agent" }, explained.terms]);
-  assert.equal(paused?.question, prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }));
+  assert.deepEqual([paused?.context, paused?.explanations], [{ blocks: context, by: "agent" }, explanations]);
+  assert.equal(paused && questionText(paused), prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }));
   // The context call was given the pause's facts, which the user also reads (S11).
-  assert.ok(pause.probe.planner.contextPrompts[0].includes(paused?.details ?? "?"));
+  assert.ok(pause.probe.planner.contextPrompts[0].includes(JSON.stringify(paused?.details ?? "?")));
 
   const limit = testLayer(tempRepo(), {
     answers: ["p"],
@@ -144,25 +147,27 @@ test("S12: the questions that do not need one make no context call: the clarific
   assert.equal(probe.planner.contextPrompts.length, 1);
   const byKind = new Map(presentedQuestions(probe.ui).map((q) => [q.origin.kind, q.context]));
   // S18: an agreed question's context is the reviewed one of questions.json, not what the turn writes beside its id.
-  assert.deepEqual(byKind.get("clarification"), { text: entry("Q2").context, by: "agent" });
-  assert.deepEqual(byKind.get("planner"), { text: plannerQuestion.context, by: "agent" });
+  assert.deepEqual(byKind.get("clarification"), { blocks: entry("Q2").context, by: "agent" });
+  assert.deepEqual(byKind.get("planner"), { blocks: plannerQuestion.context, by: "agent" });
   assert.equal(byKind.get("confirmSummary")?.by, "program");
 });
 
 // S18: an agreed question is presented from the reviewed records alone: questions.json and terms.json.
 test("S18: an agreed question is presented as reviewed: its context, text, proposed answers and reason, and the terms of terms.json", async () => {
-  const zod = { term: "zod", explanation: "A library that checks the shape of data." };
-  const entryZod = { ...entry("Q1"), context: "Claude Code checks the input of a tool with zod, a library, when the tool is called.", question: "Should zod be declared?", reason: "package.json does not list zod" };
+  const zod = { id: "z", term: "zod", explanation: "A library that checks the shape of data." };
+  const entryZod = { ...entry("Q1"), context: para("Claude Code checks the input of a tool with zod, a library, when the tool is called."), question: plain("Should zod be declared?"), reason: para("package.json does not list zod") };
+  const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(zod)/).filter((t) => t !== "").map((t) => (t === "zod" ? term(t, "z") : { text: t, ref: "", code: false })));
+  const divided: TermsEntry = { id: "Q1", explanations: [zod], context: entryZod.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), question: divide(entryZod.question), reason: entryZod.reason, proposed_answers: entryZod.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [
       { output: { questions: [entryZod] } },
       // The turn names the agreed question and writes its own wording beside the id, which is not shown.
-      { output: { ...asking("Q1", []), current_question: { id: "Q1", context: "Other context.", text: "Other wording?", terms: [], options: [{ label: "X", description: "x" }] } } },
+      { output: { ...asking("Q1", []), current_question: currentOf({ id: "Q1", context: "Other context.", text: "Other wording?", terms: [], options: [{ label: "X", description: "x" }] }) } },
       { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } },
       { output: noQuestions, plan: "v1" },
     ],
-    terms: [{ output: { entries: [{ id: "Q1", terms: [zod] }] } }],
+    terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { questionPhase: true },
@@ -170,26 +175,26 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
   await runTask(layer);
   const [q] = presentedQuestions(probe.ui);
   assert.deepEqual(q.origin, { kind: "clarification", id: "Q1" });
-  assert.deepEqual(q.context, { text: entryZod.context, by: "agent" });
-  assert.equal(q.question, entryZod.question);
-  assert.deepEqual(q.options.map((o) => [o.label, o.description, "token" in o.answer ? o.answer.token : ""]), [
+  assert.deepEqual(q.context, { blocks: divided.context, by: "agent" });
+  assert.deepEqual(q.question, divided.question);
+  assert.deepEqual(q.options.map((o) => [piecesText(o.label), piecesText(o.description), "token" in o.answer ? o.answer.token : ""]), [
     ["A", prompts.defaultMarked("a"), "1"],
     ["B", "b", "2"],
   ]);
-  assert.deepEqual(q.terms, [zod]);
-  assert.match(q.details, /package\.json does not list zod/);
-  // Every term shown with an agreed question has its explanation, and occurs in what is shown.
-  const shown = [q.context.text, q.details, q.question, ...q.options.flatMap((o) => [o.label, o.description])].join("\n");
-  for (const t of q.terms) {
+  assert.deepEqual(q.explanations, [zod]);
+  assert.match(detailsText(q), /package\.json does not list zod/);
+  // Every explanation shown with an agreed question is non-empty and referred to by a piece of what is shown.
+  const refs = [...(q.context.blocks[0].kind === "paragraph" ? q.context.blocks[0].pieces : []), ...q.question].map((p) => p.ref);
+  for (const t of q.explanations) {
     assert.ok(t.explanation.trim() !== "");
-    assert.ok(shown.includes(t.term), t.term);
+    assert.ok(refs.includes(t.id), t.term);
   }
 });
 
 // S18 (P1-R2-1 of the plan's review): an accepted requirements issue asked in the second interview is not in
 // questions.json, so it is presented from the turn, validated, and keeps its issue id in the progress.
 test("S18: an accepted requirements issue in the second interview is validated, presented from the turn, and keeps its id", async () => {
-  const gap = (context: string) => ({ ...asking("G-R1-1", []), current_question: { id: "G-R1-1", context, text: "Which port should the service listen on?", terms: [], options: [{ label: "8080", description: "the usual" }, { label: "80", description: "needs root" }] }, asked_ids: ["G-R1-1"] });
+  const gap = (context: string) => ({ ...asking("G-R1-1", []), current_question: currentOf({ id: "G-R1-1", context, text: "Which port should the service listen on?", terms: [], options: [{ label: "8080", description: "the usual" }, { label: "80", description: "needs root" }] }), asked_ids: ["G-R1-1"] });
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "", "1", ""],
     steps: [
@@ -210,8 +215,32 @@ test("S18: an accepted requirements issue in the second interview is validated, 
   assert.ok(probe.planner.prompts.includes(prompts.questionRepairPrompt([{ where: "G-R1-1", problems: [{ kind: "blankContext", subject: "" }] }])));
   const gapQuestion = presentedQuestions(probe.ui).find((q) => q.origin.kind === "followUp");
   assert.deepEqual(gapQuestion?.origin, { kind: "followUp", id: "G-R1-1" });
-  assert.equal(gapQuestion?.context.text, "The service, a web server, listens on a port for requests while it runs.");
-  assert.deepEqual(gapQuestion?.options.map((o) => o.label), ["8080", "80"]);
+  assert.equal(gapQuestion && contextText(gapQuestion), "The service, a web server, listens on a port for requests while it runs.");
+  assert.deepEqual(gapQuestion?.options.map((o) => piecesText(o.label)), ["8080", "80"]);
   const turns = probe.ui.notified.flatMap((e) => (e._tag === "InterviewTurn" && e.heading === prompts.clarificationHeading("followUp") ? [e] : []));
   assert.deepEqual(turns.at(-1) && [turns.at(-1)?.answered, turns.at(-1)?.total], [1, 1]);
+});
+
+// S5 of the task of issue #36: a question of the plan writer reaches the user with its pieces and its explanations.
+test("S5: a plan writer's question with a piece that refers to an explanation reaches QuestionPresented intact", async () => {
+  const asked = {
+    context: [{ kind: "paragraph" as const, pieces: [...plain("The service keeps its "), term("Orders", "o"), ...plain(" in a database.")] }],
+    question: [...plain("Where should the "), term("orders", "o"), ...plain(" be kept?")],
+    explanations: [{ id: "o", term: "order", explanation: "What a customer buys." }],
+    options: [{ label: plain("SQLite"), description: [...plain("one file per "), term("order", "o")] }, { label: plain("PostgreSQL"), description: plain("a server") }],
+  };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1"],
+    steps: [{ output: { questions_for_user: [asked] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runTask(layer);
+  const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
+  assert.deepEqual(q.context.blocks, asked.context);
+  assert.deepEqual(q.question, asked.question);
+  assert.deepEqual(q.explanations, asked.explanations);
+  assert.deepEqual(q.options.map((o) => [o.label, o.description]), asked.options.map((o) => [o.label, o.description]));
+  // The terminal's block names the explanation by its term, not by the words of a piece.
+  assert.ok(questionLines(q).some((l) => l.trim() === "order: What a customer buys."));
 });

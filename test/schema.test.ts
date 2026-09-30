@@ -23,16 +23,29 @@ const issue: legacy.Issue = { id: "P1-R1-1", severity: "major", location: "step 
 const disposition: legacy.Disposition = { id: "P1-R1-1", action: "accepted", rationale: "r", duplicate_of: "", reverses: "" };
 const selfCorrection: legacy.SelfCorrection = { id: "A", new_action: "plan_error", explanation: "x" };
 // Decision Q1 of the decision-support task: a question for the user is structured, with an optional list of options.
-// S3 (issues #36, #59): with its context paragraph and the explanations of its terms.
-type Term = { term: string; explanation: string };
-type UserQuestion = { context: string; question: string; terms: Term[]; options: { label: string; description: string }[] };
+// S3 (issues #36, #59): with its context paragraph and the explanations of its terms. Issue #36 (30 Sep 2026): every text
+// is a sequence of pieces, the context blocks of pieces (decision Q2), and the explanations a list the pieces refer to.
+type Piece = { text: string; ref: string; code: boolean };
+type Explanation = { id: string; term: string; explanation: string };
+type Block = { kind: "paragraph"; pieces: Piece[] } | { kind: "list"; items: { level: number; pieces: Piece[] }[] } | { kind: "code"; text: string };
+type PieceOption = { label: Piece[]; description: Piece[] };
+type UserQuestion = { context: Block[]; question: Piece[]; explanations: Explanation[]; options: PieceOption[] };
 type WithQuestions<T> = Omit<T, "questions_for_user"> & { questions_for_user: UserQuestion[] };
-const userQuestion: UserQuestion = { context: "c", question: "q?", terms: [{ term: "q", explanation: "a letter" }], options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] };
+const plain = (text: string): Piece[] => [{ text, ref: "", code: false }];
+const para = (text: string): Block[] => [{ kind: "paragraph", pieces: plain(text) }];
+const option = (label: string, description: string): PieceOption => ({ label: plain(label), description: plain(description) });
+const userQuestion: UserQuestion = {
+  context: [{ kind: "paragraph", pieces: plain("c") }, { kind: "list", items: [{ level: 0, pieces: plain("i") }, { level: 1, pieces: [{ text: "x", ref: "", code: true }] }] }, { kind: "code", text: "ls\n" }],
+  question: [{ text: "q", ref: "t1", code: false }, { text: "?", ref: "", code: false }],
+  explanations: [{ id: "t1", term: "q", explanation: "a letter" }],
+  options: [option("A", "a"), option("B", "b")],
+};
 const plannerResponse: WithQuestions<legacy.PlannerResponse> = { dispositions: [disposition], self_corrections: [selfCorrection], reviewer_feedback: "", questions_for_user: [userQuestion] };
-const questionEntry: legacy.QuestionEntry & { context: string } = { id: "Q1", context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }], default_answer: "A" };
+type QuestionEntry = { id: string; context: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string };
+const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A" };
 // Issue #21 (Q6 follow-up) and issue #35 (Q5, Q6): the fields the interview turn has beyond the frozen legacy shape.
-type CurrentQuestion = { current_question: { id: string; context: string; text: string; terms: Term[]; options: { label: string; description: string }[] } };
-const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: "c", text: "q?", terms: [], options: [{ label: "A", description: "a" }] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
+type CurrentQuestion = { current_question: { id: string; context: Block[]; text: Piece[]; explanations: Explanation[]; options: PieceOption[] } };
+const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
 const execReport: legacy.ExecReport = { status: "finished", summary: "s", question: "", remaining_work: "" };
 const execOutcome: legacy.ExecOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null };
 // Version 2 (Q5): three shapes tagged by source.
@@ -69,10 +82,13 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.SelfCorrection.Type>, DeepMutable<legacy.SelfCorrection>>>();
   sameType<Equals<DeepMutable<typeof S.PlannerResponse.Type>, DeepMutable<WithQuestions<legacy.PlannerResponse>>>>();
   sameType<Equals<DeepMutable<typeof S.PlanWriteResult.Type>, DeepMutable<WithQuestions<legacy.PlanWriteResult>>>>();
-  sameType<Equals<DeepMutable<typeof S.QuestionEntry.Type>, DeepMutable<legacy.QuestionEntry & { context: string }>>>();
-  sameType<Equals<DeepMutable<typeof S.QuestionList.Type>, { questions: DeepMutable<legacy.QuestionEntry & { context: string }>[] }>>();
-  sameType<Equals<DeepMutable<typeof S.QuestionListResponse.Type>, DeepMutable<WithQuestions<Omit<legacy.QuestionListResponse, "questions">> & { questions: (legacy.QuestionEntry & { context: string })[] }>>>();
-  sameType<Equals<DeepMutable<typeof S.QuestionContext.Type>, { context: string; terms: Term[] }>>();
+  sameType<Equals<DeepMutable<typeof S.QuestionEntry.Type>, QuestionEntry>>();
+  sameType<Equals<DeepMutable<typeof S.QuestionList.Type>, { questions: QuestionEntry[] }>>();
+  sameType<Equals<DeepMutable<typeof S.QuestionListResponse.Type>, DeepMutable<WithQuestions<Omit<legacy.QuestionListResponse, "questions">> & { questions: QuestionEntry[] }>>>();
+  // G-R1-1: the context call returns the whole question as pieces.
+  sameType<Equals<DeepMutable<typeof S.QuestionContext.Type>, { context: Block[]; question: Piece[]; options: PieceOption[]; details: Block[]; explanations: Explanation[] }>>();
+  // Decision Q1: the explaining conversation returns each agreed entry divided into pieces, with its explanations.
+  sameType<Equals<DeepMutable<typeof S.TermsEntry.Type>, { id: string; explanations: Explanation[]; context: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[] }>>();
   sameType<Equals<DeepMutable<typeof S.InterviewTurn.Type>, DeepMutable<legacy.InterviewTurn & { asked_ids: readonly string[] } & CurrentQuestion>>>();
   sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<legacy.ExecReport>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<legacy.ExecOutcome>>>();
@@ -90,11 +106,15 @@ test("each schema rejects a wrong enum value, a missing field and a wrong type",
   rejects(S.PlannerResponse, { ...plannerResponse, reviewer_feedback: 1 }, "numeric reviewer_feedback");
   rejects(S.QuestionEntry, { ...questionEntry, proposed_answers: [{ label: "A" }] }, "a proposed answer without a description");
   rejects(S.InterviewTurn, { ...interviewTurn, complete: "yes" }, "complete as a string");
-  rejects(S.InterviewTurn, { message_to_user: "m", current_question: { id: "", context: "", text: "", terms: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
+  rejects(S.InterviewTurn, { message_to_user: "m", current_question: { id: "", context: [], text: [], explanations: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
   rejects(S.InterviewTurn, { message_to_user: "m", asked_ids: [], answered_ids: [], complete: false, summary: "" }, "a turn without current_question");
   rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "Q1" } }, "a current question without its text");
-  rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "F1", text: "q?" } }, "a current question without its context, terms and options");
-  rejects(S.QuestionEntry, { id: "Q1", question: "q?", reason: "r", proposed_answers: [], default_answer: "" }, "a question entry without its context");
+  rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "F1", text: "q?" } }, "a current question without its context, explanations and options");
+  rejects(S.QuestionEntry, { id: "Q1", question: plain("q?"), reason: para("r"), proposed_answers: [], default_answer: "" }, "a question entry without its context");
+  // Issue #36 (30 Sep 2026): a question's text is never a bare string.
+  rejects(S.QuestionEntry, { ...questionEntry, question: "q?" }, "a question entry whose question is a string");
+  rejects(S.QuestionEntry, { ...questionEntry, context: "c" }, "a question entry whose context is a string");
+  rejects(S.InterviewTurn, { ...interviewTurn, current_question: { ...interviewTurn.current_question, text: "q?" } }, "a current question whose text is a string");
   rejects(S.ExecReport, { ...execReport, status: "done" }, "status done");
   rejects(S.ExecOutcome, { ...execOutcome, userInput: 5 }, "numeric userInput");
   rejects(S.LogEntry, { ...reviewEntry, source: "robot" }, "source robot");
@@ -112,14 +132,21 @@ test("each schema rejects a wrong enum value, a missing field and a wrong type",
 
 test("a question for the user is structured: with options, without options, never a bare string (decision Q1)", () => {
   assert.deepEqual(decode(S.UserQuestion, userQuestion), userQuestion);
-  const free = { context: "c", question: "Which?", terms: [], options: [] };
+  const free = { context: para("c"), question: plain("Which?"), explanations: [], options: [] };
   assert.deepEqual(decode(S.PlanWriteResult, { questions_for_user: [free] }), { questions_for_user: [free] });
   rejects(S.PlanWriteResult, { questions_for_user: ["Which?"] }, "a bare string question");
   rejects(S.PlannerResponse, { ...plannerResponse, questions_for_user: ["Which?"] }, "a bare string question in a response");
   rejects(S.UserQuestion, { ...free, options: undefined }, "a question without options");
-  rejects(S.UserQuestion, { ...free, options: [{ label: "A" }] }, "an option without a description");
-  rejects(S.UserQuestion, { question: "Which?", options: [] }, "a question without its context and terms (S3)");
-  rejects(S.UserQuestion, { ...free, terms: [{ term: "t" }] }, "a term without its explanation");
+  rejects(S.UserQuestion, { ...free, options: [{ label: plain("A") }] }, "an option without a description");
+  rejects(S.UserQuestion, { question: plain("Which?"), options: [] }, "a question without its context and explanations (S3)");
+  rejects(S.UserQuestion, { ...free, explanations: [{ id: "t1", term: "t" }] }, "an explanation without its text");
+  // Issue #36 (30 Sep 2026): pieces and blocks, never strings.
+  rejects(S.UserQuestion, { ...free, question: "Which?" }, "a question that is a string");
+  rejects(S.UserQuestion, { ...free, context: "c" }, "a context that is a string");
+  rejects(S.UserQuestion, { ...free, options: [{ label: "A", description: "a" }] }, "an option of strings");
+  rejects(S.UserQuestion, { ...free, question: [{ text: "Which?", ref: "" }] }, "a piece without its code flag");
+  rejects(S.UserQuestion, { ...free, context: [{ kind: "table", rows: [] }] }, "a block of an unknown kind");
+  rejects(S.UserQuestion, { ...free, context: [{ kind: "list", items: [{ level: 0.5, pieces: [] }] }] }, "a list item at a fractional level");
 });
 
 test("Config rejects an unknown key", () => {

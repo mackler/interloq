@@ -38,33 +38,56 @@ export const SelfCorrection = Schema.Struct({
   explanation: Schema.String,
 });
 
+// ---- a question's text as pieces (issue #36, rewritten 30 Sep 2026) -----------------------------------------------
+
 /**
- * A question for the user (decision Q1 of the decision-support task): its text and, when it is a choice, its options
- * (two or more mutually exclusive options; an empty list otherwise). A question with two or more options carries the
- * offer of decision support.
+ * A piece of a question's text: plain words (`ref` ""), or words that refer to an explanation of the question by its id
+ * (`ref`), carrying the words exactly as they stand in the sentence. `code`: the piece is a literal value shown exactly,
+ * as code (a tool's input value, a setting's name), never formatted. Every field is required, as Codex's strict mode wants.
  */
+export const Piece = Schema.Struct({ text: Schema.String, ref: Schema.String, code: Schema.Boolean });
 /**
- * A word or phrase in a question that a reader who has never seen the codebase may not know, with its explanation (issue
- * #36). Bound to its exact words (decision Q5): the page marks every case-sensitive, whole-word occurrence. Both fields
- * are plain strings for the agents; `validateQuestion` in src/question.ts rejects a blank one with its repair turn.
+ * An explanation of a word or phrase of a question that a reader who has never seen the codebase may not know: its id, the
+ * canonical name of the term (the label of its line in the terminal's "Terms:" block) and the explanation itself.
  */
-export const Term = Schema.Struct({ term: Schema.String, explanation: Schema.String });
-/** An option of a question: a short label and a description. */
+export const Explanation = Schema.Struct({ id: Schema.String, term: Schema.String, explanation: Schema.String });
+/** An item of a bulleted list: its nesting depth (0 at the top) and its pieces. */
+export const ListItem = Schema.Struct({ level: Schema.Int, pieces: Schema.Array(Piece) });
+/** A paragraph of pieces. */
+export const ParagraphBlock = Schema.Struct({ kind: Schema.Literal("paragraph"), pieces: Schema.Array(Piece) });
+/** A bulleted list. */
+export const ListBlock = Schema.Struct({ kind: Schema.Literal("list"), items: Schema.Array(ListItem) });
+/** A code block: one literal text, shown exactly, which refers to no explanation. */
+export const CodeBlock = Schema.Struct({ kind: Schema.Literal("code"), text: Schema.String });
+/** A block of a question's context or details (decision Q2): its kind is data, so the program reads no Markdown. */
+export const Block = Schema.Union([ParagraphBlock, ListBlock, CodeBlock]);
+/** An option of a question as an agent writes it: its short label and its description, both as pieces. */
+export const PieceOption = Schema.Struct({ label: Schema.Array(Piece), description: Schema.Array(Piece) });
+/** An option of a question with plain labels: the options of the AskUserQuestion tool, and an analysis's options. */
 export const QuestionOption = Schema.Struct({ label: Schema.String, description: Schema.String });
 /**
- * A question for the user (decision Q1 of the decision-support task; S3 of the task of issues #46 and #59): the context
- * paragraph that precedes it, its text, the explanations of its terms and, when it is a choice, its options (two or more
- * mutually exclusive options; an empty list otherwise). A question with two or more options carries the offer of
- * decision support.
+ * A question for the user (decision Q1 of the decision-support task; issues #36 and #59): the context paragraph as blocks,
+ * the question as pieces, the explanations its pieces refer to, and, when it is a choice, its options (two or more
+ * mutually exclusive options; an empty list otherwise). A question with two or more options carries the offer of decision
+ * support.
  */
 export const UserQuestion = Schema.Struct({
-  context: Schema.String,
-  question: Schema.String,
-  terms: Schema.Array(Term),
-  options: Schema.Array(QuestionOption),
+  context: Schema.Array(Block),
+  question: Schema.Array(Piece),
+  explanations: Schema.Array(Explanation),
+  options: Schema.Array(PieceOption),
 });
-/** The reply of a context call (S9, decision Q1): the context paragraph and the terms of a question the program composed. */
-export const QuestionContext = Schema.Struct({ context: Schema.String, terms: Schema.Array(Term) });
+/**
+ * The reply of a context call (S9, decisions G-R1-1 and F1): the whole question the program composed, as pieces: the
+ * context it writes, and the question, the options and the details it may rephrase, their literal values kept exactly.
+ */
+export const QuestionContext = Schema.Struct({
+  context: Schema.Array(Block),
+  question: Schema.Array(Piece),
+  options: Schema.Array(PieceOption),
+  details: Schema.Array(Block),
+  explanations: Schema.Array(Explanation),
+});
 
 /** The fields that every response to a review has. Spread into the question-list response. */
 const plannerResponseFields = {
@@ -149,11 +172,15 @@ export const DecisionAnalysis = Schema.Struct({
 /** One entry of the question list that Claude Code and Codex agree on before the interview. */
 export const QuestionEntry = Schema.Struct({
   id: Schema.String,
-  /** The context paragraph that precedes the question (S3); its terms come from the terms subject after convergence (Q8). */
-  context: Schema.String,
-  question: Schema.String,
-  reason: Schema.String,
-  proposed_answers: Schema.Array(Schema.Struct({ label: Schema.String, description: Schema.String })),
+  /**
+   * The context paragraph that precedes the question (S3), as blocks; every text is plain pieces here, and the pieces that
+   * refer to explanations come from the terms subject after convergence (decision Q1).
+   */
+  context: Schema.Array(Block),
+  question: Schema.Array(Piece),
+  reason: Schema.Array(Block),
+  proposed_answers: Schema.Array(PieceOption),
+  /** The label of the default answer, compared with the words of each proposed answer's label. */
   default_answer: Schema.String,
 });
 
@@ -166,11 +193,18 @@ export const QuestionListResponse = Schema.Struct({
 });
 
 /**
- * The explanations of the terms of the agreed questions (S17, issue #36, decision Q8): one entry per question id, with
- * the terms of the question, its context, its reason, its proposed answers and its default. The reply of the call that
- * writes them and of the application of the user's decisions; plan-review/terms.json holds them.
+ * The explanations of the terms of an agreed question (S17, issue #36, decision Q1): the question's entry divided into
+ * pieces that refer to its explanations, its wording unchanged. The reply of the call that writes them, of a response to
+ * their review and of the application of the user's decisions; plan-review/terms.json holds them.
  */
-export const TermsEntry = Schema.Struct({ id: Schema.String, terms: Schema.Array(Term) });
+export const TermsEntry = Schema.Struct({
+  id: Schema.String,
+  explanations: Schema.Array(Explanation),
+  context: Schema.Array(Block),
+  question: Schema.Array(Piece),
+  reason: Schema.Array(Block),
+  proposed_answers: Schema.Array(PieceOption),
+});
 export const TermsWrite = Schema.Struct({ entries: Schema.Array(TermsEntry) });
 /** A response to a review of the explanations: the dispositions and the complete amended explanations. */
 export const TermsResponse = Schema.Struct({ ...plannerResponseFields, entries: Schema.Array(TermsEntry) });
@@ -188,9 +222,9 @@ export const InterviewTurn = Schema.Struct({
   message_to_user: Schema.String,
   /**
    * Issue #35 (Q5, Q6): the question the message asks the user to answer now, its id and its text alone; S3: with its
-   * context paragraph, its terms and its options. Every field empty when the message asks none.
+   * context paragraph, its explanations and its options, as pieces (issue #36). Every field empty when the message asks none.
    */
-  current_question: Schema.Struct({ id: Schema.String, context: Schema.String, text: Schema.String, terms: Schema.Array(Term), options: Schema.Array(QuestionOption) }),
+  current_question: Schema.Struct({ id: Schema.String, context: Schema.Array(Block), text: Schema.Array(Piece), explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }),
   asked_ids: Schema.Array(Schema.String),
   answered_ids: Schema.Array(Schema.String),
   complete: Schema.Boolean,
@@ -316,7 +350,11 @@ export type Action = typeof Action.Type;
 export type Disposition = typeof Disposition.Type;
 export type SelfCorrection = typeof SelfCorrection.Type;
 export type UserQuestion = typeof UserQuestion.Type;
-export type Term = typeof Term.Type;
+export type Piece = typeof Piece.Type;
+export type Explanation = typeof Explanation.Type;
+export type Block = typeof Block.Type;
+export type ListItem = typeof ListItem.Type;
+export type PieceOption = typeof PieceOption.Type;
 export type QuestionOption = typeof QuestionOption.Type;
 export type QuestionContext = typeof QuestionContext.Type;
 export type TermsEntry = typeof TermsEntry.Type;

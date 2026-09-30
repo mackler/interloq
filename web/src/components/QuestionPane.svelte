@@ -10,14 +10,13 @@
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { answerHint, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION, TERMS_HEADING } from "../../../src/prompts.ts";
+  import { answerHint, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import type { Widget } from "../state.ts";
   import type { DraftKey } from "../draft.ts";
   import { type Ending, endingOf } from "../../../src/input.ts";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
-  import { render } from "../markdown.ts";
-  import { textHtml } from "../terms.ts";
-  import TermText from "./TermText.svelte";
+  import { blocksText, piecesText } from "../../../src/pieces.ts";
+  import QuestionText from "./QuestionText.svelte";
 
   // The typed text is the page's draft of this prompt (../draft.ts, finding 5): App keeps it per (incarnation, run,
   // prompt) and withdraws it with a notice when another tab answers first [error prevention].
@@ -69,6 +68,7 @@
   // An input method uses Enter to accept a candidate; that Enter is not an answer (finding 6) [error prevention].
   const composing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
   const question = $derived(widget?.question ?? null);
+  const hasText = (blocks: Parameters<typeof blocksText>[0]) => blocksText(blocks).join("").trim() !== "";
 </script>
 
 {#if widget !== null}
@@ -82,38 +82,32 @@
         <Button variant="text" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
       {/if}
     </div>
-    {#if question !== null && (question.context.text.trim() !== "" || question.details.trim() !== "" || question.terms.length > 0)}
+    {#if question !== null && (hasText(question.context.blocks) || hasText(question.details))}
       <div class="top">
-        {#if question.context.text.trim() !== ""}
+        {#if hasText(question.context.blocks)}
           <div class="context m3-font-body-medium">
-            <TermText class="markdown" html={render(question.context.text)} terms={question.terms} />
+            <QuestionText class="markdown" blocks={question.context.blocks} explanations={question.explanations} />
             {#if question.context.by === "program"}<p class="by m3-font-body-small">{PROGRAM_CONTEXT_NOTE}</p>{/if}
           </div>
         {/if}
-        {#if question.details.trim() !== ""}
-          <TermText class="details markdown m3-font-body-medium" html={render(question.details)} terms={question.terms} />
-        {/if}
-        {#if question.terms.length > 0}
-          <dl class="terms m3-font-body-small" aria-label={TERMS_HEADING}>
-            {#each question.terms as t, i (i)}
-              <dt>{t.term}</dt>
-              <dd>{t.explanation}</dd>
-            {/each}
-          </dl>
+        {#if hasText(question.details)}
+          <QuestionText class="details markdown m3-font-body-medium" blocks={question.details} explanations={question.explanations} />
         {/if}
       </div>
     {/if}
-    <p class="question-text m3-font-title-medium">{#if question === null}{widget.hint}{:else}<TermText inline html={textHtml(question.question)} terms={question.terms} />{/if}</p>
+    <p class="question-text m3-font-title-medium">{#if question === null}{widget.hint}{:else}<QuestionText class="markdown" pieces={question.question} explanations={question.explanations} />{/if}</p>
     {/if}
     <div class="bottom">
       {#if question !== null && question.options.length > 0}
+        <!-- S14 (issue #59): each option's label in bold on its own line and its description below it, as separate
+             elements, so that the options can be compared by their labels alone [recognition rather than recall]. -->
         <div class="options m3-font-body-medium" role="group" aria-label={PROPOSED_ANSWERS_LABEL}>
           {#each question.options as option, i (i)}
             {#if "token" in option.answer}
               {@const token = option.answer.token}
-              <Card variant="outlined" onclick={() => send(token)}><span class="card-text"><span class="token">{token}.</span> <TermText inline html={textHtml(option.description === "" ? option.label : `${option.label} — ${option.description}`)} terms={question.terms} /></span></Card>
+              <Card variant="outlined" onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}</span></Card>
             {:else}
-              <div class="numeric"><strong><TermText inline html={textHtml(option.label)} terms={question.terms} /></strong>{#if option.description !== ""} — <TermText inline html={textHtml(option.description)} terms={question.terms} />{/if}<br /><span class="m3-font-body-small">{NUMERIC_OPTION_NOTE}</span></div>
+              <div class="numeric"><span class="option-label"><strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}<span class="m3-font-body-small">{NUMERIC_OPTION_NOTE}</span></div>
             {/if}
           {/each}
         </div>
@@ -158,10 +152,12 @@
      them never moves (S27). */
   .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; background: var(--m3c-surface-container-low); border-radius: var(--m3-shape-medium); }
   /* Beside an analysis the pane holds only the answers, sized by them; the options scroll within 15 % of the window's
-     height, so that the field, the buttons and the analysis itself stay in view. */
+     height, at least one whole card of two lines (a label and a one-line description, S14) and at most 7rem, so that the
+     field, the buttons and the analysis itself stay in view. */
   .pane.answers-only { flex: 0 0 auto; padding: 0.5rem 0.75rem; }
   .pane.answers-only .bottom { flex: 0 0 auto; min-height: 0; overflow: visible; }
-  .pane.answers-only .options { max-height: 15dvh; overflow-y: auto; }
+  .pane.answers-only .options { max-height: clamp(3.75rem, 15dvh, 7rem); overflow-y: auto; }
+  .pane.answers-only .options > :global(button) { padding-block: 0.5rem; }
   .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
   /* The heading and the origin share a line where they fit, so that a short window keeps room for the question. */
   .title h2 { display: inline; margin: 0 0.25rem 0 0; }
@@ -170,20 +166,23 @@
   .top { flex: 0 1 auto; max-height: 30%; min-height: 2.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
   .context { padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
   .context .by { margin: 0.25rem 0 0; font-style: italic; }
-  .terms { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 0.75rem; }
-  .terms dt { font-weight: 600; }
-  .terms dd { margin: 0; }
   .top :global(.markdown pre) { overflow-x: auto; }
   .question-text { margin: 0; flex-shrink: 0; overflow-wrap: anywhere; }
-  /* At least a card of two lines (a label and a description that wraps once) fits, so that the first option can be
-     seen whole in a short window (S52, L23 at 640 × 400). */
-  .bottom { flex: 1 1 0; min-height: 5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+  /* At least a card of three lines (its label on a line of its own, S14, and a description that wraps once) fits, so
+     that the first option can be seen whole in a short window (S52, L23 at 640 × 400). */
+  .bottom { flex: 1 1 0; min-height: 6rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
   /* One card per row at every width; a card grows with its text, and a long unbroken token (a path) wraps. */
   .options { display: flex; flex-direction: column; gap: 0.5rem; }
   .options > :global(button) { width: 100%; min-width: 0; overflow-wrap: anywhere; text-align: start; }
+  /* S14: a card holds its label on a line of its own above the description; 12 dp above and below instead of the
+     card's 16 keep a card of three lines as tall as one of two lines was, so that the first option stays in view. */
+  .options > :global(button) { padding-block: 0.75rem; }
   .token { font-weight: 600; }
   /* The text above the card's state layer, so that a term in it is reached by the pointer (S44). */
-  .card-text { position: relative; z-index: 1; }
+  .card-text { position: relative; z-index: 1; display: flex; flex-direction: column; }
+  /* S14: the label on its own line, in bold (M3's title-small weight), the description in the body style below it. */
+  .option-label, .option-description { display: block; }
+  .numeric { display: flex; flex-direction: column; }
   .numeric { padding: 0.75rem 1rem; border: 1px dashed var(--m3c-outline-variant); border-radius: var(--m3-shape-medium); }
   .asks { margin: 0; color: var(--m3c-on-surface-variant); }
   .choices { display: flex; flex-wrap: wrap; gap: 0.5rem; }

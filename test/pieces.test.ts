@@ -1,0 +1,120 @@
+// S2 of the task of issue #36: the pure functions over a question's pieces and blocks. Nothing in them reads Markdown.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import fc from "fast-check";
+import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
+import type { Block, Piece } from "../src/schema.ts";
+
+const plain = (text: string): Piece => ({ text, ref: "", code: false });
+const ref = (text: string, id: string): Piece => ({ text, ref: id, code: false });
+
+test("the program's own words become plain pieces and paragraphs; the empty text none", () => {
+  assert.deepEqual(plainPieces("Which?"), [plain("Which?")]);
+  assert.deepEqual(plainPieces(""), []);
+  assert.deepEqual(plainBlocks("One.", " ", "Two."), [{ kind: "paragraph", pieces: [plain("One.")] }, { kind: "paragraph", pieces: [plain("Two.")] }]);
+  assert.deepEqual(plainOption("A", "a"), { label: [plain("A")], description: [plain("a")] });
+  assert.deepEqual(codePiece("ls"), { text: "ls", ref: "", code: true });
+});
+
+test("the words of pieces and blocks, and the pieces and refs of blocks", () => {
+  const blocks: readonly ShownBlock[] = [
+    { kind: "paragraph", pieces: [plain("Use "), ref("zod", "z"), plain(".")] },
+    { kind: "list", items: [{ level: 0, pieces: [plain("first")] }, { level: 1, pieces: [codePiece("npm i")] }] },
+    { kind: "code", text: "a\nb" },
+    { kind: "document", markdown: "# M" },
+  ];
+  assert.equal(piecesText([plain("Use "), ref("zod", "z"), plain(".")]), "Use zod.");
+  assert.deepEqual(blocksText(blocks), ["Use zod.", "first", "npm i", "a\nb", "# M"]);
+  assert.deepEqual(blockPieces(blocks).map((p) => p.text), ["Use ", "zod", ".", "first", "npm i"]);
+  assert.deepEqual(refsOf(blockPieces(blocks)), ["z"]);
+  assert.deepEqual(literalsOf(blocks), ["npm i", "a\nb"]);
+});
+
+test("Markdown for the records and the terminal: paragraphs, nested lists, a code span and a fenced block, exactly", () => {
+  const blocks: readonly ShownBlock[] = [
+    { kind: "paragraph", pieces: [plain("Use "), ref("zod", "z"), plain(" with "), codePiece("a`b")] },
+    { kind: "list", items: [{ level: 0, pieces: [plain("one")] }, { level: 1, pieces: [plain("two")] }] },
+    { kind: "code", text: "x\n```\ny" },
+    { kind: "document", markdown: "\n# M\n" },
+  ];
+  assert.equal(blocksMarkdown(blocks), "Use zod with ``a`b``\n\n- one\n  - two\n\n````\nx\n```\ny\n````\n\n# M");
+  // A code piece is shown exactly: the program escapes a value before it becomes a piece (S48), so nothing is doubled.
+  assert.equal(piecesMarkdown([codePiece("a\\rb")]), "`a\\rb`");
+  assert.equal(piecesMarkdown([codePiece("")]), "(empty text)");
+});
+
+test("sameBlocks and samePieces compare kinds, list levels and words, however the pieces are divided", () => {
+  const a: readonly Block[] = [{ kind: "paragraph", pieces: [plain("Use zod.")] }];
+  const b: readonly Block[] = [{ kind: "paragraph", pieces: [plain("Use "), ref("zod", "z"), plain(".")] }];
+  assert.ok(sameBlocks(a, b));
+  assert.ok(samePieces(a[0].kind === "paragraph" ? a[0].pieces : [], [plain("Use"), plain(" zod.")]));
+  assert.ok(!sameBlocks(a, [{ kind: "paragraph", pieces: [plain("Use zod!")] }]));
+  assert.ok(!sameBlocks(a, [{ kind: "list", items: [{ level: 0, pieces: [plain("Use zod.")] }] }]), "a paragraph is not a list item");
+  assert.ok(!sameBlocks([{ kind: "list", items: [{ level: 0, pieces: [plain("x")] }] }], [{ kind: "list", items: [{ level: 1, pieces: [plain("x")] }] }]), "another level");
+  assert.ok(!sameBlocks(a, [...a, ...a]));
+});
+
+// ---- properties (issue #66) ----------------------------------------------------------------------------------------
+
+/** A text and an arbitrary division of it into pieces, some referring to an explanation, some code. */
+const divided = fc.tuple(fc.string({ maxLength: 30 }), fc.array(fc.nat(30), { maxLength: 6 }), fc.array(fc.constantFrom("", "a", "b"), { maxLength: 7 }), fc.array(fc.boolean(), { maxLength: 7 })).map(([text, cuts, refs, codes]) => {
+  const at = [...new Set([0, ...cuts.map((c) => Math.min(c, text.length)), text.length])].sort((x, y) => x - y);
+  const pieces = at.slice(0, -1).map((a, i): Piece => ({ text: text.slice(a, at[i + 1]), ref: refs[i] ?? "", code: codes[i] ?? false }));
+  return { text, pieces };
+});
+const arbBlock: fc.Arbitrary<Block> = fc.oneof(
+  divided.map(({ pieces }) => ({ kind: "paragraph" as const, pieces })),
+  fc.array(fc.record({ level: fc.nat(3), pieces: divided.map((d) => d.pieces) }), { maxLength: 3 }).map((items) => ({ kind: "list" as const, items })),
+  fc.string({ maxLength: 10 }).map((text) => ({ kind: "code" as const, text })),
+);
+/** The same blocks with every piece divided again at its middle. */
+const redivide = (blocks: readonly Block[]): readonly Block[] => {
+  const split = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => (p.text.length < 2 ? [p] : [{ ...p, text: p.text.slice(0, 1) }, { ...p, text: p.text.slice(1) }]));
+  return blocks.map((b) => (b.kind === "paragraph" ? { ...b, pieces: split(b.pieces) } : b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: split(i.pieces) })) } : b));
+};
+
+test("property: dividing a text into pieces keeps its words", () => {
+  fc.assert(fc.property(divided, ({ text, pieces }) => piecesText(pieces) === text), { numRuns: 300 });
+});
+
+test("property: sameBlocks is reflexive and symmetric, and holds after any re-division", () => {
+  fc.assert(
+    fc.property(fc.array(arbBlock, { maxLength: 4 }), fc.array(arbBlock, { maxLength: 4 }), (a, b) => sameBlocks(a, a) && sameBlocks(a, b) === sameBlocks(b, a) && sameBlocks(a, redivide(a))),
+    { numRuns: 300 },
+  );
+});
+
+test("property: sameBlocks fails after any change of one character of the words", () => {
+  const changed = (blocks: readonly Block[]): readonly Block[] | null => {
+    const at = blocks.findIndex((b) => b.kind === "code" || blocksText([b]).join("") !== "");
+    if (at < 0) return null;
+    const b = blocks[at];
+    const next: Block =
+      b.kind === "code" ? { ...b, text: `${b.text}x` } : b.kind === "paragraph" ? { ...b, pieces: [...b.pieces.slice(0, -1), ...b.pieces.slice(-1).map((p) => ({ ...p, text: `${p.text}x` }))] } : { ...b, items: [{ level: 0, pieces: [plain("x")] }, ...b.items].slice(0, b.items.length + 1) };
+    return blocks.map((x, i) => (i === at ? next : x));
+  };
+  fc.assert(
+    fc.property(fc.array(arbBlock, { minLength: 1, maxLength: 4 }), (a) => {
+      const b = changed(a);
+      return b === null || !sameBlocks(a, b);
+    }),
+    { numRuns: 300 },
+  );
+});
+
+test("property: literalsOf is unchanged by re-dividing the plain pieces, and every function is total", () => {
+  fc.assert(
+    fc.property(fc.array(arbBlock, { maxLength: 4 }), (a) => {
+      const plainOnly = (blocks: readonly Block[]): readonly Block[] =>
+        blocks.map((b) => {
+          const split = (ps: readonly Piece[]) => ps.flatMap((p) => (p.code || p.text.length < 2 ? [p] : [{ ...p, text: p.text.slice(0, 1) }, { ...p, text: p.text.slice(1) }]));
+          return b.kind === "paragraph" ? { ...b, pieces: split(b.pieces) } : b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: split(i.pieces) })) } : b;
+        });
+      blocksMarkdown(a);
+      blocksText(a);
+      refsOf(blockPieces(a));
+      return JSON.stringify(literalsOf(a)) === JSON.stringify(literalsOf(plainOnly(a)));
+    }),
+    { numRuns: 300 },
+  );
+});

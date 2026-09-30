@@ -3,10 +3,11 @@ import { test } from "node:test";
 import { Result } from "effect";
 import { describe } from "../src/errors.ts";
 import { clarificationCount, normalizeQuestionList, normalizeReport, normalizeTurn } from "../src/schemaNormalize.ts";
+import { currentOf, entryOf } from "./helpers.ts";
 
 // Finding 8 / decision Q4: the wire shapes become variants after decoding.
-const turn = (complete: boolean, summary: string) => ({ message_to_user: "m", current_question: { id: "", context: "", text: "", terms: [], options: [] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete, summary });
-const ids = { asked: ["Q1", "F1"], answered: ["Q1"], current: { id: "", context: "", text: "", terms: [], options: [] } };
+const turn = (complete: boolean, summary: string) => ({ message_to_user: "m", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete, summary });
+const ids = { asked: ["Q1", "F1"], answered: ["Q1"], current: currentOf({ id: "", context: "", text: "", terms: [], options: [] }) };
 
 test("normalizeTurn: a summary is proposed only when complete is true and the summary is not blank", () => {
   assert.deepEqual(normalizeTurn(turn(true, "# Requirements")), { kind: "summary_proposed", message: "m", summary: "# Requirements", ...ids });
@@ -21,7 +22,7 @@ test("normalizeReport: finished, awaiting input with the question, blocked with 
   assert.deepEqual(normalizeReport({ status: "blocked", summary: "s", question: "no network", remaining_work: "w" }), { kind: "blocked", description: "no network", summary: "s", remainingWork: "w" });
 });
 
-const q = (id: string, defaultAnswer: string) => ({ id, context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: defaultAnswer });
+const q = (id: string, defaultAnswer: string) => entryOf({ id, context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: defaultAnswer });
 
 test("normalizeQuestionList keeps a default that names a proposed answer and nulls one that does not, with a note", () => {
   const result = normalizeQuestionList({ questions: [q("Q1", "A"), q("Q2", "C")] });
@@ -53,6 +54,6 @@ test("clarificationCount: the agreed and the asked questions make the total, the
 
 // S3: the question an interview turn asks now reaches the Ui whole, with its context, terms and options.
 test("normalizeTurn keeps the current question's context, terms and options", () => {
-  const current = { id: "F1", context: "Interloq, the orchestrator, asks.", text: "Which one?", terms: [{ term: "Interloq", explanation: "the program" }], options: [{ label: "A", description: "a" }] };
+  const current = currentOf({ id: "F1", context: "Interloq, the orchestrator, asks.", text: "Which one?", terms: [{ term: "Interloq", explanation: "the program" }], options: [{ label: "A", description: "a" }] });
   assert.deepEqual(normalizeTurn({ ...turn(false, ""), current_question: current }).current, current);
 });

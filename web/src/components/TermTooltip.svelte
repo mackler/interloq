@@ -2,8 +2,9 @@
   // The explanation of a term (S28, issue #36): a hand-built M3 rich tooltip, as StepTooltip is, since m3-svelte has
   // none. It asserts only the explanation the agents wrote and Codex reviewed. The text is plain text, never HTML. It is
   // placed inside the viewport, below or above its anchor, with a size limit and its own scrolling.
-  // `entries`: one term, or every distinct term of a focused link, in order of occurrence (S40).
-  type Entry = Readonly<{ term: string; explanation: string }>;
+  // `entries`: the explanation a word refers to (issue #36: a word is a piece with one ref). The term's canonical name
+  // is not shown: in the page the words themselves are the anchor; it labels the terminal's "Terms:" lines.
+  type Entry = Readonly<{ explanation: string }>;
   // S42: the keyboard inside the tooltip. Tab leaves past its anchor (`onPast`), Shift+Tab and Escape return to the anchor
   // (`onReturn`), and focus leaving for anything but the anchor closes it (`onFocusOut`).
   type Props = {
@@ -54,7 +55,6 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div role="tooltip" {id} class="tooltip m3-font-body-medium" style={place} tabindex="0" bind:this={tip} use:portal onclick={contain} onpointerdown={contain} onmouseenter={onEnter} onmouseleave={onLeave} onkeydown={onKey} onfocusout={onFocusOut}>
   {#each entries as entry, i (i)}
-    <strong class="m3-font-title-small">{entry.term}</strong>
     <p>{entry.explanation}</p>
   {/each}
 </div>
@@ -76,5 +76,4 @@
   }
   .tooltip:focus-visible { outline: 2px solid var(--m3c-secondary); }
   p { margin: 0.25rem 0 0; }
-  p + strong { display: block; margin-top: 0.5rem; }
 </style>

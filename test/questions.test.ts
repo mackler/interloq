@@ -4,23 +4,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { piecesText } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 type InterviewTurn = typeof S.InterviewTurn.Type;
 
 const noQuestions = { questions_for_user: [] };
-const q = (id: string): QuestionEntry => ({
-  id,
-  context: "c",
-  question: `question ${id}?`,
-  reason: "the codebase does not determine it",
-  proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }],
-  default_answer: "A",
-});
+const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
+const none = { id: "", context: [], text: [], explanations: [], options: [] };
 const turn = (message: string, answered: string[], summary = ""): InterviewTurn => ({
   message_to_user: message,
-  current_question: { id: "", context: "", text: "", terms: [], options: [] },
+  current_question: none,
   asked_ids: answered,
   answered_ids: answered,
   complete: summary !== "",
@@ -179,7 +174,7 @@ test("/done ends the interview early", async () => {
 
 // Issue #21 (Q6): a follow-up question raises the total; Claude reports it in asked_ids with an id of its own.
 test("a follow-up asked during the clarification raises its total", async () => {
-  const withFollowUp = (message: string, asked: string[], answered: string[], summary = ""): InterviewTurn => ({ message_to_user: message, current_question: { id: "", context: "", text: "", terms: [], options: [] }, asked_ids: asked, answered_ids: answered, complete: summary !== "", summary });
+  const withFollowUp = (message: string, asked: string[], answered: string[], summary = ""): InterviewTurn => ({ message_to_user: message, current_question: none, asked_ids: asked, answered_ids: answered, complete: summary !== "", summary });
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "3", ""],
     steps: [
@@ -200,14 +195,14 @@ test("a follow-up asked during the clarification raises its total", async () => 
 
 // S15 (issues #34, #58, #59): the question list is held to the rules inside behaviour 10's validation budget, at the
 // first call, at a response to a review and at the application of the user's decisions; a second failure halts.
-const blank = (id: string): QuestionEntry => ({ ...q(id), context: " " });
+const blank = (id: string): QuestionEntry => ({ ...q(id), context: para(" ") });
 test("a question list whose entry breaks a rule gets the validation repair turn at the first call; a second failure halts", async () => {
   const repaired = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [
       { output: { questions: [blank("Q1")] } },
       { output: { questions: [q("Q1")] } },
-      { output: { ...turn("Q1?", []), current_question: { id: "Q1", context: "", text: "question Q1?", terms: [], options: [] } } },
+      { output: { ...turn("Q1?", []), current_question: { ...none, id: "Q1", text: plain("question Q1?") } } },
       { output: turn("Done.", ["Q1"], "# Requirements\n\nQ1: A") },
       { output: noQuestions, plan: "v1" },
     ],
@@ -226,7 +221,7 @@ test("a response to the question review whose list breaks a rule gets the valida
     answers: [""],
     steps: [
       { output: { questions: [q("Q1")] } },
-      { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), { ...q("Q2"), question: "Which one? It matters." }] } },
+      { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), { ...q("Q2"), question: plain("Which one? It matters.") }] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), q("Q2")] } },
       { output: turn("Done.", ["Q1", "Q2"], "# Requirements\n\nA") },
       { output: noQuestions, plan: "v1" },
@@ -237,14 +232,14 @@ test("a response to the question review whose list breaks a rule gets the valida
   });
   await runTask(layer);
   assert.equal(probe.planner.prompts[2], prompts.questionRepairPrompt([{ where: "Q2", problems: [{ kind: "notLast", subject: "" }] }]));
-  assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => x.question), ["question Q1?", "question Q2?"]);
+  assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => piecesText(x.question)), ["question Q1?", "question Q2?"]);
 });
 
 // S16 (Q12): a question of the plan writer and an interview question outside questions.json are held to the rules, with
 // behaviour 10's validation repair turn and no Codex review; an agreed question and a turn that asks nothing are not.
 test("a plan writer's question that breaks a rule gets the validation repair turn; a second failure halts", async () => {
-  const bad = { context: "c", question: "Which database? Say.", terms: [], options: [] };
-  const good = { context: "c", question: "Which database?", terms: [], options: [] };
+  const bad = { context: para("c"), question: plain("Which database? Say."), explanations: [], options: [] };
+  const good = { context: para("c"), question: plain("Which database?"), explanations: [], options: [] };
   const repaired = testLayer(tempRepo(), {
     answers: ["SQLite"],
     steps: [{ output: { questions_for_user: [bad] }, plan: "v1" }, { output: { questions_for_user: [good] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
@@ -258,12 +253,12 @@ test("a plan writer's question that breaks a rule gets the validation repair tur
 });
 
 test("an interview question outside questions.json is validated, an agreed one and a turn that asks nothing are not", async () => {
-  const followUp = (context: string) => ({ ...turn("A follow-up.", ["Q1"]), current_question: { id: "F1", context, text: "Which port?", terms: [], options: [] }, asked_ids: ["Q1", "F1"] });
+  const followUp = (context: string) => ({ ...turn("A follow-up.", ["Q1"]), current_question: { ...none, id: "F1", context: para(context), text: plain("Which port?") }, asked_ids: ["Q1", "F1"] });
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "8080", ""],
     steps: [
       { output: { questions: [q("Q1")] } },
-      { output: { ...turn("", []), current_question: { id: "Q1", context: "", text: "", terms: [], options: [] }, asked_ids: ["Q1"] } },
+      { output: { ...turn("", []), current_question: { ...none, id: "Q1" }, asked_ids: ["Q1"] } },
       { output: followUp(" ") },
       { output: followUp("The service listens on a port.") },
       { output: turn("Done.", ["Q1", "F1"], "# Requirements\n\nQ1: A; F1: 8080") },
@@ -283,22 +278,46 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
   const { turnValidation, asksNothing } = await import("../src/conversation.ts");
   const { Result } = await import("effect");
   const base = turn("m", []);
-  const asking = { ...base, current_question: { id: "", context: "", text: "Choose one.", terms: [{ term: "one", explanation: "" }], options: [] } };
+  const asking = { ...base, current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", explanation: "" }] } };
   const failed = turnValidation([])(asking);
   assert.ok(Result.isFailure(failed));
   assert.equal(failed.failure.repair, prompts.questionRepairPrompt([{ where: "the current question", problems: [{ kind: "blankContext", subject: "" }, { kind: "notLast", subject: "" }, { kind: "blankExplanation", subject: "one" }] }]));
   assert.ok(Result.isSuccess(turnValidation([])(base)));
-  assert.ok(Result.isSuccess(turnValidation(["Q1"])({ ...base, current_question: { id: "Q1", context: "", text: "", terms: [], options: [] } })));
+  assert.ok(Result.isSuccess(turnValidation(["Q1"])({ ...base, current_question: { ...none, id: "Q1" } })));
   // The seam: turnDraft presents as a reply exactly the turns asksNothing names.
   const { turnDraft } = await import("../src/conversation.ts");
   const { normalizeTurn } = await import("../src/schemaNormalize.ts");
-  for (const t of [base, asking, { ...base, current_question: { ...base.current_question, options: [{ label: "A", description: "a" }] } }]) {
+  for (const t of [base, asking, { ...base, current_question: { ...base.current_question, options: [opt("A", "a")] } }]) {
     assert.equal(turnDraft(normalizeTurn(t), { questions: [], terms: [] }).origin.kind === "reply", asksNothing(t.current_question), JSON.stringify(t.current_question));
   }
 });
 
 test("a turn with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
-  const bad = { ...turn("m", []), current_question: { id: "", context: "", text: "Choose one.", terms: [{ term: "one", explanation: "" }], options: [] } };
+  const bad = { ...turn("m", []), current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", explanation: "" }] } };
   const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: ["talk"], config: withQuestions });
   await runFails(halted.layer, "QuestionInvalid", /the current question/);
+});
+
+// S7 of the task of issue #36: a follow-up question is pieces; a piece that refers to no explanation gets the repair turn.
+test("S7: a follow-up with a dangling ref gets the validation repair turn, and the repaired one is presented with its pieces", async () => {
+  const dangling = { ...none, id: "F1", context: para("The service, a web server, listens on a port."), text: [...plain("Which "), term("port", "p"), ...plain("?")] };
+  const repaired = { ...dangling, explanations: [{ id: "p", term: "port", explanation: "The number a program listens on for connections." }] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["The service needs a port.", "8080", ""],
+    steps: [
+      { output: { questions: [] } },
+      { output: { ...turn("A follow-up.", []), current_question: dangling, asked_ids: ["F1"] } },
+      { output: { ...turn("A follow-up.", []), current_question: repaired, asked_ids: ["F1"] } },
+      { output: turn("Done.", ["F1"], "# Requirements\n\nF1: 8080") },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: withQuestions,
+  });
+  await runTask(layer);
+  assert.ok(probe.planner.prompts.includes(prompts.questionRepairPrompt([{ where: "F1", problems: [{ kind: "unknownRef", subject: "p" }] }])));
+  const followUp = presentedQuestions(probe.ui).find((q) => q.origin.kind === "followUp");
+  assert.deepEqual(followUp?.question, repaired.text);
+  assert.deepEqual(followUp?.explanations, repaired.explanations);
 });

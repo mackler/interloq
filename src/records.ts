@@ -53,7 +53,7 @@ export type Baseline = typeof Baseline.Type;
 /** Where a decision took place: the phase of the run as src/uiEvents.ts names it. */
 const PhaseRecord = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(["planning", "execution", "work"]), n: S.NonNegativeInt })]);
 /** decision-<k>/question.json: the question the user was asked, with its options, the phase in which it was asked and its label (W1-R1-2). */
-export const DecisionQuestionFile = Schema.Struct({ version: V2, decision: S.PositiveInt, phase: PhaseRecord, label: Schema.String, question: Schema.String, options: S.UserQuestion.fields.options });
+export const DecisionQuestionFile = Schema.Struct({ version: V2, decision: S.PositiveInt, phase: PhaseRecord, label: Schema.String, question: Schema.String, options: Schema.Array(S.QuestionOption) });
 export type DecisionQuestionFile = typeof DecisionQuestionFile.Type;
 /** decision-<k>/analysis.json: the reviewed file of decision k, the validated analysis. */
 export const AnalysisFile = Schema.Struct({ version: V2, analysis: S.DecisionAnalysis });

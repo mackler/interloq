@@ -12,6 +12,7 @@ import { renderRound } from "./render.ts";
 import { type IssueId, validateReview, validateRound, type ValidatedReview, type ValidatedRound } from "./round.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { Config, FileChange, LogEntry, PlannerResponse, Review, UserQuestion } from "./schema.ts";
+import { piecesText } from "./pieces.ts";
 import { type PauseFacts, pauseOriginOf } from "./question.ts";
 import type { SubjectId } from "./artifacts.ts";
 import type { LoopResult, UiEvent } from "./uiEvents.ts";
@@ -104,7 +105,7 @@ export type Asks = Readonly<{ kind: "pause"; facts: PauseFacts }> | Readonly<{ k
 type Ask = Readonly<{ asks: Asks; id: IssueId | null; options?: readonly Option[]; key?: string }>;
 /** The subject of a decision in the records, from what it asks (S7): prompts.recordSubject is the one place it is composed. */
 export const subjectOf = (heading: string, asks: Asks): string =>
-  asks.kind === "pause" ? prompts.recordSubject({ kind: "pause", heading, ...pauseOriginOf(asks.facts) }, "") : prompts.recordSubject({ kind: "planner", heading }, asks.question.question);
+  asks.kind === "pause" ? prompts.recordSubject({ kind: "pause", heading, ...pauseOriginOf(asks.facts) }, "") : prompts.recordSubject({ kind: "planner", heading }, piecesText(asks.question.question));
 /** The reviewer's position and the planner's position at a disputed pause (decision Q1). */
 const positions = (reviewer: string, planner: string): readonly Option[] => [
   { label: prompts.REVIEWER_POSITION, description: reviewer },
@@ -315,7 +316,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), currentEntry(history, idOld)?.rationale ?? ""),
       key: `repeat ${idNew} ${idOld}`,
     })),
-    ...response.questions_for_user.map((question, i): Ask => ({ asks: { kind: "planner", question }, id: null, options: question.options, key: `question ${i}` })),
+    ...response.questions_for_user.map((question, i): Ask => ({ asks: { kind: "planner", question }, id: null, options: question.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) })), key: `question ${i}` })),
   ];
 };
 

@@ -15,6 +15,8 @@ import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/service
 import { makeStore } from "../src/store.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { noDecider, ScriptedUi, tempRepo } from "./helpers.ts";
+import { para } from "./helpers.ts";
+import { piecesText } from "../src/pieces.ts";
 
 // Issue #26 (plan step S18): a call that failed from a transport fault is made again with backoff; when the retries are
 // exhausted, the user chooses between another set of retries and a stop.
@@ -158,7 +160,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
   const decider: DeciderShape = {
     at: () => decider,
     decide: () => Effect.die(new Error("no decision was expected")),
-    explain: (request) => Effect.sync(() => (explained.push(request), { context: { text: "Written by Claude Code.", by: "agent" as const }, terms: [] })),
+    explain: (request) => Effect.sync(() => (explained.push(request), { context: { blocks: para("Written by Claude Code."), by: "agent" as const }, explanations: [] })),
   };
   for (const agent of ["codex", "claude"] as const) {
     explained.length = 0;
@@ -168,10 +170,10 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
     const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
     if (agent === "codex") {
       assert.equal(explained.length, 1);
-      assert.deepEqual(q.context, { text: "Written by Claude Code.", by: "agent" });
+      assert.deepEqual(q.context, { blocks: para("Written by Claude Code."), by: "agent" });
     } else {
       assert.deepEqual(explained, [], "a context call was made for the pause of the unreachable Claude Code");
-      assert.deepEqual(q.context, { text: prompts.fallbackContext(q.origin), by: "program" });
+      assert.deepEqual(q.context, { blocks: para(prompts.fallbackContext(q.origin)), by: "program" });
     }
   }
 });
@@ -183,6 +185,6 @@ test("at the exhaustion pause, the details hold the attempts and the whole fault
   const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
   await exitOf(withTransportRetry("claude", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null })), Effect.void), layer);
   const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
-  assert.ok(!q.question.includes(long.slice(0, 40)), q.question);
-  assert.equal(q.details, prompts.transportDetails(3, long));
+  assert.ok(!piecesText(q.question).includes(long.slice(0, 40)), piecesText(q.question));
+  assert.deepEqual(q.details, prompts.transportDetails(3, long));
 });

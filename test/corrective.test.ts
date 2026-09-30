@@ -4,14 +4,14 @@ import { Result } from "effect";
 import { correctivePrompt, correctionRepairPrompt } from "../src/prompts.ts";
 import { correctiveValidation } from "../src/round.ts";
 import type { PlannerResponse } from "../src/schema.ts";
-import { respond } from "./helpers.ts";
+import { respond, questionOf } from "./helpers.ts";
 
 // Issue #30 (plan step S9): the corrective turn's prompt tells Claude Code which dispositions it may change, and the
 // validation accepts exactly those changes. One source (the previous response and its accepted ids) feeds both.
 const previous: PlannerResponse = respond([["P1-R2-1", "accepted"], ["P1-R2-2", "partially_accepted"], ["P1-R2-3", "rejected"]], {
   self_corrections: [{ id: "", new_action: "plan_error", explanation: "a slip" }],
   reviewer_feedback: "thanks",
-  questions_for_user: [{ context: "c", question: "Which?", terms: [], options: [] }],
+  questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })],
 });
 const acceptedIds = previous.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
 

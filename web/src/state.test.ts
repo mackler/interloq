@@ -5,7 +5,7 @@ import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from ".
 import { foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { questionMarkdown } from "../../src/render.ts";
+import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
@@ -17,7 +17,7 @@ const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prom
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",
-  question: { number: 1, origin, context: { text: "", by: "agent" }, terms: [], question, options: options.map((o, i) => ({ ...o, answer: { token: String(i + 1) } })), details: "", decision: null },
+  question: { number: 1, origin, context: { blocks: [], by: "agent" }, explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), answer: { token: String(i + 1) } })), details: [], decision: null },
 });
 const presentedOf = (event: UiEvent): PresentedQuestion => (event._tag === "QuestionPresented" ? event.question : (undefined as never));
 /** The time of publication of an event: by default one second per seq from 14:00:00 UTC; `times` gives it in seconds. */
@@ -61,7 +61,7 @@ describe("ordering and the panels", () => {
   });
 
   test("an answer that is a choice shows the choice's label", () => {
-    const permission: UiEvent = { _tag: "QuestionPresented", question: { ...presentedOf(presentedEvent("Allow?", [])), options: [{ label: "Allow", description: "", answer: { token: "y" } }, { label: "Deny", description: "", answer: { token: "n" } }] } };
+    const permission: UiEvent = { _tag: "QuestionPresented", question: { ...presentedOf(presentedEvent("Allow?", [])), options: [{ label: plainPieces("Allow"), description: [], answer: { token: "y" } }, { label: plainPieces("Deny"), description: [], answer: { token: "n" } }] } };
     const s = fold(live([started, notified(permission), asked(1, prompts.permissionPrompt), { _tag: "Answered", prompt: 1, text: "y" }]));
     expect(bodies(s).at(-1)).toBe("user:Allow");
   });
@@ -566,7 +566,7 @@ describe("a replay of a question phase", () => {
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],
-          questions: [{ id: "Q1", context: "c", question: "Which database?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" }],
+          questions: [{ id: "Q1", context: plainBlocks("c"), question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p") }, { label: plainPieces("SQLite"), description: plainPieces("s") }], default_answer: "PostgreSQL" }],
         },
         resultText: "",
       }),
@@ -761,7 +761,7 @@ describe("decision support", () => {
   const positions = [{ label: "Follow Codex", description: "the issue" }, { label: "Follow Claude", description: "the rationale" }];
   const presented: UiEvent = presentedEvent("Should Codex's position or Claude Code's position stand?", positions, { kind: "pause", heading: "Planning phase 1", pause: "reraised", id: "A" });
   const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-  const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: "", decision: null }, options: positions, analysis });
+  const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options: positions, analysis });
 
   test("presented options become the cards of the next decision prompt; the offer is a choice", () => {
     const s = fold(live([started, notified(presented), asked(1, prompts.withOffer(prompts.decisionPrompt))]));
@@ -770,7 +770,7 @@ describe("decision support", () => {
     expect(bodies(s)).toEqual([]);
     expect(s.run?.pending?.hint).toBe(prompts.pagePromptText("decision", prompts.decisionPrompt));
     const helped = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: { _tag: "Answered", prompt: 1, text: "/decide" } }], s);
-    expect(bodies(helped)).toEqual([`program:${questionMarkdown(presentedOf(presented))}`, `user:${prompts.HELP_ME_DECIDE}`]);
+    expect(bodies(helped)).toEqual([`program:${piecesText(presentedOf(presented).question)}`, `user:${prompts.HELP_ME_DECIDE}`]);
   });
 
   test("options never outlive their prompt: a pause without options after one with options shows no cards", () => {
@@ -852,7 +852,7 @@ test("a decision's ResponseReceived is one Claude message in the right panel, li
 // W3-R1-1: a reply the run rejects (a blank answer where one is required) keeps the analysis for the prompt asked again.
 test("a rejected blank reply keeps the analysis for the retry; an accepted empty answer and the retry's answer dismiss it", () => {
   const options = [{ label: "A", description: "" }, { label: "B", description: "" }];
-  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { text: "c", by: "agent" }, terms: [], question: "Q?", options: [], details: "", decision: null }, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
+  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
   const question: UiEvent = presentedEvent("A or B?", options);
   const rejected: RunEvent[] = [
     started,
@@ -1309,14 +1309,14 @@ describe("the pending question", () => {
   test("when answered, the question and the answer are appended as an exchange", () => {
     const events: RunEvent[] = [...pendingEvents, { _tag: "Answered", prompt: 1, text: "1" }];
     for (const s of [fold(live(events)), replayed(events)]) {
-      expect(bodies(s)).toEqual(["program:a", `program:${questionMarkdown(presentedOf(presented))}`, "user:SQLite — a file"]);
+      expect(bodies(s)).toEqual(["program:a", `program:${piecesText(presentedOf(presented).question)}`, "user:SQLite — a file"]);
       expect(s.run?.pending).toBe(null);
     }
   });
   test("a question presented again after a rejected answer is the next prompt's question", () => {
     const again = presentedEvent("Which database, again?", []);
     const s = fold(live([...pendingEvents, { _tag: "Answered", prompt: 1, text: "" }, notified({ _tag: "AnswerRejected" }), notified(again), asked(2, prompts.optionOrTextPrompt)]));
-    expect(s.run?.pending?.question?.question).toBe("Which database, again?");
+    expect(piecesText(s.run?.pending?.question?.question ?? [])).toBe("Which database, again?");
   });
   test("property: while a prompt is pending, its question's text is in no transcript message", () => {
     fc.assert(
@@ -1329,10 +1329,35 @@ describe("the pending question", () => {
   });
 });
 
-// S28: an answered question keeps its terms in the transcript, where its explanations stay reachable.
-test("the question of an answered exchange carries its terms", () => {
-  const q: UiEvent = { _tag: "QuestionPresented", question: { ...presentedOf(presentedEvent("Which zod?", [])), terms: [{ term: "zod", explanation: "A library." }] } };
-  const s = fold(live([started, notified(q), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
-  expect(s.run?.left[0].terms).toEqual([{ term: "zod", explanation: "A library." }]);
-  expect(s.run?.left[1].terms ?? []).toEqual([]);
+// S28, S12 of the task of issue #36: an answered question joins the transcript whole, as it was presented, so that its
+// pieces keep referring to their explanations there.
+test("the question of an answered exchange is the presented question, whole", () => {
+  const question: PresentedQuestion = {
+    ...presentedOf(presentedEvent("Which zod?", [{ label: "A", description: "a" }])),
+    question: [{ text: "Which ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: "?", ref: "", code: false }],
+    explanations: [{ id: "z", term: "zod", explanation: "A library." }],
+    details: [{ kind: "code", text: "npm i zod" }, { kind: "document", markdown: "# Doc" }],
+  };
+  const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
+  expect(s.run?.left[0].question).toEqual(question);
+  expect(s.run?.left[0].body).toBe("Which zod?");
+  expect(s.run?.left[1].question).toBeUndefined();
+});
+
+test("property: an answered question joins the transcript exactly as it was presented", () => {
+  const piece = fc.record({ text: fc.string({ maxLength: 6 }), ref: fc.constantFrom("", "a"), code: fc.boolean() });
+  const block = fc.oneof(
+    fc.record({ kind: fc.constant("paragraph" as const), pieces: fc.array(piece, { maxLength: 3 }) }),
+    fc.record({ kind: fc.constant("list" as const), items: fc.array(fc.record({ level: fc.nat(2), pieces: fc.array(piece, { maxLength: 2 }) }), { maxLength: 2 }) }),
+    fc.record({ kind: fc.constant("code" as const), text: fc.string({ maxLength: 6 }) }),
+    fc.record({ kind: fc.constant("document" as const), markdown: fc.string({ maxLength: 6 }) }),
+  );
+  fc.assert(
+    fc.property(fc.array(block, { maxLength: 3 }), fc.array(piece, { minLength: 1, maxLength: 3 }), fc.array(block, { maxLength: 2 }), (context, text, details) => {
+      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, question: text, details, explanations: [{ id: "a", term: "t", explanation: "e" }] };
+      const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
+      return JSON.stringify(s.run?.left[0].question) === JSON.stringify(question) && s.run?.left[0].body === piecesText(text);
+    }),
+    { numRuns: 100 },
+  );
 });

@@ -12,6 +12,7 @@ import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import type { ExecOutcome } from "./schema.ts";
 import { askOffering, numberedOptions, permissionDraft, programContext, type QuestionDraft } from "./offer.ts";
+import { plainPieces } from "./pieces.ts";
 import { parseRelayedQuestion, type QuestionOrigin } from "./question.ts";
 import { chooseOption } from "./input.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
@@ -136,9 +137,9 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       const origin: QuestionOrigin = { kind: "relayed" };
       const options = numberedOptions(q.options);
       const parsed = parseRelayedQuestion(q.question, q.options);
-      if (parsed !== null) return { origin, context: { text: parsed.context, by: "agent" }, terms: parsed.terms, question: parsed.question, options, decision: null };
+      if (parsed !== null) return { origin, context: { blocks: parsed.context, by: "agent" }, explanations: parsed.explanations, question: parsed.question, options: options.map((o, i) => ({ ...o, shown: parsed.options[i] ?? o.shown })), decision: null };
       const { plan } = yield* store.readContext();
-      return { origin, context: programContext(origin), terms: [], question: q.question, options, explain: prompts.relayedFacts(plan), decision: null };
+      return { origin, context: programContext(origin), explanations: [], question: plainPieces(q.question), options, explain: prompts.relayedFacts(plan), decision: null };
     });
 
   /**

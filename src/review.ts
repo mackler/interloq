@@ -7,6 +7,7 @@ import { type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
 import { pauseOriginOf, type Question, type QuestionOrigin, validateQuestions } from "./question.ts";
+import { piecesText, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
@@ -79,12 +80,12 @@ export const decisionDraft = (heading: string, asks: Asks, options: readonly Opt
   const pause = pauseOriginOf(asks.facts);
   const origin: QuestionOrigin = { kind: "pause", heading, ...pause };
   // S12: Claude Code writes the context from the pause's facts, which the user reads beside it as prose (S11).
-  return { origin, context: programContext(origin), terms: [], question: prompts.pauseQuestion(pause), options: numberedOptions(options), details: pauseProse(asks.facts), explain: "", decision };
+  return { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.pauseQuestion(pause)), options: numberedOptions(options), details: pauseProse(asks.facts), explain: "", decision };
 };
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
 export const plannerDraft = (question: UserQuestion, heading: string, decision: number | null): QuestionDraft => {
   const origin: QuestionOrigin = { kind: "planner", heading };
-  return { origin, context: agentContext(question.context, origin), terms: question.terms, question: question.question, options: numberedOptions(question.options), decision };
+  return { origin, context: agentContext(question.context, origin), explanations: question.explanations, question: question.question, options: numberedOptions(question.options), decision };
 };
 
 /** Asks one decision (S7): the question presented, the offer where it has options; an answer that is an option's number stands for that option. */
@@ -100,7 +101,7 @@ export const askPlannerQuestion = (question: UserQuestion, heading: string, phas
   Effect.gen(function* () {
     const store = yield* Store;
     const decision = yield* askDecisionQuestion(plannerDraft(question, heading, null));
-    if (decision !== "") yield* store.appendDecision({ subject: prompts.recordSubject({ kind: "planner", heading }, question.question), id: null, decision, phase, round });
+    if (decision !== "") yield* store.appendDecision({ subject: prompts.recordSubject({ kind: "planner", heading }, piecesText(question.question)), id: null, decision, phase, round });
     return decision;
   });
 
@@ -377,13 +378,13 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             // The limit is a choice between options (decision Q6), so it carries the offer; the answer is passed on as typed.
             const { proceed } = state.setup;
             const origin: QuestionOrigin = { kind: "limit", heading, limit: command.limit };
-            const draft: QuestionDraft = { origin, context: programContext(origin), terms: [], question: prompts.limitQuestion(heading, command.limit), options: limitOptions(proceed), explain: prompts.limitFacts(heading, command.limit, state.counts), decision: within };
+            const draft: QuestionDraft = { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.limitQuestion(heading, command.limit)), options: limitOptions(proceed), explain: prompts.limitFacts(heading, command.limit, state.counts), decision: within };
             return { kind: "LimitAnswer", answer: yield* askOffering((p) => ui.ask(p), proceed === null ? prompts.limitNoProceedPrompt : prompts.limitPrompt, draft) };
           }
           case "AskUnchanged": {
             // Issue #30: Retry, Proceed or Stop, with the offer of decision support; an answer that is none of them is asked again.
             const origin: QuestionOrigin = { kind: "unchanged", heading, fileLabel, accepted: command.accepted };
-            const draft: QuestionDraft = { origin, context: programContext(origin), terms: [], question: prompts.unchangedQuestion(heading, fileLabel), options: unchangedOptions(command.retry === "interview"), explain: prompts.unchangedFacts(heading, fileLabel, command.accepted), decision: within };
+            const draft: QuestionDraft = { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(command.retry === "interview"), explain: prompts.unchangedFacts(heading, fileLabel, command.accepted), decision: within };
             const answer = yield* askOffering((p) => ui.ask(p), prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
             return { kind: "UnchangedAnswer", answer: parseUnchangedAnswer(answer)! };
           }

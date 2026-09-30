@@ -4,28 +4,42 @@
 
 import { Effect, Result } from "effect";
 import { QuestionInvalid, type RunError } from "./errors.ts";
-import { type ContextRequest, contextFallbackNote, contextPrompt, fallbackContext, questionRepairPrompt } from "./prompts.ts";
+import { type ContextRequest, contextFallbackNote, contextPrompt, fallbackContext, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
 import { describe } from "./errors.ts";
-import { type ContextWritten, questionProblems } from "./question.ts";
+import { blockPieces, literalsOf, plainBlocks } from "./pieces.ts";
+import { type ContextWritten, type Piece, questionPieces, questionProblems } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import { type Decider, Planner, type RunConfig, Store, type Ui } from "./services.ts";
 
+/** The code pieces with a ref that the program supplied in its request (the names of a tool's settings it explains, S55). */
+const suppliedRefs = (request: ContextRequest): readonly Piece[] =>
+  [...request.question, ...request.options.flatMap((o) => [...o.label, ...o.description]), ...blockPieces(request.details)].filter((p) => p.code && p.ref !== "");
+
 /**
- * The reply's context and terms under the rules of every question, the program's question and options fixed (scope
- * "context"); a term must occur in what the user is shown, the facts excluded (S36, CONTEXT_TERMS_RULE).
+ * The reply of a context call (S9; decisions G-R1-1 and F1): the whole question under the rules of every question and the
+ * data clauses of its format, the program's supplied references the one exception to "no ref on a code piece"; the
+ * options neither added, removed nor reordered; every literal value of the details kept exactly, in order; and every
+ * supplied reference kept (KEEP_SUPPLIED_REFS).
  */
 export const contextValidation =
   (request: ContextRequest): Validation<S.QuestionContext> =>
   (reply) => {
-    const problems = questionProblems({ context: reply.context, question: request.question, terms: reply.terms, options: request.options, details: request.details }, "context");
+    const supplied = suppliedRefs(request);
+    const shown = questionPieces({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details });
+    const problems: readonly QuestionProblem[] = [
+      ...questionProblems({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details }, supplied),
+      ...(reply.options.length === request.options.length ? [] : [{ kind: "optionsChanged" as const, subject: "" }]),
+      ...(JSON.stringify(literalsOf(reply.details)) === JSON.stringify(literalsOf(request.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
+      ...supplied.filter((p) => !shown.some((q) => q.code && q.text === p.text && q.ref === p.ref)).map((p) => ({ kind: "suppliedRefDropped" as const, subject: p.text })),
+    ];
     if (problems.length === 0) return Result.succeed({ value: reply, notes: [] });
-    const questions = [{ where: "the context of the question", problems }];
+    const questions = [{ where: "the question", problems }];
     return Result.fail({ error: new QuestionInvalid({ questions }), repair: questionRepairPrompt(questions) });
   };
 
-/** The program's own paragraph (S10), marked as the program's. */
-export const programWritten = (request: ContextRequest): ContextWritten => ({ context: { text: fallbackContext(request.origin), by: "program" }, terms: [] });
+/** The program's own paragraph (S10), marked as the program's; its question, options, details and explanations stand. */
+export const programWritten = (request: ContextRequest): ContextWritten => ({ context: { blocks: plainBlocks(fallbackContext(request.origin)), by: "program" }, explanations: request.explanations });
 
 /**
  * Writes a question's context in a fresh session, which may read the project and change nothing (S33): the agent's
@@ -37,7 +51,8 @@ export const writeContext = (task: string, request: ContextRequest): Effect.Effe
     const planner = yield* (yield* Planner).fresh;
     // S33: it may read the project and change nothing; the project and the guarded records are compared after the call.
     const written = yield* planningCall(contextPrompt(task, request), S.QuestionContext, "context", "readProject", contextValidation(request)).pipe(Effect.provideService(Planner, planner));
-    return { context: { text: written.output.context, by: "agent" as const }, terms: written.output.terms };
+    const reply = written.output;
+    return { context: { blocks: reply.context, by: "agent" as const }, explanations: reply.explanations, question: reply.question, options: reply.options, details: reply.details };
   }).pipe(
     Effect.catch((error: RunError): Effect.Effect<ContextWritten, RunError, Store> =>
       error._tag === "UserStopped" || error._tag === "Interrupted" || error._tag === "ProjectChanged" || error._tag === "RecordsChanged"

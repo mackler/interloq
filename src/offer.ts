@@ -6,7 +6,8 @@ import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
 import { chooseOption, isDecide, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
-import type { ContextWritten, OptionAnswer, PresentedQuestion, QuestionContextText, QuestionOrigin, Term } from "./question.ts";
+import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
+import type { ContextWritten, OptionAnswer, PresentedQuestion, QuestionContextText, QuestionOrigin } from "./question.ts";
 import { renderChoice, renderQuestionRecord } from "./render.ts";
 import { Decider, Store, Ui } from "./services.ts";
 
@@ -15,16 +16,18 @@ import { Decider, Store, Ui } from "./services.ts";
 /**
  * An option of a question, with the answer the user gives to choose it (S8: its exact text, or any number he types) and
  * the answers that choose it (P1-R1-4). Each `answer` is one that `matches` accepts, which test/offer.test.ts asserts.
+ * `label` and `description` are the option's own words, by which it is chosen and recorded; `shown` is the option as the
+ * user reads it, as pieces (issue #36), which a context call may rephrase (S10: the pairing is by position).
  */
-export type OfferedOption = Readonly<{ label: string; description: string; answer: OptionAnswer; matches: (answer: string) => boolean }>;
+export type OfferedOption = Readonly<{ label: string; description: string; shown: PieceOption; answer: OptionAnswer; matches: (answer: string) => boolean }>;
 /** A question before it is numbered (S7): everything the user is shown of it but its number. */
 export type QuestionDraft = Readonly<{
   origin: QuestionOrigin;
   context: QuestionContextText;
-  terms: readonly Term[];
-  question: string;
+  explanations: readonly Explanation[];
+  question: readonly Piece[];
   options: readonly OfferedOption[];
-  details?: string;
+  details?: readonly ShownBlock[];
   /**
    * A question the program composed asks a context call for its context and terms (S9, decision Q1): the facts of the
    * case in prose beside `details`. Absent: the draft's own context stands.
@@ -33,47 +36,58 @@ export type QuestionDraft = Readonly<{
   decision: number | null;
 }>;
 /** The fixed context paragraph of a question the program composes (S7, S10), marked as the program's. */
-export const programContext = (origin: QuestionOrigin): QuestionContextText => ({ text: prompts.fallbackContext(origin), by: "program" });
+export const programContext = (origin: QuestionOrigin): QuestionContextText => ({ blocks: plainBlocks(prompts.fallbackContext(origin)), by: "program" });
 /** An agent's context paragraph; the program's own paragraph where the agent wrote none. */
-export const agentContext = (text: string, origin: QuestionOrigin): QuestionContextText => (text.trim() === "" ? programContext(origin) : { text, by: "agent" });
+export const agentContext = (blocks: readonly ShownBlock[], origin: QuestionOrigin): QuestionContextText =>
+  blocksText(blocks).join("").trim() === "" ? programContext(origin) : { blocks, by: "agent" };
 /**
- * What a decision's analysis is asked about: the question, or for a reply to Claude Code's message in the clarification
- * the message itself, which is that question's context and what its numbered answers answer.
+ * What a decision's analysis is asked about, as the user was shown it (S10): the question's words, or for a reply to
+ * Claude Code's message in the clarification the message itself, which is that question's context and what its numbered
+ * answers answer.
  */
-export const decisionQuestionOf = (draft: QuestionDraft): string => (draft.origin.kind === "reply" ? draft.context.text : draft.question);
+export const decisionQuestionOf = (draft: QuestionDraft): string => (draft.origin.kind === "reply" ? blocksMarkdown(draft.context.blocks) : piecesText(draft.question));
 /** The question as the user is shown it, with its number in the run. */
 export const presentedQuestion = (draft: QuestionDraft, number: number): PresentedQuestion => ({
   number,
   origin: draft.origin,
   context: draft.context,
-  terms: draft.terms,
+  explanations: draft.explanations,
   question: draft.question,
-  options: draft.options.map((o) => ({ label: o.label, description: o.description, answer: o.answer })),
-  details: draft.details ?? "",
+  options: draft.options.map((o) => ({ label: o.shown.label, description: o.shown.description, answer: o.answer })),
+  details: draft.details ?? [],
   decision: draft.decision,
 });
 
-/** Options chosen by their number or their exact label: the interview, a relayed question, a pause, a plan writer's question. */
-export const numberedOptions = (options: readonly Readonly<{ label: string; description: string }>[]): readonly OfferedOption[] =>
-  options.map((o, i) => ({ label: o.label, description: o.description, answer: { token: String(i + 1) }, matches: (answer: string) => chooseOption(answer, options.length) === i || answer.trim() === o.label }));
+/**
+ * Options chosen by their number or their exact label: the interview, a relayed question, a pause, a plan writer's
+ * question. An option given as pieces is chosen by its words; one given as text is shown as plain pieces.
+ */
+export const numberedOptions = (options: readonly (Readonly<{ label: string; description: string }> | PieceOption)[]): readonly OfferedOption[] =>
+  options.map((o, i) => {
+    const shown = typeof o.label === "string" ? plainOption(o.label, o.description as string) : (o as PieceOption);
+    const label = piecesText(shown.label);
+    return { label, description: piecesText(shown.description), shown, answer: { token: String(i + 1) }, matches: (answer: string) => chooseOption(answer, options.length) === i || answer.trim() === label };
+  });
+/** An option of the program's own words: shown as it is. */
+const own = (label: string, description: string, answer: OptionAnswer, matches: (answer: string) => boolean): OfferedOption => ({ label, description, shown: plainOption(label, description), answer, matches });
 /** A permission request: y allows, and anything else denies (the prompt's own rule); n is the answer shown for the denial. */
 export const permissionOptions: readonly OfferedOption[] = [
-  { label: prompts.PERMISSION_ALLOW, description: prompts.PERMISSION_ALLOW_DESCRIPTION, answer: { token: "y" }, matches: (answer) => answer.trim().toLowerCase() === "y" },
-  { label: prompts.PERMISSION_DENY, description: prompts.PERMISSION_DENY_DESCRIPTION, answer: { token: "n" }, matches: (answer) => answer.trim().toLowerCase() !== "y" },
+  own(prompts.PERMISSION_ALLOW, prompts.PERMISSION_ALLOW_DESCRIPTION, { token: "y" }, (answer) => answer.trim().toLowerCase() === "y"),
+  own(prompts.PERMISSION_DENY, prompts.PERMISSION_DENY_DESCRIPTION, { token: "n" }, (answer) => answer.trim().toLowerCase() !== "y"),
 ];
 /**
  * A permission request as the user is asked it (S34, S49): the tool's input under plain labels in the details, a field
  * without a label explained as a term, the question naming the action, and the facts a context call is given.
  */
 export const permissionDraft = (tool: string, input: unknown): QuestionDraft => {
-  const origin: QuestionOrigin = { kind: "permission", tool, input: prompts.toolInputLines(input) };
+  const origin: QuestionOrigin = { kind: "permission", tool, input: prompts.toolInputProse(input) };
   return {
     origin,
     context: programContext(origin),
-    terms: prompts.toolInputTerms(input),
-    question: prompts.permissionQuestion(tool, input),
+    explanations: prompts.toolInputExplanations(input),
+    question: plainPieces(prompts.permissionQuestion(tool, input)),
     options: permissionOptions,
-    details: `${prompts.TOOL_INPUT_HEADING}\n\n${prompts.toolInputLines(input)}`,
+    details: prompts.toolInputBlocks(input),
     explain: prompts.permissionFacts(tool, input),
     decision: null,
   };
@@ -82,17 +96,17 @@ export const permissionDraft = (tool: string, input: unknown): QuestionDraft => 
 export const unchangedOptions = (interview: boolean): readonly OfferedOption[] => {
   const d = prompts.unchangedOptionDescriptions(interview);
   return [
-    { label: prompts.UNCHANGED_RETRY, description: d.retry, answer: { token: prompts.UNCHANGED_ANSWERS.retry }, matches: (answer: string) => parseUnchangedAnswer(answer) === "retry" },
-    { label: prompts.UNCHANGED_PROCEED, description: d.proceed, answer: { token: prompts.UNCHANGED_ANSWERS.proceed }, matches: (answer: string) => parseUnchangedAnswer(answer) === "proceed" },
-    { label: prompts.UNCHANGED_STOP, description: d.stop, answer: { token: prompts.UNCHANGED_ANSWERS.stop }, matches: (answer: string) => parseUnchangedAnswer(answer) === "stop" },
+    own(prompts.UNCHANGED_RETRY, d.retry, { token: prompts.UNCHANGED_ANSWERS.retry }, (answer: string) => parseUnchangedAnswer(answer) === "retry"),
+    own(prompts.UNCHANGED_PROCEED, d.proceed, { token: prompts.UNCHANGED_ANSWERS.proceed }, (answer: string) => parseUnchangedAnswer(answer) === "proceed"),
+    own(prompts.UNCHANGED_STOP, d.stop, { token: prompts.UNCHANGED_ANSWERS.stop }, (answer: string) => parseUnchangedAnswer(answer) === "stop"),
   ];
 };
 /** The pause of issue #26: Retry again and Stop, each chosen by the answers parseTransportAnswer reads as it. */
 export const transportOptions = (): readonly OfferedOption[] => {
   const d = prompts.transportOptionDescriptions();
   return [
-    { label: prompts.TRANSPORT_RETRY_AGAIN, description: d.retry, answer: { token: prompts.TRANSPORT_ANSWERS.retry }, matches: (answer: string) => parseTransportAnswer(answer) === "retry" },
-    { label: prompts.TRANSPORT_STOP, description: d.stop, answer: { token: prompts.TRANSPORT_ANSWERS.stop }, matches: (answer: string) => parseTransportAnswer(answer) === "stop" },
+    own(prompts.TRANSPORT_RETRY_AGAIN, d.retry, { token: prompts.TRANSPORT_ANSWERS.retry }, (answer: string) => parseTransportAnswer(answer) === "retry"),
+    own(prompts.TRANSPORT_STOP, d.stop, { token: prompts.TRANSPORT_ANSWERS.stop }, (answer: string) => parseTransportAnswer(answer) === "stop"),
   ];
 };
 /**
@@ -104,27 +118,33 @@ export const limitOptions = (proceed: string | null): readonly OfferedOption[] =
   const proceeds = (answer: string) => proceed !== null && answer.trim() === prompts.LIMIT_ANSWERS.proceed;
   const more = (answer: string) => parseExtraRounds(answer) !== null;
   return [
-    ...(proceed === null ? [] : [{ label: prompts.LIMIT_PROCEED, description: d.proceed, answer: { token: prompts.LIMIT_ANSWERS.proceed }, matches: proceeds }]),
-    { label: prompts.LIMIT_STOP, description: d.stop, answer: { token: prompts.LIMIT_ANSWERS.stop }, matches: (answer: string) => limitStops(answer, proceed !== null) },
-    { label: prompts.LIMIT_MORE, description: d.more, answer: { numeric: true }, matches: more },
+    ...(proceed === null ? [] : [own(prompts.LIMIT_PROCEED, d.proceed, { token: prompts.LIMIT_ANSWERS.proceed }, proceeds)]),
+    own(prompts.LIMIT_STOP, d.stop, { token: prompts.LIMIT_ANSWERS.stop }, (answer: string) => limitStops(answer, proceed !== null)),
+    own(prompts.LIMIT_MORE, d.more, { numeric: true }, more),
   ];
 };
 
 /**
- * A draft with the context a context call wrote (S34): its paragraph, its terms, and the draft's own terms that it did
- * not explain again (a term the call explains replaces the draft's fixed explanation of it).
+ * A draft with what a context call wrote (S9; decision G-R1-1): its paragraph and explanations, and the question, the
+ * options and the details as it rephrased them; each option keeps its answer, paired by position (S10). Where the call
+ * could not succeed, the program's paragraph and its own question stand.
  */
-const withContext = (draft: QuestionDraft, written: ContextWritten): QuestionDraft => ({
+export const withContext = (draft: QuestionDraft, written: ContextWritten): QuestionDraft => ({
   ...draft,
   context: written.context,
-  terms: [...written.terms, ...draft.terms.filter((t) => !written.terms.some((w) => w.term === t.term))],
+  explanations: written.explanations,
+  question: written.question ?? draft.question,
+  options: written.options === undefined ? draft.options : draft.options.map((o, i) => ({ ...o, shown: written.options?.[i] ?? o.shown })),
+  details: written.details ?? draft.details,
 });
-/** The context and terms a context call writes for a question the program composed (S9), before it is presented. */
+/** Details the program gave a context call: blocks of its own words; a document is Markdown shown whole, never divided. */
+const requestDetails = (details: readonly ShownBlock[]): readonly Block[] => details.flatMap((b): readonly Block[] => (b.kind === "document" ? plainBlocks(b.markdown) : [b]));
+/** What a context call writes for a question the program composed (S9), before it is presented. */
 const explain = (draft: QuestionDraft, facts: string) =>
   Effect.gen(function* () {
     const decider = yield* Decider;
-    const options = draft.options.map((o) => ({ label: o.label, description: o.description }));
-    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: draft.details ?? "", facts });
+    const options = draft.options.map((o) => o.shown);
+    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.details ?? []), explanations: draft.explanations, facts });
   });
 
 /**
@@ -160,14 +180,15 @@ export const askOffering = <E>(
       }
     }
     const decider = yield* Decider;
-    const options = draft.options.map((o) => ({ label: o.label, description: o.description }));
+    // S10: the analysis is of the question as the user was shown it, its options' words as displayed, paired by position.
+    const options = explained.options.map((o) => ({ label: piecesText(o.shown.label), description: piecesText(o.shown.description) }));
     const decisions: number[] = [];
     for (;;) {
       const answer = yield* ask(prompts.withOffer(hint));
       if (isDecide(answer)) {
-        const asked = decisionQuestionOf(draft);
-        // S37: the analysis is given the question as the user was shown it, after the context call.
-        const shown = { context: explained.context.text, terms: explained.terms, details: explained.details ?? "" };
+        const asked = decisionQuestionOf(explained);
+        // S37, S10: the analysis is given the question as the user was shown it, after the context call.
+        const shown = { context: blocksMarkdown(explained.context.blocks), explanations: explained.explanations, details: blocksMarkdown(explained.details ?? []) };
         const outcome = yield* decider.decide({ question: asked, options, number: question.number, shown });
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });
@@ -178,7 +199,7 @@ export const askOffering = <E>(
         yield* rejected;
         continue;
       }
-      const option = draft.options.find((o) => o.matches(answer))?.label ?? null;
+      const option = explained.options.find((o) => o.matches(answer))?.label ?? null;
       for (const k of decisions) {
         yield* store.saveChoice(k, { answer, option });
         yield* store.converse(renderChoice(k, answer, option));
