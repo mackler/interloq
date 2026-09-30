@@ -4,7 +4,7 @@
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
-import { blockPieces, blocksMarkdown, plainBlocks } from "../../src/pieces.ts";
+import { blocksMarkdown, plainBlocks } from "../../src/pieces.ts";
 import fc from "fast-check";
 import { renderQuestionRecord } from "../../src/render.ts";
 import QuestionText from "./components/QuestionText.svelte";
@@ -183,12 +183,12 @@ describe("the names of fields without a plain label", () => {
   });
   test("the seam: each name refers to its explanation in the details as validated, and is marked in the page", async () => {
     const { permissionDraft } = await import("../../src/offer.ts");
-    const { questionProblems } = await import("../../src/question.ts");
+    const { questionProblems, suppliedOf } = await import("../../src/question.ts");
     for (const key of keys) {
       const draft = permissionDraft("FutureTool", inputWith(key));
       expect(draft.explanations.length, key).toBe(1);
       const details = draft.details ?? [];
-      const supplied = blockPieces(details).filter((p) => p.code && p.ref !== "");
+      const supplied = suppliedOf({ context: [], question: [], explanations: [], options: [], details });
       const problems = questionProblems({ context: plainBlocks("c"), question: draft.question, explanations: draft.explanations, options: [], details }, supplied);
       expect(problems, key).toEqual([]);
       const el = rendered(inputWith(key));
@@ -222,7 +222,7 @@ describe("names that would otherwise display alike", () => {
   };
   test("labels differ, the note is beside each escaped name, and every name refers to its explanation without a problem", async () => {
     const { permissionDraft } = await import("../../src/offer.ts");
-    const { questionProblems } = await import("../../src/question.ts");
+    const { questionProblems, suppliedOf } = await import("../../src/question.ts");
     const note = noteText();
     for (const group of groups) {
       const labels = group.map((k) => {
@@ -235,7 +235,7 @@ describe("names that would otherwise display alike", () => {
       const draft = permissionDraft("FutureTool", inputOf(group));
       expect(draft.explanations.length).toBe(group.filter((k) => k !== "").length);
       const details = draft.details ?? [];
-      const supplied = blockPieces(details).filter((p) => p.code && p.ref !== "");
+      const supplied = suppliedOf({ context: [], question: [], explanations: [], options: [], details });
       const problems = questionProblems({ context: plainBlocks("c"), question: draft.question, explanations: draft.explanations, options: [], details }, supplied);
       expect(problems, JSON.stringify(group)).toEqual([]);
       const marked = new Set([...rendered(inputOf(group)).querySelectorAll<HTMLElement>(".term")].map((m) => m.dataset.ref));

@@ -9,7 +9,7 @@ import fc from "fast-check";
 import { decodeRunError, haltMessage } from "../src/errors.ts";
 import { piecesText } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
-import { type Piece, type Question, questionProblems, validateQuestion, validateQuestions } from "../src/question.ts";
+import { type Piece, type Question, questionProblems, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
 import type { Block, Explanation } from "../src/schema.ts";
 import { opt, para, plain, term } from "./helpers.ts";
 
@@ -28,7 +28,7 @@ const good: Question = {
     opt("Leave it", "Keep it as a dependency of the SDK only."),
   ],
 };
-const kinds = (q: Question, supplied: readonly Piece[] = []) => questionProblems(q, supplied).map((p) => p.kind);
+const kinds = (q: Question, supplied: readonly SuppliedRef[] = []) => questionProblems(q, supplied).map((p) => p.kind);
 
 test("a question that keeps every mechanical rule passes, a plural and a capitalized word referring to one explanation", () => {
   assert.deepEqual(questionProblems(good), []);
@@ -105,8 +105,13 @@ test("a literal value never refers to an explanation, except a code piece the pr
   const code: Piece = { text: "max_tokens", ref: "t1", code: true };
   const withCode: Question = { ...good, details: [{ kind: "list", items: [{ level: 0, pieces: [...plain("The setting "), code] }] }] };
   assert.deepEqual(kinds(withCode), ["refOnCode"]);
-  assert.deepEqual(kinds(withCode, [code]), []);
-  assert.deepEqual(kinds(withCode, [{ ...code, ref: "t2" }]), ["refOnCode"], "the supplied piece is keyed by its words and its ref");
+  assert.deepEqual(kinds(withCode, [{ part: "details", piece: code }]), []);
+  assert.deepEqual(kinds(withCode, [{ part: "details", piece: { ...code, ref: "t2" } }]), ["refOnCode"], "the supplied piece is keyed by its words and its ref");
+  // P5-R1-1: in its own part only, and as many times as it was supplied there.
+  assert.deepEqual(kinds(withCode, [{ part: "question", piece: code }]), ["refOnCode"], "supplied in another part");
+  const twice: Question = { ...withCode, details: [{ kind: "list", items: [{ level: 0, pieces: [...plain("The setting "), code, ...plain(": "), code] }] }] };
+  assert.deepEqual(kinds(twice, [{ part: "details", piece: code }]), ["refOnCode"], "copied beside the supplied occurrence");
+  assert.deepEqual(kinds(twice, [{ part: "details", piece: code }, { part: "details", piece: code }]), []);
 });
 
 test("every problem kind names a rule or clause, and the repair prompt cites its text verbatim", () => {

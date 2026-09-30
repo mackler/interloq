@@ -49,26 +49,56 @@ const blockRuns = (blocks: readonly ShownBlock[]): readonly string[] =>
   blocks.flatMap((b) => (b.kind === "paragraph" ? plainRuns(b.pieces) : b.kind === "list" ? b.items.flatMap((i) => plainRuns(i.pieces)) : b.kind === "document" ? [b.markdown] : []));
 /** A code piece that refers to an explanation, as a key: its words and its ref. */
 const codeRefKey = (p: Piece): string => JSON.stringify([p.text, p.ref]);
+/**
+ * A code piece with a ref that the program supplied, with the part of the question it stands in (`partsOf`): the
+ * exception to "no ref on a code piece" holds in that part alone, and as many times as it was supplied (P5-R1-1).
+ */
+export type SuppliedRef = Readonly<{ part: string; piece: Piece }>;
+/** The parts of a question, each with its pieces, in the order of questionPieces. */
+export const partsOf = (q: Question): readonly Readonly<{ part: string; pieces: readonly Piece[] }>[] => [
+  { part: "context", pieces: blockPieces(q.context) },
+  { part: "question", pieces: q.question },
+  { part: "details", pieces: blockPieces(q.details ?? []) },
+  ...q.options.flatMap((o, i) => [
+    { part: `option ${i + 1} label`, pieces: o.label },
+    { part: `option ${i + 1} description`, pieces: o.description },
+  ]),
+];
+/** Every supplied code piece of a question (its code pieces with a ref), with its part. */
+export const suppliedOf = (q: Question): readonly SuppliedRef[] => partsOf(q).flatMap(({ part, pieces }) => pieces.filter((p) => p.code && p.ref !== "").map((piece) => ({ part, piece })));
+/**
+ * The code pieces with a ref beyond what was supplied in their part: in each part, each text and ref as many times as
+ * the program supplied it there, the rest in excess (W4-R1-1, P5-R1-1).
+ */
+const refsBeyondSupplied = (q: Question, supplied: readonly SuppliedRef[]): readonly Piece[] =>
+  partsOf(q).flatMap(({ part, pieces }) =>
+    pieces
+      .filter((p) => p.code && p.ref !== "")
+      .filter((p, i, refd) => {
+        const allowed = supplied.filter((s) => s.part === part && codeRefKey(s.piece) === codeRefKey(p)).length;
+        return refd.slice(0, i + 1).filter((r) => codeRefKey(r) === codeRefKey(p)).length > allowed;
+      }),
+  );
 
 /**
  * The problems of one question; none when it keeps every mechanically checkable rule (S3 of the task of issue #36): every
  * ref names an explanation, every explanation is referred to, ids unique, terms, explanations and referring pieces not
  * blank, no ref added to a literal value, the question ending with its question mark, a context, and no bare number.
  * `supplied`: the code pieces with a ref that the program itself supplied (the names of a tool's settings it explains, S9),
- * the one exception to "no ref on a code piece"; none for a question an agent wrote.
+ * each with its part, the one exception to "no ref on a code piece", in that part and as often as supplied (P5-R1-1);
+ * none for a question an agent wrote.
  */
-export const questionProblems = (q: Question, supplied: readonly Piece[] = []): readonly QuestionProblem[] => {
+export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] = []): readonly QuestionProblem[] => {
   const pieces = questionPieces(q);
   const ids = q.explanations.map((e) => e.id);
   const refs = new Set(pieces.filter((p) => p.ref !== "").map((p) => p.ref));
-  const allowed = new Set(supplied.filter((p) => p.code && p.ref !== "").map(codeRefKey));
   const plainWords = [...blockRuns(q.context), ...plainRuns(q.question), ...blockRuns(q.details ?? []), ...q.options.flatMap((o) => [...plainRuns(o.label), ...plainRuns(o.description)])];
   return [
     ...(blocksText(q.context).join("").trim() === "" ? [{ kind: "blankContext" as const, subject: "" }] : []),
     ...(/\?["'”’)\]]*$/u.test(piecesText(q.question).trim()) ? [] : [{ kind: "notLast" as const, subject: "" }]),
     ...[...new Set(pieces.filter((p) => p.ref !== "" && !ids.includes(p.ref)).map((p) => p.ref))].map((subject) => ({ kind: "unknownRef" as const, subject })),
     ...pieces.filter((p) => p.ref !== "" && p.text.trim() === "").map((p) => ({ kind: "blankTermPiece" as const, subject: p.ref })),
-    ...pieces.filter((p) => p.code && p.ref !== "" && !allowed.has(codeRefKey(p))).map((p) => ({ kind: "refOnCode" as const, subject: p.text })),
+    ...refsBeyondSupplied(q, supplied).map((p) => ({ kind: "refOnCode" as const, subject: p.text })),
     // W3-R1-1: a code span shows a line break as a space; a value of several lines is a code block.
     ...pieces.filter((p) => p.code && /[\r\n]/u.test(p.text)).map((p) => ({ kind: "multiLineCode" as const, subject: p.text })),
     ...q.explanations.flatMap((e, i): QuestionProblem[] => [

@@ -90,8 +90,11 @@ export const normalizedRuns = (blocks: readonly ShownBlock[]): readonly LaidBloc
   }, { out: [], run: null, pending: [] });
   return flushed(end);
 };
-/** A stretch of one sequence of pieces: a code piece on its own, or the joined text of consecutive non-code pieces. */
-export type PieceRun = Readonly<{ code: boolean; text: string }>;
+/**
+ * A stretch of one sequence of pieces: a code piece on its own, with its ref, or the joined text of consecutive non-code
+ * pieces (ref "").
+ */
+export type PieceRun = Readonly<{ code: boolean; text: string; ref: string }>;
 /**
  * The runs of one sequence of pieces (a paragraph's, a list item's, a question's, a label's): each code piece is its own
  * run and separates the words on either side of it; consecutive non-code pieces, plain or referring to an explanation,
@@ -101,16 +104,17 @@ export type PieceRun = Readonly<{ code: boolean; text: string }>;
 export const pieceRuns = (pieces: readonly Piece[]): readonly PieceRun[] =>
   pieces.reduce<readonly PieceRun[]>((runs, p) => {
     const last = runs[runs.length - 1];
-    if (p.code) return [...runs, { code: true, text: p.text }];
-    return last !== undefined && !last.code ? [...runs.slice(0, -1), { code: false, text: `${last.text}${p.text}` }] : [...runs, { code: false, text: p.text }];
+    if (p.code) return [...runs, { code: true, text: p.text, ref: p.ref }];
+    return last !== undefined && !last.code ? [...runs.slice(0, -1), { code: false, text: `${last.text}${p.text}`, ref: "" }] : [...runs, { code: false, text: p.text, ref: "" }];
   }, []);
 /** The joined texts of the non-code runs of one sequence of pieces, the empty ones left out (W1-R1-2). */
 export const plainRuns = (pieces: readonly Piece[]): readonly string[] => pieceRuns(pieces).filter((r) => !r.code && r.text !== "").map((r) => r.text);
 /**
  * A value of the details (W1-R1-1): a code block's text (`block`), a code piece's (`code`; W3-R1-1 keeps the two apart), or
- * a phrase in a plain piece that stands for one.
+ * a phrase in a plain piece that stands for one. `ref` is a code piece's ref, "" otherwise: compared by position, it keeps a
+ * reference the program supplied on the occurrence it was supplied on (W4-R1-1).
  */
-export type ValueToken = Readonly<{ kind: "block" | "code" | "phrase"; text: string }>;
+export type ValueToken = Readonly<{ kind: "block" | "code" | "phrase"; text: string; ref: string }>;
 /** The value phrases of one plain text, left to right, the longest at each position (valuePhraseAt of src/prompts.ts). */
 const phrasesIn = (text: string): readonly string[] => {
   const found: string[] = [];
@@ -131,9 +135,9 @@ const phrasesIn = (text: string): readonly string[] => {
  */
 export const valueTokensOf = (blocks: readonly ShownBlock[]): readonly ValueToken[] => {
   const ofPieces = (pieces: readonly Piece[]): readonly ValueToken[] =>
-    pieceRuns(pieces).flatMap((r): readonly ValueToken[] => (r.code ? [{ kind: "code", text: r.text }] : phrasesIn(r.text).map((text) => ({ kind: "phrase", text }))));
+    pieceRuns(pieces).flatMap((r): readonly ValueToken[] => (r.code ? [{ kind: "code", text: r.text, ref: r.ref }] : phrasesIn(r.text).map((text) => ({ kind: "phrase", text, ref: "" }))));
   return blocks.flatMap((b): readonly ValueToken[] =>
-    b.kind === "code" ? [{ kind: "block", text: b.text }] : b.kind === "document" ? [] : b.kind === "paragraph" ? ofPieces(b.pieces) : b.items.flatMap((i) => ofPieces(i.pieces)),
+    b.kind === "code" ? [{ kind: "block", text: b.text, ref: "" }] : b.kind === "document" ? [] : b.kind === "paragraph" ? ofPieces(b.pieces) : b.items.flatMap((i) => ofPieces(i.pieces)),
   );
 };
 /** Every ref of the pieces, in order, with repetitions. */

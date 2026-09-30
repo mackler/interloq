@@ -212,7 +212,8 @@ export const KEEP_WORDING = "Keep the wording of each agreed question exactly: e
 export const KEEP_LITERALS =
   "Keep every value of the details exactly as it is, in its order and in its form, and add none: every code block and every code piece (a text, a number, a name), and every phrase in parentheses that stands for a value (yes or no, none, an empty list, object or text, whitespace alone), each still code or still a phrase as it was given. Add no explanation to any of them.";
 export const KEEP_OPTIONS = "Keep every option, in its position: you may rephrase its label and description, but not add, remove or reorder options.";
-export const KEEP_SUPPLIED_REFS = "Keep every code piece that Interloq supplied with a ref (the name of a tool's setting that Interloq explains) exactly as supplied, with its ref and with an explanation of that id; add no ref to any other code piece or code block.";
+export const KEEP_SUPPLIED_REFS =
+  "Keep every code piece that Interloq supplied with a ref (the name of a tool's setting that Interloq explains) exactly as supplied and in its place, with its ref and with an explanation of that id. No other piece carries that ref, in any part of the question: add no ref to any other code piece or code block, even one of the same text.";
 const BOUND_CLAUSES: Readonly<Record<string, string>> = { keepWording: KEEP_WORDING, keepLiterals: KEEP_LITERALS, keepOptions: KEEP_OPTIONS, keepSuppliedRefs: KEEP_SUPPLIED_REFS };
 /** The text of a rule, a format clause or a bound clause, by its id. */
 const ruleTextOf = (id: string): string => QUESTION_RULES.find((r) => r.id === id)?.rule ?? QUESTION_FORMAT.find((c) => c.id === id)?.text ?? BOUND_CLAUSES[id] ?? "";

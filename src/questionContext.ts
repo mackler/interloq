@@ -6,15 +6,21 @@ import { Effect, Result } from "effect";
 import { QuestionInvalid, type RunError } from "./errors.ts";
 import { type ContextRequest, contextFallbackNote, contextPrompt, fallbackContext, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
 import { describe } from "./errors.ts";
-import { blockPieces, plainBlocks, valueTokensOf } from "./pieces.ts";
-import { type ContextWritten, type Piece, questionPieces, questionProblems } from "./question.ts";
+import { plainBlocks, type ValueToken, valueTokensOf } from "./pieces.ts";
+import { type ContextWritten, questionPieces, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import { type Decider, Planner, type RunConfig, Store, type Ui } from "./services.ts";
 
-/** The code pieces with a ref that the program supplied in its request (the names of a tool's settings it explains, S55). */
-const suppliedRefs = (request: ContextRequest): readonly Piece[] =>
-  [...request.question, ...request.options.flatMap((o) => [...o.label, ...o.description]), ...blockPieces(request.details)].filter((p) => p.code && p.ref !== "");
+/** The code pieces with a ref that the program supplied in its request (the names of a tool's settings it explains, S55), each with its part (P5-R1-1). */
+const suppliedRefs = (request: ContextRequest): readonly SuppliedRef[] => suppliedOf({ context: [], question: request.question, explanations: [], options: request.options, details: request.details });
+
+/**
+ * The values of the request and of the reply agree position by position, in kind, text and ref (W1-R1-1, W4-R1-1); a
+ * supplied reference merely dropped is left to suppliedRefDropped, which names it.
+ */
+const sameValues = (asked: readonly ValueToken[], replied: readonly ValueToken[]): boolean =>
+  asked.length === replied.length && asked.every((a, i) => a.kind === replied[i].kind && a.text === replied[i].text && (a.ref === replied[i].ref || replied[i].ref === ""));
 
 /**
  * The reply of a context call (S9; decisions G-R1-1 and F1): the whole question under the rules of every question and the
@@ -30,9 +36,9 @@ export const contextValidation =
     const problems: readonly QuestionProblem[] = [
       ...questionProblems({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details }, supplied),
       ...(reply.options.length === request.options.length ? [] : [{ kind: "optionsChanged" as const, subject: "" }]),
-      // W1-R1-1: every value, code or phrase, kept in its kind and its order, none added.
-      ...(JSON.stringify(valueTokensOf(reply.details)) === JSON.stringify(valueTokensOf(request.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
-      ...supplied.filter((p) => !shown.some((q) => q.code && q.text === p.text && q.ref === p.ref)).map((p) => ({ kind: "suppliedRefDropped" as const, subject: p.text })),
+      // W1-R1-1: every value, code or phrase, kept in its kind and its order, none added; W4-R1-1: each code value's ref kept on its occurrence.
+      ...(sameValues(valueTokensOf(request.details), valueTokensOf(reply.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
+      ...supplied.map((s) => s.piece).filter((p) => !shown.some((q) => q.code && q.text === p.text && q.ref === p.ref)).map((p) => ({ kind: "suppliedRefDropped" as const, subject: p.text })),
     ];
     if (problems.length === 0) return Result.succeed({ value: reply, notes: [] });
     const questions = [{ where: "the question", problems }];

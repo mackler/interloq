@@ -138,7 +138,8 @@ test("S9 seam: KEEP_SUPPLIED_REFS is in the prompt of a request that supplies a 
   const addRef = (b: Block): Block => (b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: i.pieces.map((p) => (p.code && p.text === "ls" ? { ...p, ref: named.ref } : p)) })) } : b);
   const added = contextValidation(supplied)({ ...reply, details: reply.details.map(addRef) });
   assert.ok(Result.isFailure(added));
-  assert.equal(added.failure.repair, repairOf({ kind: "refOnCode", subject: "ls" }));
+  // W4-R1-1: the value's ref is compared by position too.
+  assert.equal(added.failure.repair, repairOf({ kind: "refOnCode", subject: "ls" }, { kind: "literalChanged", subject: "" }));
   assert.ok(added.failure.repair.includes(prompts.QUESTION_FORMAT.find((c) => c.id === "code")?.text ?? "?"));
 });
 
@@ -244,11 +245,11 @@ test("W1-R1-1: a changed number, a changed yes or no, values exchanged between r
   const validate = contextValidation(request);
   assert.ok(Result.isSuccess(validate(reply)));
   assert.deepEqual(valueTokensOf(request.details), [
-    { kind: "code", text: "echo ok" },
-    { kind: "code", text: "120000" },
-    // The name of a setting Interloq has no label for is a literal too, before its value.
-    { kind: "code", text: "run_in_background" },
-    { kind: "phrase", text: prompts.NO_PHRASE },
+    { kind: "code", text: "echo ok", ref: "" },
+    { kind: "code", text: "120000", ref: "" },
+    // The name of a setting Interloq has no label for is a literal too, before its value, with the program's reference.
+    { kind: "code", text: "run_in_background", ref: "setting-1" },
+    { kind: "phrase", text: prompts.NO_PHRASE, ref: "" },
   ]);
   const withDetails = (f: (ps: readonly Piece[]) => readonly Piece[]) => ({ ...reply, details: mapPieces(reply.details, f) });
   const cases: Readonly<Record<string, QuestionContext>> = {
@@ -400,7 +401,7 @@ test("property W2-R1-2: any re-division of the plain pieces, pieces that refer t
 
 test("W3-R1-1: a code block turned into a code piece of the same text is rejected, citing the one-line clause", () => {
   const request = permissionRequest("Bash", { command: "printf a\nprintf b" });
-  assert.deepEqual(valueTokensOf(request.details), [{ kind: "block", text: "printf a\nprintf b" }], "a code block is its own kind of value");
+  assert.deepEqual(valueTokensOf(request.details), [{ kind: "block", text: "printf a\nprintf b", ref: "" }], "a code block is its own kind of value");
   const reply = faithful(request);
   const inline = { ...reply, details: blocksAsPieces(reply.details as readonly Block[]) };
   const result = contextValidation(request)(inline);
@@ -447,4 +448,113 @@ test("W3-R1-1 scenario (P4-R1-1): a reply that puts a two-line command in a code
   assert.equal(q.context.by, "program");
   assert.deepEqual(q.details, draft.details);
   assert.ok(q.details.some((b) => b.kind === "code" && b.text === "printf a\nprintf b"), "the command in a code block, its line break intact");
+});
+
+// ---- W4-R1-1, P5-R1-1 (S31): a supplied reference stays on its occurrence, in its part ------------------------------
+
+const fooRequest = () => permissionRequest("Tool", { foo: "foo" });
+/** The details with the ref of the name's piece `foo` handled by `f`, given the name's piece and the value's piece. */
+const withFooRefs = (reply: QuestionContext, name: string, value: string): QuestionContext => ({
+  ...reply,
+  details: mapPieces(reply.details as readonly Block[], (ps) => {
+    const codes = ps.filter((p) => p.code && p.text === "foo");
+    return codes.length !== 2 ? ps : ps.map((p) => (p === codes[0] ? { ...p, ref: name } : p === codes[1] ? { ...p, ref: value } : p));
+  }),
+});
+const suppliedFoo: Piece = { text: "foo", ref: "setting-1", code: true };
+
+test("W4-R1-1: a supplied reference moved onto the value of the same text, or copied onto it, is rejected", () => {
+  const request = fooRequest();
+  const reply = faithful(request);
+  assert.ok(Result.isSuccess(contextValidation(request)(reply)));
+  assert.deepEqual(valueTokensOf(request.details), [
+    { kind: "code", text: "foo", ref: "setting-1" },
+    { kind: "code", text: "foo", ref: "" },
+  ]);
+  const moved = contextValidation(request)(withFooRefs(reply, "", "setting-1"));
+  assert.ok(Result.isFailure(moved), "moved");
+  assert.ok(moved.failure.repair.includes(prompts.KEEP_LITERALS));
+  const copied = contextValidation(request)(withFooRefs(reply, "setting-1", "setting-1"));
+  assert.ok(Result.isFailure(copied), "copied");
+  assert.equal(copied.failure.repair, repairOf({ kind: "refOnCode", subject: "foo" }, { kind: "literalChanged", subject: "" }));
+});
+
+test("P5-R1-1: a supplied reference copied into an option, the question or the context, with the details unchanged, is rejected", () => {
+  const request = fooRequest();
+  const reply = faithful(request);
+  const cases: Readonly<Record<string, QuestionContext>> = {
+    "an option's description": { ...reply, options: reply.options.map((o, i) => (i === 0 ? { ...o, description: [...o.description, suppliedFoo] } : o)) },
+    "an option's label": { ...reply, options: reply.options.map((o, i) => (i === 1 ? { ...o, label: [...o.label, suppliedFoo] } : o)) },
+    "the question": { ...reply, question: [suppliedFoo, ...reply.question] },
+    "the context": { ...reply, context: [...reply.context, { kind: "paragraph", pieces: [...plain("The setting "), suppliedFoo] }] },
+  };
+  for (const [where, changed] of Object.entries(cases)) {
+    const result = contextValidation(request)(changed);
+    assert.ok(Result.isFailure(result), where);
+    assert.equal(result.failure.repair, repairOf({ kind: "refOnCode", subject: "foo" }), where);
+  }
+});
+
+test("S31 seam: a reply built as KEEP_SUPPLIED_REFS says passes with its prose rephrased; the rule says the reference stays in its place", () => {
+  const request = fooRequest();
+  const prompt = prompts.contextPrompt("t", request);
+  assert.ok(prompt.includes(prompts.KEEP_SUPPLIED_REFS));
+  assert.match(prompts.KEEP_SUPPLIED_REFS, /in its place/);
+  assert.match(prompts.KEEP_SUPPLIED_REFS, /any part of the question/);
+  const reply = scriptedContextReply(prompt);
+  const rephrased = { ...reply, details: mapPieces(reply.details as readonly Block[], (ps) => ps.map((p) => (!p.code && p.text.startsWith("The tool") ? { ...p, text: `Now: ${p.text}` } : p))) };
+  assert.ok(JSON.stringify(rephrased) !== JSON.stringify(reply));
+  assert.ok(Result.isSuccess(contextValidation(request)(rephrased)));
+  const copied = contextValidation(request)({ ...reply, options: reply.options.map((o, i) => (i === 0 ? { ...o, description: [...o.description, suppliedFoo] } : o)) });
+  assert.ok(Result.isFailure(copied));
+  assert.ok(copied.failure.repair.includes(prompts.QUESTION_FORMAT.find((c) => c.id === "code")?.text ?? "?"));
+});
+
+test("property S31: a supplied reference moved, copied onto another code piece, or copied into another part is rejected", () => {
+  const keys = ["alpha", "beta", "gamma"] as const;
+  const value = fc.oneof(fc.constantFrom(...keys), fc.string({ minLength: 1, maxLength: 5 }), fc.integer());
+  const input = fc.dictionary(fc.constantFrom(...keys), value, { minKeys: 1, maxKeys: 3 });
+  fc.assert(
+    fc.property(input, fc.nat(3), (tool, m) => {
+      const request = permissionRequest("FutureTool", tool);
+      const reply = faithful(request);
+      const codes = blockPieces(reply.details as readonly Block[]).filter((p) => p.code);
+      const named = codes.find((p) => p.ref !== "");
+      if (named === undefined) return true;
+      const other = codes.find((p) => p.ref === "" && p.text === named.text) ?? codes.find((p) => p.ref === "");
+      const changed: QuestionContext | null =
+        m === 0 && other !== undefined
+          ? { ...reply, details: mapPieces(reply.details as readonly Block[], (ps) => ps.map((p) => (p === named ? { ...p, ref: "" } : p === other ? { ...p, ref: named.ref } : p))) }
+          : m === 1 && other !== undefined
+            ? { ...reply, details: mapPieces(reply.details as readonly Block[], (ps) => ps.map((p) => (p === other ? { ...p, ref: named.ref } : p))) }
+            : m === 2
+              ? { ...reply, options: reply.options.map((o, i) => (i === 0 ? { ...o, description: [...o.description, { ...named }] } : o)) }
+              : m === 3
+                ? { ...reply, question: [{ ...named }, ...reply.question] }
+                : null;
+      return Result.isSuccess(contextValidation(request)(reply)) && (changed === null || Result.isFailure(contextValidation(request)(changed)));
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("W4-R1-1 scenario: a reply that moves the setting's reference onto its value twice leaves Interloq's own details", async () => {
+  const draft = permissionDraft("Tool", { foo: "foo" });
+  const reply = faithful(fooRequest());
+  const moved = withFooRefs(reply, "", "setting-1");
+  const { layer, probe } = initialized({ answers: ["n"], contexts: [{ output: moved }, { output: moved }] });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* (yield* Store).init("the task");
+      const ui = yield* Ui;
+      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+    }).pipe(Effect.provide(layer)),
+  );
+  assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");
+  assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "literalChanged", subject: "" }));
+  const [q] = presentedQuestions(probe.ui);
+  assert.equal(q.context.by, "program");
+  assert.deepEqual(q.details, draft.details);
+  const foos = blockPieces(q.details as readonly Block[]).filter((p) => p.code && p.text === "foo");
+  assert.deepEqual(foos.map((p) => p.ref), ["setting-1", ""], "the name carries the reference, the value none");
 });
