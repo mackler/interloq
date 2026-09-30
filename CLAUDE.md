@@ -277,10 +277,11 @@ current with all six, which are released often, and does not want it to fall beh
 - At the start of every session in this repository, run `npm outdated` and tell the developer if
   any of the six has a newer version, before starting other work. For `effect`, `npm outdated`
   shows the `latest` tag (3.x); the relevant tag is `rc` (or a final 4.x): `npm view effect dist-tags`.
-- `fast-check` (4.10.2, added 25 Sep 2026 on the developer's instruction) is used only for the
-  property-based tests that `docs/functional-design-review.md`, recommendation E, names; every other
-  test is an example test. Upgrading it is `npm install --save-dev --save-exact fast-check@<version>`
-  and `npm test`.
+- `fast-check` (4.10.2, added 25 Sep 2026 on the developer's instruction) is used wherever property-based
+  testing applies (issue #66, by the developer's instruction of 29 Sep 2026; the rule is under Rules for
+  changes), not only for the tests that `docs/functional-design-review.md`, recommendation E, names. The pin
+  stays, checked by `test/deps.test.ts`. Upgrading it is
+  `npm install --save-dev --save-exact fast-check@<version>` and `npm test`.
 - Upgrade procedure for an SDK: change the version in `package.json`, `npm install`, `npm test`, run the matching
   prototype in `prototypes/` in a project container, then one real run. Update the version numbers
   and any changed facts in the section above, and commit.
@@ -299,6 +300,7 @@ current with all six, which are released often, and does not want it to fall beh
 ## Rules for changes
 
 - Test first, without exception. Before application code is written or changed, the test that specifies it is written, run, and seen to fail for the reason the change is meant to fix (a failed assertion, or a type error naming the signature being changed; never a missing module or a typo). Then the least code that makes it pass. A new module may first be scaffolded with its final signature and a body that does nothing useful, so that the test fails on its assertion. The observed failure is recorded in the commit message.
+- Property-based testing wherever it applies (issue #66). Where a function is pure and an invariant can be stated over arbitrary input, a property test with `fast-check` states it: the modules the Layout table marks pure are where they belong. Example tests remain for what properties do not cover: a specific case that once failed, a value a seam must agree on exactly, and the scenario tests required for every change of behaviour; the two are not alternatives, and a property over a pure function is no substitute for a scenario test. A property test is written first and seen to fail, like any other. Its case count is chosen so that `npm test` stays usable before every commit and in CI.
 - Every change to behaviour gets a scenario test in `test/` that runs the procedure against the test layers of `test/helpers.ts` (`testLayer`, `testWiring`). `src/issueLog.ts` stays free of I/O and of Effect services so that it can be tested directly.
 - Test the seams, not only the sides. Where two modules must agree on a value — a label, a format, a path, an identifier — a test asserts their agreement directly, by deriving both sides from one source in the test and comparing them. Testing each side against a literal of its own is not enough: it passes while they disagree. The same applies where one module produces text that another parses, and where a claim in a structured reply is meant to correspond to a change on disk. Two runs were lost in one day to seams of exactly this kind (issues #30 and #37), each with both sides tested and neither with a test of the agreement between them.
 - A prompt that tells an agent what value to return, and the validation that checks the returned value, are written and changed together, and one test exercises both.

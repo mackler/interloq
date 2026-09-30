@@ -201,6 +201,8 @@ Make clocks, IDs, and serialization explicit effect dependencies. Use exclusive 
 
 **E. Property-based tests would add substantial value in the pure core.**
 
+_Note of 30 Sep 2026 (issue #66): this table is the record of where property testing began in this program. It no longer lists what authorizes each use: CLAUDE.md, under Rules for changes, has property tests written wherever a function is pure and an invariant can be stated over arbitrary input._
+
 Prioritize the following properties. Generate valid domain objects directly and separately generate invalid boundary data; filtering arbitrary JSON until it happens to be valid gives poor coverage. Preserve seeds and shrink failures to small counterexamples. No property-testing dependency was added in this review; adopting one would need to follow the repository's dependency policy. Small deterministic exhaustive generators can cover finite action combinations in the meantime.
 
 | Target and existing test anchor | Properties worth checking | Priority |
