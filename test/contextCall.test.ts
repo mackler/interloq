@@ -615,3 +615,49 @@ test("S32 scenario: a reply that drops one occurrence's reference twice leaves I
   assert.deepEqual(q.details, draft.details);
   assert.deepEqual(blockPieces(q.details as readonly Block[]).filter((p) => p.code && p.text === "foo").map((p) => p.ref), ["setting-2", "setting-2"]);
 });
+
+// ---- W5-R1-1, P6-R1-1 to P6-R1-3 (S33): two code pieces never stand next to each other -------------------------------
+
+const code = (text: string): Piece => ({ text, ref: "", code: true });
+const codeAdjacentClause = prompts.QUESTION_FORMAT.find((c) => c.id === "codeAdjacent");
+const withLabelPieces = (label: readonly Piece[]): QuestionContext => ({ ...good, options: [{ label, description: plain("Runs them.") }, good.options[1]] });
+const problemKinds = (q: QuestionContext) => questionProblems({ context: q.context, question: q.question, explanations: q.explanations, options: q.options, details: q.details }).map((p) => p.kind);
+
+test("S33: two adjacent code pieces, or two with only an empty piece between them, are adjacentCode; a space or an empty code piece separates them", () => {
+  assert.deepEqual(problemKinds(withLabelPieces([code("a"), code("b")])), ["adjacentCode"]);
+  assert.deepEqual(problemKinds(withLabelPieces([code("a"), ...[{ text: "", ref: "", code: false }], code("b")])), ["adjacentCode"]);
+  assert.deepEqual(problemKinds(withLabelPieces([code("a"), ...plain(" "), code("b")])), []);
+  assert.deepEqual(problemKinds(withLabelPieces([code("a"), code(""), code("b")])), []);
+  // Two sequences are never joined: a code piece ending one paragraph and one starting the next are not adjacent.
+  assert.deepEqual(problemKinds({ ...good, context: [...good.context, { kind: "paragraph", pieces: [code("a")] }, { kind: "paragraph", pieces: [code("b")] }] }), []);
+});
+
+test("S33 seam: the clause is in the writer's format, and the repair prompt of adjacentCode quotes it", () => {
+  assert.ok(codeAdjacentClause !== undefined && codeAdjacentClause.kind === "data");
+  assert.equal(prompts.QUESTION_PROBLEM_RULE.adjacentCode, "codeAdjacent");
+  assert.ok(prompts.QUESTION_TEXT_FORMAT.includes(codeAdjacentClause.text));
+  const reply = withLabelPieces([code("a"), code("b")]);
+  const result = contextValidation({ ...request, options: [{ label: [code("a"), ...plain(" "), code("b")], description: plain("Runs them.") }, request.options[1]] })(reply);
+  assert.ok(Result.isFailure(result));
+  assert.ok(result.failure.repair.includes(codeAdjacentClause.text));
+});
+
+test("S33 scenario (P6-R1-3): a reply whose option label is two adjacent code pieces, twice, leaves Interloq's own options", async () => {
+  const draft = permissionDraft("Bash", { command: "ls" });
+  const reply = faithful(permissionRequest("Bash", { command: "ls" }));
+  const adjacent: QuestionContext = { ...reply, options: reply.options.map((o, i) => (i === 0 ? { ...o, label: [code("a"), code("b")] } : o)) };
+  const { layer, probe } = initialized({ answers: ["n"], contexts: [{ output: adjacent }, { output: adjacent }] });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* (yield* Store).init("the task");
+      const ui = yield* Ui;
+      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+    }).pipe(Effect.provide(layer)),
+  );
+  assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");
+  assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "adjacentCode", subject: "b" }));
+  assert.ok(probe.planner.contextPrompts[1].includes(codeAdjacentClause?.text ?? "missing"));
+  const [q] = presentedQuestions(probe.ui);
+  assert.equal(q.context.by, "program");
+  assert.deepEqual(q.options.map((o) => o.label), draft.options.map((o) => o.shown.label));
+});

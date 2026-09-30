@@ -47,6 +47,22 @@ export const questionPieces = (q: Question): readonly Piece[] => [
  */
 const blockRuns = (blocks: readonly ShownBlock[]): readonly string[] =>
   blocks.flatMap((b) => (b.kind === "paragraph" ? plainRuns(b.pieces) : b.kind === "list" ? b.items.flatMap((i) => plainRuns(i.pieces)) : b.kind === "document" ? [b.markdown] : []));
+/**
+ * Every sequence of pieces of a question, each read on its own (S33): the question, each paragraph and list item of the
+ * context and the details, each option's label and description. A document block has none.
+ */
+const sequencesOf = (q: Question): readonly (readonly Piece[])[] => {
+  const ofBlocks = (blocks: readonly ShownBlock[]) => blocks.flatMap((b) => (b.kind === "paragraph" ? [b.pieces] : b.kind === "list" ? b.items.map((i) => i.pieces) : []));
+  return [...ofBlocks(q.context), q.question, ...ofBlocks(q.details ?? []), ...q.options.flatMap((o) => [o.label, o.description])];
+};
+/**
+ * The code pieces that stand right after another in one sequence (W5-R1-1, P6-R1-1): an empty plain piece writes nothing
+ * between them and is skipped; an empty code piece is written as a phrase, not a span, and separates them.
+ */
+const adjacentCodes = (pieces: readonly Piece[]): readonly Piece[] =>
+  pieces
+    .filter((p) => p.code || p.text !== "")
+    .filter((p, i, kept) => i > 0 && p.code && p.text !== "" && kept[i - 1].code && kept[i - 1].text !== "");
 /** A code piece that refers to an explanation, as a key: its words and its ref. */
 const codeRefKey = (p: Piece): string => JSON.stringify([p.text, p.ref]);
 /**
@@ -101,6 +117,8 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
     ...refsBeyondSupplied(q, supplied).map((p) => ({ kind: "refOnCode" as const, subject: p.text })),
     // W3-R1-1: a code span shows a line break as a space; a value of several lines is a code block.
     ...pieces.filter((p) => p.code && /[\r\n]/u.test(p.text)).map((p) => ({ kind: "multiLineCode" as const, subject: p.text })),
+    // W5-R1-1: two code spans side by side are read as one span holding their backticks.
+    ...sequencesOf(q).flatMap(adjacentCodes).map((p) => ({ kind: "adjacentCode" as const, subject: p.text })),
     ...q.explanations.flatMap((e, i): QuestionProblem[] => [
       ...(ids.indexOf(e.id) < i ? [{ kind: "duplicateExplanation" as const, subject: e.id }] : []),
       ...(e.term.trim() === "" ? [{ kind: "blankTerm" as const, subject: e.id }] : []),

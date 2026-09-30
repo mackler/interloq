@@ -190,6 +190,13 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
     criterion: "",
   },
   {
+    // W5-R1-1 (S33): two code spans written side by side are read as one span holding their backticks.
+    id: "codeAdjacent",
+    kind: "data",
+    text: "Two code pieces never stand next to each other, not even with an empty piece between them: one value is one code piece, and two values have words between them.",
+    criterion: "",
+  },
+  {
     id: "inline",
     kind: "prose",
     text: "Formatting (emphasis, inline code, a link) begins and ends inside one plain piece, and a piece that refers to an explanation carries no formatting at all.",
@@ -233,6 +240,7 @@ export const QUESTION_PROBLEM_KINDS = [
   "blankTermPiece",
   "refOnCode",
   "multiLineCode",
+  "adjacentCode",
   "bareNumber",
   "unknownQuestion",
   "wordingChanged",
@@ -252,6 +260,7 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   blankTermPiece: "refPiece",
   refOnCode: "code",
   multiLineCode: "codeLine",
+  adjacentCode: "codeAdjacent",
   bareNumber: "kindBeforeNumber",
   unknownQuestion: "keepWording",
   wordingChanged: "keepWording",
@@ -287,6 +296,8 @@ export function questionProblemText(problem: QuestionProblem): string {
       return `the literal value ${subject} refers to an explanation`;
     case "multiLineCode":
       return `the code piece ${subject} holds more than one line`;
+    case "adjacentCode":
+      return `the code piece ${subject} stands right after another code piece`;
     case "bareNumber":
       return `${subject} is a number without the kind of thing it numbers before it`;
     case "unknownQuestion":
