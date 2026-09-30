@@ -128,7 +128,7 @@ test("0 at the cycle limit halts with RoundLimitStop; p proceeds to the choice",
   assert.equal((await Effect.runPromise(loop(proceeding.layer))).result, "proceed");
   // S5: the proceed choice is an option of the presented question, described in the subject's words.
   const limit = proceeding.probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "limit" ? [e.question] : []));
-  assert.ok(limit.some((q) => q.options.some((o) => /proceed to your choice with the analysis as it is/i.test(piecesText(o.description)))));
+  assert.ok(limit.some((q) => q.options.some((o) => /proceeds to your choice with the analysis as it is/i.test(piecesText(o.description)))));
 });
 
 test("an invalid analysis gets one repair turn; a second invalid reply halts", async () => {

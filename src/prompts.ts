@@ -1259,16 +1259,16 @@ export const UNCHANGED_ANSWERS = { retry: "r", proceed: "p", stop: "s" } as cons
 export const unchangedPrompt = `${UNCHANGED_ANSWERS.retry} = retry; ${UNCHANGED_ANSWERS.proceed} = proceed with the file unchanged; ${UNCHANGED_ANSWERS.stop} = stop the run > `;
 export function unchangedOptionDescriptions(interview: boolean): Readonly<{ retry: string; proceed: string; stop: string }> {
   return {
-    retry: interview ? "Hold another interview on the accepted issues, so that the summary can be amended." : "Give Claude Code one more corrective turn to apply the amendments it described or to change its dispositions.",
-    proceed: "Let the dispositions stand with the file unchanged; the issue log shows that nothing changed, and the next cycle's review goes ahead.",
-    stop: "End the run here; its records are kept.",
+    retry: interview ? "another interview is held on the accepted issues, so that the summary can be amended." : "Claude Code gets one more corrective turn to apply the amendments it described or to change its answers to the issues.",
+    proceed: "the answers to the issues stand with the file unchanged, and the next cycle's review goes ahead.",
+    stop: "the run ends here, and no further cycle runs.",
   };
 }
 export function unchangedLine(fileLabel: string, round: number, acceptedIds: readonly string[], corrected: boolean): string {
   return `\nCycle ${round}: Claude Code accepted ${acceptedIds.join(", ")} in full or in part, but ${fileLabel} is unchanged${corrected ? " after a corrective turn" : ""}.`;
 }
 export function unchangedQuestion(heading: string, fileLabel: string): string {
-  return `${heading}: Claude Code accepted issues, but ${fileLabel} is unchanged. How should the run continue?`;
+  return `${heading}: Claude Code accepted issues, but ${fileLabel} is unchanged. How do you want the run to continue?`;
 }
 export function unchangedDecisionLine(answer: "retry" | "proceed" | "stop", fileLabel: string, round: number, heading: string): string {
   const what = answer === "retry" ? "retry" : answer === "proceed" ? `proceed with ${fileLabel} unchanged` : "stop the run";
@@ -1309,20 +1309,24 @@ export const LIMIT_STOP = "End the run";
 export const LIMIT_MORE = "Continue with more cycles";
 export function limitOptionDescriptions(proceed: string | null): Readonly<{ proceed: string; stop: string; more: string }> {
   return {
-    proceed: proceed === null ? "" : `${proceed[0].toUpperCase()}${proceed.slice(1)}.`,
-    stop: "End the run here; its records are kept.",
-    more: "Let Codex and Claude Code continue for more cycles; you enter the number of cycles after choosing this option.",
+    proceed: proceed === null ? "" : `the run ${proceed.replace(/^proceed\b/, "proceeds")}.`,
+    stop: "the run ends here, and no further cycle runs.",
+    more: "Codex and Claude Code continue for more cycles, whose number you enter after choosing this option.",
   };
 }
 /** The question of the cycle limit for a decision. */
 export function limitQuestion(heading: string, limit: number): string {
-  return `${heading} has completed ${limit} cycles without convergence. How should the run continue?`;
+  return `${heading} has completed ${limit} cycles without convergence. How do you want the run to continue?`;
 }
 /** The options of a permission request. */
 export const PERMISSION_ALLOW = "Allow this";
 export const PERMISSION_DENY = "Do not allow this";
-export const PERMISSION_ALLOW_DESCRIPTION = "Claude Code performs the action and continues.";
-export const PERMISSION_DENY_DESCRIPTION = "Claude Code is told that the user denied the action and continues without it.";
+/**
+ * The options' descriptions state only how each differs from the others (S17, issue #59): each reads after
+ * OPTION_DIFFERENCE_PREAMBLE, and what both share, that Claude Code then continues, is in neither.
+ */
+export const PERMISSION_ALLOW_DESCRIPTION = "the action is performed in the project.";
+export const PERMISSION_DENY_DESCRIPTION = "the action is not performed, and Claude Code is told that you denied it.";
 /**
  * The fields of a tool's input that Interloq names in plain words (S34, W1-R1-2): the tools Claude Code uses while it
  * carries out the plan. A field not listed is shown under its own name, explained as a term (P2-R1-2).
@@ -1559,7 +1563,7 @@ export function permissionQuestion(tool: string, input: unknown): string {
         : typeof fields.url === "string"
           ? `use its tool ${tool} on the web address ${shown}`
           : `use its tool ${tool} as ${shown}`;
-  return `Claude Code wants to ${what}. Should it be allowed?`;
+  return `Claude Code wants to ${what}. Do you want to allow it?`;
 }
 /** The facts of a permission request a context call is given (S12). */
 export function permissionFacts(tool: string, input: unknown): string {
@@ -1645,8 +1649,8 @@ export const transportPrompt = `${TRANSPORT_ANSWERS.retry} = retry again; ${TRAN
 const agentName = (agent: "claude" | "codex"): string => (agent === "claude" ? "Claude Code" : "Codex");
 export function transportOptionDescriptions(): Readonly<{ retry: string; stop: string }> {
   return {
-    retry: "Make the call again, with another full set of retries and the waits between them starting again from the shortest.",
-    stop: "End the run here; its records are kept.",
+    retry: "the call is made again, with another full set of retries and the waits between them starting again from the shortest.",
+    stop: "the run ends here, and no further attempt is made.",
   };
 }
 /** A retry of the program after a transport fault, as the terminal and conversation.md show it. */
@@ -1662,7 +1666,7 @@ export function transportRecoveredLine(agent: "claude" | "codex"): string {
  * by the program. The attempts and the fault, whose length the program does not choose, are in its details.
  */
 export function transportExhaustedQuestion(agent: "claude" | "codex", what: string): string {
-  return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown above. Retry again, or stop the run?`;
+  return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown above. Do you want Interloq to retry again, or to stop the run?`;
 }
 /** The heading of the exhaustion pause's details (S52). */
 export const TRANSPORT_FAULT_HEADING = "Why the agent could not be reached:";
@@ -1820,15 +1824,15 @@ export function pauseQuestion(p: PauseOrigin): string {
     case "secondClarification":
     case "reversal":
     case "repeatedUnderNewId":
-      return "Codex has raised a point that Claude Code does not accept in full. Should Codex's position or Claude Code's position stand?";
+      return "Codex has raised a point that Claude Code does not accept in full. Whose position do you want to stand, Codex's or Claude Code's?";
     case "disputedSelfCorrection":
-      return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Should the correction stand, as Codex asked, or be withdrawn, as Claude Code now holds?";
+      return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stand, as Codex asked, or to be withdrawn, as Claude Code now holds?";
     case "unexplained":
-      return `${p.fileLabel} changed, although Claude Code accepted no point of the review and corrected nothing of its own. What should happen to the change?`;
+      return `${p.fileLabel} changed, although Claude Code accepted no point of the review and corrected nothing of its own. What do you want done with the change?`;
     case "identical":
-      return `${p.fileLabel} has returned to a version it had before, so the review alternates between two versions. Which of the two versions is correct?`;
+      return `${p.fileLabel} has returned to a version it had before, so the review alternates between two versions. Which of the two versions do you want kept?`;
     case "idle":
-      return `Claude Code has accepted no point of the review ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What should Claude Code and Codex do about the points that led to no change?`;
+      return `Claude Code has accepted no point of the review ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What do you want Claude Code and Codex to do about the points that led to no change?`;
   }
 }
 /** The question after an empty agreed question list (behaviour 2). */
@@ -1846,13 +1850,13 @@ export const AGREED_REASON_HEADING = "Why the plan needs your answer:";
 /** The question of a clarification turn that asks no particular question: its context is Claude Code's message. */
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
 /** The question of the summary's confirmation. */
-export const CONFIRM_SUMMARY_QUESTION = "Claude Code has written this summary of the requirements from the clarification. Does it state the requirements correctly?";
+export const CONFIRM_SUMMARY_QUESTION = "Claude Code has written this summary of the requirements from the clarification. Do you confirm that it states the requirements correctly?";
 /**
  * The question at a stop of an execution phase whose report carried no question the user was asked (S52, W5-R1-1):
  * fixed; Claude Code's description is in its details (`execStopDetails`).
  */
 export function execStopQuestion(): string {
-  return "Claude Code stopped before the plan was finished, for the reason shown above. What should Claude Code know or do when the plan is revised?";
+  return "Claude Code stopped before the plan was finished, for the reason shown above. What do you want Claude Code to know or do when the plan is revised?";
 }
 /** The heading of an execution stop's details, and what they say when Claude Code gave no description (S52). */
 export const EXEC_STOP_HEADING = "Why Claude Code stopped, in its own words:";

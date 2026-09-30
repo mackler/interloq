@@ -543,7 +543,7 @@ for (const [width, height] of [[390, 844], [640, 400]] as const) {
     await page.setViewportSize({ width, height });
     await startTask(page, `Prepare the build at ${width}`, PERMISSION_URL);
     const question = pane(page).locator(".question-text");
-    await expect(question).toContainText("Should it be allowed?");
+    await expect(question).toContainText("Do you want to allow it?");
     await expect(question).not.toContainText("echo");
     const firstOption = () => page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
     const together = async (what: string, asked: Locator) => {
@@ -597,7 +597,7 @@ const distinctWidths = async (what: string, scope: Locator) => {
 test("(L22) code in rendered Markdown keeps its whitespace: in the pane, beside an analysis and in the transcript", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await startTask(page, "Probe the whitespace", WHITESPACE_URL);
-  await expect(pane(page).locator(".question-text")).toContainText("Should it be allowed?");
+  await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
   await distinctWidths("in the question pane", pane(page).locator(".top"));
   await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
   const analysis = page.getByRole("region", { name: /^Decision 1: / });
@@ -616,7 +616,7 @@ for (const [width, height] of [[390, 844], [640, 400]] as const) {
     await page.setViewportSize({ width, height });
     await startTask(page, `Reach Codex at ${width}`, TRANSPORT_LONG_URL);
     const question = pane(page).locator(".question-text");
-    await expect(question).toContainText("Retry again, or stop the run?");
+    await expect(question).toContainText("Do you want Interloq to retry again, or to stop the run?");
     await expect(question).not.toContainText("endpoint");
     const firstOption = () => page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
     const together = async (what: string) => {

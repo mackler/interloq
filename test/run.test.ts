@@ -184,7 +184,7 @@ test("the round limit offers to proceed to implementation", async () => {
   // S5: the question says how many cycles were completed, and the proceed option says what proceeding does.
   const limit = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []))[0];
   assert.equal(piecesText(limit.question), prompts.limitQuestion("Planning phase 1", 1));
-  assert.match(piecesText(limit.options[0].description), /proceed to implementation with the plan as it is/i);
+  assert.match(piecesText(limit.options[0].description), /proceeds to implementation with the plan as it is/i);
 });
 
 test("a reversal and a disputed self-correction each produce a prompt and a decided_by_user entry", async () => {

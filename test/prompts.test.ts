@@ -140,7 +140,7 @@ test("an action not sent because the page is no longer connected, with the answe
 // Issue #14: the user reads "cycle", never "round", at the limit; the agents' prompts and the records keep "round".
 // S8: the counts are in the question (limitQuestion), the hint says only how to answer.
 test("the cycle limit's question and hints, in the terminal and in the page, speak of cycles", () => {
-  assert.equal(prompts.limitQuestion("Planning phase 1", 5), "Planning phase 1 has completed 5 cycles without convergence. How should the run continue?");
+  assert.equal(prompts.limitQuestion("Planning phase 1", 5), "Planning phase 1 has completed 5 cycles without convergence. How do you want the run to continue?");
   assert.match(prompts.limitPrompt, /more cycles/);
   assert.match(prompts.limitNoProceedPrompt, /more cycles/);
   assert.doesNotMatch(prompts.limitPrompt + prompts.limitNoProceedPrompt, /round/);
@@ -633,4 +633,52 @@ test("S60: empty lists, empty objects, the empty text and null display different
   assert.ok(prompts.permissionFacts("T", {}).includes(prompts.NO_INPUT_PHRASE));
   const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks(inputs[0]), decision: null });
   assert.ok(record.includes(prompts.EMPTY_LIST_PHRASE));
+});
+
+// S17 of the task of issue #36 (issue #59): every question the program composes asks what the user wants, and ends with
+// its question mark; its options' descriptions state only how they differ, so none repeats what the others share.
+test("S17: every question Interloq composes names the user as the one who decides and ends with a question mark", () => {
+  const pauses = [
+    { pause: "reraised", id: "A" },
+    { pause: "secondClarification", id: "A" },
+    { pause: "reversal", id: "A", reverses: "B" },
+    { pause: "repeatedUnderNewId", id: "A", repeats: "B" },
+    { pause: "disputedSelfCorrection", id: "A" },
+    { pause: "unexplained", fileLabel: "plan.json", heading: "Planning phase 1", round: 1 },
+    { pause: "identical", fileLabel: "plan.json" },
+    { pause: "idle", idle: 2 },
+  ] as const;
+  const questions = [
+    ...pauses.map((p) => prompts.pauseQuestion(p)),
+    prompts.limitQuestion("Planning phase 1", 5),
+    prompts.unchangedQuestion("Planning phase 1", "plan.json"),
+    prompts.transportExhaustedQuestion("codex", "the review"),
+    prompts.permissionQuestion("Bash", { command: "ls" }),
+    prompts.permissionQuestion("Edit", { file_path: "/a" }),
+    prompts.CONFIRM_SUMMARY_QUESTION,
+    prompts.START_OR_TALK_QUESTION,
+    prompts.execStopQuestion(),
+    prompts.REPLY_QUESTION,
+  ];
+  for (const q of questions) {
+    assert.match(q, /\?$/, q);
+    assert.match(q.slice(q.lastIndexOf(". ") + 1), /\byou\b/i, `the question sentence does not name the user: ${q}`);
+    assert.doesNotMatch(q, /How should the run continue|Should it be allowed|Should .* stand\?/, q);
+  }
+});
+
+test("S17: the options Interloq composes do not repeat what they share", () => {
+  const groups = [
+    [prompts.PERMISSION_ALLOW_DESCRIPTION, prompts.PERMISSION_DENY_DESCRIPTION],
+    Object.values(prompts.unchangedOptionDescriptions(false)),
+    Object.values(prompts.unchangedOptionDescriptions(true)),
+    Object.values(prompts.limitOptionDescriptions("proceed to implementation with the plan as it is")),
+    Object.values(prompts.transportOptionDescriptions()),
+  ];
+  for (const group of groups) {
+    // Every description reads after the preamble: it starts in lower case and is a clause, not a sentence of its own.
+    for (const d of group) assert.match(d, /^([a-z]|Claude Code |Codex )/, d);
+    // What every option shares is described in none: "continues" for Claude Code, and the records kept apart from Stop.
+    assert.ok(!group.every((d) => /continues/.test(d)), group.join(" | "));
+  }
 });
