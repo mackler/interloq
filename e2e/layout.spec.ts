@@ -32,10 +32,14 @@ const startTask = async (page: Page, task: string, url = URL) => {
   // which Stop stays disabled and a plain click would wait for the test's whole timeout.
   await expect(async () => {
     if (await form.isVisible()) return;
-    if (await stop.isEnabled({ timeout: 1_000 }).catch(() => false)) {
-      await stop.click({ timeout: 2_000 });
-      // S38: the confirmation closes without acting if the run ends before it is confirmed, which the retry covers.
-      await page.locator("dialog[open] button[name=confirm-end]").click({ timeout: 2_000 }).catch(() => undefined);
+    // S34: a confirmation an earlier attempt opened and did not confirm stays open and intercepts every click, Stop's
+    // included (end-to-end test 7a reproduces it); it is confirmed first, not reopened.
+    const dialog = page.locator("dialog[open]");
+    if (!(await dialog.isVisible()) && (await stop.isEnabled({ timeout: 1_000 }).catch(() => false))) await stop.click({ timeout: 2_000 });
+    if (await dialog.isVisible()) {
+      // S38: the confirmation closes without acting if the run ends before it is confirmed, which the check covers.
+      await dialog.locator("button[name=confirm-end]").click({ timeout: 5_000 }).catch(() => undefined);
+      await expect(dialog).toHaveCount(0, { timeout: 5_000 });
     }
     await again.click({ timeout: 5_000 });
     await expect(form).toBeVisible({ timeout: 2_000 });

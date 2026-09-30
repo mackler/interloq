@@ -46,6 +46,12 @@ const startTask = async (page: Page, scenario: Scenario, task: string) => {
   await expect(page.getByText("connected", { exact: true })).toBeVisible();
   // The form, an ended run, or a run left by an earlier test on the shared server, which is stopped first.
   await expect(page.locator("textarea[name=task], button[name=new], button[name=stop]:not([disabled])").first()).toBeVisible();
+  await toTheForm(page);
+  await page.locator("textarea[name=task]").fill(task);
+  await page.locator("button[name=start]").click();
+};
+/** From the page as it is to the start form: a run left running is stopped and confirmed, an ended one left behind. */
+const toTheForm = async (page: Page) => {
   const stop = page.locator("button[name=stop]");
   const again = page.locator("button[name=new]");
   const form = page.locator("textarea[name=task]");
@@ -53,16 +59,18 @@ const startTask = async (page: Page, scenario: Scenario, task: string) => {
   // which Stop stays disabled and a plain click would wait for the test's whole timeout.
   await expect(async () => {
     if (await form.isVisible()) return;
-    if (await stop.isEnabled({ timeout: 1_000 }).catch(() => false)) {
-      await stop.click({ timeout: 2_000 });
-      // S38: the confirmation closes without acting if the run ends before it is confirmed, which the retry covers.
-      await page.locator("dialog[open] button[name=confirm-end]").click({ timeout: 2_000 }).catch(() => undefined);
+    // S34: a confirmation an earlier attempt opened and did not confirm (its click missed the window on a loaded
+    // machine) stays open and intercepts every click on the page, Stop's included; it is confirmed first, not reopened.
+    const dialog = page.locator("dialog[open]");
+    if (!(await dialog.isVisible()) && (await stop.isEnabled({ timeout: 1_000 }).catch(() => false))) await stop.click({ timeout: 2_000 });
+    if (await dialog.isVisible()) {
+      // S38: the confirmation closes without acting if the run ends before it is confirmed, which the check covers.
+      await dialog.locator("button[name=confirm-end]").click({ timeout: 5_000 }).catch(() => undefined);
+      await expect(dialog).toHaveCount(0, { timeout: 5_000 });
     }
     await again.click({ timeout: 5_000 });
     await expect(form).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 60_000 });
-  await form.fill(task);
-  await page.locator("button[name=start]").click();
 };
 
 test("(1) a run from the form: the timeline shows its phases and the right panel the agents' exchange", async ({ page }) => {
@@ -213,6 +221,20 @@ test("(7) two tabs: another tab's answer withdraws the unsent draft with a notic
   await expect(other.getByText(/answered in another tab; your unsent text was discarded: «an unsent answer»/)).toBeVisible();
   await continueWithoutDeciding(other).click();
   await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
+});
+
+// S34 (the stop of execution phase 5): test 7 once failed because startTask found a run left on the shared "tabs" server,
+// clicked Stop, and its confirmation stayed open when the confirm click missed its window; every retry then clicked Stop
+// again, and the open dialog intercepted that click until the helper's deadline. A confirmation left open is the state
+// this reproduces deterministically: startTask must confirm it and go on.
+test("(7a) a Stop confirmation left open by an earlier attempt: startTask confirms it and starts the task", async ({ page }) => {
+  await startTask(page, "tabs", "Add a database");
+  await expect(asking(page, DATABASE)).toBeVisible();
+  await page.locator("button[name=stop]").click();
+  await expect(page.locator("dialog[open]")).toBeVisible();
+  await toTheForm(page);
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+  await expect(page.locator("textarea[name=task]")).toBeVisible();
 });
 
 test("(8) a dropped connection: an answer made meanwhile is sent once after the hello, and the replay duplicates nothing", async ({ page }) => {
