@@ -197,6 +197,13 @@ opens a block. The list of terms that the question pane showed above the questio
 screen space until the reader asks for it [aesthetic and minimalist design]. The terminal prints the terms as a "Terms:"
 block above the question, one line per explanation labeled with its term (decision Q6).
 
+**A tool's yes-or-no settings (work review 1 of 30 Sep 2026, W1-R1-1).** In a permission request's input, a setting that is
+true or false is shown as `(yes)` or `(no)`, and one without a value as `(none)`: phrases in parentheses, like the phrases
+for an empty list or an empty text, so that none reads as a text the tool received. A number is shown as code, like any
+other value the tool received. The parentheses mark the program's words for a value apart from the label beside them, and
+they are what lets the program check that a context call which rephrased the question kept every value [error prevention;
+consistency and standards].
+
 **Option cards (issue #59).** Each option's label is in bold on a line of its own, its description below it, as separate
 elements, in the question pane, beside an analysis and in the transcript, so that the options can be compared by their
 labels alone [recognition rather than recall]. To keep a card of three lines as tall as one of two was, a card's
