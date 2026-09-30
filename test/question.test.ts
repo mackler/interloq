@@ -49,6 +49,41 @@ test("a number with its kind before it is not bare, in a list too", () => {
   for (const text of ["Issue #6 says so.", "Issues #6, #33 and #28 say so.", "As issues #14 or #6 say."]) assert.deepEqual(kinds({ ...good, context: [...good.context, ...para(text)] }), [], text);
 });
 
+// W1-R1-2 (S23): a literal value is shown exactly and is no bare number; the check reads the plain pieces alone.
+test("bareNumber reads plain pieces only: a code piece is no bare number, and it separates the words around it", () => {
+  const code = (text: string): Piece => ({ text, ref: "", code: true });
+  assert.deepEqual(kinds({ ...good, options: [...good.options, { label: [code("#123456")], description: [] }] }), []);
+  assert.deepEqual(kinds({ ...good, context: [...good.context, { kind: "paragraph", pieces: [...plain("The color "), code("#53")] }] }), []);
+  assert.deepEqual(kinds({ ...good, question: [...plain("Keep "), code("#53"), ...plain("?")] }), []);
+  assert.deepEqual(kinds({ ...good, context: [...good.context, ...para("Also see #53.")] }), ["bareNumber"]);
+  // P2-R1-3: a code piece between the kind and the number separates them.
+  assert.deepEqual(questionProblems({ ...good, context: [...good.context, { kind: "paragraph", pieces: [...plain("Issue "), code("x"), ...plain("#53")] }] }).map((p) => [p.kind, p.subject]), [["bareNumber", "#53"]]);
+  // The details' plain pieces are read too; a code block is not.
+  assert.deepEqual(kinds({ ...good, details: para("As in #53.") }), ["bareNumber"]);
+  assert.deepEqual(kinds({ ...good, details: [{ kind: "code", text: "#53" }] }), []);
+});
+
+test("property: prepending or appending a code piece of any text to a sequence of pieces never adds bareNumber", () => {
+  const code = (text: string): Piece => ({ text, ref: "", code: true });
+  fc.assert(
+    fc.property(fc.string({ maxLength: 12 }), fc.boolean(), fc.constantFrom("question", "label", "description", "paragraph", "item"), (text, before, where) => {
+      const add = (ps: readonly Piece[]): readonly Piece[] => (before ? [code(text), ...ps] : [...ps, code(text)]);
+      const q: Question =
+        where === "question"
+          ? { ...good, question: before ? add(good.question) : [code(text), ...good.question] }
+          : where === "label"
+            ? { ...good, options: [{ ...good.options[0], label: add(good.options[0].label) }, good.options[1]] }
+            : where === "description"
+              ? { ...good, options: [{ ...good.options[0], description: add(good.options[0].description) }, good.options[1]] }
+              : where === "paragraph"
+                ? { ...good, context: [{ kind: "paragraph", pieces: add((good.context[0] as { pieces: readonly Piece[] }).pieces) }] }
+                : { ...good, context: [...good.context, { kind: "list", items: [{ level: 0, pieces: add(plain("an item")) }] }] };
+      return questionProblems(q).every((p) => p.kind !== "bareNumber");
+    }),
+    { numRuns: 300 },
+  );
+});
+
 test("the data clauses: dangling and unused refs, duplicate ids, blank terms, explanations and referring pieces", () => {
   assert.deepEqual(kinds({ ...good, question: [...plain("Is "), term("zod", "t2"), ...plain(" needed?")] }), ["unknownRef"]);
   assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { id: "t9", term: "SDK", explanation: "A kit." }] }), ["unusedExplanation"]);

@@ -40,6 +40,15 @@ export const questionPieces = (q: Question): readonly Piece[] => [
   ...blockPieces(q.details ?? []),
   ...q.options.flatMap((o) => [...o.label, ...o.description]),
 ];
+/**
+ * The runs of consecutive plain pieces, each joined (W1-R1-2): a code piece is a literal value, never a bare number, and
+ * it separates the words on either side of it.
+ */
+const plainRuns = (pieces: readonly Piece[]): readonly string[] =>
+  pieces.reduce<string[]>((runs, p) => (p.code ? [...runs, ""] : [...runs.slice(0, -1), `${runs[runs.length - 1]}${p.text}`]), [""]).filter((r) => r !== "");
+/** The plain runs of blocks: each paragraph's and list item's, a document's Markdown whole; a code block has none. */
+const blockRuns = (blocks: readonly ShownBlock[]): readonly string[] =>
+  blocks.flatMap((b) => (b.kind === "paragraph" ? plainRuns(b.pieces) : b.kind === "list" ? b.items.flatMap((i) => plainRuns(i.pieces)) : b.kind === "document" ? [b.markdown] : []));
 /** A code piece that refers to an explanation, as a key: its words and its ref. */
 const codeRefKey = (p: Piece): string => JSON.stringify([p.text, p.ref]);
 
@@ -55,7 +64,7 @@ export const questionProblems = (q: Question, supplied: readonly Piece[] = []): 
   const ids = q.explanations.map((e) => e.id);
   const refs = new Set(pieces.filter((p) => p.ref !== "").map((p) => p.ref));
   const allowed = new Set(supplied.filter((p) => p.code && p.ref !== "").map(codeRefKey));
-  const plainWords = [...blocksText(q.context.filter((b) => b.kind !== "code")), piecesText(q.question), ...q.options.flatMap((o) => [piecesText(o.label), piecesText(o.description)])];
+  const plainWords = [...blockRuns(q.context), ...plainRuns(q.question), ...blockRuns(q.details ?? []), ...q.options.flatMap((o) => [...plainRuns(o.label), ...plainRuns(o.description)])];
   return [
     ...(blocksText(q.context).join("").trim() === "" ? [{ kind: "blankContext" as const, subject: "" }] : []),
     ...(/\?["'”’)\]]*$/u.test(piecesText(q.question).trim()) ? [] : [{ kind: "notLast" as const, subject: "" }]),
