@@ -132,7 +132,8 @@ test("S9 seam: KEEP_SUPPLIED_REFS is in the prompt of a request that supplies a 
   const dropRef = (b: Block): Block => (b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: i.pieces.map((p) => (p.ref === named.ref ? { ...p, ref: "" } : p)) })) } : b);
   const dropped = contextValidation(supplied)({ ...reply, details: reply.details.map(dropRef), explanations: [] });
   assert.ok(Result.isFailure(dropped));
-  assert.equal(dropped.failure.repair, repairOf({ kind: "suppliedRefDropped", subject: "max_depth" }));
+  // S32: the dropped reference is also a changed value at its position.
+  assert.equal(dropped.failure.repair, repairOf({ kind: "literalChanged", subject: "" }, { kind: "suppliedRefDropped", subject: "max_depth" }));
   assert.ok(dropped.failure.repair.includes(prompts.KEEP_SUPPLIED_REFS));
   // A ref added to a value's code piece.
   const addRef = (b: Block): Block => (b.kind === "list" ? { ...b, items: b.items.map((i) => ({ ...i, pieces: i.pieces.map((p) => (p.code && p.text === "ls" ? { ...p, ref: named.ref } : p)) })) } : b);
@@ -557,4 +558,60 @@ test("W4-R1-1 scenario: a reply that moves the setting's reference onto its valu
   assert.deepEqual(q.details, draft.details);
   const foos = blockPieces(q.details as readonly Block[]).filter((p) => p.code && p.text === "foo");
   assert.deepEqual(foos.map((p) => p.ref), ["setting-1", ""], "the name carries the reference, the value none");
+});
+
+// ---- W4-R1-1 again (S32): a supplied reference cannot be dropped from one of two occurrences ------------------------
+
+const twiceRequest = () => permissionRequest("Tool", { outer: { foo: 1 }, foo: 2 });
+/** The reply with the ref of the n-th name piece `foo` dropped. */
+const dropFoo = (reply: QuestionContext, n: number): QuestionContext => {
+  let seen = -1;
+  return { ...reply, details: mapPieces(reply.details as readonly Block[], (ps) => ps.map((p) => (p.code && p.text === "foo" && p.ref !== "" && ++seen === n ? { ...p, ref: "" } : p))) };
+};
+
+test("S32: a supplied reference dropped from either of two occurrences of one name is rejected; a reply keeping both passes", () => {
+  const request = twiceRequest();
+  const reply = faithful(request);
+  assert.equal(blockPieces(request.details).filter((p) => p.code && p.text === "foo" && p.ref === "setting-2").length, 2);
+  assert.ok(Result.isSuccess(contextValidation(request)(reply)));
+  for (const n of [0, 1]) {
+    const result = contextValidation(request)(dropFoo(reply, n));
+    assert.ok(Result.isFailure(result), `occurrence ${n}`);
+    assert.equal(result.failure.repair, repairOf({ kind: "literalChanged", subject: "" }, { kind: "suppliedRefDropped", subject: "foo" }), `occurrence ${n}`);
+    assert.ok(result.failure.repair.includes(prompts.KEEP_SUPPLIED_REFS) && result.failure.repair.includes(prompts.KEEP_LITERALS));
+  }
+});
+
+test("property S32: a supplied ref dropped from one occurrence of a name that appears twice is rejected", () => {
+  const key = fc.constantFrom("alpha", "beta", "gamma");
+  const value = fc.oneof(fc.integer(), fc.string({ minLength: 1, maxLength: 4 }));
+  fc.assert(
+    fc.property(key, value, value, fc.nat(1), (k, v1, v2, n) => {
+      const request = permissionRequest("FutureTool", { outer: { [k]: v1 }, [k]: v2 });
+      const reply = faithful(request);
+      let seen = -1;
+      const dropped = { ...reply, details: mapPieces(reply.details as readonly Block[], (ps) => ps.map((p) => (p.code && p.text === k && p.ref !== "" && ++seen === n ? { ...p, ref: "" } : p))) };
+      return seen >= n && Result.isSuccess(contextValidation(request)(reply)) && Result.isFailure(contextValidation(request)(dropped));
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("S32 scenario: a reply that drops one occurrence's reference twice leaves Interloq's own details, both names referring", async () => {
+  const draft = permissionDraft("Tool", { outer: { foo: 1 }, foo: 2 });
+  const dropped = dropFoo(faithful(twiceRequest()), 0);
+  const { layer, probe } = initialized({ answers: ["n"], contexts: [{ output: dropped }, { output: dropped }] });
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* (yield* Store).init("the task");
+      const ui = yield* Ui;
+      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+    }).pipe(Effect.provide(layer)),
+  );
+  assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");
+  assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "literalChanged", subject: "" }, { kind: "suppliedRefDropped", subject: "foo" }));
+  const [q] = presentedQuestions(probe.ui);
+  assert.equal(q.context.by, "program");
+  assert.deepEqual(q.details, draft.details);
+  assert.deepEqual(blockPieces(q.details as readonly Block[]).filter((p) => p.code && p.text === "foo").map((p) => p.ref), ["setting-2", "setting-2"]);
 });

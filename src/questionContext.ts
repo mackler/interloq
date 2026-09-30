@@ -7,7 +7,7 @@ import { QuestionInvalid, type RunError } from "./errors.ts";
 import { type ContextRequest, contextFallbackNote, contextPrompt, fallbackContext, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
 import { describe } from "./errors.ts";
 import { plainBlocks, type ValueToken, valueTokensOf } from "./pieces.ts";
-import { type ContextWritten, questionPieces, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
+import { type ContextWritten, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import { type Decider, Planner, type RunConfig, Store, type Ui } from "./services.ts";
@@ -15,12 +15,21 @@ import { type Decider, Planner, type RunConfig, Store, type Ui } from "./service
 /** The code pieces with a ref that the program supplied in its request (the names of a tool's settings it explains, S55), each with its part (P5-R1-1). */
 const suppliedRefs = (request: ContextRequest): readonly SuppliedRef[] => suppliedOf({ context: [], question: request.question, explanations: [], options: request.options, details: request.details });
 
-/**
- * The values of the request and of the reply agree position by position, in kind, text and ref (W1-R1-1, W4-R1-1); a
- * supplied reference merely dropped is left to suppliedRefDropped, which names it.
- */
+/** The values of the request and of the reply agree position by position, in kind, text and ref exactly (W1-R1-1, W4-R1-1, S32). */
 const sameValues = (asked: readonly ValueToken[], replied: readonly ValueToken[]): boolean =>
-  asked.length === replied.length && asked.every((a, i) => a.kind === replied[i].kind && a.text === replied[i].text && (a.ref === replied[i].ref || replied[i].ref === ""));
+  asked.length === replied.length && asked.every((a, i) => a.kind === replied[i].kind && a.text === replied[i].text && a.ref === replied[i].ref);
+/**
+ * The supplied references the reply does not keep (S32): in each part, each supplied text and ref must stand there as
+ * often as the request has it there, so that one occurrence cannot stand in for another. One problem per text and ref.
+ */
+const droppedRefs = (supplied: readonly SuppliedRef[], shown: readonly SuppliedRef[]): readonly QuestionProblem[] => {
+  const key = (s: SuppliedRef) => JSON.stringify([s.part, s.piece.text, s.piece.ref]);
+  const count = (list: readonly SuppliedRef[], k: string) => list.filter((s) => key(s) === k).length;
+  return supplied
+    .filter((s, i) => supplied.findIndex((t) => key(t) === key(s)) === i)
+    .filter((s) => count(shown, key(s)) < count(supplied, key(s)))
+    .map((s) => ({ kind: "suppliedRefDropped" as const, subject: s.piece.text }));
+};
 
 /**
  * The reply of a context call (S9; decisions G-R1-1 and F1): the whole question under the rules of every question and the
@@ -32,13 +41,13 @@ export const contextValidation =
   (request: ContextRequest): Validation<S.QuestionContext> =>
   (reply) => {
     const supplied = suppliedRefs(request);
-    const shown = questionPieces({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details });
+    const shown = suppliedOf({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details });
     const problems: readonly QuestionProblem[] = [
       ...questionProblems({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details }, supplied),
       ...(reply.options.length === request.options.length ? [] : [{ kind: "optionsChanged" as const, subject: "" }]),
       // W1-R1-1: every value, code or phrase, kept in its kind and its order, none added; W4-R1-1: each code value's ref kept on its occurrence.
       ...(sameValues(valueTokensOf(request.details), valueTokensOf(reply.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
-      ...supplied.map((s) => s.piece).filter((p) => !shown.some((q) => q.code && q.text === p.text && q.ref === p.ref)).map((p) => ({ kind: "suppliedRefDropped" as const, subject: p.text })),
+      ...droppedRefs(supplied, shown),
     ];
     if (problems.length === 0) return Result.succeed({ value: reply, notes: [] });
     const questions = [{ where: "the question", problems }];
