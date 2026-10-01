@@ -1515,10 +1515,11 @@ export function codeFence(value: string): string {
 }
 /**
  * A code piece's text as a Markdown code span, exactly as it is (S9 of the task of issue #36): the program escapes a
- * value before it becomes a piece (`shownValue`), so the span adds nothing; the empty text is its phrase.
+ * value before it becomes a piece (`shownValue`), so the span adds nothing; the empty text is its phrase. A text of
+ * spaces alone is not padded, since CommonMark strips no space from such a span (W7-R1-1).
  */
 export function exactCodeSpan(text: string): string {
-  return text === "" ? emptyTextPhrase : spanOf(text);
+  return text === "" ? emptyTextPhrase : /^ +$/.test(text) ? `\`${text}\`` : spanOf(text);
 }
 /** The phrases of containers without content (S60, W8-R1-2): plain text, never code, so none looks like a string value. */
 export const EMPTY_LIST_PHRASE = "(empty list)";

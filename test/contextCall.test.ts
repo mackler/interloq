@@ -16,7 +16,7 @@ import { contextValidation, writeContext } from "../src/questionContext.ts";
 import { questionProblems } from "../src/question.ts";
 import type { Block, Piece, QuestionContext } from "../src/schema.ts";
 import { Store, Ui } from "../src/services.ts";
-import { opt, para, plain, presentedQuestions, SCRIPTED_CONTEXT, scriptedContextReply, tempRepo, term, testLayer, type TestOptions } from "./helpers.ts";
+import { finished, opt, para, plain, presentedQuestions, runTask, SCRIPTED_CONTEXT, scriptedContextReply, tempRepo, term, testLayer, type TestOptions } from "./helpers.ts";
 
 const origin = { kind: "permission", tool: "Bash", input: "npm install zod" } as const;
 const details: readonly Block[] = [
@@ -660,4 +660,26 @@ test("S33 scenario (P6-R1-3): a reply whose option label is two adjacent code pi
   const [q] = presentedQuestions(probe.ui);
   assert.equal(q.context.by, "program");
   assert.deepEqual(q.options.map((o) => o.label), draft.options.map((o) => o.shown.label));
+});
+
+// ---- W7-R1-1 (S36): a code piece of spaces alone is written without padding ----------------------------------------
+
+test("W7-R1-1 scenario (P8-R1-1): a plan writer's option label with a code piece of one space reaches conversation.md unpadded", async () => {
+  const asked = {
+    context: para("Interloq, the orchestrator, writes the list file now, so that its entries can be read apart."),
+    question: plain("Which separator do you want between the entries?"),
+    explanations: [],
+    options: [{ label: [...plain("Separate with "), { text: " ", ref: "", code: true }], description: plain("one character") }, opt("Separate with a comma", "one character")],
+  };
+  assert.deepEqual(questionProblems(asked), []);
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1"],
+    steps: [{ output: { questions_for_user: [asked] }, plan: "v1" }, { output: { questions_for_user: [] }, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runTask(layer);
+  const record = conversation(probe.dir);
+  assert.ok(record.includes("Separate with ` `"), record);
+  assert.ok(!record.includes("`   `"), record);
 });

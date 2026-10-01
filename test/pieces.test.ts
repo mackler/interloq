@@ -176,3 +176,10 @@ test("property: normalizedRuns is idempotent, keeps every block in order and nes
     { numRuns: 300 },
   );
 });
+
+// W7-R1-1 (S36): a code piece of spaces alone is written between single backticks, unpadded, so that it renders exactly.
+test("piecesMarkdown writes a code piece of spaces alone without padding", () => {
+  assert.equal(piecesMarkdown([codePiece(" ")]), "` `");
+  assert.equal(piecesMarkdown([codePiece("   ")]), "`   `");
+  assert.equal(piecesMarkdown([codePiece(" a ")]), "`  a  `", "padding stays where the content is not all spaces");
+});

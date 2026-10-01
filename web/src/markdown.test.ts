@@ -67,3 +67,30 @@ describe("code pieces rendered from piecesMarkdown", () => {
     expect(el.textContent).toContain("(empty text)");
   });
 });
+
+// W7-R1-1 (S36): a code piece made only of spaces renders as exactly its text.
+describe("a code piece of spaces alone", () => {
+  test("one space renders as one code element of one space", async () => {
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    const el = document.createElement("div");
+    el.innerHTML = render(piecesMarkdown([{ text: " ", ref: "", code: true }]));
+    expect([...el.querySelectorAll("code")].map((c) => c.textContent)).toEqual([" "]);
+  });
+  test("property: any run of spaces, alone or beside the adjacency cases, renders as exactly its text", async () => {
+    const fc = (await import("fast-check")).default;
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    const { questionProblems } = await import("../../src/question.ts");
+    const plainPiece = fc.stringMatching(/^[a-z0-9 ,.]{0,6}$/).map((text) => ({ text, ref: "", code: false }));
+    const codePiece = fc.oneof(fc.stringMatching(/^[a-z0-9]{1,6}$/), fc.stringMatching(/^ {1,5}$/)).map((text) => ({ text, ref: "", code: true }));
+    fc.assert(
+      fc.property(fc.array(fc.oneof(plainPiece, codePiece), { minLength: 1, maxLength: 6 }), (pieces) => {
+        const q = { context: [{ kind: "paragraph" as const, pieces: [{ text: "c", ref: "", code: false }] }], question: [{ text: "Q?", ref: "", code: false }], explanations: [], options: [{ label: pieces, description: [] }] };
+        if (questionProblems(q).length > 0) return true;
+        const el = document.createElement("div");
+        el.innerHTML = render(piecesMarkdown(pieces));
+        return JSON.stringify([...el.querySelectorAll("code")].map((c) => c.textContent)) === JSON.stringify(pieces.filter((p) => p.code).map((p) => p.text));
+      }),
+      { numRuns: 300 },
+    );
+  });
+});
