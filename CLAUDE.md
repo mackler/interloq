@@ -50,8 +50,13 @@ A type admits exactly the values the domain has. Where the presence, meaning or 
 depends on another field's value, the type is a tagged union of the cases, not a record with a flag;
 fields that cannot vary independently are one field. A validation rule that rejects a *combination*
 of fields is evidence that the type is wrong — make the combination unrepresentable rather than check
-for it. This does not reach checks on a value's own content (a blank string, a question that does not
-end in a question mark, a code piece containing a line break), which no type carries. At the agent
+for it. The same holds for a check on a value's own content: a string that must not be blank, a
+number within a range, a path already resolved, a text of one line. The value gets a type whose only
+inhabitants satisfy the rule, built by a function that returns a `Result`, so that an invalid value
+cannot be constructed rather than being rejected after it exists; `ProjectPath` and `RecordPath`
+(`src/services.ts:87`) are the pattern already in use. What stays a check is what no constructor can
+decide: a comparison of a value with something outside it, such as a reply against what the program
+supplied, and a judgment of prose that only a reviewer can make. At the agent
 boundary a union becomes an `anyOf` of closed objects in the JSON Schema, and this file records that
 Codex's strict mode has never been shown to accept one, so a new union there waits on the prototype
 run that settles it.
@@ -309,6 +314,7 @@ current with all six, which are released often, and does not want it to fall beh
 
 ## Rules for changes
 
+- The type first. Before the test, the data types and the signatures the change needs are written and settled: a change of behaviour states what its types become before anything else is written, and a plan's step says so in its text. The test is then written against them, and a type error naming a signature is the ordinary way it first fails. The types are not the application code the next rule speaks of; writing them is the first act of a change, not an exception to it.
 - Test first, without exception. Before application code is written or changed, the test that specifies it is written, run, and seen to fail for the reason the change is meant to fix (a failed assertion, or a type error naming the signature being changed; never a missing module or a typo). Then the least code that makes it pass. A new module may first be scaffolded with its final signature and a body that does nothing useful, so that the test fails on its assertion. The observed failure is recorded in the commit message.
 - Property-based testing wherever it applies (issue #66). Where a function is pure and an invariant can be stated over arbitrary input, a property test with `fast-check` states it: the modules the Layout table marks pure are where they belong. Example tests remain for what properties do not cover: a specific case that once failed, a value a seam must agree on exactly, and the scenario tests required for every change of behaviour; the two are not alternatives, and a property over a pure function is no substitute for a scenario test. A property test is written first and seen to fail, like any other. Its case count is chosen so that `npm test` stays usable before every commit and in CI.
 - Every change to behaviour gets a scenario test in `test/` that runs the procedure against the test layers of `test/helpers.ts` (`testLayer`, `testWiring`). `src/issueLog.ts` stays free of I/O and of Effect services so that it can be tested directly.
