@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { questionLines } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf } from "./helpers.ts";
+import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 import type { Piece, TermsEntry } from "../src/schema.ts";
 
@@ -243,4 +243,33 @@ test("S5: a plan writer's question with a piece that refers to an explanation re
   assert.deepEqual(q.options.map((o) => [o.label, o.description]), asked.options.map((o) => [o.label, o.description]));
   // The terminal's block names the explanation by its term, not by the words of a piece.
   assert.ok(questionLines(q).some((l) => l.trim() === "order: What a customer buys."));
+});
+
+// S37 (the developer's decision of 4 Oct 2026): a plain piece carries no code. A plan writer's question whose plain piece
+// holds an unclosed backtick, and another that ends in a backslash right before a code piece, is written to the terminal
+// and to conversation.md so that only its code pieces read back as code.
+test("S37: a plain piece's backtick and trailing backslash reach the terminal and conversation.md as characters", async () => {
+  const code = (text: string): Piece => ({ text, ref: "", code: true });
+  const asked = {
+    context: [{ kind: "paragraph" as const, pieces: plain("Claude Code, the planning agent, needs a command.") }],
+    question: [...plain("Should the step run `"), code("ls"), ...plain(" or C:\\"), code("dir"), ...plain(" first?")],
+    explanations: [],
+    options: [{ label: plain("The first"), description: plain("list the files") }, { label: plain("The second"), description: plain("list the directory") }],
+  };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1"],
+    steps: [{ output: { questions_for_user: [asked] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runTask(layer);
+  const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
+  const expected = "Should the step run \\``ls` or C:\\\\`dir` first?";
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  const shown = [conversation.split("\n").find((l) => l.includes("Should the step run")) ?? "", questionLines(q).find((l) => l.includes("Should the step run")) ?? ""];
+  for (const line of shown) {
+    assert.ok(line.includes(expected), line);
+    assert.deepEqual(readBack(line).code, ["ls", "dir"], line);
+    assert.ok(readBack(line).rest.includes("Should the step run ` or C:\\ first?"), line);
+  }
 });

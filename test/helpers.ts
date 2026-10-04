@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { marked } from "marked";
 import type { PresentedQuestion } from "../src/question.ts";
 import { confirmingRead } from "../src/confirmEnd.ts";
 import { programWritten } from "../src/questionContext.ts";
@@ -568,3 +569,16 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   };
   return { wiring, probe: { ui, planner, reviewer, dir, usageLines } };
 }
+
+// S37: Markdown read back with marked (a devDependency of the page), for the tests alone; the program reads no Markdown.
+const entities: Readonly<Record<string, string>> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+const unescapeHtml = (html: string): string => html.replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => entities[e] ?? e);
+/** Markdown read back: the texts of its code elements, in order, and its text outside them. */
+export const readBack = (markdown: string): Readonly<{ code: readonly string[]; rest: string }> => {
+  const html = marked.parseInline(markdown, { async: false, gfm: true });
+  return {
+    code: [...html.matchAll(/<code>([\s\S]*?)<\/code>/g)].map((m) => unescapeHtml(m[1])),
+    rest: unescapeHtml(html.replace(/<code>[\s\S]*?<\/code>/g, "").replace(/<[^>]*>/g, "")),
+  };
+};
+

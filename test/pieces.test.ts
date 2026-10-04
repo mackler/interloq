@@ -2,9 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { marked } from "marked";
 import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, normalizedRuns, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
 import type { Block, Piece } from "../src/schema.ts";
+import { readBack } from "./helpers.ts";
 
 const plain = (text: string): Piece => ({ text, ref: "", code: false });
 const ref = (text: string, id: string): Piece => ({ text, ref: id, code: false });
@@ -189,17 +189,6 @@ test("piecesMarkdown writes a code piece of spaces alone without padding", () =>
 // escapes every backtick of a plain piece and doubles its trailing backslash, so that nothing in a plain piece can pair
 // with anything outside it. The tests read the Markdown back with marked (a devDependency of the page); the program
 // itself reads no Markdown.
-const entities: Readonly<Record<string, string>> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
-const unescapeHtml = (html: string): string => html.replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => entities[e] ?? e);
-/** Markdown read back: the texts of its code elements, in order, and its text outside them. */
-const readBack = (markdown: string): Readonly<{ code: readonly string[]; rest: string }> => {
-  const html = marked.parseInline(markdown, { async: false, gfm: true });
-  return {
-    code: [...html.matchAll(/<code>([\s\S]*?)<\/code>/g)].map((m) => unescapeHtml(m[1])),
-    rest: unescapeHtml(html.replace(/<code>[\s\S]*?<\/code>/g, "").replace(/<[^>]*>/g, "")),
-  };
-};
-
 test("a plain piece ending in a backtick does not merge with the code piece after it", () => {
   const back = readBack(piecesMarkdown([plain("see `"), codePiece("ls"), plain(" now")]));
   assert.deepEqual(back.code, ["ls"]);
