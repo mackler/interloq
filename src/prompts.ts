@@ -197,10 +197,11 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
     criterion: "",
   },
   {
+    // S37 (the developer's decision of 4 Oct 2026): piecesMarkdown of src/pieces.ts escapes every backtick of a plain piece.
     id: "inline",
     kind: "prose",
-    text: "Formatting (emphasis, inline code, a link) begins and ends inside one plain piece, and a piece that refers to an explanation carries no formatting at all.",
-    criterion: "a piece's formatting (emphasis, inline code, a link) does not begin and end inside that one plain piece, or a piece that refers to an explanation carries formatting.",
+    text: "A plain piece carries emphasis and links only, never code: each begins and ends inside that one plain piece, and a backtick in a plain piece is shown as a backtick character. Every literal value (a command, a file name, a setting) is its own code piece. A piece that refers to an explanation carries no formatting at all.",
+    criterion: "a literal value is written between backticks in a plain piece rather than as its own code piece, a piece's emphasis or link does not begin and end inside that one plain piece, or a piece that refers to an explanation carries formatting.",
   },
 ];
 /** The format as the writer of a question reads it (S4). */

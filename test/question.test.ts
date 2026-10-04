@@ -7,11 +7,11 @@ import { test } from "node:test";
 import { Result } from "effect";
 import fc from "fast-check";
 import { decodeRunError, haltMessage } from "../src/errors.ts";
-import { piecesText } from "../src/pieces.ts";
+import { piecesMarkdown, piecesText } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { type Piece, type Question, questionProblems, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
 import type { Block, Explanation } from "../src/schema.ts";
-import { opt, para, plain, term } from "./helpers.ts";
+import { opt, para, plain, readBack, term } from "./helpers.ts";
 
 const zod: Explanation = { id: "t1", term: "zod", explanation: "A library that checks that data has the expected shape." };
 const good: Question = {
@@ -174,6 +174,22 @@ test("S4: the prose clauses reach the writers and the reviewers from the one con
     assert.ok(prompts.QUESTION_OPTIONS_RULE.includes(clause.text), clause.id);
   }
   for (const clause of prompts.QUESTION_FORMAT.filter((c) => c.kind === "data")) assert.equal(clause.criterion, "", `${clause.id} is checked by the program, not asked of the reviewer`);
+});
+
+// S37 (the developer's decision of 4 Oct 2026): the clause that tells the writers a plain piece carries no code, the
+// criterion the reviewers apply, and the terminal's writing of a plain piece agree.
+test("S37: a plain piece carries emphasis and links only: the writers, the reviewers and piecesMarkdown agree", () => {
+  const inline = prompts.QUESTION_FORMAT.find((c) => c.id === "inline");
+  assert.ok(inline !== undefined);
+  for (const words of ["emphasis and links only, never code", "shown as a backtick character", "its own code piece"]) assert.ok(inline.text.includes(words), words);
+  assert.ok(inline.criterion.includes("rather than as its own code piece"), inline.criterion);
+  for (const writer of [prompts.QUESTION_TEXT_FORMAT, prompts.QUESTION_OPTIONS_RULE, prompts.questionListPrompt("t")]) assert.ok(writer.includes(inline.text));
+  assert.ok(prompts.questionReviewCriteria().includes(inline.criterion));
+  for (const clause of prompts.QUESTION_FORMAT) assert.ok(!/inline code/i.test(`${clause.text} ${clause.criterion}`), clause.id);
+  // What the clause tells the writer is what the program does with the reply: a value between backticks in a plain
+  // piece is not code, the same value as a code piece is.
+  assert.deepEqual(readBack(piecesMarkdown(plain("run `npm test` now"))).code, []);
+  assert.deepEqual(readBack(piecesMarkdown([...plain("run "), { text: "npm test", ref: "", code: true }, ...plain(" now")])).code, ["npm test"]);
 });
 
 // ---- properties (issue #66) ----------------------------------------------------------------------------------------
