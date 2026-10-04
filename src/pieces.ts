@@ -146,10 +146,19 @@ export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.fi
 // ---- Markdown for the records and the terminal -------------------------------------------------------------------
 
 /**
- * Pieces as inline Markdown: a plain piece as written, a code piece as a code span of exactly its text (S45; the program
- * escapes a value before it becomes a piece, S48), a piece that refers to an explanation as its words.
+ * A plain piece as inline Markdown (S37, the developer's decision of 4 Oct 2026): a plain piece carries emphasis and links
+ * only, never code. Every backtick not already escaped (an odd number of backslashes before it) is escaped, so it is shown
+ * as a backtick character, and a trailing backslash that is not itself escaped is doubled. So no backtick run and no
+ * backslash of the piece can pair with, or escape, anything outside it; choosing a code span's delimiter could not
+ * achieve this, because the run it would close against may be inside the code piece's own text.
  */
-export const piecesMarkdown = (pieces: readonly Piece[]): string => pieces.map((p) => (p.code ? exactCodeSpan(p.text) : p.text)).join("");
+export const plainMarkdown = (text: string): string =>
+  text.replace(/(\\*)`/g, (_, slashes: string) => (slashes.length % 2 === 1 ? `${slashes}\`` : `${slashes}\\\``)).replace(/(?<!\\)((?:\\\\)*\\)$/u, "$1\\");
+/**
+ * Pieces as inline Markdown: a plain piece by plainMarkdown, a piece that refers to an explanation likewise (its words), a
+ * code piece as a code span of exactly its text (S45; the program escapes a value before it becomes a piece, S48).
+ */
+export const piecesMarkdown = (pieces: readonly Piece[]): string => pieces.map((p) => (p.code ? exactCodeSpan(p.text) : plainMarkdown(p.text))).join("");
 /** A code block as a fenced block of exactly its text (S45). */
 const codeBlockMarkdown = (text: string): string => {
   const fence = codeFence(text);

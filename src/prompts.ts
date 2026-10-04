@@ -1545,6 +1545,13 @@ export function toolInputExplanations(input: unknown): readonly Explanation[] {
 }
 const plainPiece = (text: string): Piece => ({ text, ref: "", code: false });
 const codePiece = (text: string): Piece => ({ text, ref: "", code: true });
+/**
+ * ESCAPED_VALUE_NOTE as pieces (S37): a plain piece never carries code, so each escape the note explains, a code span of
+ * its text, is a code piece of its own, and the words between them plain pieces. piecesMarkdown writes them back as the
+ * note's text.
+ */
+const escapedNotePieces = (lead: string): readonly Piece[] =>
+  `${lead}${ESCAPED_VALUE_NOTE}`.split(/`([^`]*)`/).map((text, i) => (i % 2 === 1 ? codePiece(text) : plainPiece(text))).filter((p) => p.code || p.text !== "");
 /** A row of a tool's input: a list item at its level, a multi-line value as a code block, or the escapes' note below it. */
 type InputRow = Readonly<{ kind: "item"; level: number; pieces: readonly Piece[] }> | Readonly<{ kind: "code"; text: string }> | Readonly<{ kind: "note" }>;
 /**
@@ -1560,7 +1567,7 @@ export function toolInputBlocks(input: unknown): readonly Block[] {
     if (known !== null) return [plainPiece(known)];
     if (key === "") return [plainPiece(EMPTY_NAME_LABEL)];
     const shown = shownName(key);
-    return [plainPiece("The tool's setting named "), { text: shown.text, ref: ids.get(shown.text) ?? "", code: true }, ...(shown.kind === "escaped" ? [plainPiece(` ${ESCAPED_VALUE_NOTE}`)] : [])];
+    return [plainPiece("The tool's setting named "), { text: shown.text, ref: ids.get(shown.text) ?? "", code: true }, ...(shown.kind === "escaped" ? escapedNotePieces(" ") : [])];
   };
   const rows = (label: readonly Piece[], sep: string, v: unknown, level: number): readonly InputRow[] => {
     const item = (...pieces: readonly Piece[]): InputRow => ({ kind: "item", level, pieces: [...label, ...pieces].filter((p) => p.code || p.text !== "") });
@@ -1568,7 +1575,7 @@ export function toolInputBlocks(input: unknown): readonly Block[] {
       const shown = shownValue(v);
       if (shown.kind === "phrase") return [item(plainPiece(`${sep}${shown.text}`))];
       const note: readonly InputRow[] = shown.kind === "escaped" ? [{ kind: "note" }] : [];
-      if (!shown.text.includes("\n")) return [item(plainPiece(sep), codePiece(shown.text), ...(shown.kind === "escaped" ? [plainPiece(` ${ESCAPED_VALUE_NOTE}`)] : []))];
+      if (!shown.text.includes("\n")) return [item(plainPiece(sep), codePiece(shown.text), ...(shown.kind === "escaped" ? escapedNotePieces(" ") : []))];
       return [item(plainPiece(sep.trimEnd())), { kind: "code", text: shown.text }, ...note];
     }
     if (Array.isArray(v) && v.length === 0) return [item(plainPiece(`${sep}${EMPTY_LIST_PHRASE}`))];
@@ -1586,7 +1593,7 @@ export function toolInputBlocks(input: unknown): readonly Block[] {
   // Consecutive items form one list; a code block or the escapes' note ends it.
   const blocks = all.reduce<readonly Block[]>((acc, row) => {
     if (row.kind === "code") return [...acc, { kind: "code", text: row.text }];
-    if (row.kind === "note") return [...acc, { kind: "paragraph", pieces: [plainPiece(ESCAPED_VALUE_NOTE)] }];
+    if (row.kind === "note") return [...acc, { kind: "paragraph", pieces: escapedNotePieces("") }];
     const last = acc[acc.length - 1];
     const it = { level: row.level, pieces: row.pieces };
     return last?.kind === "list" ? [...acc.slice(0, -1), { kind: "list", items: [...last.items, it] }] : [...acc, { kind: "list", items: [it] }];
@@ -1736,13 +1743,13 @@ export const TRANSPORT_FAULT_HEADING = "Why the agent could not be reached:";
 export function transportDetails(attempts: number, fault: string): readonly Block[] {
   const shown = shownValue(fault);
   const lead = `Interloq tried ${attempts} ${attempts === 1 ? "time" : "times"}, waiting longer before each new attempt. The last error, as reported:`;
-  const note: readonly Block[] = shown.kind === "escaped" ? [{ kind: "paragraph", pieces: [plainPiece(ESCAPED_VALUE_NOTE)] }] : [];
+  const note: readonly Block[] = shown.kind === "escaped" ? [{ kind: "paragraph", pieces: escapedNotePieces("") }] : [];
   const fault_: readonly Block[] =
     shown.kind === "phrase"
       ? [{ kind: "paragraph", pieces: [plainPiece(`${lead} ${shown.text}`)] }]
       : shown.text.includes("\n")
         ? [{ kind: "paragraph", pieces: [plainPiece(lead)] }, { kind: "code", text: shown.text }, ...note]
-        : [{ kind: "paragraph", pieces: [plainPiece(`${lead} `), codePiece(shown.text), ...(shown.kind === "escaped" ? [plainPiece(` ${ESCAPED_VALUE_NOTE}`)] : [])] }];
+        : [{ kind: "paragraph", pieces: [plainPiece(`${lead} `), codePiece(shown.text), ...(shown.kind === "escaped" ? escapedNotePieces(" ") : [])] }];
   return [{ kind: "paragraph", pieces: [plainPiece(TRANSPORT_FAULT_HEADING)] }, ...fault_];
 }
 export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" | "codex", what: string): string {

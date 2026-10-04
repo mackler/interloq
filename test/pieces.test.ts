@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
+import { marked } from "marked";
 import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, normalizedRuns, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
 import type { Block, Piece } from "../src/schema.ts";
 
@@ -182,4 +183,66 @@ test("piecesMarkdown writes a code piece of spaces alone without padding", () =>
   assert.equal(piecesMarkdown([codePiece(" ")]), "` `");
   assert.equal(piecesMarkdown([codePiece("   ")]), "`   `");
   assert.equal(piecesMarkdown([codePiece(" a ")]), "`  a  `", "padding stays where the content is not all spaces");
+});
+
+// S37 (the developer's decision of 4 Oct 2026): a plain piece carries emphasis and links only, never code. piecesMarkdown
+// escapes every backtick of a plain piece and doubles its trailing backslash, so that nothing in a plain piece can pair
+// with anything outside it. The tests read the Markdown back with marked (a devDependency of the page); the program
+// itself reads no Markdown.
+const entities: Readonly<Record<string, string>> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" };
+const unescapeHtml = (html: string): string => html.replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => entities[e] ?? e);
+/** Markdown read back: the texts of its code elements, in order, and its text outside them. */
+const readBack = (markdown: string): Readonly<{ code: readonly string[]; rest: string }> => {
+  const html = marked.parseInline(markdown, { async: false, gfm: true });
+  return {
+    code: [...html.matchAll(/<code>([\s\S]*?)<\/code>/g)].map((m) => unescapeHtml(m[1])),
+    rest: unescapeHtml(html.replace(/<code>[\s\S]*?<\/code>/g, "").replace(/<[^>]*>/g, "")),
+  };
+};
+
+test("a plain piece ending in a backtick does not merge with the code piece after it", () => {
+  const back = readBack(piecesMarkdown([plain("see `"), codePiece("ls"), plain(" now")]));
+  assert.deepEqual(back.code, ["ls"]);
+  assert.equal(back.rest, "see ` now");
+});
+
+test("a plain piece ending in a backslash does not escape the code span after it", () => {
+  const back = readBack(piecesMarkdown([plain("path C:\\"), codePiece("dir"), plain(" here")]));
+  assert.deepEqual(back.code, ["dir"]);
+  assert.equal(back.rest, "path C:\\ here");
+});
+
+test("an unclosed backtick run in a plain piece does not close against a run inside a code piece", () => {
+  const back = readBack(piecesMarkdown([plain("one `` two "), codePiece("a``b"), plain(" three")]));
+  assert.deepEqual(back.code, ["a``b"]);
+  assert.equal(back.rest, "one `` two  three");
+});
+
+test("property: the code read back is exactly the code pieces, whatever the plain pieces hold", () => {
+  const plainText = fc.string({ unit: fc.constantFrom("`", "`", "\\", "\\", "a", "b", " "), maxLength: 12 });
+  const codeText = fc.string({ unit: fc.constantFrom("`", "\\", "a", " ", "x"), minLength: 1, maxLength: 8 });
+  fc.assert(
+    fc.property(plainText, plainText, plainText, codeText, codeText, (p1, p2, p3, c1, c2) => {
+      const back = readBack(piecesMarkdown([plain(p1), codePiece(c1), plain(` and ${p2} or `), codePiece(c2), plain(p3)]));
+      return JSON.stringify(back.code) === JSON.stringify([c1, c2]);
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("property: a plain piece of words and backticks reads back as its own text, nothing in code", () => {
+  fc.assert(
+    fc.property(fc.string({ unit: fc.constantFrom("`", "`", "a", "b", " "), maxLength: 16 }), (text) => {
+      const back = readBack(piecesMarkdown([plain(text)]));
+      return back.code.length === 0 && back.rest === text;
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("a plain piece keeps its emphasis and links; an escaped backtick stays one backtick; an empty code piece stays a phrase", () => {
+  assert.equal(piecesMarkdown([plain("*a* and [x](https://example.com)")]), "*a* and [x](https://example.com)");
+  const escaped = readBack(piecesMarkdown([plain("a \\` b")]));
+  assert.deepEqual(escaped, { code: [], rest: "a ` b" });
+  assert.ok(piecesMarkdown([plain("a `"), codePiece(""), plain("b")]).endsWith("(empty text)b"));
 });

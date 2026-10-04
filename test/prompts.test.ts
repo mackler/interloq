@@ -471,6 +471,19 @@ test("an escaped field carries ESCAPED_VALUE_NOTE once, in the lines the termina
   assert.equal(block.split(prompts.ESCAPED_VALUE_NOTE).length - 1, 1);
 });
 
+// S37: a plain piece never carries code, so the escapes' note writes each escape it explains as a code piece of its own,
+// derived from ESCAPED_VALUE_NOTE, whose Markdown it still is.
+test("S37: the escapes' note is pieces, each escape it explains a code piece, written as ESCAPED_VALUE_NOTE", () => {
+  const blocks = prompts.toolInputBlocks({ "a\nb": "c\r", content: "x\r\ny" });
+  const pieces = blocks.flatMap((b) => (b.kind === "paragraph" ? b.pieces : b.kind === "list" ? b.items.flatMap((i) => i.pieces) : []));
+  const explained = [...prompts.ESCAPED_VALUE_NOTE.matchAll(/`([^`]*)`/g)].map((m) => m[1]);
+  assert.ok(explained.length > 0);
+  const code = pieces.filter((p) => p.code).map((p) => p.text);
+  for (const e of explained) assert.ok(code.includes(e), `the escape ${e} is a code piece`);
+  assert.ok(pieces.every((p) => p.code || !p.text.includes("`")), "no plain piece holds a backtick");
+  assert.equal(blocksMarkdown(blocks).split(prompts.ESCAPED_VALUE_NOTE).length - 1, 3);
+});
+
 // S49 (W4-R1-1): the permission question names the action and points at the input shown with it; its length does not
 // depend on the input, so that a long command cannot push the answers out of view.
 test("permissionQuestion names neither the command, nor the file, nor the address, and its length does not depend on the input", () => {
