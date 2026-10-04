@@ -6,6 +6,8 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "../scratch/tsbuildinfo/web.tsbuildinfo",
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,

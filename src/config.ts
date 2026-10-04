@@ -22,6 +22,9 @@ export const decodeConfigText = (file: string, text: string): Result.Result<Part
   return Result.isSuccess(decoded) ? Result.succeed(decoded.success) : Result.fail(new ConfigInvalid({ file, ...S.firstIssue(decoded.failure) }));
 };
 
+/** The configuration from its three sources, each later one replacing the keys it sets (decided behaviour 9). */
+export const mergeConfig = (shared: Partial<Config>, own: Partial<Config>): Config => ({ ...S.defaultConfig, ...shared, ...own });
+
 /**
  * The configuration: the defaults, then the shared config file, then <project>/plan-review/config.json
  * (decided behaviour 9). Invalid JSON, a wrong type or an unknown key is ConfigInvalid (Q4).
@@ -40,5 +43,5 @@ export const loadConfig = (project: string, sharedFile: string): Effect.Effect<C
       });
     const shared = yield* read(sharedFile);
     const own = yield* read(path.join(path.resolve(project), RECORDS_DIR, pathOf({ kind: "config" })));
-    return { ...S.defaultConfig, ...shared, ...own };
+    return mergeConfig(shared, own);
   });

@@ -4,6 +4,8 @@
     "module": "nodenext",
     "strict": true,
     "noEmit": true,
+    "incremental": true,
+    "tsBuildInfoFile": "scratch/tsbuildinfo/program.tsbuildinfo",
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
