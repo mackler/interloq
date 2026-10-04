@@ -46,6 +46,16 @@ with it: no shared mutable state, no `null`-or-throw signatures, no hidden preco
 exhaustiveness over variants, and a pure core that the tests exercise directly. The findings and
 recommendations of `docs/functional-design-review.md` are the reference for what this means here.
 
+A type admits exactly the values the domain has. Where the presence, meaning or legality of one field
+depends on another field's value, the type is a tagged union of the cases, not a record with a flag;
+fields that cannot vary independently are one field. A validation rule that rejects a *combination*
+of fields is evidence that the type is wrong — make the combination unrepresentable rather than check
+for it. This does not reach checks on a value's own content (a blank string, a question that does not
+end in a question mark, a code piece containing a line break), which no type carries. At the agent
+boundary a union becomes an `anyOf` of closed objects in the JSON Schema, and this file records that
+Codex's strict mode has never been shown to accept one, so a new union there waits on the prototype
+run that settles it.
+
 ## Layout
 
 | File | Content |
