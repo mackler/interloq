@@ -77,7 +77,6 @@ test("the heading of a work review", () => {
 test("conversation.md's headings of the interviews are unchanged", () => {
   assert.equal(recordHeading("clarification"), "Interview");
   assert.equal(recordHeading("followUp"), "Second interview");
-  assert.equal(recordHeading("conversation"), "Conversation before planning");
 });
 
 // Decision support, plan step 5.1: the terminal shows each option's arguments one after another.

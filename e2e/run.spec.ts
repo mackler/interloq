@@ -1,10 +1,11 @@
 import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
+import { phaseName } from "../src/uiEvents.ts";
 import { AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
-const PORTS = { converge: 8101, decision: 8102, stop: 8103, interview: 8104, workCorrection: 8105, tabs: 8106, drop: 8107, long: 8108, questionReview: 8109, longChoices: 8110, decide: 8111, decideLong: 8112, decideRevise: 8113, decideBlank: 8114, planSteps: 8115, transportRetry: 8116, unchangedPause: 8117, longQuestion: 8118, permissionLong: 8119, whitespace: 8120, transportLong: 8121 } as const;
+const PORTS = { converge: 8101, decision: 8102, stop: 8103, interview: 8104, workCorrection: 8105, tabs: 8106, drop: 8107, long: 8108, questionReview: 8109, longChoices: 8110, decide: 8111, decideLong: 8112, decideRevise: 8113, decideBlank: 8114, planSteps: 8115, transportRetry: 8116, unchangedPause: 8117, longQuestion: 8118, permissionLong: 8119, whitespace: 8120, transportLong: 8121, emptyQuestions: 8122 } as const;
 type Scenario = keyof typeof PORTS;
 const url = (scenario: Scenario) => `http://127.0.0.1:${PORTS[scenario]}/`;
 const left = (page: Page) => page.getByRole("region", { name: "You and Interloq" });
@@ -190,6 +191,17 @@ test("(5) an interview through confirmation: the page's help, a numbered answer,
   await expect(rail(page).getByText("Gather Requirements", { exact: true })).toBeVisible();
   await expect(step("Clarification")).toHaveAttribute("data-step", "done");
   await expect(step("Clarification").getByText(loopSummary(1, 0, "converged"), { exact: true })).toBeVisible();
+});
+
+test("(23) an empty agreed question list: planning starts without a prompt, and the run finishes (issue #83)", async ({ page }) => {
+  await startTask(page, "emptyQuestions", "Document the service");
+  // One planning phase is foreseen, so the rail names it without a number (phaseName with a count of 1).
+  const planning = rail(page).locator("li.entry", { has: page.getByText(phaseName({ kind: "planning", n: 1 }, 1), { exact: true }) });
+  await expect(planning).toHaveAttribute("data-state", /active|done/);
+  await expect(pane(page)).toHaveCount(0);
+  await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  await expect(rail(page).locator("li.entry", { has: page.getByText("Gather Requirements", { exact: true }) })).toHaveAttribute("data-state", "done");
+  await expect(pane(page)).toHaveCount(0);
 });
 
 test("(6) a work correction runs planning, execution and the work review a second time", async ({ page }) => {

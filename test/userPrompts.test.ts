@@ -21,7 +21,6 @@ const catalog: [string, Partial<UserPrompt> & { kind: UserPrompt["kind"] }, stri
   [prompts.permissionPrompt, { kind: "permission", mode: "ask", free: "none" }, ["End the run=q"]],
   [prompts.interviewMessagePrompt, { kind: "interviewMessage", mode: "message", free: "message" }, ["Finish clarification and start planning=/done", "End the run=/quit"]],
   [prompts.confirmSummaryPrompt, { kind: "confirmSummary", mode: "message", free: "message" }, ["Confirm=", "End the run=/quit"]],
-  [prompts.startOrTalkPrompt, { kind: "startOrTalk", mode: "message", free: "message" }, ["Start planning=", "End the run=/quit"]],
 ];
 
 for (const [text, expected, choices] of catalog) {

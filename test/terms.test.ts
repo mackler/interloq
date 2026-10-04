@@ -124,7 +124,7 @@ test("the terms review at its cycle limit: p proceeds to the clarification with 
 
 test("an empty agreed list writes no terms and has no terms review", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: [""],
+    answers: [],
     steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],

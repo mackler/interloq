@@ -10,8 +10,8 @@ import { piecesText } from "./pieces.ts";
 
 /** A phase of the run as the progress display names it. */
 export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work"; n: number }>;
-/** Which conversation with the user runs (issue #21): the first clarification, a follow-up on accepted requirements gaps, or the conversation after an empty agreed list. */
-export type InterviewStage = "clarification" | "followUp" | "conversation";
+/** Which conversation with the user runs (issue #21): the first clarification, or a follow-up on accepted requirements gaps. An empty agreed list opens none (issue #83). */
+export type InterviewStage = "clarification" | "followUp";
 export type Agent = "claude" | "codex";
 export type LoopResult = "converged" | "proceed" | "revise";
 

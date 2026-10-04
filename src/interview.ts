@@ -3,9 +3,7 @@
 import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
 import { interview } from "./conversation.ts";
-import { askOffering, programContext } from "./offer.ts";
 import * as prompts from "./prompts.ts";
-import { plainPieces } from "./pieces.ts";
 import { planningCall, reviewLoop } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
 import * as S from "./schema.ts";
@@ -47,24 +45,17 @@ export const questionPhase = (task: string): Effect.Effect<void, RunError, Servi
 
     const agreed = (yield* store.loadQuestions()).questions;
     yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: agreed })}\n`);
-    // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
-    if (agreed.length > 0) yield* explainTerms(task, agreed);
-
+    // Issue #83 (the developer's instruction of 4 Oct 2026): an empty agreed list is no reason to pause; planning starts.
     if (agreed.length === 0) {
-      const origin = { kind: "startOrTalk" } as const;
-      const first = yield* askOffering((m) => ui.askMessage(m), prompts.startOrTalkPrompt, { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.START_OR_TALK_QUESTION), options: [], decision: null });
-      if (first === "" || first === "/done") {
-        yield* store.writeRequirements(`# Requirements\n\n## Task\n\n${task}\n\nNo question was needed, and the user added no information.\n`);
-        yield* store.converse("**User:** started planning without a conversation.\n\n");
-        yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
-        return;
-      }
-      yield* store.converse(`**User:** ${first}\n\n`);
-      yield* interview(prompts.interviewOpenEmptyPrompt(first), "conversation", []);
-    } else {
-      yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
-      yield* interview(prompts.interviewOpenPrompt, "clarification", agreed.map((q) => q.id));
+      yield* store.writeRequirements(`# Requirements\n\n## Task\n\n${task}\n\nNo question was needed.\n`);
+      yield* store.converse("Planning starts without a conversation: no question was needed.\n\n");
+      yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
+      return;
     }
+    // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
+    yield* explainTerms(task, agreed);
+    yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
+    yield* interview(prompts.interviewOpenPrompt, "clarification", agreed.map((q) => q.id));
 
     const reviewed = yield* reviewLoop(requirementsSubject());
     yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: reviewed.result });

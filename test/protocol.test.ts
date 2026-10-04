@@ -47,7 +47,7 @@ const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_
 // S5: a question as the user is shown it, with every kind of origin and both kinds of answer.
 const origin = fc.oneof(
   fc.record({ kind: fc.constantFrom("clarification" as const, "followUp" as const), id: text }),
-  fc.record({ kind: fc.constantFrom("reply" as const, "startOrTalk" as const, "confirmSummary" as const, "relayed" as const) }),
+  fc.record({ kind: fc.constantFrom("reply" as const, "confirmSummary" as const, "relayed" as const) }),
   fc.record({ kind: fc.constant("planner" as const), heading: text }),
   fc.record({ kind: fc.constant("execStop" as const), phase: nat, status: text }),
   fc.record({ kind: fc.constant("permission" as const), tool: text, input: text }),
@@ -84,7 +84,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("ToolUsed" as const), agent, tool: text, target: text }),
   fc.record({ _tag: fc.constant("AgentCallEnded" as const), agent, ok: fc.boolean() }),
   fc.record({ _tag: fc.constant("InterviewTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
-  fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const, "conversation" as const), total: nat }),
+  fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const), total: nat }),
   fc.record({ _tag: fc.constant("ClaudeSaid" as const), text }),
   fc.constant({ _tag: "AnswerRejected" as const }),
   // Issue #26: the program's retry and its recovery.

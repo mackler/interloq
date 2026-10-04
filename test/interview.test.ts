@@ -16,9 +16,9 @@ const read = (dir: string, name: string): string => fs.readFileSync(path.join(di
 
 test("a turn that is complete with a blank summary continues the conversation instead of proposing a summary", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["hi", "more", ""],
+    answers: ["more", ""],
     steps: [
-      { output: { questions: [] } },
+      { output: { questions: [q("Q1")] } },
       { output: turn("Anything to add?", true, "  ") },
       { output: turn("Done.", true, "# Requirements\n\nNone.") },
       { output: noQuestions, plan: "v1" },
@@ -66,9 +66,9 @@ test("a default answer that names no proposed answer is recorded as null, with a
 // emitted before the terminal's lines of that turn, which stay unchanged.
 test("the question phase notifies its beginning and end and every interview turn before its lines", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["hi", "more", ""],
+    answers: ["more", ""],
     steps: [
-      { output: { questions: [] } },
+      { output: { questions: [q("Q1")] } },
       { output: turn("Anything to add?", false, "") },
       { output: turn("Done.", true, "# Requirements\n\nNone.") },
       { output: noQuestions, plan: "v1" },
@@ -84,11 +84,11 @@ test("the question phase notifies its beginning and end and every interview turn
   assert.deepEqual(probe.ui.notified[1], { _tag: "PhaseBegan", phase: { kind: "questions" } });
   const turns = probe.ui.notified.filter((e) => e._tag === "InterviewTurn");
   assert.deepEqual(turns, [
-    { _tag: "InterviewTurn", heading: "Conversation before planning", message: "Anything to add?", summary: null, answered: 0, total: 0 },
-    { _tag: "InterviewTurn", heading: "Conversation before planning", message: "Done.", summary: "# Requirements\n\nNone.", answered: 0, total: 0 },
+    { _tag: "InterviewTurn", heading: "Clarification", message: "Anything to add?", summary: null, answered: 0, total: 1 },
+    { _tag: "InterviewTurn", heading: "Clarification", message: "Done.", summary: "# Requirements\n\nNone.", answered: 0, total: 1 },
   ]);
-  // Issue #21: the conversation after an empty agreed list is a clarification with nothing agreed to count.
-  assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: "Conversation before planning", stage: "conversation", total: 0 });
+  // Issue #21: the clarification counts the agreed questions.
+  assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 1 });
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
   assert.ok(tags.indexOf("PhaseEnded") < tags.lastIndexOf("PhaseBegan"), "the question phase ends before planning begins");
   // The terminal line of a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
@@ -101,8 +101,8 @@ test("the question phase notifies its beginning and end and every interview turn
 // Finding 8 of docs/gui-review.md: the interview's opening help is a structured event, rendered per interface.
 test("the interview's opening is an InterviewOpened event, not a terminal-only say", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["hi", ""],
-    steps: [{ output: { questions: [] } }, { output: turn("Done.", true, "# Requirements\n\nNone.") }, { output: noQuestions, plan: "v1" }],
+    answers: [""],
+    steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Done.", true, "# Requirements\n\nNone.") }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { questionPhase: true },

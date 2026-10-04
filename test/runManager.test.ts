@@ -13,7 +13,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type Listener, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain } from "./helpers.ts";
+import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -148,15 +148,12 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
   const h = await harness(repo, [
     {
       config: { questionPhase: true },
-      steps: [{ output: { questions: [] } }, { output: { ...turn("One question.", false, ""), current_question: database, asked_ids: ["F1"] } }, { output: turn("Done.", true, "# Requirements\n\nPostgreSQL.") }, { output: noQuestions, plan: "v1" }],
+      steps: [{ output: { questions: [questionEntry("Q1", "Which cache should the service use?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }, { output: { ...turn("One question.", false, ""), current_question: database, asked_ids: ["F1"] } }, { output: turn("Done.", true, "# Requirements\n\nPostgreSQL.") }, { output: noQuestions, plan: "v1" }],
       reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
       execs: [finished],
     },
   ]);
   const id = await started(h, repo);
-  const opening = await pendingAsk(h, id);
-  assert.equal(opening.kind, "startOrTalk");
-  await run(h.manager.answer(h.manager.incarnation, id, opening.prompt, "let us talk"));
   const you = await pendingAsk(h, id);
   assert.equal(you.kind, "interviewMessage");
   // S5: the turn's question is presented before the prompt, its options with the answers that choose them.

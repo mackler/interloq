@@ -452,13 +452,6 @@ export const interviewOpenPrompt = `Conduct an interview with the user. plan-rev
 ${INTERVIEW_RULES}
 Begin now with your first message to the user.`;
 
-export function interviewOpenEmptyPrompt(firstMessage: string): string {
-  return `The agreed question list in plan-review/questions.json is empty. The user has chosen to add information before planning starts. Conduct the conversation with the user.
-${INTERVIEW_RULES}
-The user's first message:
-${firstMessage}`;
-}
-
 export function interviewGapsPrompt(reviewFile: string, ids: string[]): string {
   return `The reviewer has examined plan-review/requirements.md, the confirmed result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
 Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids.
@@ -694,8 +687,6 @@ export const permissionPrompt = "y = allow; anything else = do not allow (q = en
 export const interviewMessagePrompt = "You > ";
 /** The confirmation of the interview's summary. */
 export const confirmSummaryPrompt = "Enter = confirm the summary; any other text continues the conversation > ";
-/** The choice after an empty agreed question list (behaviour 2). */
-export const startOrTalkPrompt = "Enter = start planning; any other text opens a conversation with Claude Code > ";
 
 // ---- status lines to the user (issue #14: "Gather Requirements", "Implementation", "cycle") -----------------------
 
@@ -881,8 +872,6 @@ export function pagePromptText(kind: string, offeredText: string): string {
       return "Your reply";
     case "confirmSummary":
       return "Confirm the summary, or write what should change.";
-    case "startOrTalk":
-      return "Claude and Codex agree that no question is needed. Start planning, or write a message to open a conversation with Claude.";
     default:
       return text.replace(/\s*>\s*$/, "").trim();
   }
@@ -895,8 +884,6 @@ export function clarificationHeading(stage: InterviewStage): string {
       return "Clarification";
     case "followUp":
       return "Follow-up clarification";
-    case "conversation":
-      return "Conversation before planning";
   }
 }
 /**
@@ -907,7 +894,6 @@ export const END_CLARIFICATION = "Finish clarification and start planning";
 export const END_RUN_LABEL = "End the run";
 export const CONTINUE_WITHOUT_DECIDING = "Continue without deciding";
 export const CONFIRM_SUMMARY_LABEL = "Confirm";
-export const START_PLANNING_LABEL = "Start planning";
 /** The interview's opening help (finding 8 of docs/gui-review.md), for the terminal or the page. */
 export function interviewHelp(heading: string, ui: "terminal" | "page"): string {
   return ui === "terminal"
@@ -1822,8 +1808,6 @@ const originText = (origin: QuestionOrigin): string => {
       return "A further question Claude Code asks you while it clarifies the task";
     case "reply":
       return "Claude Code, the planning agent, waits for your reply while it clarifies the task";
-    case "startOrTalk":
-      return "Asked before the plan is written";
     case "confirmSummary":
       return "Asked at the end of the clarification of the task";
     case "planner":
@@ -1902,8 +1886,6 @@ export function pauseQuestion(p: PauseOrigin): string {
       return `Claude Code has accepted no point of the review ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What do you want Claude Code and Codex to do about the points that led to no change?`;
   }
 }
-/** The question after an empty agreed question list (behaviour 2). */
-export const START_OR_TALK_QUESTION = "Claude Code and Codex agree that no question needs to be put to you before the plan is written. Do you want planning to start now, or do you first want to tell Claude Code more about the task?";
 /** An agreed question's default, as its option's description marks it (S18). */
 export function defaultMarked(description: string): string {
   return description.trim() === "" ? "(the default)" : `${description} (the default)`;
@@ -1948,8 +1930,6 @@ export function fallbackContext(origin: QuestionOrigin): string {
       return `${interloq} Before the plan is written, Claude Code asks you questions in a conversation, so that the plan follows your decisions and not its own assumptions.`;
     case "reply":
       return `${interloq} Before the plan is written, Claude Code clarifies the task with you in a conversation.`;
-    case "startOrTalk":
-      return `${interloq} Before the plan is written, Claude Code proposed the questions it needed answered, and Codex checked that list; the list is empty. You can add information in a conversation first, so that the plan takes it into account.`;
     case "confirmSummary":
       return `${interloq} At the end of the clarification, Claude Code writes a summary of your answers, the requirements document, which Codex then checks and from which the plan is written. Your confirmation makes it the record the plan must follow.`;
     case "planner":

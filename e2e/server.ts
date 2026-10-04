@@ -103,6 +103,13 @@ export const SCENARIOS: Record<string, TestOptions> = {
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   },
+  // Issue #83: an empty agreed question list, which the review accepts; planning starts without a prompt.
+  emptyQuestions: {
+    config: { questionPhase: true },
+    steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "1. [ ] the step\n" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  },
   // Issue #12: the interview's numbered answers are paragraphs.
   longChoices: {
     config: { questionPhase: true },

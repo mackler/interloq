@@ -89,8 +89,6 @@ export const recordHeading = (stage: InterviewStage): string => {
       return "Interview";
     case "followUp":
       return "Second interview";
-    case "conversation":
-      return "Conversation before planning";
   }
 };
 

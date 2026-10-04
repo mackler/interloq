@@ -56,31 +56,28 @@ test("question list is amended in review, the interview runs, the summary is con
   assert.match(conversation, /### Confirmed summary/);
 });
 
-test("an empty agreed list offers the conversation; Enter starts planning", async () => {
+// Issue #83 (the developer's instruction of 4 Oct 2026): an empty agreed list is no reason to pause. Nothing is asked;
+// requirements.md is written, the phase ends with "no conversation", and planning begins.
+test("an empty agreed list asks nothing: requirements.md is written, the phase ends with no conversation, planning begins", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: [""],
+    answers: [],
     steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: withQuestions,
   });
   await runTask(layer);
-  assert.match(presentedSubjects(probe.ui)[0], /no question needs to be put to you/);
+  assert.deepEqual(probe.ui.asked, [], "a prompt was asked");
+  assert.deepEqual(presentedQuestions(probe.ui), [], "a question was presented");
   assert.match(read(probe.dir, "requirements.md"), /No question was needed/);
+  assert.doesNotMatch(read(probe.dir, "requirements.md"), /the user added no information/);
+  const tags = probe.ui.notified.map((e) => e._tag);
+  const ended = probe.ui.notified.findIndex((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions");
+  assert.deepEqual(probe.ui.notified[ended], { _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
+  assert.ok(tags.indexOf("InterviewOpened") === -1, "an interview was opened");
+  assert.ok(probe.ui.notified.slice(ended).some((e) => e._tag === "PhaseBegan" && e.phase.kind === "planning"), "planning did not begin after the question phase");
+  assert.match(probe.planner.prompts[1], /Produce an implementation plan/);
   assert.equal(probe.reviewer.phases, 3); // question, plan and work review: no requirements review without a conversation
-});
-
-test("an empty agreed list with a first message opens a conversation", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["use the existing logger", ""],
-    steps: [{ output: { questions: [] } }, { output: turn("Noted.", [], "# Requirements\n\nUse the existing logger.") }, { output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
-    config: withQuestions,
-  });
-  await runTask(layer);
-  assert.ok(probe.planner.prompts[1].includes("use the existing logger"));
-  assert.match(read(probe.dir, "requirements.md"), /existing logger/);
 });
 
 test("an unconfirmed summary continues the conversation", async () => {
@@ -294,7 +291,7 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
 
 test("a turn with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
   const bad = { ...turn("m", []), current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", explanation: "" }] } };
-  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: ["talk"], config: withQuestions });
+  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [], config: withQuestions });
   await runFails(halted.layer, "QuestionInvalid", /the current question/);
 });
 
@@ -303,9 +300,9 @@ test("S7: a follow-up with a dangling ref gets the validation repair turn, and t
   const dangling = { ...none, id: "F1", context: para("The service, a web server, listens on a port."), text: [...plain("Which "), term("port", "p"), ...plain("?")] };
   const repaired = { ...dangling, explanations: [{ id: "p", term: "port", explanation: "The number a program listens on for connections." }] };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["The service needs a port.", "8080", ""],
+    answers: ["8080", ""],
     steps: [
-      { output: { questions: [] } },
+      { output: { questions: [q("Q1")] } },
       { output: { ...turn("A follow-up.", []), current_question: dangling, asked_ids: ["F1"] } },
       { output: { ...turn("A follow-up.", []), current_question: repaired, asked_ids: ["F1"] } },
       { output: turn("Done.", ["F1"], "# Requirements\n\nF1: 8080") },

@@ -39,7 +39,7 @@ test("the log rules explain file_change with the keys the log entries carry", ()
 // S16 and S18: the interview asks for a question's parts in current_question under the rules of every question; an
 // agreed question of questions.json is named by its id alone, since the program shows it as it was reviewed.
 test("the interview prompts ask for the current question's parts under the rules, and for an agreed question its id alone", () => {
-  const texts = [prompts.interviewOpenPrompt, prompts.interviewOpenEmptyPrompt("hello"), prompts.interviewGapsPrompt("plan-review/requirements-review/review-1.json", ["G-R1-1"])];
+  const texts = [prompts.interviewOpenPrompt, prompts.interviewGapsPrompt("plan-review/requirements-review/review-1.json", ["G-R1-1"])];
   for (const text of texts) {
     assert.ok(text.includes(prompts.questionWritingRules()));
     assert.match(text, /For an agreed question of plan-review\/questions\.json, give only its id/);
@@ -163,7 +163,6 @@ test("the status lines of the phases name Gather Requirements and Implementation
 test("the clarification's headings and help", () => {
   assert.equal(prompts.clarificationHeading("clarification"), "Clarification");
   assert.equal(prompts.clarificationHeading("followUp"), "Follow-up clarification");
-  assert.equal(prompts.clarificationHeading("conversation"), "Conversation before planning");
   assert.equal(prompts.interviewHelp("Clarification", "page"), "Clarification. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.");
   assert.equal(prompts.interviewHelp("Clarification", "terminal"), '\nClarification. Commands: /done = end the clarification; /quit = end the run; """ on its own line starts and ends a message of several lines.');
   assert.equal(prompts.END_CLARIFICATION, "Finish clarification and start planning");
@@ -202,7 +201,7 @@ test("the steps of Gather Requirements", () => {
 
 // Issue #21 (Q6 follow-up): Claude reports every question asked, follow-ups with ids of their own, and the answered ones.
 test("the interview rules define asked_ids with follow-up ids, and answered_ids over both", () => {
-  for (const text of [prompts.interviewOpenPrompt, prompts.interviewOpenEmptyPrompt("hi"), prompts.interviewGapsPrompt("plan-review/requirements-review/review-1.json", ["G-R1-1"])]) {
+  for (const text of [prompts.interviewOpenPrompt, prompts.interviewGapsPrompt("plan-review/requirements-review/review-1.json", ["G-R1-1"])]) {
     assert.match(text, /asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id F1, F2, … that you assign to each follow-up question/);
     assert.match(text, /answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far/);
   }
@@ -286,7 +285,7 @@ test("the offer's label reads Help me decide, and the terminal's offer line carr
 test("the ids the prompts assign to agreed and follow-up questions", () => {
   const agreed = `${prompts.AGREED_QUESTION_PREFIX}1, ${prompts.AGREED_QUESTION_PREFIX}2, and so on`;
   assert.ok(prompts.questionListPrompt("t").includes(`id: ${agreed}`), "the question list prompt assigns other ids");
-  const rules = [prompts.interviewOpenPrompt, prompts.interviewOpenEmptyPrompt("hello"), prompts.interviewGapsPrompt("f", ["G-R1-1"])];
+  const rules = [prompts.interviewOpenPrompt, prompts.interviewGapsPrompt("f", ["G-R1-1"])];
   for (const text of rules) {
     assert.ok(text.includes(`${prompts.FOLLOW_UP_PREFIX}1, ${prompts.FOLLOW_UP_PREFIX}2, …`), "the interview rules assign other follow-up ids");
     assert.match(text, /current_question: the question this message asks the user to answer now/);
@@ -669,7 +668,6 @@ test("S17: every question Interloq composes names the user as the one who decide
     prompts.permissionQuestion("Bash", { command: "ls" }),
     prompts.permissionQuestion("Edit", { file_path: "/a" }),
     prompts.CONFIRM_SUMMARY_QUESTION,
-    prompts.START_OR_TALK_QUESTION,
     prompts.execStopQuestion(),
     prompts.REPLY_QUESTION,
   ];

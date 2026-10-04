@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
-import { finished, tempRepo, testWiring, type WiringProbe, questionOf, currentOf } from "./helpers.ts";
+import { finished, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const runProgram = (args: readonly string[], wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(args, wiring)));
@@ -141,9 +141,9 @@ test("/quit in the clarification, confirmed, ends the run with exit code 130", a
   const turn = { message_to_user: "Tell me more.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: false, summary: "" };
   const { wiring, probe } = testWiring(tempRepo(), {
     config: { questionPhase: true },
-    steps: [{ output: { questions: [] } }, { output: turn }],
+    steps: [{ output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } }, { output: turn }],
     reviews: [{ issues: [] }],
-    answers: ["talk", "/quit", "y"],
+    answers: ["/quit", "y"],
     confirmEnds: true,
   });
   assert.equal(await runProgram(["task"], wiring), 130);

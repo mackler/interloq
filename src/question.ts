@@ -199,8 +199,6 @@ export type QuestionOrigin =
   | Readonly<{ kind: "followUp"; id: string }>
   /** A turn of the clarification that asks no particular question: the user replies to Claude Code's message. */
   | Readonly<{ kind: "reply" }>
-  /** The choice after an empty agreed list: start planning, or talk first. */
-  | Readonly<{ kind: "startOrTalk" }>
   /** The confirmation of the summary of a clarification. */
   | Readonly<{ kind: "confirmSummary" }>
   /** A question Claude Code returns with a plan it writes or revises, or with a response to a review (`heading` names where). */

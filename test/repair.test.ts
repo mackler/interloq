@@ -12,7 +12,7 @@ import { Planner, Reviewer, RunConfig, Sdk, type Services, Store, Ui } from "../
 import { platformLayer } from "../src/platform.ts";
 import { storeLayer } from "../src/store.ts";
 import { FakeSdk, init, messages, success, turn, type Script } from "./fakeSdk.ts";
-import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, currentOf } from "./helpers.ts";
+import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, currentOf, questionEntry } from "./helpers.ts";
 
 // Decision Q5: an invalid structured reply in a planning, interview or review call gets one repair
 // turn in the same session or thread; a second invalid reply stops the run, and both replies are kept.
@@ -63,9 +63,9 @@ test("a second invalid Codex reply stops the run with AgentReplyInvalid naming b
 
 test("an interview turn is validated the same way", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["hello", ""],
+    answers: [""],
     steps: [
-      { output: { questions: [] } },
+      { output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } },
       { output: { message_to_user: 1 } },
       { output: { message_to_user: "Noted.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: true, summary: "# Requirements\n\nhello" } },
       { output: noQuestions, plan: "v1" },

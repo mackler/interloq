@@ -128,7 +128,6 @@ describe("who speaks in the left panel", () => {
     const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x" })]));
     expect(tool.run?.activity).toBe("Claude — Read: x");
     expect(prompts.pagePromptText("execInput", prompts.execInputPrompt)).toBe("Your input for Claude");
-    expect(prompts.pagePromptText("startOrTalk", prompts.startOrTalkPrompt)).toBe("Claude and Codex agree that no question is needed. Start planning, or write a message to open a conversation with Claude.");
   });
 });
 
@@ -178,7 +177,7 @@ describe("Markdown in the left panel", () => {
 // Plan step 4.7 (the review against the heuristics): the page states a prompt without the terminal's key
 // conventions, which the buttons replace [match between the system and the real world].
 test("every prompt is shown in the page's words, without the terminal's key conventions", () => {
-  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.execInputPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt, prompts.startOrTalkPrompt];
+  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.execInputPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt];
   for (const text of texts) {
     const body = fold(live([started, asked(1, text)])).run?.pending?.hint ?? "";
     expect(body, text).not.toMatch(/>\s*$|\bq = quit|Enter =|= stop|p = /);
@@ -306,7 +305,7 @@ describe("the cycles of a review loop in the timeline", () => {
 describe("the steps of Gather Requirements", () => {
   const q = { kind: "questions" as const };
   const turn = (answered: number, total: number, summary: string | null = null) => notified({ _tag: "InterviewTurn", heading: "Clarification", message: "Hi", summary, answered, total });
-  const opened = (stage: "clarification" | "followUp" | "conversation", total: number) => notified({ _tag: "InterviewOpened", heading: "Clarification", stage, total });
+  const opened = (stage: "clarification" | "followUp", total: number) => notified({ _tag: "InterviewOpened", heading: "Clarification", stage, total });
   const round = (subject: "questions" | "requirements", n: number) => notified({ _tag: "RoundBegan", subject, round: n, limit: 5 });
   const finished = (subject: "questions" | "requirements") => notified({ _tag: "LoopFinished", subject, result: "converged" });
   const steps = (s: ViewState) => s.run?.timeline[0].steps.map((st) => [st.label, st.state, st.count === null ? null : `${st.count.answered}/${st.count.total}`, st.groups.map((g) => `${g.heading}:${g.rounds.map((c) => c.round).join(",")}`).join(";")]);
@@ -364,16 +363,6 @@ describe("the steps of Gather Requirements", () => {
     expect(steps(s)?.map((st) => st[0])).toEqual([prompts.stepLabel("formulate"), "Clarification"]);
     expect(steps(s)?.at(-1)).toEqual(["Clarification", "active", "10/11", "Requirements review:1,2,3"]);
     expect(replayed(events).run?.timeline).toEqual(s.run?.timeline);
-  });
-
-  test("a follow-up after the conversation of an empty list folds into the same step", () => {
-    const events = [started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), opened("conversation", 0), turn(0, 0, "# R"), round("requirements", 1), opened("followUp", 2), turn(2, 2)];
-    expect(steps(fold(live(events)))).toEqual([[prompts.stepLabel("formulate"), "done", null, "Question review:1"], ["Clarification", "active", "2/2", "Requirements review:1"]]);
-  });
-
-  test("the conversation after an empty list is a Clarification whose count starts at 0 of 0", () => {
-    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), opened("conversation", 0)]));
-    expect(steps(s)?.at(-1)).toEqual(["Clarification", "active", "0/0", ""]);
   });
 
   test("a run that ends during a clarification stops that step with its phase; the earlier steps stay done", () => {
