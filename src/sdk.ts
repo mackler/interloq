@@ -18,6 +18,8 @@ export type StepReport = Readonly<{ id: string; status: "started" | "done" }>;
 export type StepHandler = (report: StepReport) => Promise<Readonly<{ text: string; isError: boolean }>>;
 
 export type AgentSdk = {
+  /** The environment Interloq was started with, which every Claude Code call carries with the command ceiling added (issue #78). */
+  readonly inheritedEnv: Readonly<Record<string, string | undefined>>;
   /** One Claude Code call. The messages of the turn arrive in order. */
   query(params: { prompt: string; options?: Options }): AsyncIterable<SDKMessage>;
   /**

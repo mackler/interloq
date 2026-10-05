@@ -9,7 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import type { CanUseTool, HookCallback, HookJSONOutput, Options, PermissionResult, PreToolUseHookInput, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Effect, Fiber, Layer } from "effect";
-import { makeClaudePlanner, toSdkAnswers } from "../src/claude.ts";
+import { claudeEnv, makeClaudePlanner, toSdkAnswers } from "../src/claude.ts";
 import { FileSystemError, type RunError } from "../src/errors.ts";
 import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as prompts from "../src/prompts.ts";
@@ -180,6 +180,18 @@ test("the planning call passes the agent JSON Schema of the given Effect schema 
   assert.deepEqual(options.outputFormat, { type: "json_schema", schema: agentJsonSchema(S.PlannerResponse) });
   assert.equal(options.cwd, fake.project);
   assert.equal(options.permissionMode, "default");
+});
+
+// Issue #78: every call carries the inherited environment with BASH_MAX_TIMEOUT_MS set to the ceiling, the same value the
+// planning prompts' rule states.
+test("a planning call and an execution call carry the inherited environment with the command ceiling", async () => {
+  const fake = await planner([messages(init(), success({ questions_for_user: [] })), messages(init(), success({ status: "finished", summary: "done", question: "", remaining_work: "" }))]);
+  await run(fake.planner.planning("write the plan", schema));
+  await run(fake.planner.executing("implement the plan", noReporter));
+  const expected = claudeEnv(fake.sdk.inheritedEnv, prompts.COMMAND_CEILING_MS);
+  assert.equal(expected.BASH_MAX_TIMEOUT_MS, String(prompts.COMMAND_CEILING_MS));
+  assert.equal(expected.PATH, fake.sdk.inheritedEnv.PATH);
+  assert.deepEqual(fake.sdk.calls.map((c) => c.options.env), [expected, expected]);
 });
 
 test("the execution call passes the agent JSON Schema of ExecReport as outputFormat", async () => {

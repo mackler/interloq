@@ -65,6 +65,8 @@ export const rejecting = (value: unknown): TurnAnswer => () =>
 
 export class FakeSdk implements AgentSdk {
   readonly calls: Call[] = [];
+  /** A made-up environment, so that a test sees exactly what each call carries (issue #78). */
+  readonly inheritedEnv: Readonly<Record<string, string | undefined>> = { PATH: "/fake/bin", HOME: "/fake/home", BASH_MAX_TIMEOUT_MS: "1" };
   readonly threads: { options: ThreadOptions | undefined; calls: ThreadCall[] }[] = [];
   private readonly scripts: Script[];
   private readonly turns: TurnAnswer[];

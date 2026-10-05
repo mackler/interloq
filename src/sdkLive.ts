@@ -12,6 +12,7 @@ export const liveSdk = (): AgentSdk => {
   const codex = new Codex();
   return {
     query,
+    inheritedEnv: process.env,
     startThread: (options) => codex.startThread(options),
     stepReporter: (handler) =>
       createSdkMcpServer({

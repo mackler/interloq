@@ -551,6 +551,14 @@ Do not modify any file.`;
 }
 
 /** The in-process tool of an execution call (issue #6, Q2): its server, its name, its statuses and its description. */
+/**
+ * The longest a single shell command of Claude Code may run, in milliseconds (issue #78; requirements Q4 and Q7: 20
+ * minutes, fixed in the code). Every call passes it as BASH_MAX_TIMEOUT_MS (`claudeEnv` in src/claude.ts), and the
+ * planning prompts forbid a step to end with a command expected to run longer. prototypes/proto-bash-timeout.ts showed
+ * on 5 Oct 2026 (Agent SDK 0.3.283) that the setting, passed through Options.env, takes effect in the bundled CLI.
+ */
+export const COMMAND_CEILING_MS = 1_200_000;
+
 export const REPORT_STEP_SERVER = "interloq";
 export const REPORT_STEP_TOOL = "report_step";
 /** The name under which Claude Code calls the tool, and under which hooks and permissions see it. */

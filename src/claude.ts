@@ -82,6 +82,12 @@ const readProjectPermission: CanUseTool = async () => deny(READ_PROJECT_REASON);
 const readOnlyPermission: CanUseTool = async () => deny(READ_ONLY_REASON);
 
 /** The Planner service over the SDK, Ui, Store and RunConfig services. */
+/**
+ * The environment of a Claude Code call (issue #78): the inherited one, with BASH_MAX_TIMEOUT_MS set to the ceiling. The
+ * Agent SDK replaces the inherited environment with the one it is given, so the inherited entries are kept.
+ */
+export const claudeEnv = (inherited: Readonly<Record<string, string | undefined>>, ceilingMs: number): Record<string, string | undefined> => ({ ...inherited, BASH_MAX_TIMEOUT_MS: String(ceilingMs) });
+
 export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | Store | RunConfig> = Effect.gen(function* () {
   const sdk = yield* Sdk;
   const ui = yield* Ui;
@@ -299,6 +305,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       const resumed = yield* Ref.get(session);
       if (resumed !== null) full.resume = resumed;
       if (config.claudeModel !== null) full.model = config.claudeModel;
+      full.env = claudeEnv(sdk.inheritedEnv, prompts.COMMAND_CEILING_MS);
 
       const failed = (e: unknown): string => (e instanceof Error ? e.message : String(e));
       // Starting the call can throw synchronously (for example when the SDK cannot start its CLI);

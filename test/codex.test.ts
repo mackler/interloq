@@ -105,7 +105,7 @@ const typedFailure = async <E>(effect: Effect.Effect<unknown, E>): Promise<E> =>
 test("a startThread that throws makes startPhase fail with CodexCallFailed, not a defect", async () => {
   const store = await run(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
   const fake = new FakeSdk();
-  const sdk: AgentSdk = { query: (params) => fake.query(params), stepReporter: (handler) => fake.stepReporter(handler), startThread: () => { throw new Error("spawn codex ENOENT"); } };
+  const sdk: AgentSdk = { inheritedEnv: fake.inheritedEnv, query: (params) => fake.query(params), stepReporter: (handler) => fake.stepReporter(handler), startThread: () => { throw new Error("spawn codex ENOENT"); } };
   const deps = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Sdk, sdk), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
   const codex = await run(makeCodexReviewer.pipe(Effect.provide(deps)));
   const error = await typedFailure(codex.startPhase);
