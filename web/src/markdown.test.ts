@@ -94,3 +94,24 @@ describe("a code piece of spaces alone", () => {
     );
   });
 });
+
+// Issue #94: a plain piece carries emphasis and links only (decided behaviour 2), so a sequence of plain pieces renders
+// as text and opens no block. S37 escapes a backtick in a plain piece; nothing yet guards what opens a block at the
+// start of a line, and piecesMarkdown joins the pieces of one sequence into one line. These are the seven cases found
+// on 5 Oct 2026, four of which the property above cannot generate: its plain piece is drawn from [a-z0-9 ,.], which
+// holds no tab, hyphen, number sign or greater-than sign. The joined sequence is what matters: two pieces of two
+// spaces make four leading spaces between them.
+describe("a plain piece opens no Markdown block (issue #94)", () => {
+  const BLOCKS = "pre, code, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote";
+  const cases: readonly (readonly string[])[] = [["    ", "a"], ["\t", "a"], ["  ", "  ", "a"], ["- x"], ["# h"], ["> q"], ["1. x"]];
+  for (const texts of cases) {
+    test(`${JSON.stringify(texts)} renders as its text alone`, async () => {
+      const { piecesMarkdown } = await import("../../src/pieces.ts");
+      const pieces = texts.map((text) => ({ text, ref: "", code: false }));
+      const el = document.createElement("div");
+      el.innerHTML = render(piecesMarkdown(pieces));
+      expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
+      expect(el.textContent).toBe(texts.join(""));
+    });
+  }
+});
