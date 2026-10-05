@@ -145,8 +145,11 @@ export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.fi
 
 // ---- Markdown for the records and the terminal -------------------------------------------------------------------
 
-/** Where a run of plain pieces stands on its line (issue #94): whether it begins a line, and whether it ends one. */
-export type LineEdges = Readonly<{ lineStart: boolean; lineEnd: boolean }>;
+/**
+ * Where a run of plain pieces stands on its line (issue #94): whether it begins a line, whether it ends one, and the
+ * Markdown written after it in the same sequence (W1-R1-1: a link reference definition's label may reach into it).
+ */
+export type LineEdges = Readonly<{ lineStart: boolean; lineEnd: boolean; after: string }>;
 /**
  * One plain piece with its backticks escaped (S37, the developer's decision of 4 Oct 2026): a plain piece carries emphasis
  * and links only, never code. Every backtick not already escaped (an odd number of backslashes before it) is escaped, so it
@@ -161,9 +164,11 @@ const whitespaceReferences = (ws: string): string => ws.replace(/[ \t]/gu, (c) =
 /**
  * The text of a line after its leading whitespace, with a backslash where its first characters would open a block (issue
  * #94): an ATX heading, a block quote, a thematic break, a setext underline, a bullet list, a tilde fence, an ordered list
- * (the backslash before its `.` or `)`), an HTML block that is not an autolink, a link reference definition.
+ * (the backslash before its `.` or `)`), an HTML block that is not an autolink, a link reference definition. A link
+ * reference definition's label may span line breaks (none blank) and reach past the run (W1-R1-1), so it is decided over
+ * `continuation`, the text from the same place through the end of the run and the Markdown written after it.
  */
-const escapedOpener = (rest: string): string => {
+const escapedOpener = (rest: string, continuation: string): string => {
   const ordered = /^(\d{1,9})([.)])(?=[ \t]|$)/u.exec(rest);
   if (ordered !== null) return `${ordered[1]}\\${rest.slice(ordered[1].length)}`;
   const autolink = /^<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>/u;
@@ -175,8 +180,13 @@ const escapedOpener = (rest: string): string => {
     /^[-+*](?=[ \t]|$)/u.test(rest) ||
     rest.startsWith("~~~") ||
     (/^<[A-Za-z/!?]/u.test(rest) && !autolink.test(rest)) ||
-    /^\[(?:[^\]\\]|\\.)*\]:/u.test(rest);
+    linkLabelOpens(continuation);
   return opens ? `\\${rest}` : rest;
+};
+/** Whether a text begins with a link reference definition's label and colon: `[`, a label holding no blank line, `]:`. */
+const linkLabelOpens = (text: string): boolean => {
+  const label = /^\[(?:[^\]\\]|\\.)*\]:/u.exec(text);
+  return label !== null && !/\n[ \t]*\n/u.test(label[0].replace(/\r\n?/gu, "\n"));
 };
 /**
  * One line of a run made inert (issue #94): where it begins a line, its leading spaces and tabs become numeric character
@@ -184,10 +194,10 @@ const escapedOpener = (rest: string): string => {
  * references, since a paragraph drops them and two before a line break are a hard break. A line of spaces and tabs alone
  * that both begins and ends a line is left blank, as every caller treats a blank sequence as absent.
  */
-const inertLine = (line: string, starts: boolean, ends: boolean): string => {
+const inertLine = (line: string, continuation: string, starts: boolean, ends: boolean): string => {
   if (starts && ends && /^[ \t]*$/u.test(line)) return line;
   const lead = starts ? (/^[ \t]*/u.exec(line)?.[0] ?? "") : "";
-  const body = starts ? escapedOpener(line.slice(lead.length)) : line;
+  const body = starts ? escapedOpener(line.slice(lead.length), continuation.slice(lead.length)) : line;
   const trail = ends ? (/[ \t]*$/u.exec(body)?.[0] ?? "") : "";
   return `${whitespaceReferences(lead)}${body.slice(0, body.length - trail.length)}${whitespaceReferences(trail)}`;
 };
@@ -200,12 +210,18 @@ const inertLine = (line: string, starts: boolean, ends: boolean): string => {
  * or at the run's end where `at.lineEnd`. A space or a tab cannot be escaped with a backslash, so leading and trailing
  * whitespace is written as numeric character references, which conversation.md, read as Markdown, shows as the
  * characters. Inside a list item the indentation blocksMarkdown adds is literal spaces before the references, so it is
- * neither counted as the piece's whitespace nor defeats the escape. The terminal prints the same text (the developer's
- * decision of 5 Oct 2026).
+ * neither counted as the piece's whitespace nor defeats the escape. A link reference definition's label may span lines
+ * and reach into what follows the run, which is why `at.after` holds the Markdown written after it (W1-R1-1). The terminal
+ * prints the same text (the developer's decision of 5 Oct 2026).
  */
 export const plainMarkdown = (texts: readonly string[], at: LineEdges): string => {
-  const parts = texts.map(escapedPiece).join("").split(/(\r\n|\r|\n)/u);
-  return parts.map((part, i) => (i % 2 === 1 ? part : inertLine(part, i > 0 || at.lineStart, i < parts.length - 1 || at.lineEnd))).join("");
+  const joined = texts.map(escapedPiece).join("");
+  const parts = joined.split(/(\r\n|\r|\n)/u);
+  // Each part's offset in the joined run, so that a line's continuation reaches through the run and into `at.after`.
+  const offsets = parts.reduce<readonly number[]>((acc, part, i) => (i === 0 ? [0] : [...acc, acc[i - 1] + parts[i - 1].length]), []);
+  return parts
+    .map((part, i) => (i % 2 === 1 ? part : inertLine(part, `${joined.slice(offsets[i])}${at.after}`, i > 0 || at.lineStart, i < parts.length - 1 || at.lineEnd)))
+    .join("");
 };
 /**
  * Pieces as inline Markdown: each run of consecutive non-code pieces by plainMarkdown (a piece that refers to an
@@ -216,7 +232,8 @@ export const piecesMarkdown = (pieces: readonly Piece[]): string => {
     const last = acc.at(-1);
     return p.code ? [...acc, { code: true, text: p.text }] : last !== undefined && !last.code ? [...acc.slice(0, -1), { code: false, texts: [...last.texts, p.text] }] : [...acc, { code: false, texts: [p.text] }];
   }, []);
-  return runs.map((r, i) => (r.code ? exactCodeSpan(r.text) : plainMarkdown(r.texts, { lineStart: i === 0, lineEnd: i === runs.length - 1 }))).join("");
+  // From the last run back, so that each run is told the Markdown written after it.
+  return runs.reduceRight((after, r, i) => `${r.code ? exactCodeSpan(r.text) : plainMarkdown(r.texts, { lineStart: i === 0, lineEnd: i === runs.length - 1, after })}${after}`, "");
 };
 /** A code block as a fenced block of exactly its text (S45). */
 const codeBlockMarkdown = (text: string): string => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import DOMPurify from "dompurify";
+import fc from "fast-check";
 import { makeRenderer, render } from "./markdown.ts";
 
 // Plan step 4.4: the agents' Markdown is rendered and sanitised.
@@ -128,10 +129,9 @@ describe("a plain piece opens no Markdown block: the class (issue #94)", () => {
     return el;
   };
   const textOf = (el: Element): string => (el.textContent ?? "").replace(/\n$/u, "");
-  const pieces = async () => {
-    const fc = (await import("fast-check")).default;
+  const pieces = () => {
     const unit = fc.constantFrom(" ", "\t", "-", "+", "*", "#", ">", "~", "<", "0", "1", "9", ".", ")", "_", "=", "[", "]", ":", "a", "b");
-    return { fc, arb: fc.array(fc.string({ unit, maxLength: 4 }), { minLength: 1, maxLength: 5 }) };
+    return { arb: fc.array(fc.string({ unit, maxLength: 4 }), { minLength: 1, maxLength: 5 }) };
   };
   /** The joined text is not whitespace alone, and forms no emphasis or inline HTML when read as inline Markdown alone. */
   const admissible = async (texts: readonly string[]): Promise<boolean> => {
@@ -144,42 +144,89 @@ describe("a plain piece opens no Markdown block: the class (issue #94)", () => {
 
   test("property: a sequence of plain pieces renders as exactly its text and holds no block", async () => {
     const { piecesMarkdown } = await import("../../src/pieces.ts");
-    const { fc, arb } = await pieces();
-    const admitted: string[][] = [];
-    fc.assert(fc.property(arb, (texts) => void admitted.push(texts)), { numRuns: 300 });
-    for (const texts of admitted) {
-      if (!(await admissible(texts))) continue;
-      const el = shown(piecesMarkdown(texts.map(plainOf)));
-      expect([...el.querySelectorAll(BLOCKS)], JSON.stringify(texts)).toEqual([]);
-      expect(textOf(el), JSON.stringify(texts)).toBe(texts.join(""));
-    }
+    const { arb } = pieces();
+    await fc.assert(
+      fc.asyncProperty(arb, async (texts) => {
+        fc.pre(await admissible(texts));
+        const el = shown(piecesMarkdown(texts.map(plainOf)));
+        expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
+        expect(textOf(el)).toBe(texts.join(""));
+      }),
+      { numRuns: 300 },
+    );
   });
 
   test("property: the same sequence inside a list item, as an item and as a paragraph interrupting the list", async () => {
     const { blocksMarkdown } = await import("../../src/pieces.ts");
-    const { fc, arb } = await pieces();
-    const admitted: string[][] = [];
-    fc.assert(fc.property(arb, (texts) => void admitted.push(texts)), { numRuns: 300 });
+    const { arb } = pieces();
     const item = (level: number, text: string) => ({ level, pieces: [plainOf(text)] });
-    for (const texts of admitted) {
-      if (!(await admissible(texts))) continue;
-      const joined = texts.join("");
-      const asItem = shown(blocksMarkdown([{ kind: "list", items: [item(0, "top"), { level: 1, pieces: texts.map(plainOf) }] }]));
-      expect(asItem.querySelectorAll("ul").length, JSON.stringify(texts)).toBe(2);
-      expect([...asItem.querySelectorAll("li")].map(textOf).at(-1), JSON.stringify(texts)).toBe(joined);
-      expect([...asItem.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")], JSON.stringify(texts)).toEqual([]);
-      const interrupting = shown(
-        blocksMarkdown([
-          { kind: "list", items: [item(0, "one"), item(1, "two")] },
-          { kind: "paragraph", pieces: texts.map(plainOf) },
-          { kind: "list", items: [item(1, "three")] },
-        ]),
-      );
-      expect(interrupting.querySelectorAll("ul").length, JSON.stringify(texts)).toBe(2);
-      expect(interrupting.querySelectorAll("li").length, JSON.stringify(texts)).toBe(3);
-      expect([...interrupting.querySelectorAll("p")].map(textOf), JSON.stringify(texts)).toContain(joined);
-      expect([...interrupting.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")], JSON.stringify(texts)).toEqual([]);
-    }
+    await fc.assert(
+      fc.asyncProperty(arb, async (texts) => {
+        fc.pre(await admissible(texts));
+        const joined = texts.join("");
+        const asItem = shown(blocksMarkdown([{ kind: "list", items: [item(0, "top"), { level: 1, pieces: texts.map(plainOf) }] }]));
+        expect(asItem.querySelectorAll("ul").length).toBe(2);
+        expect([...asItem.querySelectorAll("li")].map(textOf).at(-1)).toBe(joined);
+        expect([...asItem.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")]).toEqual([]);
+        const interrupting = shown(
+          blocksMarkdown([
+            { kind: "list", items: [item(0, "one"), item(1, "two")] },
+            { kind: "paragraph", pieces: texts.map(plainOf) },
+            { kind: "list", items: [item(1, "three")] },
+          ]),
+        );
+        expect(interrupting.querySelectorAll("ul").length).toBe(2);
+        expect(interrupting.querySelectorAll("li").length).toBe(3);
+        expect([...interrupting.querySelectorAll("p")].map(textOf)).toContain(joined);
+        expect([...interrupting.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")]).toEqual([]);
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  // W1-R1-1: a link reference definition's label may span line breaks (no blank line) and reach past the run into a code
+  // piece; each case ends at its destination, since text after it would make the line a paragraph anyway.
+  const labelCases: readonly (readonly { text: string; ref: string; code: boolean }[])[] = [
+    [plainOf("[a\n]: b")],
+    [plainOf("[a\nb]: c")],
+    [plainOf("[a"), plainOf("\n]: b")],
+    [plainOf("[a "), { text: "x", ref: "", code: true }, plainOf("]: b")],
+  ];
+  for (const ps of labelCases) {
+    test(`a multi-line link label ${JSON.stringify(ps.map((p) => p.text))} renders as its text`, async () => {
+      const { piecesMarkdown } = await import("../../src/pieces.ts");
+      const el = shown(piecesMarkdown(ps));
+      // A code piece is its one code element; nothing else is a block.
+      expect([...el.querySelectorAll("code")].map((c) => c.textContent)).toEqual(ps.filter((p) => p.code).map((p) => p.text));
+      expect([...el.querySelectorAll(BLOCKS.replace("code, ", ""))]).toEqual([]);
+      expect(textOf(el)).toBe(ps.map((p) => p.text).join(""));
+    });
+  }
+  for (const text of ["[a\n]: b", "[a\nb]: c"]) {
+    test(`a multi-line link label ${JSON.stringify(text)} inside a list item renders as its text`, async () => {
+      const { blocksMarkdown } = await import("../../src/pieces.ts");
+      const el = shown(blocksMarkdown([{ kind: "list", items: [{ level: 0, pieces: [plainOf(text)] }] }]));
+      expect([...el.querySelectorAll("li")].map(textOf)).toEqual([text]);
+    });
+  }
+  // Separate from the property above: a line break in that generator would also make blank lines (two paragraphs) and
+  // leading or trailing breaks (dropped by the renderer), neither a block a plain piece opens.
+  test("property: a link reference definition whose label spans lines, divided into pieces anywhere, renders as its text", async () => {
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    const label = fc.string({ unit: fc.constantFrom("a", "b", " ", "\n"), minLength: 1, maxLength: 8 }).filter((l) => l.trim() !== "" && !/\n[ \t]*\n/u.test(l));
+    const destination = fc.string({ unit: fc.constantFrom("a", "b", "c"), minLength: 1, maxLength: 4 });
+    const cuts = fc.array(fc.nat(), { maxLength: 2 });
+    await fc.assert(
+      fc.asyncProperty(label, destination, cuts, async (l, d, at) => {
+        const text = `[${l}]: ${d}`;
+        const points = [...new Set(at.map((n) => n % (text.length + 1)))].sort((x, y) => x - y);
+        const texts = [0, ...points, text.length].slice(1).map((end, i, ends) => text.slice(i === 0 ? 0 : ends[i - 1], end)).filter((t) => t !== "");
+        const el = shown(piecesMarkdown(texts.map(plainOf)));
+        expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
+        expect(textOf(el)).toBe(text);
+      }),
+      { numRuns: 200 },
+    );
   });
 
   const cases: readonly (readonly string[])[] = [["***"], ["___"], ["---"], ["~~~"], ["<div>"], ["+ x"], ["2) x"], ["###### h"], ["a\n==="], ["[a]: b"]];

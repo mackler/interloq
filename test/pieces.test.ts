@@ -59,8 +59,8 @@ test("sameBlocks and samePieces compare kinds, list levels and words, however th
 // middle of a line gets no block escaping.
 test("issue #94: plainMarkdown writes a run that begins a line as one paragraph of exactly its text", () => {
   for (const texts of [["# h"], ["  ", "  ", "a"]]) {
-    assert.deepEqual(readBlocks(plainMarkdown(texts, { lineStart: true, lineEnd: true })), { types: ["paragraph"], text: texts.join("") }, JSON.stringify(texts));
-    assert.equal(plainMarkdown(texts, { lineStart: false, lineEnd: false }), texts.join(""), JSON.stringify(texts));
+    assert.deepEqual(readBlocks(plainMarkdown(texts, { lineStart: true, lineEnd: true, after: "" })), { types: ["paragraph"], text: texts.join("") }, JSON.stringify(texts));
+    assert.equal(plainMarkdown(texts, { lineStart: false, lineEnd: false, after: "" }), texts.join(""), JSON.stringify(texts));
   }
 });
 

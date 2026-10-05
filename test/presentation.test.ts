@@ -297,3 +297,26 @@ test("issue #94: a plain piece that would open a block reaches conversation.md a
   assert.deepEqual(back.types, ["paragraph"], question);
   assert.ok(back.text.includes("    not code, the question?"), back.text);
 });
+
+// W1-R1-1: an agreed question whose context is a link reference definition with a label over two lines reaches
+// conversation.md as text: the definition, ending at its destination, would otherwise swallow the quote's paragraph.
+test("W1-R1-1: a context whose link label spans two lines reaches conversation.md as text", async () => {
+  const context = "[a\n]: b";
+  const opening = { ...entry("Q1"), context: para(context) };
+  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    terms: [{ output: { entries: [divided] } }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  const lines = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").split("\n");
+  const first = lines.findIndex((l, i) => l.startsWith("> ") && l.includes("[a") && (lines[i + 1] ?? "").startsWith("> ") && (lines[i + 1] ?? "").includes("]: b"));
+  assert.ok(first >= 0, "the quoted context lines");
+  const back = readBlocks(lines.slice(first, first + 2).join("\n"));
+  assert.deepEqual(back.types, ["blockquote"]);
+  assert.equal(back.text.replace(/^\n+|\n+$/gu, ""), context);
+});
