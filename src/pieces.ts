@@ -183,9 +183,12 @@ const escapedOpener = (rest: string, continuation: string): string => {
     linkLabelOpens(continuation);
   return opens ? `\\${rest}` : rest;
 };
-/** Whether a text begins with a link reference definition's label and colon: `[`, a label holding no blank line, `]:`. */
+/**
+ * Whether a text begins with a link reference definition's label and colon: `[`, a label holding no blank line, `]:`. A
+ * backslash before a line break does not end the label (work review 2), so an escape takes any character after it.
+ */
 const linkLabelOpens = (text: string): boolean => {
-  const label = /^\[(?:[^\]\\]|\\.)*\]:/u.exec(text);
+  const label = /^\[(?:[^\]\\]|\\[\s\S])*\]:/u.exec(text);
   return label !== null && !/\n[ \t]*\n/u.test(label[0].replace(/\r\n?/gu, "\n"));
 };
 /**

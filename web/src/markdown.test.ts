@@ -209,21 +209,54 @@ describe("a plain piece opens no Markdown block: the class (issue #94)", () => {
       expect([...el.querySelectorAll("li")].map(textOf)).toEqual([text]);
     });
   }
+  /**
+   * The oracle of work review 2: the joined input, its line endings normalized as block parsing normalizes them, rendered
+   * as inline Markdown alone. A backslash before a line break is a hard break, inline Markdown a plain piece may carry, so
+   * the block rendering must add or remove nothing beyond what this inline rendering does.
+   */
+  const inlineText = async (text: string): Promise<string> => {
+    const { renderInline } = await import("./markdown.ts");
+    const el = document.createElement("span");
+    el.innerHTML = renderInline(text.replace(/\r\n?/gu, "\n"));
+    return el.textContent ?? "";
+  };
+  const BLOCKS_BUT_CODE = "pre, code, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, hr, table";
+  // Work review 2: a backslash right before a line break does not end a label, so the text is still a definition.
+  for (const text of ["[a\\\nb]: c", "[a\\\r\nb]: c"]) {
+    test(`a link label with a backslash before its line break ${JSON.stringify(text)} renders as its inline text`, async () => {
+      const { piecesMarkdown } = await import("../../src/pieces.ts");
+      const el = shown(piecesMarkdown([plainOf(text)]));
+      expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
+      expect(textOf(el)).toBe(await inlineText(text));
+    });
+  }
+  test("a link label with a backslash before its line break inside a list item renders as its inline text", async () => {
+    const { blocksMarkdown } = await import("../../src/pieces.ts");
+    const text = "[a\\\nb]: c";
+    const el = shown(blocksMarkdown([{ kind: "list", items: [{ level: 0, pieces: [plainOf(text)] }] }]));
+    expect([...el.querySelectorAll(BLOCKS_BUT_CODE.replace("ul, ", ""))]).toEqual([]);
+    expect([...el.querySelectorAll("li")].map(textOf)).toEqual([await inlineText(text)]);
+  });
   // Separate from the property above: a line break in that generator would also make blank lines (two paragraphs) and
-  // leading or trailing breaks (dropped by the renderer), neither a block a plain piece opens.
+  // leading or trailing breaks (dropped by the renderer), neither a block a plain piece opens. Compared with the inline
+  // oracle (work review 2), so a backslash means the same on both sides; no space beside a line break, since step S3 keeps
+  // whitespace at a line's edge as references while inline parsing strips it or makes a hard break of it; and no cut right
+  // after a backslash, since escapedPiece doubles a piece's trailing backslash (S37), which the oracle cannot model.
   test("property: a link reference definition whose label spans lines, divided into pieces anywhere, renders as its text", async () => {
     const { piecesMarkdown } = await import("../../src/pieces.ts");
-    const label = fc.string({ unit: fc.constantFrom("a", "b", " ", "\n"), minLength: 1, maxLength: 8 }).filter((l) => l.trim() !== "" && !/\n[ \t]*\n/u.test(l));
+    const label = fc
+      .string({ unit: fc.constantFrom("a", "b", " ", "\n", "\\"), minLength: 1, maxLength: 8 })
+      .filter((l) => l.trim() !== "" && !/\n[ \t]*\n/u.test(l) && !/[ \t]\n|\n[ \t]/u.test(l));
     const destination = fc.string({ unit: fc.constantFrom("a", "b", "c"), minLength: 1, maxLength: 4 });
     const cuts = fc.array(fc.nat(), { maxLength: 2 });
     await fc.assert(
       fc.asyncProperty(label, destination, cuts, async (l, d, at) => {
         const text = `[${l}]: ${d}`;
-        const points = [...new Set(at.map((n) => n % (text.length + 1)))].sort((x, y) => x - y);
+        const points = [...new Set(at.map((n) => n % (text.length + 1)))].filter((n) => text[n - 1] !== "\\").sort((x, y) => x - y);
         const texts = [0, ...points, text.length].slice(1).map((end, i, ends) => text.slice(i === 0 ? 0 : ends[i - 1], end)).filter((t) => t !== "");
         const el = shown(piecesMarkdown(texts.map(plainOf)));
         expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
-        expect(textOf(el)).toBe(text);
+        expect(textOf(el)).toBe(await inlineText(text));
       }),
       { numRuns: 200 },
     );
