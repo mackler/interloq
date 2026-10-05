@@ -111,7 +111,108 @@ describe("a plain piece opens no Markdown block (issue #94)", () => {
       const el = document.createElement("div");
       el.innerHTML = render(piecesMarkdown(pieces));
       expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
-      expect(el.textContent).toBe(texts.join(""));
+      // marked ends every block with a line break, which no fix can remove (issue #94, step S3).
+      expect(el.textContent?.replace(/\n$/u, "")).toBe(texts.join(""));
     });
   }
+});
+
+// Issue #94: the property over the joined sequence, on its own and inside a list item through blocksMarkdown, and the
+// rest of the class of block openers. The text is compared without the line break the renderer writes after its last block.
+describe("a plain piece opens no Markdown block: the class (issue #94)", () => {
+  const BLOCKS = "pre, code, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, hr, table";
+  const plainOf = (text: string) => ({ text, ref: "", code: false });
+  const shown = (markdown: string): HTMLDivElement => {
+    const el = document.createElement("div");
+    el.innerHTML = render(markdown);
+    return el;
+  };
+  const textOf = (el: Element): string => (el.textContent ?? "").replace(/\n$/u, "");
+  const pieces = async () => {
+    const fc = (await import("fast-check")).default;
+    const unit = fc.constantFrom(" ", "\t", "-", "+", "*", "#", ">", "~", "<", "0", "1", "9", ".", ")", "_", "=", "[", "]", ":", "a", "b");
+    return { fc, arb: fc.array(fc.string({ unit, maxLength: 4 }), { minLength: 1, maxLength: 5 }) };
+  };
+  /** The joined text is not whitespace alone, and forms no emphasis or inline HTML when read as inline Markdown alone. */
+  const admissible = async (texts: readonly string[]): Promise<boolean> => {
+    const { renderInline } = await import("./markdown.ts");
+    const joined = texts.join("");
+    const el = document.createElement("span");
+    el.innerHTML = renderInline(joined);
+    return joined.trim() !== "" && el.textContent === joined;
+  };
+
+  test("property: a sequence of plain pieces renders as exactly its text and holds no block", async () => {
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    const { fc, arb } = await pieces();
+    const admitted: string[][] = [];
+    fc.assert(fc.property(arb, (texts) => void admitted.push(texts)), { numRuns: 300 });
+    for (const texts of admitted) {
+      if (!(await admissible(texts))) continue;
+      const el = shown(piecesMarkdown(texts.map(plainOf)));
+      expect([...el.querySelectorAll(BLOCKS)], JSON.stringify(texts)).toEqual([]);
+      expect(textOf(el), JSON.stringify(texts)).toBe(texts.join(""));
+    }
+  });
+
+  test("property: the same sequence inside a list item, as an item and as a paragraph interrupting the list", async () => {
+    const { blocksMarkdown } = await import("../../src/pieces.ts");
+    const { fc, arb } = await pieces();
+    const admitted: string[][] = [];
+    fc.assert(fc.property(arb, (texts) => void admitted.push(texts)), { numRuns: 300 });
+    const item = (level: number, text: string) => ({ level, pieces: [plainOf(text)] });
+    for (const texts of admitted) {
+      if (!(await admissible(texts))) continue;
+      const joined = texts.join("");
+      const asItem = shown(blocksMarkdown([{ kind: "list", items: [item(0, "top"), { level: 1, pieces: texts.map(plainOf) }] }]));
+      expect(asItem.querySelectorAll("ul").length, JSON.stringify(texts)).toBe(2);
+      expect([...asItem.querySelectorAll("li")].map(textOf).at(-1), JSON.stringify(texts)).toBe(joined);
+      expect([...asItem.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")], JSON.stringify(texts)).toEqual([]);
+      const interrupting = shown(
+        blocksMarkdown([
+          { kind: "list", items: [item(0, "one"), item(1, "two")] },
+          { kind: "paragraph", pieces: texts.map(plainOf) },
+          { kind: "list", items: [item(1, "three")] },
+        ]),
+      );
+      expect(interrupting.querySelectorAll("ul").length, JSON.stringify(texts)).toBe(2);
+      expect(interrupting.querySelectorAll("li").length, JSON.stringify(texts)).toBe(3);
+      expect([...interrupting.querySelectorAll("p")].map(textOf), JSON.stringify(texts)).toContain(joined);
+      expect([...interrupting.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")], JSON.stringify(texts)).toEqual([]);
+    }
+  });
+
+  const cases: readonly (readonly string[])[] = [["***"], ["___"], ["---"], ["~~~"], ["<div>"], ["+ x"], ["2) x"], ["###### h"], ["a\n==="], ["[a]: b"]];
+  for (const texts of cases) {
+    test(`${JSON.stringify(texts)} renders as its text alone`, async () => {
+      const { piecesMarkdown } = await import("../../src/pieces.ts");
+      const el = shown(piecesMarkdown(texts.map(plainOf)));
+      expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
+      expect(textOf(el)).toBe(texts.join(""));
+    });
+  }
+  test("four spaces before a word inside a list item render as text", async () => {
+    const { blocksMarkdown } = await import("../../src/pieces.ts");
+    const el = shown(blocksMarkdown([{ kind: "list", items: [{ level: 0, pieces: [plainOf("    a")] }] }]));
+    expect([...el.querySelectorAll("pre, code")]).toEqual([]);
+    expect([...el.querySelectorAll("li")].map(textOf)).toEqual(["    a"]);
+  });
+  test("emphasis and a link are kept; an autolink at the start of a line stays a link; four spaces alone render as nothing", async () => {
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    const emphasis = shown(piecesMarkdown([plainOf("*a* and [x](https://example.com)")]));
+    expect(emphasis.querySelector("em")?.textContent).toBe("a");
+    expect(emphasis.querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+    expect(shown(piecesMarkdown([plainOf("<https://example.com>")])).querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+    expect(textOf(shown(piecesMarkdown([plainOf("    ")])))).toBe("");
+  });
+  test("a backslash ending one piece stays a character before a number sign beginning the next", async () => {
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    const el = shown(piecesMarkdown([plainOf("C:\\"), plainOf("# h")]));
+    expect([...el.querySelectorAll(BLOCKS)]).toEqual([]);
+    expect(textOf(el)).toBe("C:\\# h");
+  });
+  test("the spaces beside a code piece are written as spaces", async () => {
+    const { piecesMarkdown } = await import("../../src/pieces.ts");
+    expect(piecesMarkdown([plainOf("run "), { text: "ls", ref: "", code: true }, plainOf(" now")])).toBe("run `ls` now");
+  });
 });

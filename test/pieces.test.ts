@@ -2,9 +2,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, normalizedRuns, piecesMarkdown, piecesText, plainBlocks, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
+import { blockPieces, blocksMarkdown, blocksText, codePiece, literalsOf, normalizedLevels, normalizedRuns, piecesMarkdown, piecesText, plainBlocks, plainMarkdown, plainOption, plainPieces, refsOf, sameBlocks, samePieces, type ShownBlock } from "../src/pieces.ts";
 import type { Block, Piece } from "../src/schema.ts";
-import { readBack } from "./helpers.ts";
+import { readBack, readBlocks } from "./helpers.ts";
 
 const plain = (text: string): Piece => ({ text, ref: "", code: false });
 const ref = (text: string, id: string): Piece => ({ text, ref: id, code: false });
@@ -53,6 +53,15 @@ test("sameBlocks and samePieces compare kinds, list levels and words, however th
   assert.ok(!sameBlocks(a, [{ kind: "list", items: [{ level: 0, pieces: [plain("Use zod.")] }] }]), "a paragraph is not a list item");
   assert.ok(!sameBlocks([{ kind: "list", items: [{ level: 0, pieces: [plain("x")] }] }], [{ kind: "list", items: [{ level: 1, pieces: [plain("x")] }] }]), "another level");
   assert.ok(!sameBlocks(a, [...a, ...a]));
+});
+
+// Issue #94: plainMarkdown writes a run of plain pieces that begins a line so that it opens no block; the same run in the
+// middle of a line gets no block escaping.
+test("issue #94: plainMarkdown writes a run that begins a line as one paragraph of exactly its text", () => {
+  for (const texts of [["# h"], ["  ", "  ", "a"]]) {
+    assert.deepEqual(readBlocks(plainMarkdown(texts, { lineStart: true, lineEnd: true })), { types: ["paragraph"], text: texts.join("") }, JSON.stringify(texts));
+    assert.equal(plainMarkdown(texts, { lineStart: false, lineEnd: false }), texts.join(""), JSON.stringify(texts));
+  }
 });
 
 // ---- properties (issue #66) ----------------------------------------------------------------------------------------

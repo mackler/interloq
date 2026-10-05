@@ -145,20 +145,79 @@ export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.fi
 
 // ---- Markdown for the records and the terminal -------------------------------------------------------------------
 
+/** Where a run of plain pieces stands on its line (issue #94): whether it begins a line, and whether it ends one. */
+export type LineEdges = Readonly<{ lineStart: boolean; lineEnd: boolean }>;
 /**
- * A plain piece as inline Markdown (S37, the developer's decision of 4 Oct 2026): a plain piece carries emphasis and links
- * only, never code. Every backtick not already escaped (an odd number of backslashes before it) is escaped, so it is shown
- * as a backtick character, and a trailing backslash that is not itself escaped is doubled. So no backtick run and no
- * backslash of the piece can pair with, or escape, anything outside it; choosing a code span's delimiter could not
+ * One plain piece with its backticks escaped (S37, the developer's decision of 4 Oct 2026): a plain piece carries emphasis
+ * and links only, never code. Every backtick not already escaped (an odd number of backslashes before it) is escaped, so it
+ * is shown as a backtick character, and a trailing backslash that is not itself escaped is doubled. So no backtick run and
+ * no backslash of the piece can pair with, or escape, anything outside it; choosing a code span's delimiter could not
  * achieve this, because the run it would close against may be inside the code piece's own text.
  */
-export const plainMarkdown = (text: string): string =>
+const escapedPiece = (text: string): string =>
   text.replace(/(\\*)`/g, (_, slashes: string) => (slashes.length % 2 === 1 ? `${slashes}\`` : `${slashes}\\\``)).replace(/(?<!\\)((?:\\\\)*\\)$/u, "$1\\");
+/** A space or a tab as a numeric character reference: not whitespace to the block parser, shown as the character. */
+const whitespaceReferences = (ws: string): string => ws.replace(/[ \t]/gu, (c) => (c === "\t" ? "&#9;" : "&#32;"));
 /**
- * Pieces as inline Markdown: a plain piece by plainMarkdown, a piece that refers to an explanation likewise (its words), a
- * code piece as a code span of exactly its text (S45; the program escapes a value before it becomes a piece, S48).
+ * The text of a line after its leading whitespace, with a backslash where its first characters would open a block (issue
+ * #94): an ATX heading, a block quote, a thematic break, a setext underline, a bullet list, a tilde fence, an ordered list
+ * (the backslash before its `.` or `)`), an HTML block that is not an autolink, a link reference definition.
  */
-export const piecesMarkdown = (pieces: readonly Piece[]): string => pieces.map((p) => (p.code ? exactCodeSpan(p.text) : plainMarkdown(p.text))).join("");
+const escapedOpener = (rest: string): string => {
+  const ordered = /^(\d{1,9})([.)])(?=[ \t]|$)/u.exec(rest);
+  if (ordered !== null) return `${ordered[1]}\\${rest.slice(ordered[1].length)}`;
+  const autolink = /^<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>/u;
+  const opens =
+    /^#{1,6}(?=[ \t]|$)/u.test(rest) ||
+    rest.startsWith(">") ||
+    /^([-*_])(?:[ \t]*\1){2,}[ \t]*$/u.test(rest) ||
+    /^(?:=+|-+)[ \t]*$/u.test(rest) ||
+    /^[-+*](?=[ \t]|$)/u.test(rest) ||
+    rest.startsWith("~~~") ||
+    (/^<[A-Za-z/!?]/u.test(rest) && !autolink.test(rest)) ||
+    /^\[(?:[^\]\\]|\\.)*\]:/u.test(rest);
+  return opens ? `\\${rest}` : rest;
+};
+/**
+ * One line of a run made inert (issue #94): where it begins a line, its leading spaces and tabs become numeric character
+ * references and a block opener after them gets a backslash; where it ends a line, its trailing spaces and tabs become
+ * references, since a paragraph drops them and two before a line break are a hard break. A line of spaces and tabs alone
+ * that both begins and ends a line is left blank, as every caller treats a blank sequence as absent.
+ */
+const inertLine = (line: string, starts: boolean, ends: boolean): string => {
+  if (starts && ends && /^[ \t]*$/u.test(line)) return line;
+  const lead = starts ? (/^[ \t]*/u.exec(line)?.[0] ?? "") : "";
+  const body = starts ? escapedOpener(line.slice(lead.length)) : line;
+  const trail = ends ? (/[ \t]*$/u.exec(body)?.[0] ?? "") : "";
+  return `${whitespaceReferences(lead)}${body.slice(0, body.length - trail.length)}${whitespaceReferences(trail)}`;
+};
+/**
+ * One run of consecutive non-code pieces (plain pieces, and pieces that refer to an explanation, as their words) as inline
+ * Markdown that opens no block (issue #94; decided behavior 2: a plain piece is inline Markdown only). Each piece is
+ * escaped on its own by escapedPiece, so a backslash ending one piece still cannot escape the next; the run is then joined,
+ * because a block opener may cross pieces (two pieces of two spaces make four), and every line of it is made inert by
+ * inertLine: a line begins at a line break in the run, or at the run's start where `at.lineStart`; it ends at a line break,
+ * or at the run's end where `at.lineEnd`. A space or a tab cannot be escaped with a backslash, so leading and trailing
+ * whitespace is written as numeric character references, which conversation.md, read as Markdown, shows as the
+ * characters. Inside a list item the indentation blocksMarkdown adds is literal spaces before the references, so it is
+ * neither counted as the piece's whitespace nor defeats the escape. The terminal prints the same text (the developer's
+ * decision of 5 Oct 2026).
+ */
+export const plainMarkdown = (texts: readonly string[], at: LineEdges): string => {
+  const parts = texts.map(escapedPiece).join("").split(/(\r\n|\r|\n)/u);
+  return parts.map((part, i) => (i % 2 === 1 ? part : inertLine(part, i > 0 || at.lineStart, i < parts.length - 1 || at.lineEnd))).join("");
+};
+/**
+ * Pieces as inline Markdown: each run of consecutive non-code pieces by plainMarkdown (a piece that refers to an
+ * explanation is written as its words, like a plain piece), told whether it begins and ends the sequence's line; a code piece as a code span of exactly its text (S45; the program escapes a value before it becomes a piece, S48).
+ */
+export const piecesMarkdown = (pieces: readonly Piece[]): string => {
+  const runs = pieces.reduce<readonly (Readonly<{ code: true; text: string }> | Readonly<{ code: false; texts: readonly string[] }>)[]>((acc, p) => {
+    const last = acc.at(-1);
+    return p.code ? [...acc, { code: true, text: p.text }] : last !== undefined && !last.code ? [...acc.slice(0, -1), { code: false, texts: [...last.texts, p.text] }] : [...acc, { code: false, texts: [p.text] }];
+  }, []);
+  return runs.map((r, i) => (r.code ? exactCodeSpan(r.text) : plainMarkdown(r.texts, { lineStart: i === 0, lineEnd: i === runs.length - 1 }))).join("");
+};
 /** A code block as a fenced block of exactly its text (S45). */
 const codeBlockMarkdown = (text: string): string => {
   const fence = codeFence(text);

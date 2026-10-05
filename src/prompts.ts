@@ -138,6 +138,15 @@ ${QUESTION_FORMAT.filter((c) => c.kind === "prose").map((c) => `- ${c.criterion}
 }
 
 /**
+ * The line openings that the clause `inline` names to the writers as examples of what a plain piece never opens (issue
+ * #94): a heading, a block quote, the list markers, a tilde fence, an HTML block, an indented code block (four spaces or a
+ * tab). piecesMarkdown of src/pieces.ts writes each of them so that it is shown as its characters.
+ */
+export const PLAIN_BLOCK_OPENERS: readonly string[] = ["#", ">", "-", "+", "*", "1.", "1)", "~~~", "<div>", "    ", "\t"];
+/** An opener as the clause `inline` names it: whitespace in words, any other opener between quotation marks. */
+export const blockOpenerName = (opener: string): string => (opener === "\t" ? "a tab" : opener === "    " ? "four spaces" : `'${opener}'`);
+
+/**
  * One clause of how a question's text is written as pieces (S4 of the task of issue #36): a data clause the validation
  * of src/question.ts enforces, or a prose clause that is stated to the writers and to the reviewers and not checked,
  * since checking it would mean reading Markdown (its effect on the display is tested in the page).
@@ -198,10 +207,11 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
   },
   {
     // S37 (the developer's decision of 4 Oct 2026): piecesMarkdown of src/pieces.ts escapes every backtick of a plain piece.
+    // Issue #94 (5 Oct 2026): plainMarkdown of src/pieces.ts writes what would open a block at the start of a line as its characters.
     id: "inline",
     kind: "prose",
-    text: "A plain piece carries emphasis and links only, never code: each begins and ends inside that one plain piece, and a backtick in a plain piece is shown as a backtick character. Every literal value (a command, a file name, a setting) is its own code piece. A piece that refers to an explanation carries no formatting at all.",
-    criterion: "a literal value is written between backticks in a plain piece rather than as its own code piece, a piece's emphasis or link does not begin and end inside that one plain piece, or a piece that refers to an explanation carries formatting.",
+    text: `A plain piece carries emphasis and links only, never code: each begins and ends inside that one plain piece, and a backtick in a plain piece is shown as a backtick character. A plain piece never opens a block: whatever a line begins with (${PLAIN_BLOCK_OPENERS.map(blockOpenerName).join(", ")}) is shown as those characters, so a heading, a list, a quotation or a code block is written as a block of its kind, never as Markdown in a piece. Every literal value (a command, a file name, a setting) is its own code piece. A piece that refers to an explanation carries no formatting at all.`,
+    criterion: "a literal value is written between backticks in a plain piece rather than as its own code piece, a piece's emphasis or link does not begin and end inside that one plain piece, a piece that refers to an explanation carries formatting, or a plain piece relies on Markdown that opens a heading, a list, a quotation or a code block.",
   },
 ];
 /** The format as the writer of a question reads it (S4). */

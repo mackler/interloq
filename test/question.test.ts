@@ -11,7 +11,7 @@ import { piecesMarkdown, piecesText } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { type Piece, type Question, questionProblems, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
 import type { Block, Explanation } from "../src/schema.ts";
-import { opt, para, plain, readBack, term } from "./helpers.ts";
+import { opt, para, plain, readBack, readBlocks, term } from "./helpers.ts";
 
 const zod: Explanation = { id: "t1", term: "zod", explanation: "A library that checks that data has the expected shape." };
 const good: Question = {
@@ -190,6 +190,21 @@ test("S37: a plain piece carries emphasis and links only: the writers, the revie
   // piece is not code, the same value as a code piece is.
   assert.deepEqual(readBack(piecesMarkdown(plain("run `npm test` now"))).code, []);
   assert.deepEqual(readBack(piecesMarkdown([...plain("run "), { text: "npm test", ref: "", code: true }, ...plain(" now")])).code, ["npm test"]);
+});
+
+// Issue #94: a plain piece never opens a block. The clause that tells the writers so names every opener of
+// PLAIN_BLOCK_OPENERS, the reviewers' criterion names the blocks, and piecesMarkdown writes a plain piece beginning with
+// each opener as one paragraph of exactly its text.
+test("issue #94: a plain piece never opens a block: the writers, the reviewers and piecesMarkdown agree", () => {
+  const inline = prompts.QUESTION_FORMAT.find((c) => c.id === "inline");
+  assert.ok(inline !== undefined);
+  assert.ok(inline.text.includes("A plain piece never opens a block"), inline.text);
+  for (const opener of prompts.PLAIN_BLOCK_OPENERS) assert.ok(inline.text.includes(prompts.blockOpenerName(opener)), JSON.stringify(opener));
+  assert.match(inline.criterion, /relies on Markdown that opens a heading, a list, a quotation or a code block/);
+  for (const opener of prompts.PLAIN_BLOCK_OPENERS) {
+    const text = `${opener} x`;
+    assert.deepEqual(readBlocks(piecesMarkdown(plain(text))), { types: ["paragraph"], text }, JSON.stringify(opener));
+  }
 });
 
 // ---- properties (issue #66) ----------------------------------------------------------------------------------------

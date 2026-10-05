@@ -582,3 +582,11 @@ export const readBack = (markdown: string): Readonly<{ code: readonly string[]; 
   };
 };
 
+/**
+ * Issue #94: Markdown read as blocks, for the tests alone: the types of its top-level blocks (blank space left out), and
+ * its text with every tag removed, every entity decoded and the renderer's last line break dropped.
+ */
+export const readBlocks = (markdown: string): Readonly<{ types: readonly string[]; text: string }> => ({
+  types: marked.lexer(markdown).filter((t) => t.type !== "space").map((t) => t.type),
+  text: unescapeHtml(marked.parse(markdown, { async: false, gfm: true }).replace(/<[^>]*>/g, "")).replace(/\n$/u, ""),
+});

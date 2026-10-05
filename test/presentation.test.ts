@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { questionLines } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack } from "./helpers.ts";
+import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 import type { Piece, TermsEntry } from "../src/schema.ts";
 
@@ -272,4 +272,28 @@ test("S37: a plain piece's backtick and trailing backslash reach the terminal an
     assert.deepEqual(readBack(line).code, ["ls", "dir"], line);
     assert.ok(readBack(line).rest.includes("Should the step run ` or C:\\ first?"), line);
   }
+});
+
+// Issue #94: an agreed question whose context begins with a list marker and whose question begins with four spaces
+// reaches conversation.md as text: the context stays a paragraph inside its block quote, the question a paragraph.
+test("issue #94: a plain piece that would open a block reaches conversation.md as text", async () => {
+  const opening = { ...entry("Q1"), context: para("- not a list, the context of Q1."), question: plain("    not code, the question?") };
+  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    terms: [{ output: { entries: [divided] } }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  const quoted = conversation.split("\n").find((l) => l.includes("not a list, the context of Q1.")) ?? "";
+  assert.ok(quoted.startsWith("> "), quoted);
+  assert.deepEqual(readBlocks(quoted.slice(2)), { types: ["paragraph"], text: "- not a list, the context of Q1." });
+  const question = conversation.split("\n").find((l) => l.startsWith("**") && l.includes("not code, the question?")) ?? "";
+  const back = readBlocks(question);
+  assert.deepEqual(back.types, ["paragraph"], question);
+  assert.ok(back.text.includes("    not code, the question?"), back.text);
 });
