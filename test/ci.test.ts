@@ -73,3 +73,15 @@ test("the image pins the bats and bashly this machine runs, and the Playwright t
   const pinned = (JSON.parse(readText("package.json") ?? "{}") as { devDependencies?: Record<string, string> }).devDependencies?.["@playwright/test"];
   assert.equal(argOf("PLAYWRIGHT_VERSION"), pinned, "the image's Playwright is not the pin in package.json");
 });
+
+// Issue #75 (requirements Q3): the end-to-end tests run on half of each machine's cores. The one source of the worker
+// count is playwright.config.ts, which this machine and the CI runner both read; nothing else may set it.
+test("the end-to-end worker count is 50% of the cores, set in playwright.config.ts alone", async () => {
+  const config = (await import("../playwright.config.ts")).default;
+  assert.equal(config.workers, "50%", "playwright.config.ts does not set workers to 50%");
+  assert.equal(config.fullyParallel, true, "playwright.config.ts does not run the tests in parallel");
+  const scripts = (JSON.parse(readText("package.json") ?? "{}") as { scripts?: Record<string, string> }).scripts ?? {};
+  for (const [where, text] of [[".github/workflows/ci.yml", workflow()], ["container/Dockerfile", dockerfile()], ["package.json's test:e2e", scripts["test:e2e"] ?? ""]] as const) {
+    assert.doesNotMatch(text, /--workers|(^|\s)-j\s*\d|PLAYWRIGHT_WORKERS/m, `${where} overrides the worker count`);
+  }
+});
