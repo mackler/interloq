@@ -35,7 +35,7 @@
     "test:cli": "bats test/cli",
     "test:web": "vitest run --config web/vite.config.ts",
     "test:e2e": "playwright test",
-    "test": "npm run check && npm run test:unit && npm run test:cli && npm run test:web && npm run build && npm run test:e2e",
+    "test": "node scripts/test-all.ts",
     "generate:cli": "BASHLY_SETTINGS_PATH=bin/ilcli.bashly/settings.yml bashly generate --quiet"
   }
 }
