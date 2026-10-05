@@ -323,6 +323,29 @@ const planProducing = () => [
   prompts.planApplyDecisionsPrompt,
   prompts.planRespondPrompt(1, 1),
 ];
+// Issue #78: no step of a plan may end with a command expected to outlast one shell command, whose ceiling every Claude
+// Code call carries; the execution prompt states the same ceiling and how to wait for a long suite.
+test("every prompt that asks for the whole plan states the step duration rule, in minutes of COMMAND_CEILING_MS", async () => {
+  const minutes = prompts.COMMAND_CEILING_MS / 60_000;
+  assert.match(prompts.PLAN_STEP_DURATION_RULE, new RegExp(`\\b${minutes} minutes\\b`));
+  for (const text of planProducing()) assert.ok(text.includes(prompts.PLAN_STEP_DURATION_RULE), text.slice(0, 80));
+  // Every prompt that carries PLAN_FORMAT carries the rule beside it, so that a sixth one added later is not missed.
+  const source = fs.readFileSync(new URL("../src/prompts.ts", import.meta.url), "utf8");
+  const uses = source.split("${PLAN_FORMAT}").length - 1;
+  assert.ok(uses >= 5);
+  assert.equal(source.split("${PLAN_FORMAT}\n${PLAN_STEP_DURATION_RULE}").length - 1, uses, "a prompt carries PLAN_FORMAT without the step duration rule");
+  // The seam with the environment of every call: the same ceiling.
+  const { claudeEnv } = await import("../src/claude.ts");
+  assert.equal(claudeEnv({}, prompts.COMMAND_CEILING_MS).BASH_MAX_TIMEOUT_MS, String(prompts.COMMAND_CEILING_MS));
+});
+
+test("the execution prompt states the ceiling for a foreground command and says to wait for a long suite in the background without editing", () => {
+  assert.ok(prompts.executePrompt.includes(prompts.BACKGROUND_SUITE_SENTENCE));
+  assert.ok(prompts.BACKGROUND_SUITE_SENTENCE.includes(`timeout set to ${prompts.COMMAND_CEILING_MS}`), prompts.BACKGROUND_SUITE_SENTENCE);
+  assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /in the background/);
+  assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /do not edit/);
+});
+
 test("every prompt that produces the plan asks for it whole as data and states the id rule", () => {
   for (const text of planProducing()) {
     assert.ok(text.includes(prompts.PLAN_FORMAT), text.slice(0, 80));

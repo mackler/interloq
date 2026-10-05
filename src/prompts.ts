@@ -496,6 +496,19 @@ Return an empty questions_for_user array.`;
  * How every call that creates or changes the plan returns it (issue #6, F1): whole, as data; the program writes plan.json
  * and plan.md from it.
  */
+/**
+ * The longest a single shell command of Claude Code may run, in milliseconds (issue #78; requirements Q4 and Q7: 20
+ * minutes, fixed in the code). Every call passes it as BASH_MAX_TIMEOUT_MS (`claudeEnv` in src/claude.ts), and the
+ * planning prompts forbid a step to end with a command expected to run longer. prototypes/proto-bash-timeout.ts showed
+ * on 5 Oct 2026 (Agent SDK 0.3.283) that the setting, passed through Options.env, takes effect in the bundled CLI.
+ */
+export const COMMAND_CEILING_MS = 1_200_000;
+
+/** The rule of every prompt that asks for the whole plan (issue #78): no step outlasts one shell command. */
+export const PLAN_STEP_DURATION_RULE = `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. No step may end with a command expected to run longer than that, such as a full test suite that may outlast it; a step's verification runs only the suites its change touches.`;
+/** The execution prompt's sentences on long commands (issue #78, requirements Q6). */
+export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. Start a command that may run longer than a few minutes, such as a full test suite, in the background with the Bash tool, and wait for it to end before you report the step done. While it runs, read and search, but do not edit any file: the suites read the working tree, and a result must belong to the files as they were when it started.`;
+
 export const PLAN_FORMAT = `Return the complete plan in the field 'plan': its stages in order, each with its number and a title, and in each stage its steps in order, each with an id, its number within the stage, a short label of one line, and its full text in Markdown. Return the whole plan every time, including the parts that did not change. The program writes plan-review/plan.json and plan-review/plan.md from it; do not write either file.`;
 /** The rule of step identity (G-R1-1), which validatePlan in src/plan.ts enforces and the repair turn repeats. */
 export const PLAN_ID_RULE = `Every step has an id (S1, S2, …) that is unique across the plan. A step that stays in the plan keeps its id in every revision, and a new step gets an id not used before in this plan. A step whose status in plan-review/plan.json is 'done' stays in the plan, with its id, label and text unchanged; it may move to another stage. Stage and step numbers are for display only.`;
@@ -508,6 +521,7 @@ export function initialPlanPrompt(task: string, withRequirements: boolean): stri
     : "";
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
 ${requirements}${PLAN_FORMAT}
+${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file. Do not implement anything.
 Put in questions_for_user only questions that the user alone can answer and without whose answer the plan cannot be written; otherwise return an empty array.
@@ -519,6 +533,7 @@ export const revisePlanPrompt = `Execution has stopped. The last entry of plan-r
 Revise the plan in plan-review/plan.json for the remaining work: keep the steps with status 'done', and change, add, or remove the other steps as the user's input and the current state of the codebase require.
 ${PLAN_STATUSES}
 ${PLAN_FORMAT}
+${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only questions that the user alone can answer and without whose answer the plan cannot be revised; otherwise return an empty array.
@@ -526,6 +541,7 @@ ${QUESTION_OPTIONS_RULE}`;
 
 export const planApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file and amend the plan in plan-review/plan.json where a decision requires it.
 ${PLAN_FORMAT}
+${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file.
 Return an empty questions_for_user array.`;
@@ -546,19 +562,12 @@ export function planRespondPrompt(phase: number, round: number): string {
   return `plan-review/planning-${phase}/review-${round}.json contains a review of the plan in plan-review/plan.json.
 ${respondRules("you amend the plan for it")}
 ${PLAN_FORMAT}
+${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file.`;
 }
 
 /** The in-process tool of an execution call (issue #6, Q2): its server, its name, its statuses and its description. */
-/**
- * The longest a single shell command of Claude Code may run, in milliseconds (issue #78; requirements Q4 and Q7: 20
- * minutes, fixed in the code). Every call passes it as BASH_MAX_TIMEOUT_MS (`claudeEnv` in src/claude.ts), and the
- * planning prompts forbid a step to end with a command expected to run longer. prototypes/proto-bash-timeout.ts showed
- * on 5 Oct 2026 (Agent SDK 0.3.283) that the setting, passed through Options.env, takes effect in the bundled CLI.
- */
-export const COMMAND_CEILING_MS = 1_200_000;
-
 export const REPORT_STEP_SERVER = "interloq";
 export const REPORT_STEP_TOOL = "report_step";
 /** The name under which Claude Code calls the tool, and under which hooks and permissions see it. */
@@ -626,6 +635,7 @@ Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, c
 If you need information or a decision from the user, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.
 ${RELAYED_SHAPE}
 ${questionWritingRules()}
+${BACKGROUND_SUITE_SENTENCE}
 If you cannot continue for another reason, for example a command that fails and that you cannot correct or a denied permission, stop and return status 'blocked' with the description in the question field.
 When every step is completed and verified, return status 'finished'.
 In every case put a summary of the work done in summary and a description of the steps not yet completed in remaining_work.`;
@@ -851,6 +861,7 @@ export function revisePlanAfterExecutionPrompt(phase: number, end: Readonly<{ st
 Revise the plan in plan-review/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
 ${PLAN_STATUSES} An unfinished step counts as remaining.
 ${PLAN_FORMAT}
+${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only questions that the user alone can answer and without whose answer the plan cannot be revised; otherwise return an empty array.
