@@ -100,6 +100,12 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: "a context paragraph opens by counting or classifying what follows ('Two parts are involved') instead of with the first thing it describes.",
   },
   {
+    // Issue #91 (5 Oct 2026): the context states the situation and what turns on the choice.
+    id: "contextBearsOnChoice",
+    rule: "The context paragraph states the present situation and what turns on the choice. It includes the five points required of a context paragraph only as far as they serve that, and leaves out a point that does not bear on the choice; where the two rules disagree, this one governs. It does not recount how the situation was learned (a test run, what was measured, what was tried first); it states a decision taken elsewhere as part of the situation and offers no evidence for it; and it shows no code, file contents or instruction unless the reader is deciding what that text says. Keep a sentence only if it would be different were the reader to choose another option, or if the reader needs it to tell the options apart.",
+    criterion: "a sentence of the context neither would differ under another option nor helps the reader tell the options apart: it recounts how the situation was learned, argues for a decision taken elsewhere instead of stating it, shows code, a file's contents or an instruction the reader is not deciding about, or states a point that does not bear on the choice. Where this and the criterion of the five points of a context paragraph disagree, this one governs: a point of the five left out because it does not bear on the choice is not an issue.",
+  },
+  {
     id: "purposeOwner",
     rule: "Where the context states a purpose, name what the purpose belongs to (the question, a component, or the program): not 'The point is that you can look a word up', but 'Binding each explanation to its word is what allows you to find out what a word means without leaving the question.'",
     criterion: "a statement of purpose leaves unstated what the purpose belongs to, as 'The point is that …' or 'The purpose is that …' does.",
@@ -110,6 +116,12 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: "the question sentence asks about the program in the present tense ('How does …', 'What does … show') instead of asking what the user wants ('How do you want …').",
   },
   {
+    // Issue #92 (5 Oct 2026): a question asks which outcome the reader wants, not how the program is arranged.
+    id: "askOutcome",
+    rule: "Ask which outcome the reader wants. Never ask where a line of code goes, which module holds a value, or which of two arrangements of the same program to adopt: where two implementations are being chosen between, name the outcomes that differ and make those outcomes the options; how the program is arranged then follows from the answer. A question in the right tense can still break this rule.",
+    criterion: "a question asks where code goes, which module holds a value, or which arrangement of the same program to adopt, instead of which of the outcomes that differ the reader wants.",
+  },
+  {
     id: "determinateOptions",
     rule: "Give every option a meaning that cannot be taken two ways and that says what produces its outcome, so that the arguments for and against it can be worked out from what the option says, as docs/decision-making.md requires of an analysis.",
     criterion: "an option could be taken two ways, or states an outcome without saying what produces it, so that the arguments for and against it cannot be worked out from what it says, as docs/decision-making.md requires of an analysis.",
@@ -118,6 +130,36 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     id: "optionDifferences",
     rule: `Write each option's description so that it states only how that option differs from the other options: it must read correctly after these words, which are never shown to the user: "${OPTION_DIFFERENCE_PREAMBLE}" An aspect that two options share is described in neither of them. Where an option differs from some of the others but not all, it names which ones before stating that difference. Where it has several differences, state them in descending order of how many other options they distinguish it from.`,
     criterion: `an option's description does not read correctly after "${OPTION_DIFFERENCE_PREAMBLE}", describes an aspect it shares with another option, states a difference from only some options without naming them first, or does not order its differences by how many other options they distinguish it from.`,
+  },
+  {
+    // Issue #92 (5 Oct 2026): each option says what choosing it changes for the reader.
+    id: "readerConsequence",
+    rule: "In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently. Where you decide whether to ask and no such difference can be named for the options, do not ask: settle the matter yourself and say what you settled.",
+    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run), or a question is asked whose options differ in none of these, which the writer should have settled and reported instead.",
+  },
+  {
+    // Issue #93 (5 Oct 2026): a conclusion states its warrant.
+    id: "statedWarrant",
+    rule: "Where a sentence draws a conclusion ('so', 'therefore', 'which means', 'hence', 'thus'), state its warrant: the general principle that carries the grounds to the claim, and with it any fact that principle rests on which the reader cannot be expected to know. A conclusion whose warrant does not fit in one sentence belongs to a decision taken elsewhere: state that decision as the situation instead of arguing it.",
+    criterion: "a sentence draws a conclusion ('so', 'therefore', 'which means', 'hence', 'thus') without the principle that carries the grounds to the claim, or without a fact that principle rests on which the reader cannot be expected to know, or argues a conclusion whose warrant does not fit in one sentence instead of stating it as a decision taken elsewhere.",
+  },
+  {
+    // Issue #59 (5 Oct 2026): a fact about how the software is developed says that is what it is.
+    id: "developmentFacts",
+    rule: "Where the text states a fact about how the software is developed, built, tested or released, say that this is what it is, and never leave it in the same tense as a fact about the running program; where the reader needs its timing, name the occasion (at a commit, on every push, when someone asks for it) instead of the bare present tense. Not 'The adapter builds the options of each call and is tested against a fake of the library', which puts what happens while the program runs and what happens on a developer's machine in one tense, with nothing marking the change.",
+    criterion: "a fact about how the software is developed, built, tested or released is stated, unmarked, in the same tense as a fact about the running program, or without its occasion (at a commit, on every push, when someone asks for it) where the reader needs its timing.",
+  },
+  {
+    // Issue #59 (5 Oct 2026): the reader's own instructions are named as the reader's.
+    id: "readerInstructions",
+    rule: "Where the text rests on an instruction the reader wrote, state the instruction in the reader's own terms and say that it is the reader's own. Never refer to the reader's instructions by an internal name ('the repository's rules', 'the repository's instructions', 'the project's rules', 'the rules'), and never attribute an action to them: a rule does nothing; the run does something because the reader asked for it.",
+    criterion: "the text refers to the reader's own instructions by an internal name ('the repository's rules', 'the repository's instructions', 'the project's rules', 'the rules') instead of stating them as the reader's own, or attributes an action to them.",
+  },
+  {
+    // Issue #59 (5 Oct 2026): no passive without an actor where the reader needs to know who acts.
+    id: "namedActor",
+    rule: "Where a sentence says that something happens to the reader, to the program or to a record, and the reader needs to know who does it (who shows, who writes, who decides, who refuses), name the actor. The passive is allowed where the actor does not matter to the reader. Not 'its text is shown to you before it is written', which hides three actors in nine words.",
+    criterion: "a sentence leaves out who acts where the reader needs to know it: who shows, who writes, who decides or who refuses.",
   },
   {
     id: "terms",

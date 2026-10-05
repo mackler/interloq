@@ -731,3 +731,31 @@ test("a multi-line value and its escapes note keep the nesting of the settings a
     `- The tool's setting named \`outer\`:\n  - The command:\n\n    \`\`\`\n    a\n    b\\r\n    \`\`\`\n\n    ${prompts.ESCAPED_VALUE_NOTE}\n\n  - ${timeout}: \`12\`\n- ${timeout}: \`34\``,
   );
 });
+
+// S1, moved here from test/questionRules.test.ts on 5 Oct 2026 (the requirements name this file): the one list of the
+// ids of QUESTION_RULES, with the seven of issues #59, #91, #92 and #93.
+const RULE_IDS = ["selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
+
+test("QUESTION_RULES holds one entry per rule, with unique ids and a rule and a criterion each", () => {
+  assert.deepEqual(prompts.QUESTION_RULES.map((r) => r.id), RULE_IDS);
+  for (const r of prompts.QUESTION_RULES) {
+    assert.ok(r.rule.trim().length > 0, r.id);
+    assert.ok(r.criterion.trim().length > 0, r.id);
+  }
+});
+
+test("the writer's rendering carries every rule, and the reviewer's every criterion, from the one array", () => {
+  const writing = prompts.questionWritingRules();
+  const review = prompts.questionReviewCriteria();
+  for (const r of prompts.QUESTION_RULES) {
+    assert.ok(writing.includes(r.rule), `the writing rules lack ${r.id}`);
+    assert.ok(review.includes(r.criterion), `the review criteria lack ${r.id}`);
+  }
+});
+
+test("no rule restates another: no two entries of QUESTION_RULES or QUESTION_FORMAT share an id or a text", () => {
+  const ids = [...prompts.QUESTION_RULES.map((r) => r.id), ...prompts.QUESTION_FORMAT.map((c) => c.id)];
+  assert.equal(new Set(ids).size, ids.length);
+  const texts = [...prompts.QUESTION_RULES.flatMap((r) => [r.rule, r.criterion]), ...prompts.QUESTION_FORMAT.flatMap((c) => [c.text, c.criterion])].filter((x) => x !== "");
+  assert.equal(new Set(texts).size, texts.length);
+});

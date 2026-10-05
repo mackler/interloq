@@ -318,3 +318,28 @@ test("S7: a follow-up with a dangling ref gets the validation repair turn, and t
   assert.deepEqual(followUp?.question, repaired.text);
   assert.deepEqual(followUp?.explanations, repaired.explanations);
 });
+
+// Issues #59, #91, #92 and #93 (5 Oct 2026): the seven rules reach the agent that writes the question list and the plan,
+// and their criteria the reviewer of the question list, in a run of the question phase.
+test("the seven rules of 5 Oct 2026 reach the writers of the question list and the plan, and their criteria the review", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1: A or B?", []) }, { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") }, { output: noQuestions, plan: "v1" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: withQuestions,
+  });
+  await runTask(layer);
+  const ids = ["contextBearsOnChoice", "askOutcome", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor"];
+  const rules = ids.map((id) => prompts.QUESTION_RULES.find((r) => r.id === id));
+  assert.ok(rules.every((r) => r !== undefined), "a rule is missing");
+  const listPrompt = probe.planner.prompts[0];
+  const planPrompt = probe.planner.prompts.at(-1) ?? "";
+  assert.match(planPrompt, /Produce an implementation plan/);
+  const reviewPrompt = probe.reviewer.prompts[0];
+  for (const r of rules) {
+    assert.ok(listPrompt.includes(r!.rule), r!.id);
+    assert.ok(planPrompt.includes(r!.rule), r!.id);
+    assert.ok(reviewPrompt.includes(r!.criterion), r!.id);
+  }
+});

@@ -4,25 +4,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 
-const RULE_IDS = ["selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "purposeOwner", "askWhatUserWants", "determinateOptions", "optionDifferences", "terms"];
-
-test("QUESTION_RULES holds one entry per rule, with unique ids and a rule and a criterion each", () => {
-  assert.deepEqual(prompts.QUESTION_RULES.map((r) => r.id), RULE_IDS);
-  for (const r of prompts.QUESTION_RULES) {
-    assert.ok(r.rule.trim().length > 0, r.id);
-    assert.ok(r.criterion.trim().length > 0, r.id);
-  }
-});
-
-test("the writer's rendering carries every rule, and the reviewer's every criterion, from the one array", () => {
-  const writing = prompts.questionWritingRules();
-  const review = prompts.questionReviewCriteria();
-  for (const r of prompts.QUESTION_RULES) {
-    assert.ok(writing.includes(r.rule), `the writing rules lack ${r.id}`);
-    assert.ok(review.includes(r.criterion), `the review criteria lack ${r.id}`);
-  }
-});
-
 test("the context rule names the five points, in the words the reviewer checks", () => {
   const context = prompts.QUESTION_RULES.find((r) => r.id === "context")!;
   for (const text of [context.rule, context.criterion]) {
@@ -80,4 +61,24 @@ test("S16: the context does not announce itself, a purpose names its owner, and 
     assert.ok(prompts.questionWritingRules().includes(byId(id).rule), id);
     assert.ok(prompts.questionReviewCriteria().includes(byId(id).criterion), id);
   }
+});
+
+// Issues #59, #91, #92 and #93 (5 Oct 2026): what each of the seven rules of the question put to the user says, in the
+// writer's rule and in the reviewers' criterion, each entry looked up by its id.
+test("the seven rules of 5 Oct 2026 say, in the rule and in the criterion, what the writer and the reviewers are held to", () => {
+  const byId = (id: string) => {
+    const found = prompts.QUESTION_RULES.find((r) => r.id === id);
+    assert.ok(found !== undefined, `QUESTION_RULES has no entry ${id}`);
+    return found;
+  };
+  const both = (id: string) => [byId(id).rule, byId(id).criterion];
+  for (const text of both("statedWarrant")) for (const word of ["'so'", "'therefore'", "'which means'", "'hence'", "'thus'"]) assert.ok(text.includes(word), word);
+  const occasions = ["at a commit", "on every push", "when someone asks for it"];
+  assert.ok(byId("developmentFacts").rule.includes("The adapter builds the options of each call and is tested against a fake of the library"));
+  for (const text of both("developmentFacts")) for (const occasion of occasions) assert.ok(text.includes(occasion), occasion);
+  for (const text of both("readerInstructions")) for (const name of ["'the repository's rules'", "'the repository's instructions'", "'the project's rules'", "'the rules'"]) assert.ok(text.includes(name), name);
+  assert.ok(byId("namedActor").rule.includes("its text is shown to you before it is written"));
+  for (const text of both("namedActor")) for (const actor of ["who shows", "who writes", "who decides", "who refuses"]) assert.ok(text.includes(actor), actor);
+  for (const text of both("contextBearsOnChoice")) assert.match(text, /five points .*this one governs|disagree, this one governs/);
+  for (const text of both("readerConsequence")) for (const cost of ["time", "work that falls to someone later", "a risk", "money"]) assert.ok(text.includes(cost), cost);
 });
