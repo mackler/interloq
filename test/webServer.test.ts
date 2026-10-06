@@ -457,3 +457,77 @@ test("tabs of one run agree on the open entries, live and from the replay, keyed
     for (const x of [a, b, c]) x.close();
   });
 });
+
+// Issue #87, work review 1 (W1-R1-2): the seam of the shared state over a run that reaches two real decisions whose
+// analyses both contain the entry e1, with a change of the shared state sent while the run's events of an answer are
+// being published. Every tab, a late one included, folds the server's frames into the same whole view.
+test("two real decisions sharing entry e1: interleaved with run events, every tab reduces to the same whole view", async () => {
+  const repo = tempRepo();
+  const el = (text: string) => ({ text, counterarguments: [] });
+  const entry = (id: string, title: string) => ({ id, title, comparative_condition: el(`c ${title}`), starting_cause: el("s"), intermediate_steps: el("i"), threshold: el("t"), effect_on_persons: el("e"), reason_the_effect_matters: el("r"), extent: { per_person: el("p"), persons_affected: el("a"), likelihood: el("l"), timing: el("w") } });
+  const analysis = (decision: string, x: string, y: string, title: string) => ({
+    decision,
+    columns: [
+      { kind: "argued", option: x, advantages: [entry("e1", title)], disadvantages: [] },
+      { kind: "argued", option: y, advantages: [], disadvantages: [entry("e2", `${title} costs.`)] },
+    ],
+    recommendation: { option: "", reason: "" },
+  });
+  const options = (x: string, y: string) => [{ label: x, description: `${x} it is` }, { label: y, description: `${y} it is` }];
+  const script: TestOptions = {
+    steps: [
+      { output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: options("SQLite", "PostgreSQL") }), questionOf({ context: "c", question: "Which cache?", terms: [], options: options("Redis", "Memcached") })] }, plan: "v1" },
+      { output: analysis("Which database?", "SQLite", "PostgreSQL", "The first decision's advantage.") },
+      { output: analysis("Which cache?", "Redis", "Memcached", "The second decision's advantage.") },
+      { output: noQuestions },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  };
+  const analyzed = (c: Client, decision: number) =>
+    (perRun(c).get(1) ?? []).some((e) => e.event._tag === "Notified" && e.event.event._tag === "DecisionAnalyzed" && e.event.event.decision === decision);
+  const askedAfter = (c: Client, decision: number) => {
+    const events = perRun(c).get(1) ?? [];
+    const at = events.findIndex((e) => e.event._tag === "Notified" && e.event.event._tag === "DecisionAnalyzed" && e.event.event.decision === decision);
+    const asked = pending(c, 1);
+    return at >= 0 && asked !== null && events.findIndex((e) => e.event === asked) > at ? asked : null;
+  };
+  await serve(await managerOf(repo, [script]), dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
+    const answer = (c: Client, text: string) => c.send({ type: "answer", incarnation, run: 1, prompt: pending(c, 1)!.prompt, text });
+    const e1 = (decision: number) => ({ _tag: "DecisionEntry" as const, decision, entry: "e1" });
+    const ui = (c: Client, decision: number, open: boolean) => c.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(decision), open } });
+    a.send({ type: "start", project: repo, task: "task" });
+    await until("the first question", () => pending(a, 1) !== null);
+    answer(a, "/decide");
+    await until("decision 1's analysis and its question asked again", () => askedAfter(a, 1) !== null && askedAfter(b, 1) !== null);
+    ui(a, 1, true);
+    await until("the state in both tabs", () => [a, b].every((c) => c.messages.some((m) => m.type === "ui" && m.state.version === 1)));
+    // B's answer publishes run events; A's changes are sent at once, so they interleave with them.
+    const first = pending(b, 1)!.prompt;
+    answer(b, "1");
+    ui(a, 1, false);
+    ui(a, 1, true);
+    await until("the second question", () => (pending(a, 1)?.prompt ?? first) > first && !analyzed(a, 2));
+    answer(a, "/decide");
+    await until("decision 2's analysis and its question in both tabs", () => askedAfter(a, 2) !== null && askedAfter(b, 2) !== null);
+    await until("the last state in both tabs", () => [a, b].every((c) => c.messages.some((m) => m.type === "ui" && m.state.version === 3)));
+    const c = await connect(port);
+    await until("the third tab's replay", () => c.messages.some((m) => m.type === "replay"));
+    const view = (x: Client) => x.messages.reduce(reduce, initialState).run;
+    const [va, vb, vc] = [view(a), view(b), view(c)];
+    assert.deepEqual(vb, va, "tab B's view differs from tab A's");
+    assert.deepEqual(vc, va, "the late tab's view differs from tab A's");
+    for (const v of [va, vb, vc]) {
+      assert.equal(v?.analysis?.event.decision, 2);
+      assert.deepEqual([isOpen(v!.ui, e1(1)), isOpen(v!.ui, e1(2))], [true, false]);
+    }
+    contiguous(a);
+    a.send({ type: "stop", incarnation, run: 1 });
+    await until("the end of run 1", () => hasEnded(a, 1));
+    for (const x of [a, b, c]) x.close();
+  });
+});
