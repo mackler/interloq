@@ -873,13 +873,35 @@ describe("DecisionView", () => {
     expect(column.querySelector(".advantages-heading, .disadvantages-heading, .entry")).toBe(null);
   });
 
-  // W1-R1-3: the recommendation scrolls with the columns, so that a long one cannot squeeze them.
-  test("the recommendation is inside the scrolling area, below the row of columns", async () => {
+  // Issue #81 (W1-R1-3 kept): the recommendation has a region of its own below the columns, outside their scrollers.
+  test("the recommendation is a region of its own below the sideways region, outside the columns' scrollers", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    const scroller = one(root, ".scroll");
-    expect(scroller.querySelector(".recommendation")).not.toBe(null);
-    expect(scroller.querySelector(".columns")).not.toBe(null);
+    const sideways = one(root, ".sideways");
+    const recommendation = one(root, ".recommendation");
+    expect(sideways.contains(recommendation)).toBe(false);
+    expect(recommendation.closest(".column")).toBe(null);
+    expect(sideways.compareDocumentPosition(recommendation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sideways.querySelectorAll(".column > .column-content").length).toBe(2);
+  });
+
+  // Decision Q1 (P1-R2-3): the strip is measured from each column's content wrapper, never from its scroller, whose
+  // scrollHeight is at least its own height.
+  test("the strip follows the columns' content wrappers, less their open bodies, not the scrollers", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const root = show(DecisionView, { event, narrow: false, open: (id: string) => id === "E1", onToggle: () => undefined, onShowConversation: () => undefined });
+    const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
+    one(root, ".sideways").style.lineHeight = "100px";
+    const [first, second] = [...root.querySelectorAll<HTMLElement>(".column")];
+    for (const c of [first, second]) for (const name of ["scrollHeight", "clientHeight", "offsetHeight"]) define(c, name, 600);
+    const rect = (height: number) => () => ({ height, width: 0, x: 0, y: 0, top: 0, left: 0, bottom: height, right: 0, toJSON: () => ({}) }) as DOMRect;
+    first.querySelector<HTMLElement>(".column-content")!.getBoundingClientRect = rect(400);
+    second.querySelector<HTMLElement>(".column-content")!.getBoundingClientRect = rect(150);
+    const body = first.querySelector<HTMLElement>(".elements")!;
+    body.getBoundingClientRect = rect(300);
+    window.dispatchEvent(new Event("resize"));
+    flushSync();
+    expect(one(root, "section.decision").style.getPropertyValue("--strip")).toBe("150px");
   });
 
   // Issue #87: every entry starts collapsed, its row the label and the whole title; a disputed entry carries the mark.

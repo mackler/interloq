@@ -162,15 +162,17 @@
   /* The heading and the origin share a line where they fit, so that a short window keeps room for the question. */
   .title h2 { display: inline; margin: 0 0.25rem 0 0; }
   .origin { color: var(--m3c-on-surface-variant); }
-  /* The context takes at most three tenths of the pane, so that the question's first option stays in view below it. */
-  .top { flex: 0 1 auto; max-height: 30%; min-height: 2.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+  /* Issue #79, decision Q1: the context takes the room its answers leave. Both regions are sized by their content, and
+     where the pane is too short the context shrinks first (a far larger flex-shrink), down to its minimum, before the
+     answers do, so that the question's first option stays in view below it and no room stays empty while it scrolls. */
+  .top { flex: 0 1000 auto; min-height: 2.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
   .context { padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
   .context .by { margin: 0.25rem 0 0; font-style: italic; }
   .top :global(.markdown pre) { overflow-x: auto; }
   .question-text { margin: 0; flex-shrink: 0; overflow-wrap: anywhere; }
   /* At least a card of three lines (its label on a line of its own, S14, and a description that wraps once) fits, so
      that the first option can be seen whole in a short window (S52, L23 at 640 × 400). */
-  .bottom { flex: 1 1 0; min-height: 6rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+  .bottom { flex: 0 1 auto; min-height: 6rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
   /* One card per row at every width; a card grows with its text, and a long unbroken token (a path) wraps. */
   .options { display: flex; flex-direction: column; gap: 0.5rem; }
   .options > :global(button) { width: 100%; min-width: 0; overflow-wrap: anywhere; text-align: start; }

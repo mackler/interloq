@@ -21,12 +21,14 @@
   import { Button } from "m3-svelte";
   import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type EntryView, viewOf } from "../../../src/analysisView.ts";
+  import { allot, type Allotment, closedHeightOf, stripOf } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
 
   /** `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the change asked for. */
-  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void };
-  let { event, narrow, open, onToggle, onShowConversation }: Props = $props();
+  /** `onMinimum` (decision G-R1-2): the least height the analysis needs, for the compact layout to grow to. */
+  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void; onMinimum?: (px: number) => void };
+  let { event, narrow, open, onToggle, onShowConversation, onMinimum }: Props = $props();
   const view = $derived(viewOf(event.analysis));
   let row = $state<HTMLElement | null>(null);
   let overflowing = $state(false);
@@ -37,10 +39,79 @@
     void view;
     measure();
   });
+
+  // Issues #79 and #81, decisions Q1 and G-R1-2: the heights of the regions. The columns keep a strip, ten lines or
+  // their height with every entry closed if that is less, measured when the analysis appears and when the window is
+  // resized, never when an entry opens, so nothing above or below the columns moves while the reader opens entries; the
+  // context and the recommendation take the room the strip leaves (allot of web/src/layout.ts). The page grows to the
+  // minimum total in the compact layout (`onMinimum`, used by App).
+  let section = $state<HTMLElement | null>(null);
+  let contextBox = $state<HTMLElement | null>(null);
+  let contextInner = $state<HTMLElement | null>(null);
+  let recommendationBox = $state<HTMLElement | null>(null);
+  let recommendationInner = $state<HTMLElement | null>(null);
+  let strip = $state(0);
+  let heights = $state<Allotment | null>(null);
+  const px = (v: string) => parseFloat(v) || 0;
+  const lineOf = (el: Element) => {
+    const cs = getComputedStyle(el);
+    return px(cs.lineHeight) || 1.2 * px(cs.fontSize);
+  };
+  const paddingOf = (el: Element) => {
+    const cs = getComputedStyle(el);
+    return px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth);
+  };
+  /** The strip, from each column's content (its unconstrained wrapper, not its scroller) less its own open bodies. */
+  const measureStrip = () => {
+    if (row === null) return;
+    const columns = [...row.querySelectorAll<HTMLElement>(".column")].map((c) => {
+      const inner = c.querySelector<HTMLElement>(".column-content");
+      const openBodies = [...c.querySelectorAll<HTMLElement>(".elements")].map((b) => {
+        const cs = getComputedStyle(b);
+        return b.getBoundingClientRect().height + px(cs.marginTop) + px(cs.marginBottom);
+      });
+      return { content: (inner?.getBoundingClientRect().height ?? 0) + paddingOf(c), openBodies };
+    });
+    // Whole pixels, so that sub-pixel layout after a resize cannot move the regions above and below by a fraction.
+    strip = Math.round(stripOf(closedHeightOf(columns), 10 * lineOf(row)));
+  };
+  /** The heights of the context and the recommendation, from the room the section has for them and the columns. */
+  const allotHeights = () => {
+    if (section === null || contextBox === null || contextInner === null || row === null) return;
+    const kids = [...section.children] as HTMLElement[];
+    const span = kids.length === 0 ? 0 : kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
+    const free = section.clientHeight - paddingOf(section) - span;
+    const regions = [contextBox, row, recommendationBox].reduce((n, el) => n + (el?.getBoundingClientRect().height ?? 0), 0);
+    const line = lineOf(contextBox);
+    const contextPadding = paddingOf(contextBox);
+    const recommendation = recommendationBox === null || recommendationInner === null ? 0 : recommendationInner.offsetHeight + paddingOf(recommendationBox);
+    const next = allot({ available: regions + free, context: contextInner.offsetHeight + contextPadding, recommendation, strip, minText: 2 * line + contextPadding });
+    if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5) heights = next;
+    const fixed = span - regions;
+    const minimum = fixed + paddingOf(section) + Math.min(next.context, 2 * line + contextPadding) + (recommendation === 0 ? 0 : Math.min(recommendation, 2 * line + contextPadding)) + strip;
+    onMinimum?.(Math.ceil(minimum));
+  };
+  $effect(() => {
+    void view;
+    void narrow;
+    measureStrip();
+    allotHeights();
+  });
+  $effect(() => {
+    if (section === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => allotHeights());
+    for (const el of [section, contextInner, recommendationInner]) if (el !== null) observer.observe(el);
+    return () => observer.disconnect();
+  });
+  const resized = () => {
+    measure();
+    measureStrip();
+    allotHeights();
+  };
   const marked = (text: string, symbol: string | null) => (symbol === null ? text : `${text} ${symbol}`);
 </script>
 
-<svelte:window onresize={measure} />
+<svelte:window onresize={resized} />
 {#snippet entryOf(entry: EntryView, bodyId: string)}
   {@const expanded = open(entry.id)}
   <div class="entry">
@@ -71,7 +142,7 @@
   </div>
 {/snippet}
 
-<section class="decision" aria-label={decisionViewHeading(event.decision, event.presented.number)}>
+<section class="decision" aria-label={decisionViewHeading(event.decision, event.presented.number)} bind:this={section} style:--strip="{strip}px">
   <div class="head">
     <h2 class="m3-font-title-medium">{decisionViewHeading(event.decision, event.presented.number)}</h2>
     <Button variant="tonal" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
@@ -82,12 +153,16 @@
     <!-- S28: the question's terms carry their explanations here too; the analysis text does not. -->
     <!-- S46 (W3-R1-3): the details the question is about (a permission's input, a pause's facts, an agreed question's
          reason) follow the context in the same scrolling region, as the terminal prints them. -->
-    <div class="question-context m3-font-body-medium">
-      <!-- S59 (P9-R2-1): the context is Markdown, as in QuestionPane and the transcript, so a term split by inline
-           markup is marked here too. -->
-      <QuestionText class="context-text markdown" blocks={event.presented.context.blocks} explanations={event.presented.explanations} />
-      {#if event.presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
-      {#if event.presented.details.length > 0}<QuestionText class="details markdown" blocks={event.presented.details} explanations={event.presented.explanations} />{/if}
+    <!-- Issue #79: the context takes the room that is free (decision Q1), its height set by allot; it scrolls only when
+         there is none. -->
+    <div class="question-context m3-font-body-medium" bind:this={contextBox} style:height={heights === null || narrow ? null : `${heights.context}px`}>
+      <div class="context-inner" bind:this={contextInner}>
+        <!-- S59 (P9-R2-1): the context is Markdown, as in QuestionPane and the transcript, so a term split by inline
+             markup is marked here too. -->
+        <QuestionText class="context-text markdown" blocks={event.presented.context.blocks} explanations={event.presented.explanations} />
+        {#if event.presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
+        {#if event.presented.details.length > 0}<QuestionText class="details markdown" blocks={event.presented.details} explanations={event.presented.explanations} />{/if}
+      </div>
     </div>
     <p class="question-text m3-font-title-small"><QuestionText class="markdown" pieces={event.presented.question} explanations={event.presented.explanations} /></p>
   </div>
@@ -95,31 +170,38 @@
     <p class="narrow m3-font-body-medium" role="alert">{ENLARGE_WINDOW_NOTICE}</p>
   {:else}
     {#if overflowing}<p class="hint m3-font-body-small">{SCROLL_SIDEWAYS_HINT}</p>{/if}
-    <!-- The columns and the recommendation scroll together, so that a long recommendation never squeezes the columns
-         (W1-R1-3) [aesthetic and minimalist design; visibility of system status: all of it can be reached]. -->
-    <div class="scroll" bind:this={row}>
-    <div class="columns" style:grid-template-columns="repeat({view.columns.length}, minmax(20rem, 1fr))">
-      {#each view.columns as column, i (i)}
-        <article class="column m3-font-body-medium">
-          <h3 class="m3-font-title-medium">{column.option}</h3>
-          {#if column.kind === "unclear"}
-            <p class="unclear">{column.unclear}</p>
-          {:else}
-            <h4 class="advantages-heading m3-font-title-small">{column.advantagesHeading}</h4>
-            {#each column.advantages as entry, j (entry.id)}{@render entryOf(entry, `decision-${event.decision}-${i}-a${j}`)}{/each}
-            <h4 class="disadvantages-heading m3-font-title-small">{column.disadvantagesHeading}</h4>
-            {#each column.disadvantages as entry, j (entry.id)}{@render entryOf(entry, `decision-${event.decision}-${i}-d${j}`)}{/each}
-          {/if}
-        </article>
-      {/each}
+    <!-- Issue #81: the region scrolls sideways when the columns do not fit, and each column scrolls on its own inside it
+         (the developer's instruction of 1 Oct 2026), so a short column stays in view while a long one is read. -->
+    <div class="sideways" bind:this={row}>
+      <div class="columns" style:grid-template-columns="repeat({view.columns.length}, minmax(20rem, 1fr))">
+        {#each view.columns as column, i (i)}
+          <article class="column m3-font-body-medium">
+            <div class="column-content">
+              <h3 class="m3-font-title-medium">{column.option}</h3>
+              {#if column.kind === "unclear"}
+                <p class="unclear">{column.unclear}</p>
+              {:else}
+                <h4 class="advantages-heading m3-font-title-small">{column.advantagesHeading}</h4>
+                {#each column.advantages as entry, j (entry.id)}{@render entryOf(entry, `decision-${event.decision}-${i}-a${j}`)}{/each}
+                <h4 class="disadvantages-heading m3-font-title-small">{column.disadvantagesHeading}</h4>
+                {#each column.disadvantages as entry, j (entry.id)}{@render entryOf(entry, `decision-${event.decision}-${i}-d${j}`)}{/each}
+              {/if}
+            </div>
+          </article>
+        {/each}
+      </div>
     </div>
+    <!-- Issue #81: the recommendation has a region of its own below the columns, outside their scrollers, bounded by
+         allot as the context is, so a long recommendation never squeezes the columns below their strip (W1-R1-3)
+         [aesthetic and minimalist design; visibility of system status: it is always in view, and all of it can be reached]. -->
     {#if view.recommendation !== null}
-      <section class="recommendation m3-font-body-medium" aria-label={RECOMMENDATION_HEADING}>
-        <h3 class="m3-font-title-small">{recommendedOption(view.recommendation.option)}</h3>
-        {#each view.recommendation.reason.split(/\n\s*\n/) as paragraph, i (i)}<p>{paragraph}</p>{/each}
+      <section class="recommendation m3-font-body-medium" aria-label={RECOMMENDATION_HEADING} bind:this={recommendationBox} style:height={heights === null ? null : `${heights.recommendation}px`}>
+        <div class="recommendation-inner" bind:this={recommendationInner}>
+          <h3 class="m3-font-title-small">{recommendedOption(view.recommendation.option)}</h3>
+          {#each view.recommendation.reason.split(/\n\s*\n/) as paragraph, i (i)}<p>{paragraph}</p>{/each}
+        </div>
       </section>
     {/if}
-    </div>
   {/if}
 </section>
 
@@ -130,22 +212,25 @@
   /* The question beside its analysis (S39, W2-R1-2): only the context is bounded and scrolls on its own; the question
      text follows it outside any scrolled region, as in QuestionPane, so a long context cannot push it out of view. */
   .question { flex-shrink: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-  .question-context { margin: 0; box-sizing: border-box; max-height: 2.75rem; overflow-y: auto; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
+  .question-context { margin: 0; box-sizing: border-box; overflow-y: auto; flex-shrink: 0; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
   .question-context .by { margin: 0.25rem 0 0; font-style: italic; }
   .question-context :global(.details) { margin-top: 0.5rem; white-space: normal; }
   .question-context :global(.details pre) { overflow-x: auto; }
   .question-text { margin: 0; }
   .hint, .narrow { margin: 0; color: var(--m3c-on-surface-variant); }
-  /* The columns and the recommendation scroll in both directions within the area, so that the question and the prompt stay in view. */
-  .scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 0.75rem; }
-  .columns { display: grid; gap: 0.75rem; flex-shrink: 0; align-items: start; }
-  .column { padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container); user-select: text; }
-  .column h3 { margin: 0 0 0.5rem; position: sticky; top: 0; background: inherit; }
+  /* Issue #81: the sideways region keeps at least the strip; its height is definite (a flex item with a zero basis), so
+     each column, as tall as the region and no taller, scrolls on its own; nothing here is clipped at its full height. */
+  .sideways { flex: 1 1 0; min-height: var(--strip); overflow-x: auto; overflow-y: hidden; }
+  .columns { display: grid; gap: 0.75rem; height: 100%; min-height: 0; align-items: stretch; }
+  .column { box-sizing: border-box; min-height: 0; max-height: 100%; overflow-y: auto; padding: 0 0.75rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container); user-select: text; }
+  .column-content { display: flow-root; }
+  .column h3 { margin: 0 0 0.5rem; padding-top: 0.75rem; position: sticky; top: 0; z-index: 2; background: inherit; }
   .advantages-heading { margin: 0 0 0.5rem; }
   .disadvantages-heading { margin: 1rem 0 0.5rem; }
   .unclear { margin: 0; }
   .label { font-weight: 600; }
-  .entry { margin-bottom: 0.25rem; }
+  /* flow-root: an open body's margins stay inside its entry, so its height is what closing it takes away. */
+  .entry { display: flow-root; margin-bottom: 0.25rem; }
   /* Issue #87: the disclosure, hand-built after M3's list item: a state layer of the on-surface color on hover (8 %),
      focus (10 %) and press (10 %), a focus ring, and the standard easing for the chevron and the body; none of it under
      reduced motion. It asserts that the entry is open or closed and nothing more (docs/ui-review.md). The title wraps
@@ -172,7 +257,7 @@
   /* Issue #35 (Q7): what argues against the column's option, in the scheme's error color; the rest keeps the text color. */
   .opposes { color: var(--m3c-error); }
   .recommendation { padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-secondary-container); color: var(--m3c-on-secondary-container); }
-  .recommendation { position: sticky; left: 0; flex-shrink: 0; }
+  .recommendation { box-sizing: border-box; flex: 0 0 auto; overflow-y: auto; }
   .recommendation h3 { margin: 0; }
   .recommendation p { margin: 0.5rem 0 0; }
 </style>

@@ -467,16 +467,10 @@ test.describe("the tests of the decideLong server, in order", () => {
     await answerDismisses(page, parts);
   });
 
-  test("(L14) a long analysis at 390 × 844: it scrolls inside itself, and the answer controls are in view", async ({ page }) => {
+  // Decision G-R1-2: at 390 × 844 the analysis's minimum total and the answer controls exceed the window, so the run
+  // scrolls, and the controls are reached by scrolling it (reachable, below).
+  test("(L14) a long analysis at 390 × 844: it scrolls inside itself, and the answer controls can be reached", async ({ page }) => {
     const parts = await openLongAnalysis(page, 390, 844);
-    const run = await parts.run.evaluate((el) => ({ top: el.scrollTop, scroll: el.scrollHeight, client: el.clientHeight }));
-    expect(run.top).toBe(0);
-    expect(run.scroll, "the run scrolls").toBeLessThanOrEqual(run.client + 1);
-    for (const [name, part] of [["the prompt", parts.prompt], ["the activity line", parts.activity]] as const) {
-      const b = await box(part);
-      expect(b.y, `${name}'s top`).toBeGreaterThanOrEqual(0);
-      expect(b.y + b.height, `${name} is below the window`).toBeLessThanOrEqual(844 + 1);
-    }
     // Issue #81: the analysis scrolls inside itself, in a column's own scroller (its entry opened, issue #87), and the
     // recommendation's end is reached inside the recommendation's own region.
     await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
@@ -490,6 +484,7 @@ test.describe("the tests of the decideLong server, in order", () => {
     await expect(page.getByRole("button", { name: new RegExp(LEFT) })).toHaveCount(0);
     await expect(page.getByRole("button", { name: new RegExp(RIGHT) })).toHaveCount(0);
     await separateAndWhole(parts);
+    await reachable(parts);
     await answerDismisses(page, parts);
   });
 
@@ -589,13 +584,25 @@ test.describe("the tests of the decideLong server, in order", () => {
       const overflow = await context.evaluate((el) => el.scrollHeight - el.clientHeight);
       expect(overflow, "the context overflows its region").toBeGreaterThan(0);
       expect(await question.evaluate((el) => el.closest(".question-context") === null), "the question is outside the scrolled context").toBe(true);
-      const inView = async (what: string) => {
-        await firstCard.scrollIntoViewIfNeeded();
-        for (const [name, part] of [["the question", question], ["the first answer", firstCard]] as const) {
+      const within = async (what: string, parts: readonly (readonly [string, Locator])[]) => {
+        for (const [name, part] of parts) {
           const b = await box(part);
           expect(b.y, `${what}: ${name}'s top`).toBeGreaterThanOrEqual(-1);
           expect(b.y + b.height, `${what}: ${name} is below the window`).toBeLessThanOrEqual(height + 1);
         }
+      };
+      // Decision G-R1-2 (the grown analysis wins): at 640 × 400 the analysis keeps its minimum total, so the question is
+      // in the window with its context region, and the first answer comes into the window when the page is scrolled to it.
+      const inView = async (what: string) => {
+        if (height === 400) {
+          await question.scrollIntoViewIfNeeded();
+          await within(what, [["the question", question], ["the context region", context]]);
+          await firstCard.scrollIntoViewIfNeeded();
+          await within(what, [["the first answer", firstCard]]);
+          return;
+        }
+        await firstCard.scrollIntoViewIfNeeded();
+        await within(what, [["the question", question], ["the first answer", firstCard]]);
       };
       await inView("before scrolling the context");
       await context.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));

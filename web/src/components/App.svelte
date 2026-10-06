@@ -94,6 +94,8 @@
   const analysisKey = $derived(analysis === null || run === null ? null : { incarnation: view.incarnation ?? "", run: run.id, decision: analysis.event.decision });
   const deciding = $derived(analysisKey !== null && analysisShown(conversationFor, analysisKey));
   const NARROW_WIDTH = 390;
+  /** Decision G-R1-2: the least height of the analysis, which the compact layout grows to; the page then scrolls to the answers. */
+  let analysisMinimum = $state(0);
 </script>
 
 <svelte:window bind:innerWidth={width} />
@@ -154,8 +156,8 @@
         <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} />
       {/if}
       {#if analysis !== null && deciding}
-        <div class="decision-area">
-          <DecisionView event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
+        <div class="decision-area" style:min-height={compact && analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
+          <DecisionView onMinimum={(h) => (analysisMinimum = h)} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
         <div class="decision-area back">
@@ -221,14 +223,12 @@
   /* The shown column fills the window; its panel scrolls inside it and keeps at least 12.5rem, below which the page scrolls. */
   .run.compact .left, .run.compact .right { flex: 1 0 0; }
   .run.compact .left :global(.panel), .run.compact .right :global(.panel), .run.compact .left :global(.pane:not(.answers-only)) { min-height: 12.5rem; }
-  /* W4-R1-1: while the analysis is shown, only the decision area flexes; it never grows to its content and keeps a
-     floor of min(12rem, 40dvh), and DecisionView's .scroll scrolls inside it. The columns hold only the prompt and
-     the activity line then, sized by their content. The run keeps its outer scroll, so that where the controls and
-     the floor do not fit (a short window, or the progress opened) they are reached by scrolling, never clipped.
-     Measured (e2e, decideLong): at 390 × 844 the progress, prompt, activity line, gaps and padding take 420 px, and
-     with the 192 px floor 612 px fit the run's 742, so it does not scroll; at 640 × 400 they take 402 px, and with
-     the 160 px floor 562 px exceed its 294, so it scrolls. No height query is needed. */
-  .run.compact.deciding > .decision-area { flex: 1 1 0; min-height: min(12rem, 40dvh); }
+  /* W4-R1-1, decision G-R1-2: while the analysis is shown, only the decision area flexes. It never grows to its content,
+     and its floor is the analysis's minimum total (its heading, the question, two lines each of the context and the
+     recommendation, and the columns' strip), set inline from DecisionView's measurement; where the window is shorter,
+     the run scrolls, and the answer controls are reached below it, never clipped. The columns hold only the prompt and
+     the activity line then, sized by their content. */
+  .run.compact.deciding > .decision-area { flex: 1 1 0; min-height: 0; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
   .progress :global(.rail) { max-height: 40vh; }
