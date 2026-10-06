@@ -42,3 +42,26 @@ export type AnalysisKey = Readonly<{ incarnation: string; run: number; decision:
 /** Whether the analysis of `key` is shown: always, unless the user chose the conversation for exactly that decision. */
 export const analysisShown = (hidden: AnalysisKey | null, key: AnalysisKey): boolean =>
   hidden === null || hidden.incarnation !== key.incarnation || hidden.run !== key.run || hidden.decision !== key.decision;
+
+// Issues #79 and #81, decisions Q1 and G-R1-2 of their task: the heights of a decision's analysis. The context paragraph
+// and the recommendation take their whole height when the columns keep their strip; otherwise they share the room the
+// strip leaves, equally, an unused share going to the other, each keeping at least `minText` (or its content, if less).
+// The columns never get less than the strip; where even the minimums do not fit, the total exceeds `available`, and the
+// compact layout lets the page grow to it (G-R1-2). All heights in pixels.
+
+/** What the allotment is computed from: the room, the two texts' content heights, the columns' strip and the texts' minimum. */
+export type AllotInput = Readonly<{ available: number; context: number; recommendation: number; strip: number; minText: number }>;
+/** The heights given to the context region, the recommendation's region and the columns' region. */
+export type Allotment = Readonly<{ context: number; recommendation: number; columns: number }>;
+
+/** The heights of the three regions (decision Q1). */
+export const allot = (input: AllotInput): Allotment => ({ context: 0, recommendation: 0, columns: 0 });
+/** The columns' strip: about ten lines, or the closed columns' height if that is less (decision Q1). */
+export const stripOf = (closedColumnsHeight: number, tenLines: number): number => 0;
+/**
+ * The height of the tallest column with every entry closed. `content` is a column's content height alone (an
+ * unconstrained inner wrapper's, never the scroller's `scrollHeight`, which is at least the scroller's own height);
+ * `openBodies` are the heights of that column's own open entry bodies. Each column's open bodies are taken from that
+ * column, then the maximum is taken, so an entry open in another tab changes nothing.
+ */
+export const closedHeightOf = (columns: readonly Readonly<{ content: number; openBodies: readonly number[] }>[]): number => 0;
