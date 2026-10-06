@@ -77,7 +77,8 @@
   };
   /** The heights of the context and the recommendation, from the room the section has for them and the columns. */
   const allotHeights = () => {
-    if (section === null || contextBox === null || contextInner === null || row === null) return;
+    // Below 390 px there are no columns (W2-R1-1 of work review 2): the context takes the room left, with no strip.
+    if (section === null || contextBox === null || contextInner === null) return;
     const kids = [...section.children] as HTMLElement[];
     const span = kids.length === 0 ? 0 : kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
     const free = section.clientHeight - paddingOf(section) - span;
@@ -85,10 +86,10 @@
     const line = lineOf(contextBox);
     const contextPadding = paddingOf(contextBox);
     const recommendation = recommendationBox === null || recommendationInner === null ? 0 : recommendationInner.offsetHeight + paddingOf(recommendationBox);
-    const next = allot({ available: regions + free, context: contextInner.offsetHeight + contextPadding, recommendation, strip, minText: 2 * line + contextPadding });
+    const next = allot({ available: regions + free, context: contextInner.offsetHeight + contextPadding, recommendation: narrow ? 0 : recommendation, strip: narrow ? 0 : strip, minText: 2 * line + contextPadding });
     if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5) heights = next;
     const fixed = span - regions;
-    const minimum = fixed + paddingOf(section) + Math.min(next.context, 2 * line + contextPadding) + (recommendation === 0 ? 0 : Math.min(recommendation, 2 * line + contextPadding)) + strip;
+    const minimum = fixed + paddingOf(section) + Math.min(next.context, 2 * line + contextPadding) + (recommendation === 0 ? 0 : Math.min(recommendation, 2 * line + contextPadding)) + (narrow ? 0 : strip);
     onMinimum?.(Math.ceil(minimum));
   };
   $effect(() => {
@@ -155,7 +156,7 @@
          reason) follow the context in the same scrolling region, as the terminal prints them. -->
     <!-- Issue #79: the context takes the room that is free (decision Q1), its height set by allot; it scrolls only when
          there is none. -->
-    <div class="question-context m3-font-body-medium" bind:this={contextBox} style:height={heights === null || narrow ? null : `${heights.context}px`}>
+    <div class="question-context m3-font-body-medium" bind:this={contextBox} style:height={heights === null ? null : `${heights.context}px`}>
       <div class="context-inner" bind:this={contextInner}>
         <!-- S59 (P9-R2-1): the context is Markdown, as in QuestionPane and the transcript, so a term split by inline
              markup is marked here too. -->

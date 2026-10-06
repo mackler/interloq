@@ -110,6 +110,15 @@ const LONG_CHOICES_URL = layoutUrl("longChoices");
 // Decision support (decision Q5): one column per option at every allowed width, side by side when they fit, scrolling
 // sideways when they do not; below 390 px a message instead.
 const DECIDE_URL = layoutUrl("decide");
+/** The question text and the notice lie inside the analysis's box (W2-R1-1 of work review 2). */
+const questionAndNoticeInside = async (analysis: Locator) => {
+  const area = await box(analysis);
+  for (const [name, part] of [["the question", analysis.locator(".question-text")], ["the notice", analysis.getByRole("alert")]] as const) {
+    const b = await box(part);
+    expect(b.y, `${name}'s top is above the analysis`).toBeGreaterThanOrEqual(area.y - 1);
+    expect(b.y + b.height, `${name} is below the analysis's end`).toBeLessThanOrEqual(area.y + area.height + 1);
+  }
+};
 const openAnalysis = async (page: Page) => {
   await startTask(page, "Add a database", DECIDE_URL);
   await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
@@ -468,6 +477,20 @@ test.describe("the tests of the decide server, in order", () => {
     const analysis = await openAnalysis(page);
     await expect(analysis.getByRole("alert")).toHaveText(/at least 390 pixels wide/);
     await expect(analysis.locator(".column")).toHaveCount(0);
+    await questionAndNoticeInside(analysis);
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
+    await expect(analysis).toBeHidden();
+  });
+
+  // Work review 2 (W2-R1-1): below 390 px the long context is bounded by the room left, so the question and the notice
+  // stay inside the analysis, and the context scrolls for the rest.
+  test("(L12a) a long context at 360 × 800: the question and the notice stay inside the analysis, and the context scrolls", async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    const analysis = await openAnalysis(page);
+    await expect(analysis.getByRole("alert")).toHaveText(/at least 390 pixels wide/);
+    await questionAndNoticeInside(analysis);
+    const m = await analysis.locator(".question-context").evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }));
+    expect(m.scroll, "the context does not scroll").toBeGreaterThan(m.client + 1);
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
     await expect(analysis).toBeHidden();
   });

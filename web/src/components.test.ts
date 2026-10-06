@@ -959,6 +959,21 @@ describe("DecisionView", () => {
     });
   });
 
+  // W2-R1-2 of work review 2 (W2-R1-1): below 390 px the context is bounded by the room the section leaves, as allot gives it
+  // with no strip and no recommendation, so a long context cannot push the question and the notice out of the view.
+  test("below 390 px the context takes the room the section leaves, by allot with no strip", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const { allot } = await import("./layout.ts");
+    const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
+    const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
+    define(one(root, "section.decision"), "clientHeight", 300);
+    define(one(root, ".context-inner"), "offsetHeight", 1000);
+    window.dispatchEvent(new Event("resize"));
+    flushSync();
+    const expected = allot({ available: 300, context: 1000, recommendation: 0, strip: 0, minText: 0 }).context;
+    expect(one(root, ".question-context").style.height).toBe(`${expected}px`);
+  });
+
   test("below 390 px the analysis is not laid out; a message asks for a wider window", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
