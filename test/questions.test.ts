@@ -343,3 +343,88 @@ test("the seven rules of 5 Oct 2026 reach the writers of the question list and t
     assert.ok(reviewPrompt.includes(r!.criterion), r!.id);
   }
 });
+
+// Issue #99 (S3): an entry's skip condition is described in the question list's prompt and checked by the program, with
+// the validation repair turn of behaviour 10; the list is recorded in an order in which a question follows its premise.
+const dependent = (id: string, question: string, answer: string): QuestionEntry => ({ ...q(id), skip_if: { question, answer } });
+const skipConditionRun = (first: readonly QuestionEntry[], second: readonly QuestionEntry[]) =>
+  testLayer(tempRepo(), {
+    answers: ["1", "1", ""],
+    steps: [
+      { output: { questions: first } },
+      { output: { questions: second } },
+      { output: { ...turn("Q1?", []), current_question: { ...none, id: "Q1" } } },
+      { output: { ...turn("Q2?", ["Q1"]), current_question: { ...none, id: "Q2" } } },
+      { output: turn("Done.", ["Q1", "Q2"], "# Requirements\n\nQ1: A") },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: withQuestions,
+  });
+
+test("a skip condition naming an unknown question, an unknown answer or forming a cycle gets the validation repair turn", async () => {
+  const cases: readonly (readonly [readonly QuestionEntry[], import("../src/premises.ts").SkipProblem])[] = [
+    [[q("Q1"), dependent("Q2", "Q9", "A")], { kind: "unknownQuestion", id: "Q2", names: "Q9" }],
+    [[q("Q1"), dependent("Q2", "Q1", "Maybe")], { kind: "unknownAnswer", id: "Q2", question: "Q1", answer: "Maybe" }],
+    [[dependent("Q1", "Q2", "B"), dependent("Q2", "Q1", "B")], { kind: "cycle", ids: ["Q1", "Q2"] }],
+  ];
+  for (const [list, problem] of cases) {
+    const { layer, probe } = skipConditionRun(list, [q("Q1"), dependent("Q2", "Q1", "B")]);
+    await runTask(layer);
+    assert.equal(probe.planner.prompts[1], prompts.skipConditionRepairPrompt([problem]), problem.kind);
+    assert.ok(probe.planner.prompts[1].includes(prompts.skipConditionProblemLine(problem)));
+    assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => x.skip_if), [null, { question: "Q1", answer: "B" }]);
+  }
+  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1"), dependent("Q2", "Q9", "A")] } }, { output: { questions: [q("Q1"), dependent("Q2", "Q9", "A")] } }], config: withQuestions });
+  await runFails(halted.layer, "SkipConditionInvalid", /Q2/);
+});
+
+test("a skip condition is checked at a response to the review and at the application of the user's decisions", async () => {
+  const { questionSubject } = await import("../src/subjects.ts");
+  const subject = questionSubject("task");
+  const wrong = { ...respond([]), questions: [q("Q1"), dependent("Q2", "Q9", "A")] };
+  const responded = subject.respond.validate!(wrong);
+  assert.ok(responded._tag === "Failure");
+  assert.equal(responded.failure.repair, prompts.skipConditionRepairPrompt([{ kind: "unknownQuestion", id: "Q2", names: "Q9" }]));
+  const applied = subject.applyDecisions.validate!({ questions: wrong.questions });
+  assert.ok(applied._tag === "Failure");
+  assert.equal(applied.failure.error._tag, "SkipConditionInvalid");
+});
+
+test("a dependent question listed before its premise is recorded after it, and conversation.md names its condition", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", "1", ""],
+    steps: [
+      { output: { questions: [dependent("Q2", "Q1", "B"), q("Q1")] } },
+      { output: { ...turn("Q1?", []), current_question: { ...none, id: "Q1" } } },
+      { output: { ...turn("Q2?", ["Q1"]), current_question: { ...none, id: "Q2" } } },
+      { output: turn("Done.", ["Q1", "Q2"], "# Requirements\n\nQ1: A") },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: withQuestions,
+  });
+  await runTask(layer);
+  assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => x.id), ["Q1", "Q2"]);
+  assert.ok(read(probe.dir, "conversation.md").includes(prompts.skipIfLine({ question: "Q1", answer: "B" })));
+});
+
+test("the description of skip_if in the question list's prompt states each requirement the program checks", () => {
+  const listPrompt = prompts.questionListPrompt("task");
+  assert.ok(listPrompt.includes(prompts.SKIP_IF_FIELD));
+  const problems: readonly import("../src/premises.ts").SkipProblem[] = [
+    { kind: "unknownQuestion", id: "Q2", names: "Q9" },
+    { kind: "selfReference", id: "Q2" },
+    { kind: "unknownAnswer", id: "Q2", question: "Q1", answer: "Maybe" },
+    { kind: "cycle", ids: ["Q1", "Q2"] },
+  ];
+  for (const p of problems) {
+    const clause = prompts.SKIP_IF_CLAUSES[p.kind];
+    assert.ok(clause.length > 0, p.kind);
+    assert.ok(prompts.SKIP_IF_FIELD.includes(clause), p.kind);
+    assert.ok(prompts.skipConditionProblemLine(p).includes(clause), p.kind);
+  }
+  assert.ok(prompts.skipConditionRepairPrompt(problems).includes(prompts.SKIP_IF_FIELD));
+});

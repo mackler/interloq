@@ -384,12 +384,42 @@ Return the complete output again, corrected. Do not modify any file.`;
 
 // ---- the skip conditions of the question list (issue #99) -----------------------------------------------------------
 
-/** One problem of a list's skip conditions, as the repair prompt and the halt state it. */
-export const skipConditionProblemLine = (_problem: SkipProblem): string => "";
+/**
+ * The requirements on an entry's skip_if, each stated once: the field's description in the question list's prompt is made
+ * of them, and the repair prompt names the one a problem breaks (the seam of issue #99).
+ */
+export const SKIP_IF_CLAUSES: Readonly<Record<SkipProblem["kind"], string>> = {
+  unknownQuestion: "it names another question of this list by its id",
+  selfReference: "never the entry's own id",
+  unknownAnswer: "and the label of one of that question's proposed answers, word for word",
+  cycle: "no question may depend on itself, directly or through other questions",
+};
+/** The field skip_if of a question-list entry, as the writer of the list reads it. */
+export const SKIP_IF_FIELD = `skip_if: null when the question is to be asked whatever the other answers are. Otherwise the answer of another question that makes this question unnecessary: ${SKIP_IF_CLAUSES.unknownQuestion} (question), ${SKIP_IF_CLAUSES.selfReference}, ${SKIP_IF_CLAUSES.unknownAnswer} (answer); ${SKIP_IF_CLAUSES.cycle}. When the user chooses that answer, the program does not put this question to the user, and asks it only after the question it names. Use it where a question's options all rest on a premise that another question asks.`;
+const skipProblemText = (problem: SkipProblem): string => {
+  switch (problem.kind) {
+    case "unknownQuestion":
+      return `${problem.id}: its skip_if names ${problem.names}, which is not a question of the list`;
+    case "selfReference":
+      return `${problem.id}: its skip_if names the question itself`;
+    case "unknownAnswer":
+      return `${problem.id}: its skip_if names the answer ${JSON.stringify(problem.answer)}, which is not the label of a proposed answer of ${problem.question}`;
+    case "cycle":
+      return `${problem.ids.join(", ")}: their skip_if conditions form a cycle`;
+  }
+};
+/** One problem of a list's skip conditions, as the repair prompt and the halt state it, with the requirement it breaks. */
+export const skipConditionProblemLine = (problem: SkipProblem): string => `- ${skipProblemText(problem)}; ${SKIP_IF_CLAUSES[problem.kind]}.`;
 /** The halt after the repair turn could not correct the skip conditions. */
-export const skipConditionInvalidText = (_problems: readonly SkipProblem[]): string => "";
+export const skipConditionInvalidText = (problems: readonly SkipProblem[]): string => `the skip conditions of the question list are invalid: ${problems.map(skipProblemText).join("; ")}`;
 /** The validation repair turn of a question list whose skip conditions are wrong. */
-export const skipConditionRepairPrompt = (_problems: readonly SkipProblem[]): string => "";
+export const skipConditionRepairPrompt = (problems: readonly SkipProblem[]): string => `Your structured output matched the schema, but the program cannot accept the skip_if of its questions:
+${problems.map(skipConditionProblemLine).join("\n")}
+The field, as it is to be filled:
+${SKIP_IF_FIELD}
+Return the complete output again, corrected. Do not modify any file.`;
+/** The line under a question-list entry with a skip condition, in conversation.md. */
+export const skipIfLine = (condition: Readonly<{ question: string; answer: string }>): string => `Not asked if ${condition.question} is answered ${JSON.stringify(condition.answer)}.`;
 /** The program's note that questions were skipped: to Claude Code after the user's message, and in conversation.md. */
 export const skippedNote = (_skipped: readonly Skipped[]): string => "";
 
@@ -432,6 +462,7 @@ export function questionListPrompt(task: string): string {
 Return in 'questions' the questions whose answers you need from the user before you can write an implementation plan for the task.
 Include a question only if its answer affects the plan and neither the task text nor the codebase nor the project documentation determines it.
 Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. question: one decision per question, as pieces. reason: why the plan depends on the answer, and why the codebase does not determine it, with the files you inspected, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
+${SKIP_IF_FIELD}
 How the text of an entry is written:
 ${formatClauses(["blocks", "pieces", "code", "inline"])}
 - Every piece is plain here: ref "" everywhere. The explanations are written after the list is agreed, by dividing its text into pieces that refer to them, its wording unchanged.

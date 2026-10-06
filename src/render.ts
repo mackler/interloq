@@ -15,7 +15,7 @@ import type { InterviewStage } from "./uiEvents.ts";
 
 /** A question list as the agents exchange it or as the program records it (a recorded default may be null). */
 export type RenderableQuestions = Readonly<{
-  questions: readonly Readonly<{ id: string; question: readonly Piece[]; reason: readonly Block[]; proposed_answers: readonly PieceOption[]; default_answer: string | null }>[];
+  questions: readonly Readonly<{ id: string; question: readonly Piece[]; reason: readonly Block[]; proposed_answers: readonly PieceOption[]; default_answer: string | null; skip_if: Readonly<{ question: string; answer: string }> | null }>[];
 }>;
 
 /** "Question review", "Requirements review", "Planning phase k": the heading of a subject's rounds. */
@@ -50,7 +50,8 @@ export function renderQuestions(list: RenderableQuestions): string {
     list.questions
       .map((q) => {
         const answers = q.proposed_answers.map((a) => `  - ${piecesMarkdown(a.label)}: ${piecesMarkdown(a.description)}${piecesText(a.label) === q.default_answer ? " (default)" : ""}`).join("\n");
-        return `- **[${q.id}]** ${piecesMarkdown(q.question)}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}`;
+        const condition = q.skip_if === null ? "" : `\n  ${words.skipIfLine(q.skip_if)}`;
+        return `- **[${q.id}]** ${piecesMarkdown(q.question)}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}${condition}`;
       })
       .join("\n") + "\n"
   );

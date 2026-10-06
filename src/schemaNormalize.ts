@@ -4,6 +4,7 @@
 import { Result } from "effect";
 import { QuestionListInvalid } from "./errors.ts";
 import { piecesText } from "./pieces.ts";
+import { orderBySkipCondition } from "./premises.ts";
 import type { ExecReport, InterviewTurn, QuestionList, QuestionsFile } from "./schema.ts";
 
 /** The questions asked and answered so far, as Claude Code reports them in each turn (issue #21), and the question asked now (S3: with its context, terms and options). */
@@ -42,9 +43,13 @@ export const normalizeQuestionList = (list: QuestionList): Result.Result<Normali
   const ids = list.questions.map((q) => q.id);
   const duplicateIds = [...new Set(ids.filter((id, i) => id !== "" && ids.indexOf(id) !== i))];
   const emptyIds = ids.filter((id) => id === "").length;
-  if (duplicateIds.length > 0 || emptyIds > 0) return Result.fail(new QuestionListInvalid({ duplicateIds, emptyIds }));
+  if (duplicateIds.length > 0 || emptyIds > 0) return Result.fail(new QuestionListInvalid({ duplicateIds, emptyIds, cycle: [] }));
+  // Issue #99: a question follows the question its skip condition names. The validation has rejected a cycle with its
+  // repair turn, so one here is structural.
+  const ordered = orderBySkipCondition(list.questions);
+  if (Result.isFailure(ordered)) return Result.fail(new QuestionListInvalid({ duplicateIds: [], emptyIds: 0, cycle: ordered.failure.kind === "cycle" ? ordered.failure.ids : [ordered.failure.id] }));
   const notes: string[] = [];
-  const questions = list.questions.map((q) => {
+  const questions = ordered.success.map((q) => {
     if (q.proposed_answers.some((a) => piecesText(a.label) === q.default_answer)) return { ...q, id: q.id, default_answer: q.default_answer as string | null };
     notes.push(`The default answer of question ${q.id}, ${JSON.stringify(q.default_answer)}, names none of its proposed answers; the question has no default.`);
     return { ...q, id: q.id, default_answer: null };

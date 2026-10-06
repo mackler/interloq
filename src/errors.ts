@@ -23,7 +23,7 @@ export class RoundInvalid extends Data.TaggedError("RoundInvalid")<{
   readonly collidingIds: readonly string[];
 }> {}
 /** A question list whose structure is invalid (duplicate or empty ids): a halt without a repair turn, by analogy with Q3 (step 4.6). */
-export class QuestionListInvalid extends Data.TaggedError("QuestionListInvalid")<{ readonly duplicateIds: readonly string[]; readonly emptyIds: number }> {}
+export class QuestionListInvalid extends Data.TaggedError("QuestionListInvalid")<{ readonly duplicateIds: readonly string[]; readonly emptyIds: number; readonly cycle: readonly string[] }> {}
 export class RoundLimitStop extends Data.TaggedError("RoundLimitStop")<{ readonly heading: string }> {}
 export class ClaudeCallFailed extends Data.TaggedError("ClaudeCallFailed")<{ readonly message: string }> {}
 export class CodexCallFailed extends Data.TaggedError("CodexCallFailed")<{ readonly message: string }> {}
@@ -138,6 +138,7 @@ export const describe = (error: RunErrorFields): string => {
       const parts: string[] = [];
       if (error.duplicateIds.length > 0) parts.push(`more than one question with the id: ${error.duplicateIds.join(", ")}`);
       if (error.emptyIds > 0) parts.push(`${error.emptyIds} question(s) without an id`);
+      if (error.cycle.length > 0) parts.push(`the skip conditions of ${error.cycle.join(", ")} form a cycle`);
       return `the question list is invalid: ${parts.join("; ")}`;
     }
     case "RoundLimitStop":
@@ -213,7 +214,7 @@ const RunErrorData = Schema.Union([
     emptyIds: Strings,
     collidingIds: Strings,
   }),
-  Schema.Struct({ _tag: Schema.Literal("QuestionListInvalid"), duplicateIds: Strings, emptyIds: Schema.Number }),
+  Schema.Struct({ _tag: Schema.Literal("QuestionListInvalid"), duplicateIds: Strings, emptyIds: Schema.Number, cycle: Strings }),
   Schema.Struct({ _tag: Schema.Literal("RoundLimitStop"), heading: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("ClaudeCallFailed"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("CodexCallFailed"), message: Schema.String }),

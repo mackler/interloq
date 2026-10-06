@@ -9,7 +9,8 @@ import { subjectHeading } from "./render.ts";
 import { bothValidations, questionsValidation, type Subject, userQuestionsValidation, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import type { DecisionAnalysis, DecisionApplied, DecisionResponse, Plan, PlannerResponse, PlanResponse, PlanWrite, PlanWriteResult, QuestionList, QuestionListResponse, QuestionsFile, RecordedPlan, TermsEntry, TermsResponse, TermsWrite } from "./schema.ts";
-import { QuestionInvalid } from "./errors.ts";
+import { QuestionInvalid, SkipConditionInvalid } from "./errors.ts";
+import { skipConditionProblems } from "./premises.ts";
 import type { QuestionProblem } from "./prompts.ts";
 import { sameBlocks, samePieces } from "./pieces.ts";
 import { questionProblems } from "./question.ts";
@@ -32,9 +33,20 @@ export const writeQuestions = (task: string, list: QuestionList): Effect.Effect<
  * the user's decisions alike. An entry is named by its id, or by its position when it has none.
  */
 export const questionListValidation = <T extends Readonly<{ questions: readonly QuestionList["questions"][number][] }>>(): Validation<T> =>
-  questionsValidation((output: T) =>
-    output.questions.map((e, i) => ({ where: e.id.trim() === "" ? `question ${i + 1}` : e.id, question: { context: e.context, question: e.question, explanations: [], options: e.proposed_answers, details: e.reason } })),
+  bothValidations(
+    questionsValidation((output: T) =>
+      output.questions.map((e, i) => ({ where: e.id.trim() === "" ? `question ${i + 1}` : e.id, question: { context: e.context, question: e.question, explanations: [], options: e.proposed_answers, details: e.reason } })),
+    ),
+    skipConditionValidation<T>(),
   );
+
+/** The skip conditions of a question list (issue #99): each names another entry and one of its answers, and none loops. */
+export const skipConditionValidation =
+  <T extends Readonly<{ questions: readonly QuestionList["questions"][number][] }>>(): Validation<T> =>
+  (output) => {
+    const problems = skipConditionProblems(output.questions);
+    return problems.length === 0 ? Result.succeed({ value: output, notes: [] }) : Result.fail({ error: new SkipConditionInvalid({ problems }), repair: prompts.skipConditionRepairPrompt(problems) });
+  };
 
 /** The question list. Claude Code returns the amended list, and the program writes it to questions.json. */
 export function questionSubject(task: string): Subject<QuestionListResponse, QuestionList> {
