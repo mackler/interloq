@@ -403,20 +403,46 @@ test.describe("the tests of the decide server, in order", () => {
     await expect(analysis).toBeHidden();
   });
 
-  // Issue #79: the context takes the room that is free: at 1280 × 800 a context of about ten lines is shown whole beside
-  // the columns' strip and a short recommendation.
-  test("(L24) a context of about ten lines at 1280 × 800 is shown whole, bounded by the room the rest leaves", async ({ page }) => {
+  // Issue #79, decision Q1 kept by the developer ("Keep the rule as decided"): at 1280 × 800 the columns keep their strip,
+  // and the context takes all the room the rest leaves, scrolling for the remainder; nothing is left empty while it is cut.
+  test("(L24) a context of about ten lines at 1280 × 800 takes the room the rest leaves, and scrolls for the rest", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     const analysis = await openAnalysis(page);
     const context = analysis.locator(".question-context");
     const m = await context.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) || 1.2 * parseFloat(getComputedStyle(el).fontSize) }));
     expect(m.scroll, "the context is about ten lines").toBeGreaterThan(6 * m.line);
+    expect(m.scroll, "the context does not scroll").toBeGreaterThan(m.client + 1);
+    const fill = await analysis.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      const kids = [...el.children] as HTMLElement[];
+      const span = kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
+      const sideways = el.querySelector<HTMLElement>(".sideways")!.getBoundingClientRect().height;
+      const recommendation = el.querySelector<HTMLElement>(".recommendation")!;
+      return {
+        span,
+        inner: el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+        strip: parseFloat(cs.getPropertyValue("--strip")),
+        sideways,
+        recommendationWhole: recommendation.scrollHeight <= recommendation.clientHeight + 1,
+        heights: [el.querySelector<HTMLElement>(".question-context")!.getBoundingClientRect().height, recommendation.getBoundingClientRect().height],
+        recommendationBottom: recommendation.getBoundingClientRect().bottom,
+        bottom: el.getBoundingClientRect().bottom,
+      };
+    });
+    expect(fill.sideways, "the columns' strip").toBeGreaterThanOrEqual(fill.strip - 1);
+    expect(fill.recommendationBottom, "the recommendation leaves the analysis").toBeLessThanOrEqual(fill.bottom + 1);
+    // Decision Q1: where both texts are longer than the room the strip leaves, they share it equally.
+    if (!fill.recommendationWhole) expect(Math.abs(fill.heights[0] - fill.heights[1]), "the context and the recommendation do not share the room equally").toBeLessThanOrEqual(1);
+    expect(Math.abs(fill.span - fill.inner), "room is left empty while the context is cut").toBeLessThanOrEqual(1);
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
+    await expect(analysis).toBeHidden();
+  });
+
+  test("(L24a) the same context at 1280 × 1100 is shown whole", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 1100 });
+    const analysis = await openAnalysis(page);
+    const m = await analysis.locator(".question-context").evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }));
     expect(m.client, "the context is cut").toBeGreaterThanOrEqual(m.scroll - 1);
-    const strip = await analysis.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--strip")));
-    const [c, q, w, r, a] = await Promise.all([context, analysis.locator(".question-text"), analysis.locator(".sideways"), analysis.locator(".recommendation"), analysis].map(box));
-    expect(w.height, "the columns' strip").toBeGreaterThanOrEqual(strip - 1);
-    expect(q.y).toBeGreaterThanOrEqual(c.y + c.height - 1);
-    expect(r.y + r.height, "the recommendation leaves the analysis").toBeLessThanOrEqual(a.y + a.height + 1);
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
     await expect(analysis).toBeHidden();
   });
