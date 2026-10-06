@@ -55,13 +55,25 @@ export type AllotInput = Readonly<{ available: number; context: number; recommen
 export type Allotment = Readonly<{ context: number; recommendation: number; columns: number }>;
 
 /** The heights of the three regions (decision Q1). */
-export const allot = (input: AllotInput): Allotment => ({ context: 0, recommendation: 0, columns: 0 });
+export const allot = ({ available, context, recommendation, strip, minText }: AllotInput): Allotment => {
+  if (context + recommendation + strip <= available) return { context, recommendation, columns: available - context - recommendation };
+  const [minContext, minRecommendation] = [Math.min(minText, context), Math.min(minText, recommendation)];
+  // The room the strip leaves, never less than the two minimums (G-R1-2: the page grows instead).
+  const room = Math.max(available - strip, minContext + minRecommendation);
+  if (context + recommendation <= room) return { context, recommendation, columns: Math.max(strip, available - context - recommendation) };
+  const half = room / 2;
+  const split = context <= half ? context : recommendation <= half ? room - recommendation : half;
+  const shown = Math.min(context, Math.max(minContext, Math.min(split, room - minRecommendation)));
+  const rest = Math.min(recommendation, room - shown);
+  return { context: shown, recommendation: rest, columns: Math.max(strip, available - shown - rest) };
+};
 /** The columns' strip: about ten lines, or the closed columns' height if that is less (decision Q1). */
-export const stripOf = (closedColumnsHeight: number, tenLines: number): number => 0;
+export const stripOf = (closedColumnsHeight: number, tenLines: number): number => Math.min(tenLines, closedColumnsHeight);
 /**
  * The height of the tallest column with every entry closed. `content` is a column's content height alone (an
  * unconstrained inner wrapper's, never the scroller's `scrollHeight`, which is at least the scroller's own height);
  * `openBodies` are the heights of that column's own open entry bodies. Each column's open bodies are taken from that
  * column, then the maximum is taken, so an entry open in another tab changes nothing.
  */
-export const closedHeightOf = (columns: readonly Readonly<{ content: number; openBodies: readonly number[] }>[]): number => 0;
+export const closedHeightOf = (columns: readonly Readonly<{ content: number; openBodies: readonly number[] }>[]): number =>
+  columns.reduce((tallest, c) => Math.max(tallest, c.content - c.openBodies.reduce((n, h) => n + h, 0)), 0);
