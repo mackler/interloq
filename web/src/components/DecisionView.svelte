@@ -83,13 +83,19 @@
     const span = kids.length === 0 ? 0 : kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
     const free = section.clientHeight - paddingOf(section) - span;
     const regions = [contextBox, row, recommendationBox].reduce((n, el) => n + (el?.getBoundingClientRect().height ?? 0), 0);
-    const line = lineOf(contextBox);
     const contextPadding = paddingOf(contextBox);
+    // W4-R1-1 of work review 4: each text's minimum is two of its own lines plus its own region's padding and borders;
+    // below 390 px there is no recommendation, and its minimum is 0. Rounded up to whole pixels, so that a minimum is
+    // never less than two lines and the allotment does not move with a sub-pixel change of the room.
+    const minContext = Math.ceil(2 * lineOf(contextBox) + contextPadding);
+    const minRecommendation = narrow || recommendationBox === null ? 0 : Math.ceil(2 * lineOf(recommendationBox) + paddingOf(recommendationBox));
     const recommendation = recommendationBox === null || recommendationInner === null ? 0 : recommendationInner.offsetHeight + paddingOf(recommendationBox);
-    const next = allot({ available: regions + free, context: contextInner.offsetHeight + contextPadding, recommendation: narrow ? 0 : recommendation, strip: narrow ? 0 : strip, minText: 2 * line + contextPadding });
+    // Whole pixels, as the strip and the minimums are, so that a sub-pixel change of the room after a reload or a resize
+    // does not move the regions (W4-R1-1).
+    const next = allot({ available: Math.round(regions + free), context: contextInner.offsetHeight + contextPadding, recommendation: narrow ? 0 : recommendation, strip: narrow ? 0 : strip, minContext, minRecommendation });
     if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5) heights = next;
     const fixed = span - regions;
-    const minimum = fixed + paddingOf(section) + Math.min(next.context, 2 * line + contextPadding) + (recommendation === 0 ? 0 : Math.min(recommendation, 2 * line + contextPadding)) + (narrow ? 0 : strip);
+    const minimum = fixed + paddingOf(section) + Math.min(next.context, minContext) + (recommendation === 0 ? 0 : Math.min(minRecommendation, recommendation)) + (narrow ? 0 : strip);
     onMinimum?.(Math.ceil(minimum));
   };
   $effect(() => {

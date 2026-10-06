@@ -45,19 +45,20 @@ export const analysisShown = (hidden: AnalysisKey | null, key: AnalysisKey): boo
 
 // Issues #79 and #81, decisions Q1 and G-R1-2 of their task: the heights of a decision's analysis. The context paragraph
 // and the recommendation take their whole height when the columns keep their strip; otherwise they share the room the
-// strip leaves, equally, an unused share going to the other, each keeping at least `minText` (or its content, if less).
+// strip leaves, equally, an unused share going to the other, each keeping at least its own minimum, `minContext` or
+// `minRecommendation` (or its content, if less): two lines plus that region's own padding and borders (W4-R1-1).
 // The columns never get less than the strip; where even the minimums do not fit, the total exceeds `available`, and the
 // compact layout lets the page grow to it (G-R1-2). All heights in pixels.
 
-/** What the allotment is computed from: the room, the two texts' content heights, the columns' strip and the texts' minimum. */
-export type AllotInput = Readonly<{ available: number; context: number; recommendation: number; strip: number; minText: number }>;
+/** What the allotment is computed from: the room, the two texts' content heights, the columns' strip and each text's minimum. */
+export type AllotInput = Readonly<{ available: number; context: number; recommendation: number; strip: number; minContext: number; minRecommendation: number }>;
 /** The heights given to the context region, the recommendation's region and the columns' region. */
 export type Allotment = Readonly<{ context: number; recommendation: number; columns: number }>;
 
 /** The heights of the three regions (decision Q1). */
-export const allot = ({ available, context, recommendation, strip, minText }: AllotInput): Allotment => {
+export const allot = ({ available, context, recommendation, strip, ...minimums }: AllotInput): Allotment => {
   if (context + recommendation + strip <= available) return { context, recommendation, columns: available - context - recommendation };
-  const [minContext, minRecommendation] = [Math.min(minText, context), Math.min(minText, recommendation)];
+  const [minContext, minRecommendation] = [Math.min(minimums.minContext, context), Math.min(minimums.minRecommendation, recommendation)];
   // The room the strip leaves, never less than the two minimums (G-R1-2: the page grows instead).
   const room = Math.max(available - strip, minContext + minRecommendation);
   if (context + recommendation <= room) return { context, recommendation, columns: Math.max(strip, available - context - recommendation) };

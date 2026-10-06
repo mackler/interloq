@@ -433,6 +433,10 @@ test.describe("the tests of the decide server, in order", () => {
         strip: parseFloat(cs.getPropertyValue("--strip")),
         sideways,
         recommendationWhole: recommendation.scrollHeight <= recommendation.clientHeight + 1,
+        minimums: [el.querySelector<HTMLElement>(".question-context")!, recommendation].map((r) => {
+          const rs = getComputedStyle(r);
+          return 2 * (parseFloat(rs.lineHeight) || 1.2 * parseFloat(rs.fontSize)) + parseFloat(rs.paddingTop) + parseFloat(rs.paddingBottom) + parseFloat(rs.borderTopWidth) + parseFloat(rs.borderBottomWidth);
+        }),
         heights: [el.querySelector<HTMLElement>(".question-context")!.getBoundingClientRect().height, recommendation.getBoundingClientRect().height],
         recommendationBottom: recommendation.getBoundingClientRect().bottom,
         bottom: el.getBoundingClientRect().bottom,
@@ -440,8 +444,11 @@ test.describe("the tests of the decide server, in order", () => {
     });
     expect(fill.sideways, "the columns' strip").toBeGreaterThanOrEqual(fill.strip - 1);
     expect(fill.recommendationBottom, "the recommendation leaves the analysis").toBeLessThanOrEqual(fill.bottom + 1);
-    // Decision Q1: where both texts are longer than the room the strip leaves, they share it equally.
-    if (!fill.recommendationWhole) expect(Math.abs(fill.heights[0] - fill.heights[1]), "the context and the recommendation do not share the room equally").toBeLessThanOrEqual(1);
+    // Decision Q1: where both texts are longer than the room the strip leaves, they share it equally, unless one text's
+    // own minimum (two lines plus its region's padding, W4-R1-1) is more than half of that room (P1-R1-1).
+    const halfRoom = (fill.heights[0] + fill.heights[1]) / 2;
+    if (!fill.recommendationWhole && Math.max(...fill.minimums) <= halfRoom) expect(Math.abs(fill.heights[0] - fill.heights[1]), "the context and the recommendation do not share the room equally").toBeLessThanOrEqual(1);
+    if (!fill.recommendationWhole && Math.max(...fill.minimums) > halfRoom) expect(Math.abs(fill.heights[1] - Math.max(...fill.minimums)), "the recommendation is not at its own minimum").toBeLessThanOrEqual(1);
     expect(Math.abs(fill.span - fill.inner), "room is left empty while the context is cut").toBeLessThanOrEqual(1);
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
     await expect(analysis).toBeHidden();
@@ -537,6 +544,22 @@ test.describe("the tests of the decideLong server, in order", () => {
     const [end, region] = [await box(last), await box(parts.recommendation)];
     expect(end.y).toBeGreaterThanOrEqual(region.y - 1);
     expect(end.y + end.height).toBeLessThanOrEqual(region.y + region.height + 1);
+    await answerDismisses(page, parts);
+  });
+
+  // W4-R1-1 of work review 4: in a short wide window both long texts are cut to their minimums, and each still shows two
+  // lines inside its own region's padding, the recommendation's padding being larger than the context's.
+  test("(L27a) at 1280 × 400 the context and the recommendation each show at least two lines inside their padding", async ({ page }) => {
+    const parts = await openLongAnalysis(page, 1280, 400);
+    for (const [name, region] of [["the context", parts.analysis.locator(".question-context")], ["the recommendation", parts.recommendation]] as const) {
+      const m = await region.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        const line = parseFloat(cs.lineHeight) || 1.2 * parseFloat(cs.fontSize);
+        return { inner: el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom), line, cut: el.scrollHeight > el.clientHeight + 1 };
+      });
+      expect(m.cut, `${name} is not cut, so its minimum is not tested`).toBe(true);
+      expect(m.inner, `${name} shows less than two lines`).toBeGreaterThanOrEqual(2 * m.line - 1);
+    }
     await answerDismisses(page, parts);
   });
 

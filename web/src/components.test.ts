@@ -970,8 +970,37 @@ describe("DecisionView", () => {
     define(one(root, ".context-inner"), "offsetHeight", 1000);
     window.dispatchEvent(new Event("resize"));
     flushSync();
-    const expected = allot({ available: 300, context: 1000, recommendation: 0, strip: 0, minText: 0 }).context;
+    const expected = allot({ available: 300, context: 1000, recommendation: 0, strip: 0, minContext: 0, minRecommendation: 0 }).context;
     expect(one(root, ".question-context").style.height).toBe(`${expected}px`);
+  });
+
+  // W4-R1-1 of work review 4: each text's two-line minimum counts its own region's padding. jsdom applies no component
+  // styles, so the computed style is stubbed: lines of 15 px, the context's padding 8 + 8 px, the recommendation's 12 + 12.
+  test("cut to their minimums, the recommendation keeps two lines plus its own padding, and the minimum total includes it", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const minimums: number[] = [];
+    const root = show(DecisionView, { event, narrow: false, open: () => false, onToggle: () => undefined, onShowConversation: () => undefined, onMinimum: (px: number) => void minimums.push(px) });
+    const [contextBox, recommendationBox] = [one(root, ".question-context"), one(root, ".recommendation")];
+    const padding = new Map<Element, number>([[contextBox, 8], [recommendationBox, 12]]);
+    const original = window.getComputedStyle.bind(window);
+    const spy = vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element) => {
+      const p = `${padding.get(el) ?? 0}px`;
+      return { ...original(el), lineHeight: "15px", fontSize: "12.5px", paddingTop: p, paddingBottom: p, borderTopWidth: "0px", borderBottomWidth: "0px", marginTop: "0px", marginBottom: "0px" } as CSSStyleDeclaration;
+    });
+    try {
+      const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
+      define(one(root, "section.decision"), "clientHeight", 10);
+      define(one(root, ".context-inner"), "offsetHeight", 1000);
+      define(one(root, ".recommendation-inner"), "offsetHeight", 1000);
+      window.dispatchEvent(new Event("resize"));
+      flushSync();
+      const [minContext, minRecommendation] = [2 * 15 + 16, 2 * 15 + 24];
+      expect(parseFloat(recommendationBox.style.height), "the recommendation shows less than two lines").toBeGreaterThanOrEqual(minRecommendation);
+      expect(parseFloat(contextBox.style.height)).toBeGreaterThanOrEqual(minContext);
+      expect(minimums.at(-1), "the minimum total leaves out the recommendation's padding").toBe(minContext + minRecommendation);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("below 390 px the analysis is not laid out; a message asks for a wider window", async () => {

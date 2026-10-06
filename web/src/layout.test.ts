@@ -66,8 +66,11 @@ test("analysisShown: hidden only for the decision it was hidden for, not for the
 describe("the allotment of a decision's heights", () => {
   const RUNS = { numRuns: 300, seed: 20261006 };
   const px = fc.integer({ min: 0, max: 2000 });
-  const input = fc.record({ available: px, context: px, recommendation: px, strip: fc.integer({ min: 0, max: 400 }), minText: fc.integer({ min: 0, max: 60 }) });
-  const mins = (i: AllotInput) => ({ c: Math.min(i.minText, i.context), r: Math.min(i.minText, i.recommendation) });
+  const input = fc.record({ available: px, context: px, recommendation: px, strip: fc.integer({ min: 0, max: 400 }), minContext: fc.integer({ min: 0, max: 60 }), minRecommendation: fc.integer({ min: 0, max: 60 }) });
+  // W4-R1-1 of work review 4: each text's minimum clamped by its own content.
+  const mins = (i: AllotInput) => ({ c: Math.min(i.minContext, i.context), r: Math.min(i.minRecommendation, i.recommendation) });
+  /** The room the texts share when they do not fit beside the strip, never less than their clamped minimums. */
+  const textRoom = (i: AllotInput) => Math.max(i.available - i.strip, mins(i).c + mins(i).r);
   test("the columns never get less than the strip", () => {
     fc.assert(fc.property(input, (i) => void expect(allot(i).columns).toBeGreaterThanOrEqual(i.strip)), RUNS);
   });
@@ -97,7 +100,9 @@ describe("the allotment of a decision's heights", () => {
     fc.assert(
       fc.property(input, (i) => {
         const a = allot(i);
-        fc.pre(a.context < i.context && a.recommendation < i.recommendation);
+        const m = mins(i);
+        // P1-R1-1: a minimum above half the room binds, and the split is then unequal on a correct allotment.
+        fc.pre(a.context < i.context && a.recommendation < i.recommendation && Math.max(m.c, m.r) <= textRoom(i) / 2);
         expect(Math.abs(a.context - a.recommendation)).toBeLessThanOrEqual(1);
       }),
       RUNS,
@@ -112,6 +117,30 @@ describe("the allotment of a decision's heights", () => {
       }),
       RUNS,
     );
+  });
+  // W4-R1-1: the recommendation's minimum is its own, never the context's.
+  const unequal = input.filter((i) => i.minContext !== i.minRecommendation);
+  test("with minimums that differ, the recommendation is never held to the context's minimum", () => {
+    fc.assert(
+      fc.property(unequal, (i) => {
+        const a = allot(i);
+        const m = mins(i);
+        expect(a.recommendation).toBeGreaterThanOrEqual(m.r - 1e-9);
+        expect(a.context).toBeGreaterThanOrEqual(m.c - 1e-9);
+        if (a.context < i.context && a.recommendation < i.recommendation && Math.max(m.c, m.r) > textRoom(i) / 2) {
+          const [bound, other] = m.r > m.c ? [a.recommendation, a.context] : [a.context, a.recommendation];
+          const otherContent = m.r > m.c ? i.context : i.recommendation;
+          expect(bound).toBeCloseTo(Math.max(m.c, m.r), 6);
+          expect(other).toBeCloseTo(Math.min(otherContent, textRoom(i) - Math.max(m.c, m.r)), 6);
+        }
+      }),
+      RUNS,
+    );
+  });
+  test("a recommendation cut to its minimum gets its own minimum, not the context's", () => {
+    // The sizes of W4-R1-1 at 1280 × 400: two lines of 15 px, the context's padding 16 px, the recommendation's 24 px.
+    const a = allot({ available: 100, context: 500, recommendation: 500, strip: 80, minContext: 46, minRecommendation: 54 });
+    expect(a).toEqual({ context: 46, recommendation: 54, columns: 80 });
   });
   test("more room never shrinks any region", () => {
     fc.assert(
