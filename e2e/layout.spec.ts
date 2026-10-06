@@ -149,16 +149,41 @@ const openLongAnalysis = async (page: Page, width: number, height: number) => {
 };
 type Parts = Awaited<ReturnType<typeof openLongAnalysis>>;
 /**
- * Decision G-R1-2: the least height of the analysis in the compact layout, its heading, the question, two lines each of
- * the context and the recommendation, and the columns' strip (gaps and paddings left out, so a lower bound).
+ * The task of L21, by the developer's decision at the stop of execution phase 1: in a window of any width too short for
+ * the analysis's floor, the analysis gives up height so that the question and its first answer are in view together,
+ * with nothing scrolled into view. The spare room asserted is 16 px: the 24 px ROOM_MARGIN of web/src/layout.ts less the
+ * 8 px by which CI's font and this container's differ (issue #73). The run may hold more below the first answer (the
+ * rest of the prompt, the activity line), which the room does not budget, so its scroll position is checked, not its
+ * scroll height.
  */
-const minimumTotal = (analysis: Locator) =>
-  analysis.evaluate((el) => {
-    const h = (s: string) => el.querySelector(s)?.getBoundingClientRect().height ?? 0;
-    const line = (parseFloat(getComputedStyle(el.querySelector(".question-context")!).lineHeight) || 1.2 * parseFloat(getComputedStyle(el.querySelector(".question-context")!).fontSize));
-    const strip = parseFloat(getComputedStyle(el).getPropertyValue("--strip"));
-    return h(".head") + h(".question-text") + 4 * line + strip;
+const questionWithFirstAnswer = async (page: Page, analysis: Locator, height: number) => {
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  expect(await page.locator("main.run").evaluate((el) => el.scrollTop), "the run scrolled").toBe(0);
+  const question = await box(analysis.locator(".question-text"));
+  expect(question.y, "the question's top is above the window").toBeGreaterThanOrEqual(0);
+  const first = await box(page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first());
+  expect(first.y + first.height, "the first answer has less than 16 px below it").toBeLessThanOrEqual(height - 16);
+};
+/**
+ * The order in which the analysis yields where the window is shorter than its floor (the task of L21): the columns give
+ * up their height before the recommendation shows less than two of its lines, and the recommendation gives up its
+ * height before the context shows less than two of its lines. A text counts as shortened only when it is cut.
+ */
+const yieldOrder = async (analysis: Locator) => {
+  const m = await analysis.evaluate((el) => {
+    const text = (s: string) => {
+      const r = el.querySelector<HTMLElement>(s);
+      if (r === null) return null;
+      const cs = getComputedStyle(r);
+      const line = parseFloat(cs.lineHeight) || 1.2 * parseFloat(cs.fontSize);
+      const inner = r.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      return { short: r.scrollHeight > r.clientHeight + 1 && inner < 2 * line - 1, height: r.getBoundingClientRect().height };
+    };
+    return { context: text(".question-context"), recommendation: text(".recommendation"), columns: el.querySelector(".sideways")?.getBoundingClientRect().height ?? 0 };
   });
+  if (m.recommendation?.short === true) expect(m.columns, "the recommendation is shortened while the columns keep height").toBeLessThanOrEqual(1);
+  if (m.context?.short === true) expect(m.recommendation?.height ?? 0, "the context is shortened while the recommendation keeps height").toBeLessThanOrEqual(1);
+};
 /** Whether some column's own scroller holds more than it shows. */
 const someColumnOverflows = (parts: Parts) => parts.columns.evaluateAll((cs) => cs.some((c) => c.scrollHeight > c.clientHeight + 1));
 /** The decision area, the prompt and the activity line do not overlap, and the prompt shows all of its content. */
@@ -463,25 +488,19 @@ test.describe("the tests of the decide server, in order", () => {
     await expect(analysis).toBeHidden();
   });
 
-  // Work review 3 (W3-R1-1), decision G-R1-2 at every width: in a short wide window the analysis keeps its minimum
-  // total, nothing in it is clipped, and the run scrolls to the answer controls.
-  test("(L27) the analysis at 1280 × 400 keeps its minimum total, and the answers are reached by scrolling", async ({ page }) => {
+  // The task of L21, by the developer's decision at the stop of execution phase 1: in a short wide window the analysis
+  // gives up height (it once kept its minimum total, W3-R1-1 and decision G-R1-2), so that the question and the first
+  // answer are in view together; nothing in it is clipped outside its own box.
+  test("(L27) the analysis at 1280 × 400 yields: the question and the first answer in view, the question and the recommendation inside the analysis", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 400 });
     const analysis = await openAnalysis(page);
+    await questionWithFirstAnswer(page, analysis, 400);
     const area = await box(analysis);
-    for (const [name, part] of [["the question", analysis.locator(".question-text")], ["the columns", analysis.locator(".sideways")], ["the recommendation", analysis.locator(".recommendation")]] as const) {
+    for (const [name, part] of [["the question", analysis.locator(".question-text")], ["the recommendation", analysis.locator(".recommendation")]] as const) {
+      if (!(await part.isVisible())) continue;
       const b = await box(part);
       expect(b.y, `${name}'s top is above the analysis`).toBeGreaterThanOrEqual(area.y - 1);
       expect(b.y + b.height, `${name} is below the analysis's end`).toBeLessThanOrEqual(area.y + area.height + 1);
-    }
-    const strip = await analysis.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--strip")));
-    expect((await box(analysis.locator(".sideways"))).height, "the columns' strip").toBeGreaterThanOrEqual(strip - 1);
-    expect((await box(page.locator(".decision-area"))).height, "the decision area is below its minimum total").toBeGreaterThanOrEqual((await minimumTotal(analysis)) - 1);
-    for (const part of [page.locator("section.pane"), page.locator("[data-activity]")]) {
-      await part.scrollIntoViewIfNeeded();
-      const b = await box(part);
-      expect(b.y).toBeGreaterThanOrEqual(-1);
-      expect(b.y + b.height).toBeLessThanOrEqual(400 + 1);
     }
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
     await expect(analysis).toBeHidden();
@@ -549,17 +568,11 @@ test.describe("the tests of the decideLong server, in order", () => {
 
   // W4-R1-1 of work review 4: in a short wide window both long texts are cut to their minimums, and each still shows two
   // lines inside its own region's padding, the recommendation's padding being larger than the context's.
-  test("(L27a) at 1280 × 400 the context and the recommendation each show at least two lines inside their padding", async ({ page }) => {
+  // The task of L21: at 1280 × 400 the floor does not fit beside the first answer, and the analysis yields in order.
+  test("(L27a) at 1280 × 400 the analysis yields in order: the columns, then the recommendation, then the context", async ({ page }) => {
     const parts = await openLongAnalysis(page, 1280, 400);
-    for (const [name, region] of [["the context", parts.analysis.locator(".question-context")], ["the recommendation", parts.recommendation]] as const) {
-      const m = await region.evaluate((el) => {
-        const cs = getComputedStyle(el);
-        const line = parseFloat(cs.lineHeight) || 1.2 * parseFloat(cs.fontSize);
-        return { inner: el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom), line, cut: el.scrollHeight > el.clientHeight + 1 };
-      });
-      expect(m.cut, `${name} is not cut, so its minimum is not tested`).toBe(true);
-      expect(m.inner, `${name} shows less than two lines`).toBeGreaterThanOrEqual(2 * m.line - 1);
-    }
+    await questionWithFirstAnswer(page, parts.analysis, 400);
+    await yieldOrder(parts.analysis);
     await answerDismisses(page, parts);
   });
 
@@ -584,23 +597,26 @@ test.describe("the tests of the decideLong server, in order", () => {
     await answerDismisses(page, parts);
   });
 
-  // Decision G-R1-2: in a short window the analysis keeps its minimum total, and the page scrolls to the answer controls.
-  test("(L15) a long analysis at 640 × 400: the analysis keeps its minimum total, and the answer controls can be reached", async ({ page }) => {
+  // The task of L21, by the developer's decision at the stop of execution phase 1: in a short window the analysis gives
+  // up height so that the question and the first answer are in view together; the controls below the first answer are
+  // reached by scrolling. Its columns have no height left at this size, so no column is opened here.
+  test("(L15) a long analysis at 640 × 400: the analysis yields, the question and the first answer are in view, and the answer controls can be reached", async ({ page }) => {
     const parts = await openLongAnalysis(page, 640, 400);
-    expect((await box(parts.area)).height, "the decision area is below its minimum total").toBeGreaterThanOrEqual((await minimumTotal(parts.analysis)) - 1);
-    await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
-    expect(await someColumnOverflows(parts), "no column scrolls inside itself").toBe(true);
+    await questionWithFirstAnswer(page, parts.analysis, 400);
+    await yieldOrder(parts.analysis);
     await separateAndWhole(parts);
     await reachable(parts);
     await answerDismisses(page, parts);
   });
 
-  test("(L16) a long analysis at 390 × 600 with the progress opened: the analysis keeps its minimum total, and the answer controls can be reached", async ({ page }) => {
-    // At 844 px the scenario's short timeline leaves the controls and the floor room enough; at 600 px they do not.
+  test("(L16) a long analysis at 390 × 600 with the progress opened: the analysis yields, the question and the first answer are in view, and the answer controls can be reached", async ({ page }) => {
+    // The task of L21: at 600 px the floor does not fit beside the first answer even with the progress closed (a room of
+    // 326 px against a minimum total of about 330), so the analysis yields here too.
     const parts = await openLongAnalysis(page, 390, 600);
     await page.locator("details.progress > summary, details.progress summary").first().click();
     await expect(page.locator("details.progress")).toHaveAttribute("open", "");
-    expect((await box(parts.area)).height, "the decision area is below its minimum total").toBeGreaterThanOrEqual((await minimumTotal(parts.analysis)) - 1);
+    await questionWithFirstAnswer(page, parts.analysis, 600);
+    await yieldOrder(parts.analysis);
     await separateAndWhole(parts);
     await reachable(parts);
     await answerDismisses(page, parts);
@@ -868,6 +884,30 @@ test.describe("the tests of the permissionLong server, in order", () => {
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
+  test("(L21a) a permission request at 640 × 400 beside the analysis: the question and the first answer in view with room to spare, the analysis within its own box", async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 400 });
+    await startTask(page, "Prepare the build with room to spare", PERMISSION_URL);
+    await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
+    await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    await expect(analysis).toBeVisible();
+    await questionWithFirstAnswer(page, analysis, 400);
+    await yieldOrder(analysis);
+    const m = await analysis.evaluate((el) => {
+      const own = (s: string) => {
+        const r = el.querySelector<HTMLElement>(s);
+        return r === null ? null : { rendered: r.getBoundingClientRect().height, inline: parseFloat(r.style.height) };
+      };
+      return { scroll: el.scrollHeight, client: el.clientHeight, context: own(".question-context"), recommendation: own(".recommendation") };
+    });
+    expect(m.scroll, "the analysis's content overflows its own box").toBeLessThanOrEqual(m.client + 1);
+    for (const [name, r] of [["the context", m.context], ["the recommendation", m.recommendation]] as const) {
+      if (r === null) continue;
+      expect(Math.abs(r.rendered - r.inline), `${name} renders at ${r.rendered} px, not its allotted ${r.inline} px`).toBeLessThanOrEqual(1);
+    }
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
+    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
 });
 
 test.describe("the tests of the whitespace server, in order", () => {

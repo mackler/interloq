@@ -13,6 +13,7 @@ import ActivityLine from "./components/ActivityLine.svelte";
 import type { ServerMessage } from "../../src/protocol.ts";
 import type { UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
+import type { Room } from "./layout.ts";
 import TopBar from "./components/TopBar.svelte";
 import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
@@ -963,14 +964,14 @@ describe("DecisionView", () => {
   // with no strip and no recommendation, so a long context cannot push the question and the notice out of the view.
   test("below 390 px the context takes the room the section leaves, by allot with no strip", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const { allot } = await import("./layout.ts");
+    const { allot, UNBOUNDED_ROOM } = await import("./layout.ts");
     const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
     define(one(root, "section.decision"), "clientHeight", 300);
     define(one(root, ".context-inner"), "offsetHeight", 1000);
     window.dispatchEvent(new Event("resize"));
     flushSync();
-    const expected = allot({ available: 300, context: 1000, recommendation: 0, strip: 0, minContext: 0, minRecommendation: 0 }).context;
+    const expected = allot({ available: 300, context: 1000, recommendation: 0, strip: 0, minContext: 0, minRecommendation: 0, room: UNBOUNDED_ROOM }).context;
     expect(one(root, ".question-context").style.height).toBe(`${expected}px`);
   });
 
@@ -1001,6 +1002,93 @@ describe("DecisionView", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  // The task of L21, by the developer's decision at the stop of execution phase 1: the analysis's minimum is bounded by
+  // the room the window has beside the question and its first answer, and where the floor exceeds that room, the
+  // columns yield first, then the recommendation, then the context, each down to 0 and below its own padding. jsdom
+  // applies no component styles and lays nothing out, so the computed style and the boxes are stubbed: lines of 15 px,
+  // the context's padding 8 + 8 px, the recommendation's 12 + 12, both texts 1,000 px of content, and the strip from
+  // the closed columns' content (ten lines being 150 px).
+  describe("the minimum bounded by the room", () => {
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    const laidOut = async (props: { room?: Room; columns: number; fixed: number }) => {
+      const { default: DecisionView } = await import("./components/DecisionView.svelte");
+      const minimums: number[] = [];
+      const root = show(DecisionView, { event, narrow: false, open: () => false, onToggle: () => undefined, onShowConversation: () => undefined, onMinimum: (px: number) => void minimums.push(px), ...(props.room === undefined ? {} : { room: props.room }) });
+      const section = one(root, "section.decision");
+      const [contextBox, recommendationBox] = [one(root, ".question-context"), one(root, ".recommendation")];
+      const padding = new Map<Element, number>([[contextBox, 8], [recommendationBox, 12]]);
+      const original = window.getComputedStyle.bind(window);
+      const spy = vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element) => {
+        const p = `${padding.get(el) ?? 0}px`;
+        return { ...original(el), lineHeight: "15px", fontSize: "12.5px", paddingTop: p, paddingBottom: p, borderTopWidth: "0px", borderBottomWidth: "0px", marginTop: "0px", marginBottom: "0px" } as CSSStyleDeclaration;
+      });
+      const define = (el: Element, name: string, value: unknown) => Object.defineProperty(el, name, { configurable: true, get: () => value });
+      // The heading and the question before the regions: the section's first child at 0, its last (the recommendation,
+      // laid out at no height) ending at `fixed`, so the section's children span `fixed` and the regions none of it.
+      const kids = [...section.children];
+      define(kids[0], "getBoundingClientRect", () => rect(0, 0));
+      define(kids[kids.length - 1], "getBoundingClientRect", () => rect(props.fixed, 0));
+      for (const c of root.querySelectorAll(".column-content")) define(c, "getBoundingClientRect", () => rect(0, props.columns));
+      define(section, "clientHeight", 10);
+      define(one(root, ".context-inner"), "offsetHeight", 1000);
+      define(one(root, ".recommendation-inner"), "offsetHeight", 1000);
+      window.dispatchEvent(new Event("resize"));
+      flushSync();
+      return { section, contextBox, recommendationBox, minimums, restore: () => spy.mockRestore() };
+    };
+    const [minContext, minRecommendation] = [2 * 15 + 16, 2 * 15 + 24];
+    test("a room smaller than the minimum: the minimum reported is the room, and the columns yield first", async () => {
+      const v = await laidOut({ room: 150 as Room, columns: 100, fixed: 0 });
+      try {
+        expect(v.minimums.at(-1)).toBe(150);
+        expect(parseFloat(v.section.style.getPropertyValue("--strip")), "the columns keep their strip").toBeLessThan(100);
+        expect(parseFloat(v.contextBox.style.height)).toBe(minContext);
+        expect(parseFloat(v.recommendationBox.style.height)).toBe(minRecommendation);
+      } finally {
+        v.restore();
+      }
+    });
+    test("with a heading and a question of 100 px, the regions share what the room leaves after them", async () => {
+      const v = await laidOut({ room: 300 as Room, columns: 170, fixed: 100 });
+      try {
+        const total = parseFloat(v.contextBox.style.height) + parseFloat(v.recommendationBox.style.height) + parseFloat(v.section.style.getPropertyValue("--strip"));
+        expect(total, "the regions take more than the room leaves").toBeLessThanOrEqual(200);
+        expect(v.minimums.at(-1)).toBe(300);
+      } finally {
+        v.restore();
+      }
+    });
+    test("a text allotted less than its own padding loses the padding, and a text allotted nothing is hidden", async () => {
+      const v = await laidOut({ room: 10 as Room, columns: 100, fixed: 0 });
+      try {
+        expect(v.recommendationBox.style.height).toBe("0px");
+        expect(v.recommendationBox.style.paddingTop).toBe("0px");
+        expect(v.recommendationBox.style.paddingBottom).toBe("0px");
+        expect(v.recommendationBox.style.visibility).toBe("hidden");
+        expect(v.recommendationBox.getAttribute("aria-hidden")).toBe("true");
+        expect(v.contextBox.style.height).toBe("10px");
+        expect(v.contextBox.style.paddingTop).toBe("0px");
+        expect(v.contextBox.style.paddingBottom).toBe("0px");
+        expect(v.contextBox.getAttribute("aria-hidden")).toBe(null);
+      } finally {
+        v.restore();
+      }
+    });
+    test("a room larger than the minimum: the minimum is reported whole, and no padding is taken away", async () => {
+      const v = await laidOut({ room: 1000 as Room, columns: 100, fixed: 0 });
+      try {
+        expect(v.minimums.at(-1)).toBe(minContext + minRecommendation + 100);
+        expect(v.section.style.getPropertyValue("--strip")).toBe("100px");
+        for (const box of [v.contextBox, v.recommendationBox]) {
+          expect(box.style.paddingTop).toBe("");
+          expect(box.style.visibility).toBe("");
+        }
+      } finally {
+        v.restore();
+      }
+    });
   });
 
   test("below 390 px the analysis is not laid out; a message asks for a wider window", async () => {

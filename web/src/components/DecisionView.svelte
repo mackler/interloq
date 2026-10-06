@@ -21,14 +21,17 @@
   import { Button } from "m3-svelte";
   import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type EntryView, viewOf } from "../../../src/analysisView.ts";
-  import { allot, type Allotment, closedHeightOf, stripOf } from "../layout.ts";
+  import { allot, type Allotment, type AnalysisMinimum, boundedMinimum, closedHeightOf, regionsRoom, type Room, stripOf, UNBOUNDED_ROOM } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
 
   /** `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the change asked for. */
-  /** `onMinimum` (decision G-R1-2): the least height the analysis needs, for the compact layout to grow to. */
-  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void; onMinimum?: (px: number) => void };
-  let { event, narrow, open, onToggle, onShowConversation, onMinimum }: Props = $props();
+  /**
+   * `onMinimum` (decision G-R1-2): the least height the analysis needs, for the layout to grow to, never more than
+   * `room`, the height the window has for the analysis beside the question and its first answer (unbounded if absent).
+   */
+  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void; onMinimum?: (px: AnalysisMinimum) => void; room?: Room };
+  let { event, narrow, open, onToggle, onShowConversation, onMinimum, room }: Props = $props();
   const view = $derived(viewOf(event.analysis));
   let row = $state<HTMLElement | null>(null);
   let overflowing = $state(false);
@@ -76,6 +79,21 @@
     strip = Math.round(stripOf(closedHeightOf(columns), 10 * lineOf(row)));
   };
   /** The heights of the context and the recommendation, from the room the section has for them and the columns. */
+  // The task of L21: a text allotted less than its own vertical padding renders without it (inline), so the padding is
+  // read from the CSS while no inline override is set, and kept, so that the allotment never feeds its own input.
+  let declaredPadding = new Map<HTMLElement, number>();
+  const declaredPaddingOf = (el: HTMLElement) => {
+    if (el.style.paddingTop === "" && el.style.paddingBottom === "") declaredPadding = new Map([...declaredPadding, [el, paddingOf(el)]]);
+    return declaredPadding.get(el) ?? paddingOf(el);
+  };
+  /** Whether a text's allotment is below its own vertical padding, which it then gives up. */
+  const unpadded = (el: HTMLElement | null, height: number | undefined) => el !== null && height !== undefined && height < declaredPaddingOf(el);
+  // The hint above the columns, and the gap before the columns, belong to them: they are allotted with the columns'
+  // strip, and where the columns are given no height the hint is hidden and the gap taken back, so that neither pushes
+  // the question's first answer down. The hint is measured while it is shown and kept, so that hiding it does not
+  // change the allotment.
+  let hintCost = 0;
+  const columnsHidden = $derived(heights !== null && heights.columns <= 0);
   const allotHeights = () => {
     // Below 390 px there are no columns (W2-R1-1 of work review 2): the context takes the room left, with no strip.
     if (section === null || contextBox === null || contextInner === null) return;
@@ -83,24 +101,33 @@
     const span = kids.length === 0 ? 0 : kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
     const free = section.clientHeight - paddingOf(section) - span;
     const regions = [contextBox, row, recommendationBox].reduce((n, el) => n + (el?.getBoundingClientRect().height ?? 0), 0);
-    const contextPadding = paddingOf(contextBox);
+    const contextPadding = declaredPaddingOf(contextBox);
     // W4-R1-1 of work review 4: each text's minimum is two of its own lines plus its own region's padding and borders;
     // below 390 px there is no recommendation, and its minimum is 0. Rounded up to whole pixels, so that a minimum is
     // never less than two lines and the allotment does not move with a sub-pixel change of the room.
     const minContext = Math.ceil(2 * lineOf(contextBox) + contextPadding);
-    const minRecommendation = narrow || recommendationBox === null ? 0 : Math.ceil(2 * lineOf(recommendationBox) + paddingOf(recommendationBox));
-    const recommendation = recommendationBox === null || recommendationInner === null ? 0 : recommendationInner.offsetHeight + paddingOf(recommendationBox);
+    const minRecommendation = narrow || recommendationBox === null ? 0 : Math.ceil(2 * lineOf(recommendationBox) + declaredPaddingOf(recommendationBox));
+    const recommendation = recommendationBox === null || recommendationInner === null ? 0 : recommendationInner.offsetHeight + declaredPaddingOf(recommendationBox);
     // Whole pixels, as the strip and the minimums are, so that a sub-pixel change of the room after a reload or a resize
     // does not move the regions (W4-R1-1).
-    const next = allot({ available: Math.round(regions + free), context: contextInner.offsetHeight + contextPadding, recommendation: narrow ? 0 : recommendation, strip: narrow ? 0 : strip, minContext, minRecommendation });
-    if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5) heights = next;
-    const fixed = span - regions;
-    const minimum = fixed + paddingOf(section) + Math.min(next.context, minContext) + (recommendation === 0 ? 0 : Math.min(minRecommendation, recommendation)) + (narrow ? 0 : strip);
-    onMinimum?.(Math.ceil(minimum));
+    // The task of L21 (finding P1-R2-1): the regions share what the area's room leaves after the heading, the question,
+    // the gaps and the section's padding.
+    const hint = section.querySelector<HTMLElement>(".hint");
+    if (hint !== null) hintCost = hint.getBoundingClientRect().height + px(getComputedStyle(section).rowGap);
+    const gap = row === null || narrow ? 0 : px(getComputedStyle(section).rowGap);
+    const shown = (hint === null ? 0 : hintCost) + (columnsHidden ? 0 : gap);
+    const withHint = (overflowing && !narrow ? hintCost : 0) + gap;
+    const fixed = span - regions - shown;
+    const allotted = allot({ available: Math.round(regions + shown + free), context: contextInner.offsetHeight + contextPadding, recommendation: narrow ? 0 : recommendation, strip: narrow ? 0 : strip + withHint, minContext, minRecommendation, room: regionsRoom(room ?? UNBOUNDED_ROOM, fixed + paddingOf(section)) });
+    const next = { ...allotted, columns: Math.max(0, allotted.columns - withHint) };
+    if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5 || Math.abs(next.columns - heights.columns) > 0.5) heights = next;
+    const minimum = fixed + paddingOf(section) + Math.min(next.context, minContext) + (recommendation === 0 ? 0 : Math.min(minRecommendation, recommendation)) + (narrow ? 0 : strip + withHint);
+    onMinimum?.(boundedMinimum(Math.ceil(minimum), room ?? UNBOUNDED_ROOM));
   };
   $effect(() => {
     void view;
     void narrow;
+    void room;
     measureStrip();
     allotHeights();
   });
@@ -149,7 +176,7 @@
   </div>
 {/snippet}
 
-<section class="decision" aria-label={decisionViewHeading(event.decision, event.presented.number)} bind:this={section} style:--strip="{strip}px">
+<section class="decision" aria-label={decisionViewHeading(event.decision, event.presented.number)} bind:this={section} style:--strip="{heights === null ? strip : Math.min(strip, heights.columns)}px">
   <div class="head">
     <h2 class="m3-font-title-medium">{decisionViewHeading(event.decision, event.presented.number)}</h2>
     <Button variant="tonal" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
@@ -162,7 +189,9 @@
          reason) follow the context in the same scrolling region, as the terminal prints them. -->
     <!-- Issue #79: the context takes the room that is free (decision Q1), its height set by allot; it scrolls only when
          there is none. -->
-    <div class="question-context m3-font-body-medium" bind:this={contextBox} style:height={heights === null ? null : `${heights.context}px`}>
+    <!-- The task of L21: where the window is shorter than the analysis's floor, the context yields last, below its own
+         padding and down to nothing, so that the question and its first answer stay in view. -->
+    <div class="question-context m3-font-body-medium" bind:this={contextBox} style:height={heights === null ? null : `${heights.context}px`} style:padding-top={unpadded(contextBox, heights?.context) ? "0px" : null} style:padding-bottom={unpadded(contextBox, heights?.context) ? "0px" : null} style:visibility={heights !== null && heights.context <= 0 ? "hidden" : null} aria-hidden={heights !== null && heights.context <= 0 ? "true" : undefined}>
       <div class="context-inner" bind:this={contextInner}>
         <!-- S59 (P9-R2-1): the context is Markdown, as in QuestionPane and the transcript, so a term split by inline
              markup is marked here too. -->
@@ -176,10 +205,10 @@
   {#if narrow}
     <p class="narrow m3-font-body-medium" role="alert">{ENLARGE_WINDOW_NOTICE}</p>
   {:else}
-    {#if overflowing}<p class="hint m3-font-body-small">{SCROLL_SIDEWAYS_HINT}</p>{/if}
+    {#if overflowing && !columnsHidden}<p class="hint m3-font-body-small">{SCROLL_SIDEWAYS_HINT}</p>{/if}
     <!-- Issue #81: the region scrolls sideways when the columns do not fit, and each column scrolls on its own inside it
          (the developer's instruction of 1 Oct 2026), so a short column stays in view while a long one is read. -->
-    <div class="sideways" bind:this={row}>
+    <div class="sideways" class:taken={columnsHidden} bind:this={row} aria-hidden={columnsHidden ? "true" : undefined}>
       <div class="columns" style:grid-template-columns="repeat({view.columns.length}, minmax(20rem, 1fr))">
         {#each view.columns as column, i (i)}
           <article class="column m3-font-body-medium">
@@ -202,7 +231,7 @@
          allot as the context is, so a long recommendation never squeezes the columns below their strip (W1-R1-3)
          [aesthetic and minimalist design; visibility of system status: it is always in view, and all of it can be reached]. -->
     {#if view.recommendation !== null}
-      <section class="recommendation m3-font-body-medium" aria-label={RECOMMENDATION_HEADING} bind:this={recommendationBox} style:height={heights === null ? null : `${heights.recommendation}px`}>
+      <section class="recommendation m3-font-body-medium" aria-label={RECOMMENDATION_HEADING} bind:this={recommendationBox} style:height={heights === null ? null : `${heights.recommendation}px`} style:padding-top={unpadded(recommendationBox, heights?.recommendation) ? "0px" : null} style:padding-bottom={unpadded(recommendationBox, heights?.recommendation) ? "0px" : null} style:visibility={heights !== null && heights.recommendation <= 0 ? "hidden" : null} aria-hidden={heights !== null && heights.recommendation <= 0 ? "true" : undefined}>
         <div class="recommendation-inner" bind:this={recommendationInner}>
           <h3 class="m3-font-title-small">{recommendedOption(view.recommendation.option)}</h3>
           {#each view.recommendation.reason.split(/\n\s*\n/) as paragraph, i (i)}<p>{paragraph}</p>{/each}
@@ -213,7 +242,9 @@
 </section>
 
 <style>
-  .decision { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
+  /* The task of L21: columns given no height are hidden, and the gap before them is taken back. */
+  .sideways.taken { visibility: hidden; margin-top: calc(-1 * var(--decision-gap)); }
+  .decision { --decision-gap: 0.5rem; display: flex; flex-direction: column; gap: var(--decision-gap); flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
   .head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
   .head h2 { margin: 0; }
   /* The question beside its analysis (S39, W2-R1-2): only the context is bounded and scrolls on its own; the question

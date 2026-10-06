@@ -9,8 +9,8 @@
   // Interloq", selects it].
   import { Button, ConnectedButtons } from "m3-svelte";
   import { untrack } from "svelte";
-  import { CONNECTION_FAILED_NOTICE, notSentNotice, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
-  import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
+  import { CONNECTION_FAILED_NOTICE, notSentNotice, PROPOSED_ANSWERS_LABEL, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { type AnalysisKey, type AnalysisMinimum, analysisShown, type Room, roomOf, UNBOUNDED_ROOM, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ClientMessage } from "../../../src/protocol.ts";
   import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { connect, type Connection } from "../socket.ts";
@@ -94,11 +94,51 @@
   const analysisKey = $derived(analysis === null || run === null ? null : { incarnation: view.incarnation ?? "", run: run.id, decision: analysis.event.decision });
   const deciding = $derived(analysisKey !== null && analysisShown(conversationFor, analysisKey));
   const NARROW_WIDTH = 390;
-  /** Decision G-R1-2: the least height of the analysis, which the compact layout grows to; the page then scrolls to the answers. */
-  let analysisMinimum = $state(0);
+  /**
+   * Decision G-R1-2: the least height of the analysis, which the layout grows to. The task of L21, by the developer's
+   * decision at the stop of execution phase 1: it is bounded by the room the window has for the analysis beside the
+   * question and its first answer, at every width, so the run never scrolls the question out of view to show an answer.
+   */
+  let analysisMinimum = $state<AnalysisMinimum | null>(null);
+  let runElement = $state<HTMLElement | null>(null);
+  let room = $state<Room>(UNBOUNDED_ROOM);
+  const px = (v: string) => parseFloat(v) || 0;
+  /** The room of the decision area: the run's height less what lies above it and down to the first answer (roomOf). */
+  const measureRoom = () => {
+    const el = runElement;
+    const left = el?.querySelector<HTMLElement>(":scope > .left") ?? null;
+    const answer = left?.querySelector<HTMLElement>(`[role=group][aria-label="${PROPOSED_ANSWERS_LABEL}"] button`) ?? null;
+    if (el === null || !deciding || left === null || answer === null) {
+      if (room !== UNBOUNDED_ROOM) room = UNBOUNDED_ROOM;
+      return;
+    }
+    const cs = getComputedStyle(el);
+    const [padding, gap] = [px(cs.paddingTop) + px(cs.paddingBottom), px(cs.rowGap)];
+    const firstAnswer = answer.getBoundingClientRect().bottom - left.getBoundingClientRect().top;
+    const kids = [...el.children] as HTMLElement[];
+    const area = kids.findIndex((k) => k.classList.contains("decision-area"));
+    // Only the children that take part in the layout: a hidden one has no box and no gap.
+    const above = kids.slice(0, Math.max(0, area)).filter((k) => k.getClientRects().length > 0).map((k) => k.getBoundingClientRect().height);
+    const next = roomOf(compact ? { _tag: "Stacked", height: el.clientHeight, padding, gap, above, firstAnswer } : { _tag: "Grid", height: el.clientHeight, padding, rowGap: gap, firstAnswer });
+    const whole = Math.floor(next) as Room;
+    if (Math.abs(whole - room) >= 1 || room === UNBOUNDED_ROOM) room = whole;
+  };
+  $effect(() => {
+    void deciding;
+    void compact;
+    void run?.pending;
+    const el = runElement;
+    untrack(measureRoom);
+    if (el === null || typeof ResizeObserver === "undefined") return;
+    // The run and its children other than the decision area, whose heights do not depend on the analysis's floor.
+    const observer = new ResizeObserver(() => measureRoom());
+    observer.observe(el);
+    for (const k of el.children) if (!k.classList.contains("decision-area")) observer.observe(k);
+    return () => observer.disconnect();
+  });
 </script>
 
-<svelte:window bind:innerWidth={width} />
+<svelte:window bind:innerWidth={width} onresize={measureRoom} />
 <div class="app">
   <TopBar {run} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} />
   <!-- A failed page says so for as long as it lasts, apart from the notices, which a new task marks as seen, and keeps
@@ -133,7 +173,7 @@
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
          of panels or a resize across 840 px keeps each panel's reading position [user control and freedom]. -->
-    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} style:--analysis-minimum={analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
+    <main bind:this={runElement} class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} style:--analysis-minimum={analysisMinimum !== null && analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
@@ -156,8 +196,8 @@
         <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} />
       {/if}
       {#if analysis !== null && deciding}
-        <div class="decision-area" style:min-height={analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
-          <DecisionView onMinimum={(h) => (analysisMinimum = h)} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
+        <div class="decision-area" style:min-height={analysisMinimum !== null && analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
+          <DecisionView {room} onMinimum={(h) => (analysisMinimum = h)} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
         <div class="decision-area back">
@@ -209,9 +249,11 @@
   .left :global(.panel), .right :global(.panel) { flex: 1; }
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   /* The analysis spans both chat columns in the first row; the prompt and the activity line stay below it. */
-  /* W3-R1-1 of work review 3, decision G-R1-2 at every width: the analysis's row keeps the analysis's minimum total
-     (measured by DecisionView, set inline as --analysis-minimum), and where it and the controls exceed the window the
-     run scrolls instead of clipping. */
+  /* W3-R1-1 of work review 3, decision G-R1-2: the analysis's row keeps the analysis's minimum total (measured by
+     DecisionView, set inline as --analysis-minimum) wherever the window can hold it beside the question and its first
+     answer. Where it cannot, at any width (the developer's decision in the task of L21), the minimum is bounded by that
+     room and the analysis yields its columns, then its recommendation, then its context; only what lies below the
+     first answer is reached by scrolling the run. */
   .run.deciding { grid-template-rows: minmax(var(--analysis-minimum, 0px), 1fr) auto; overflow-y: auto; }
   .run.deciding > :global(.rail) { grid-row: 1 / 3; }
   .decision-area { grid-column: 2 / 4; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
@@ -228,9 +270,10 @@
   .run.compact .left :global(.panel), .run.compact .right :global(.panel), .run.compact .left :global(.pane:not(.answers-only)) { min-height: 12.5rem; }
   /* W4-R1-1, decision G-R1-2: while the analysis is shown, only the decision area flexes. It never grows to its content,
      and its floor is the analysis's minimum total (its heading, the question, two lines each of the context and the
-     recommendation, and the columns' strip), set inline from DecisionView's measurement; where the window is shorter,
-     the run scrolls, and the answer controls are reached below it, never clipped. The columns hold only the prompt and
-     the activity line then, sized by their content. */
+     recommendation, and the columns' strip), set inline from DecisionView's measurement, bounded by the room the window
+     has beside the question and its first answer (the task of L21): where the window is shorter, the analysis yields,
+     and the answer controls below the first are reached by scrolling the run, never clipped. The columns hold only the
+     prompt and the activity line then, sized by their content. */
   .run.compact.deciding > .decision-area { flex: 1 1 0; min-height: 0; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
