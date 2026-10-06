@@ -39,6 +39,14 @@ jobs:
         run: |
           gem install bashly -v 2.0.0
           bashly --version
+      # Issue #73: the layout tests measure text, and this runner and the development container resolve sans-serif to
+      # different families, so a test can pass in one and fail in the other. Until the font is pinned in both, record
+      # what this runner resolves to, so that the container can be made to match it. Remove this step with that change.
+      - name: Fonts available to the browser (issue #73)
+        run: |
+          fc-match sans-serif
+          fc-match monospace
+          fc-list : family | sort -u | head -40
       - run: npm test
 
   release:
