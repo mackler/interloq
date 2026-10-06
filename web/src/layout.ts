@@ -58,7 +58,12 @@ declare const RoomBrand: unique symbol;
 export type Room = number & { readonly [RoomBrand]: true };
 /** A room not yet measured: no bound. */
 export const UNBOUNDED_ROOM = Number.POSITIVE_INFINITY as Room;
-/** The spare room below the first answer: three times the 8 px by which CI's font and the container's differ (issue #73). */
+/**
+ * The spare room below the first answer: the layout tests require 16 px of it, and the other 8 px tolerate rasterization
+ * differences between environments that render the same face (issue #73: since 6 Oct 2026 the page names Liberation,
+ * so CI and the container measure the same text). Measured that day: 20 px spare below the first answer in L15, L16,
+ * L21a, L21b, L27 and L27a, beyond the tests' 16.
+ */
 export const ROOM_MARGIN = 24;
 /**
  * What the room is measured from, by layout. `height` is the run's client height, its padding included; `padding` its

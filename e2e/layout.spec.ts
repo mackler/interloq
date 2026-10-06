@@ -151,8 +151,8 @@ type Parts = Awaited<ReturnType<typeof openLongAnalysis>>;
 /**
  * The task of L21, by the developer's decision at the stop of execution phase 1: in a window of any width too short for
  * the analysis's floor, the analysis gives up height so that the question and its first answer are in view together,
- * with nothing scrolled into view. The spare room asserted is 16 px: the 24 px ROOM_MARGIN of web/src/layout.ts less the
- * 8 px by which CI's font and this container's differ (issue #73). The run may hold more below the first answer (the
+ * with nothing scrolled into view. The spare room asserted is 16 px: the 24 px ROOM_MARGIN of web/src/layout.ts less 8 px
+ * that tolerate rasterization differences between environments rendering the same face (issue #73). The run may hold more below the first answer (the
  * rest of the prompt, the activity line), which the room does not budget, so its scroll position is checked, not its
  * scroll height.
  */
