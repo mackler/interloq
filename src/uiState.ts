@@ -13,10 +13,17 @@ export type RunUiState = Readonly<{ version: number; open: readonly UiScope[] }>
 export const emptyUiState: RunUiState = { version: 0, open: [] };
 
 /** A total, injective encoding of a scope (the entry id is JSON-quoted, so no separator can occur in it unescaped). */
-export const scopeKey = (scope: UiScope): string => "";
+export const scopeKey = (scope: UiScope): string => `${scope._tag}:${scope.decision}:${JSON.stringify(scope.entry)}`;
 /** The state after a flag: the version raised, the scope added or removed; opening an open scope keeps it once. */
-export const withFlag = (state: RunUiState, flag: UiFlag): RunUiState => state;
+export const withFlag = (state: RunUiState, flag: UiFlag): RunUiState => {
+  const key = scopeKey(flag.scope);
+  const others = state.open.filter((s) => scopeKey(s) !== key);
+  return { version: state.version + 1, open: flag.open ? [...others, flag.scope] : others };
+};
 /** Whether the scope is open in the state. */
-export const isOpen = (state: RunUiState, scope: UiScope): boolean => false;
+export const isOpen = (state: RunUiState, scope: UiScope): boolean => {
+  const key = scopeKey(scope);
+  return state.open.some((s) => scopeKey(s) === key);
+};
 /** Of two states of one run, the one with the higher version (the first when equal). */
-export const newer = (a: RunUiState, b: RunUiState): RunUiState => a;
+export const newer = (a: RunUiState, b: RunUiState): RunUiState => (b.version > a.version ? b : a);

@@ -110,7 +110,9 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const forward = Effect.gen(function* () {
         for (;;) {
           const event = yield* Queue.take(buffered);
-          if (event._tag === "event" && !inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
+          // Issue #87: a shared state is sent whatever the snapshot holds; the page keeps the higher version.
+          if (event._tag === "ui") yield* send({ type: "ui", run: event.run, state: event.state });
+          else if (!inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
         }
       });
       yield* Effect.forkScoped(forward);

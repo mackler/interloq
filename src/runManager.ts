@@ -6,7 +6,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, type Wiring } from "./program.ts";
 import type { RunEvent, RunRecord, RunUi, Stamped } from "./protocol.ts";
-import { emptyUiState, type RunUiState, type UiFlag } from "./uiState.ts";
+import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
@@ -186,7 +186,12 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
           Ref.update(listeners, (set): ReadonlySet<Listener<Broadcast>> => new Set([...set, listener])),
           () => Ref.update(listeners, (set) => new Set([...set].filter((l) => l !== listener))),
         ).pipe(Effect.asVoid),
-      replay: Ref.get(state).pipe(Effect.map((s) => ({ runs: [s.last, s.current].flatMap((r) => (r === null ? [] : [record(r)])), ui: [] }))),
+      replay: Ref.get(state).pipe(
+        Effect.map((s) => {
+          const runs = [s.last, s.current].flatMap((r) => (r === null ? [] : [r]));
+          return { runs: runs.map(record), ui: runs.map((r) => ({ run: r.id, state: r.shared })) };
+        }),
+      ),
       current: Ref.get(state).pipe(Effect.map((s) => s.current?.id ?? null)),
       start,
       stop: (of, id) =>
@@ -203,6 +208,16 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
             return r.ui.answer(prompt, text).pipe(Effect.map((taken): Refusal | null => (taken ? null : { refused: "that question has already been answered" })));
           }),
         ),
-      setUi: () => Effect.succeed(null),
+      // Issue #87: the change and its broadcast are one serialized, uninterruptible step of the publisher, so every tab
+      // receives the states in the order of their versions, interleaved with the run's events as they were recorded.
+      setUi: (of, id, flag) =>
+        of !== incarnation
+          ? Effect.succeed(EARLIER)
+          : publish((s): readonly [Broadcast | null, State] => {
+              const change = (r: Run | null): Run | null => (r !== null && r.id === id ? { ...r, shared: withFlag(r.shared, flag) } : r);
+              const [current, last] = [change(s.current), change(s.last)];
+              const changed = current !== s.current ? current : last !== s.last ? last : null;
+              return changed === null ? [null, s] : [{ _tag: "ui", run: id, state: changed.shared }, { ...s, current, last }];
+            }).pipe(Effect.map((b) => (b === null ? ENDED : null))),
     };
   });

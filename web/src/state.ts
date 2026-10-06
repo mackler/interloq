@@ -11,7 +11,7 @@ import { correctionCount } from "../../src/issueLog.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus } from "../../src/schema.ts";
-import { emptyUiState, type RunUiState } from "../../src/uiState.ts";
+import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
 
 export type Author = "program" | "user" | "codex" | "claude";
 /**
@@ -631,15 +631,19 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       return { ...state, ...runs, connection: "open", cwd: message.cwd, current: message.current, incarnation: message.incarnation, needsReconnect: false };
     }
     case "replay": {
-      const views = message.runs.map((r) => foldRun(r.id, r.events));
+      // Issue #87: each replayed run's shared state, held by the server beside its events.
+      const views = message.runs.map((r) => ({ ...foldRun(r.id, r.events), ui: message.ui.find((u) => u.run === r.id)?.state ?? emptyUiState }));
       return { ...state, run: views[views.length - 1] ?? null, last: views[views.length - 2] ?? null };
     }
     case "listing":
       return { ...state, listing: { path: message.path, parent: message.parent, dirs: message.dirs, error: message.error } };
     case "refused":
       return notice(state, message.reason);
-    case "ui":
-      return state;
+    case "ui": {
+      // Issue #87: the run's whole shared state; of two, the higher version stands, whatever their order of arrival.
+      const apply = (view: RunView | null): RunView | null => (view !== null && view.id === message.run ? { ...view, ui: newer(view.ui, message.state) } : view);
+      return { ...state, run: apply(state.run), last: apply(state.last) };
+    }
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.

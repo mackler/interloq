@@ -60,12 +60,16 @@ export const connect = (url: string, handlers: Handlers, env: Environment = brow
   // After PROTOCOL_ERROR_LIMIT of them the page stops reconnecting, and every action is handed back unsent.
   let failed = false;
 
-  /** The queued actions after a hello: an answer or a stop of another incarnation or of an ended run is discarded with a notice (finding 12). */
+  /**
+   * The queued actions after a hello: an answer, a stop or a change of the shared state (issue #87) of another
+   * incarnation is discarded with a notice (finding 12), and so is an answer or a stop of an ended run; a change of the
+   * shared state of an ended run is sent, because the server keeps the last run's state too.
+   */
   const flush = (hello: Readonly<{ current: number | null; incarnation: string }>) => {
     const pending = queue;
     queue = [];
     for (const m of pending) {
-      if ((m.type === "answer" || m.type === "stop") && m.incarnation !== hello.incarnation) handlers.onNotice(notSentNotice(m.type, "restarted"));
+      if ((m.type === "answer" || m.type === "stop" || m.type === "ui") && m.incarnation !== hello.incarnation) handlers.onNotice(notSentNotice(m.type, "restarted"));
       else if ((m.type === "answer" || m.type === "stop") && m.run !== hello.current) handlers.onNotice(notSentNotice(m.type, "ended"));
       else socket?.send(JSON.stringify(m));
     }
