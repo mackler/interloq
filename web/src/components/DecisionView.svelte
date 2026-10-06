@@ -11,11 +11,15 @@
   // option is in the scheme's error color, so that a rebuttal reads apart from what it disputes [visibility of system
   // status; match between the system and the real world: the two voices of an argument are told apart at a glance]; the
   // headings and the option's name keep their color. An option whose meaning is unclear shows what is unclear in place of
-  // its headings (decision Q8). Below 390 px nothing is laid out and a
+  // its headings (decision Q8). Issue #87: every entry starts collapsed to its label and whole title, opened one at a
+  // time by the reader [aesthetic and minimalist design: a column is first a list of outcomes]; an entry that hides a
+  // contradicting position carries a mark, and one that does not carries none, so the reader can skip it knowing no
+  // reasoning disputes it [visibility of system status]; which entries are open is the run's shared state, the same in
+  // every tab [consistency and standards; user control and freedom]. Below 390 px nothing is laid out and a
   // message asks for a wider window; the prompt below stays usable [help users recognize and recover]. The
   // conversation is one click away and back [user control and freedom].
   import { Button } from "m3-svelte";
-  import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type EntryView, viewOf } from "../../../src/analysisView.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
@@ -37,23 +41,33 @@
 </script>
 
 <svelte:window onresize={measure} />
-{#snippet entryOf(entry: EntryView)}
+{#snippet entryOf(entry: EntryView, bodyId: string)}
+  {@const expanded = open(entry.id)}
   <div class="entry">
-    <p class="title m3-font-title-small" class:opposes={entry.opposes} data-opposes={entry.opposes}><span class="label">{entry.label}</span> {marked(entry.title, entry.symbol)}</p>
-    <ul class="elements">
-      {#each entry.elements as element, i (i)}
-        <li class="element">
-          <span class="element-text" class:opposes={element.opposes} data-opposes={element.opposes}>{element.text}</span>
-          {#if element.arguments.length > 0}
-            <ul class="arguments">
-              {#each element.arguments as argument (argument.id)}
-                <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{marked(argument.text, argument.symbol)}</li>
-              {/each}
-            </ul>
-          {/if}
-        </li>
-      {/each}
-    </ul>
+    <!-- Issue #87: the row is the entry's label and whole title (decision Q2), a native button, so that Enter and Space
+         open it [flexibility and efficiency of use]; its body is rendered only while it is open [aesthetic and
+         minimalist design]. The mark says that a text inside argues the other side [visibility of system status]. -->
+    <button type="button" class="toggle" aria-expanded={expanded} aria-controls={bodyId} aria-label={entryToggleName(entry.label, entry.title, expanded)} onclick={() => onToggle(entry.id, !expanded)}>
+      <span class="chevron" class:expanded aria-hidden="true"></span>
+      <span class="title m3-font-title-small" class:opposes={entry.opposes} data-opposes={entry.opposes}><span class="label">{entry.label}</span> {marked(entry.title, entry.symbol)}</span>
+      {#if entry.disputed}<span class="disputed" role="img" aria-label={ENTRY_DISPUTED_LABEL}>⚠</span>{/if}
+    </button>
+    {#if expanded}
+      <ul class="elements" id={bodyId}>
+        {#each entry.elements as element, i (i)}
+          <li class="element">
+            <span class="element-text" class:opposes={element.opposes} data-opposes={element.opposes}>{element.text}</span>
+            {#if element.arguments.length > 0}
+              <ul class="arguments">
+                {#each element.arguments as argument (argument.id)}
+                  <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{marked(argument.text, argument.symbol)}</li>
+                {/each}
+              </ul>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 {/snippet}
 
@@ -92,9 +106,9 @@
             <p class="unclear">{column.unclear}</p>
           {:else}
             <h4 class="advantages-heading m3-font-title-small">{column.advantagesHeading}</h4>
-            {#each column.advantages as entry (entry.id)}{@render entryOf(entry)}{/each}
+            {#each column.advantages as entry, j (entry.id)}{@render entryOf(entry, `decision-${event.decision}-${i}-a${j}`)}{/each}
             <h4 class="disadvantages-heading m3-font-title-small">{column.disadvantagesHeading}</h4>
-            {#each column.disadvantages as entry (entry.id)}{@render entryOf(entry)}{/each}
+            {#each column.disadvantages as entry, j (entry.id)}{@render entryOf(entry, `decision-${event.decision}-${i}-d${j}`)}{/each}
           {/if}
         </article>
       {/each}
@@ -131,9 +145,27 @@
   .disadvantages-heading { margin: 1rem 0 0.5rem; }
   .unclear { margin: 0; }
   .label { font-weight: 600; }
-  .entry { margin-bottom: 0.75rem; }
-  .title { margin: 0 0 0.25rem; }
-  .elements { margin: 0; padding-left: 1.25rem; }
+  .entry { margin-bottom: 0.25rem; }
+  /* Issue #87: the disclosure, hand-built after M3's list item: a state layer of the on-surface color on hover (8 %),
+     focus (10 %) and press (10 %), a focus ring, and the standard easing for the chevron and the body; none of it under
+     reduced motion. It asserts that the entry is open or closed and nothing more (docs/ui-review.md). The title wraps
+     whole (decision Q2). */
+  .toggle { position: relative; display: flex; align-items: flex-start; gap: 0.5rem; width: 100%; margin: 0; padding: 0.375rem 0.5rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
+  .toggle::before { content: ""; position: absolute; inset: 0; background: var(--m3c-on-surface); opacity: 0; transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); pointer-events: none; }
+  .toggle:hover::before { opacity: 0.08; }
+  .toggle:focus-visible::before, .toggle:active::before { opacity: 0.1; }
+  .toggle:focus-visible { outline: 3px solid var(--m3c-secondary); outline-offset: 2px; }
+  .chevron { flex: none; width: 0.5rem; height: 0.5rem; margin-top: 0.4rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 200ms cubic-bezier(0.2, 0, 0, 1); }
+  .chevron.expanded { transform: rotate(45deg); }
+  .title { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+  .disputed { flex: none; color: var(--m3c-error); font-weight: 700; }
+  .elements { animation: reveal 200ms cubic-bezier(0.2, 0, 0, 1); }
+  @keyframes reveal { from { opacity: 0; transform: translateY(-0.25rem); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .toggle::before, .chevron { transition: none; }
+    .elements { animation: none; }
+  }
+  .elements { margin: 0.25rem 0 0.5rem; padding-left: 2.25rem; }
   .element { margin-bottom: 0.25rem; }
   .arguments { list-style: none; margin: 0.25rem 0 0.25rem 0.5rem; padding: 0; }
   .argument { margin-top: 0.25rem; padding-left: 0.5rem; border-left: 2px solid var(--m3c-outline-variant); }

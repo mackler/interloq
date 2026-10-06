@@ -18,6 +18,7 @@
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
+  import { isOpen } from "../../../src/uiState.ts";
   import DirectoryDialog from "./DirectoryDialog.svelte";
   import QuestionPane from "./QuestionPane.svelte";
   import StartForm from "./StartForm.svelte";
@@ -154,7 +155,7 @@
       {/if}
       {#if analysis !== null && deciding}
         <div class="decision-area">
-          <DecisionView event={analysis.event} narrow={width < NARROW_WIDTH} open={() => false} onToggle={() => undefined} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
+          <DecisionView event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
         <div class="decision-area back">
