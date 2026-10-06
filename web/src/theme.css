@@ -11,9 +11,16 @@
 :root {
   --m3v-source: #4a64a8;
   color-scheme: light dark;
+  /* Issue #73: the type family is Liberation, which the page names and does not serve. Liberation Sans, Mono and Serif
+     are installed in Regular, Bold, Italic and Bold Italic in the developer's browser, the CI runner and the development
+     container, so every one renders the same faces; Arial and Courier New, metric-compatible with them, are the fallbacks.
+     m3-svelte declares both variables in its tokens layer, and its components take their family from them; this
+     unlayered rule overrides them. A deviation from M3's Roboto Flex, recorded in docs/ui-review.md. */
+  --m3-font: "Liberation Sans", Arial, sans-serif;
+  --m3-font-mono: "Liberation Mono", "Courier New", monospace;
 }
 html, body { margin: 0; }
-body { font-family: "Roboto Flex", Roboto, system-ui, sans-serif; }
+body { font-family: var(--m3-font); }
 
 /*
  * Issue #42: M3's indeterminate linear progress indicator, written by hand because m3-svelte has none. A 4px track in
@@ -67,7 +74,18 @@ body { font-family: "Roboto Flex", Roboto, system-ui, sans-serif; }
    " a " like "a" [visibility of system status; error prevention: a permission's input is read before it is allowed].
    One rule for all three components; none copies it. Inline code is an inline block, so that its tab stops are
    measured from its own start: a tab then always advances to the next of every 4 spaces, never the width of one space
-   by the accident of where the code falls in the line. */
+   by the accident of where the code falls in the line.
+   Issue #73: the family of all code, in rendered Markdown and outside it (the start form), is named here, once. Under
+   the bare monospace family the browser drew code at 13/16 of a parent size derived from the medium keyword, which every
+   parent in the page has; naming a family ends that reduction, so the size is set to what it was: a code block and
+   inline code at 0.8125em, code inside a code block at its block's size. */
+code, pre {
+  font-family: var(--m3-font-mono);
+  font-size: 0.8125em;
+}
+pre code {
+  font-size: 1em;
+}
 .markdown code {
   white-space: break-spaces;
   tab-size: 4;

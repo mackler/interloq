@@ -225,6 +225,23 @@ const LONG_QUESTION_URL = layoutUrl("longQuestion");
 // S49 (W4-R1-1): a permission request whose command runs to 40 lines keeps its question and first option in view together,
 // in the question pane and beside a decision's analysis; the command is read by scrolling the details.
 const PERMISSION_URL = layoutUrl("permissionLong");
+/** A face the renderer used for an element's text, as the Chrome DevTools Protocol reports it (issue #73). */
+type UsedFont = Readonly<{ familyName: string; postScriptName: string; glyphCount: number }>;
+/** The faces actually used for the text of the first element matching `selector`: not the declared family, which falls through silently. */
+const usedFont = async (page: Page, selector: string): Promise<readonly UsedFont[]> => {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("DOM.enable");
+    await cdp.send("CSS.enable");
+    const { root } = await cdp.send("DOM.getDocument", { depth: -1 });
+    const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+    if (nodeId === 0) throw new Error(`no element matches ${selector}`);
+    const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+    return fonts;
+  } finally {
+    await cdp.detach();
+  }
+};
 // (L22) S51 (W3-R1-2 of work review 5): code in rendered Markdown keeps its whitespace visually. A code element's text
 // keeps every space, but the browser's default white-space collapses runs and drops the spaces at the edges, so
 // "a b", "a  b" and "a<tab>b" would look alike and " a " like "a". Measured in the question pane, beside an analysis and
@@ -849,7 +866,6 @@ test.describe("the tests of the longContextShortAnswers server, in order", () =>
 
 test.describe("the tests of the permissionLong server, in order", () => {
   test.describe.configure({ mode: "default" });
-
   for (const [width, height] of [[390, 844], [640, 400]] as const) {
     test(`(L21) a permission request with a 40-line command at ${width} × ${height}: the question and the first option in view`, async ({ page }) => {
       await page.setViewportSize({ width, height });
@@ -884,6 +900,28 @@ test.describe("the tests of the permissionLong server, in order", () => {
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
+  // Issue #73: the page names Liberation, installed in Regular, Bold, Italic and Bold Italic in the developer's browser,
+  // the CI runner and the development container. A declared family that is not installed falls through silently, so the
+  // test reads the faces the renderer used (Chrome DevTools Protocol), not the declared font-family. Code keeps the size
+  // it had under the bare monospace family, 13/16 of its parent's, so that naming a family moves none of the commands the
+  // layout tests measure.
+  test("(L28) the page renders in Liberation: body text, bold text and code, at the sizes it had", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startTask(page, "Prepare the build in Liberation", PERMISSION_URL);
+    await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
+    const families = (fonts: readonly UsedFont[]) => [...new Set(fonts.map((f) => f.familyName))];
+    expect(families(await usedFont(page, "section.pane .question-text")), "the question's text").toEqual(["Liberation Sans"]);
+    expect((await usedFont(page, "section.pane .option-label strong")).map((f) => f.postScriptName), "a bold option label").toEqual(["LiberationSans-Bold"]);
+    expect(families(await usedFont(page, "section.pane .top li > code")), "inline code").toEqual(["Liberation Mono"]);
+    expect(families(await usedFont(page, "section.pane .top pre > code")), "a code block").toEqual(["Liberation Mono"]);
+    const sizes = await pane(page).locator(".top").evaluate((top) =>
+      [...top.querySelectorAll("li > code, li > pre")].map((el) => ({ tag: el.tagName, own: parseFloat(getComputedStyle(el).fontSize), parent: parseFloat(getComputedStyle(el.parentElement!).fontSize) })),
+    );
+    expect(sizes.length, "the details hold code").toBeGreaterThan(0);
+    for (const s of sizes) expect(Math.abs(s.own - (s.parent * 13) / 16), `${s.tag} is ${s.own} px under a parent of ${s.parent} px`).toBeLessThanOrEqual(0.5);
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
+    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
   test("(L21a) a permission request at 640 × 400 beside the analysis: the question and the first answer in view with room to spare, the analysis within its own box", async ({ page }) => {
     await page.setViewportSize({ width: 640, height: 400 });
     await startTask(page, "Prepare the build with room to spare", PERMISSION_URL);
