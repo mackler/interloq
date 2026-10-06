@@ -154,7 +154,7 @@
       {/if}
       {#if analysis !== null && deciding}
         <div class="decision-area">
-          <DecisionView event={analysis.event} narrow={width < NARROW_WIDTH} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
+          <DecisionView event={analysis.event} narrow={width < NARROW_WIDTH} open={() => false} onToggle={() => undefined} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
         <div class="decision-area back">

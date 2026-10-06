@@ -594,6 +594,22 @@ describe("App and the draft", () => {
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
   });
 
+  // Issue #87: opening an entry in the page sends the change of the run's shared state, keyed by decision and entry.
+  test("toggling an entry sends one ui message with the incarnation, the run, the decision and the entry", async () => {
+    const { root, ws } = await openPage();
+    const el = (text: string) => ({ text, counterarguments: [] });
+    const e1 = { id: "e1", title: "T.", comparative_condition: el("c"), starting_cause: el("s"), intermediate_steps: el("i"), threshold: el("t"), effect_on_persons: el("e"), reason_the_effect_matters: el("r"), extent: { per_person: el("p"), persons_affected: el("a"), likelihood: el("l"), timing: el("w") } };
+    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 3, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options: [], analysis: { decision: "d", columns: [{ kind: "argued", option: "A", advantages: [e1], disadvantages: [] }], recommendation: { option: "", reason: "" } } } };
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
+    ws.onopen?.({});
+    ws.sent = [];
+    one(root, ".entry > button.toggle").click();
+    flushSync();
+    expect(ws.sent.map((m) => JSON.parse(m))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "DecisionEntry", decision: 3, entry: "e1" }, open: true } }]);
+    ws.receive({ type: "ui", run: 1, state: { version: 1, open: [{ _tag: "DecisionEntry", decision: 3, entry: "e1" }] } });
+    expect(one(root, ".entry > button.toggle").getAttribute("aria-expanded")).toBe("true");
+  });
+
   // S27 with decision support: beside an analysis, which shows the question, the pane keeps only its answers; the
   // analysis's "Show the conversation" shows the conversation itself.
   test("beside an analysis the pane shows only its answers; the analysis's Show the conversation shows the transcript", async () => {
@@ -760,7 +776,7 @@ describe("DecisionView", () => {
   // S22: the question beside its analysis, as the user was shown it: its number in the heading, its context and itself.
   test("the view's heading names the decision and the question's number; the context and the question follow it", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     expect(root.querySelector("h2")?.textContent?.trim()).toBe(prompts.decisionViewHeading(2, 4));
     expect(root.querySelector(".question-context")?.textContent).toMatch(/keeps its data in a database/);
     expect(root.querySelector(".question-text")?.textContent?.trim()).toBe("Which database?");
@@ -769,7 +785,7 @@ describe("DecisionView", () => {
   // S39 (W2-R1-2): only the context scrolls; the question text is in no scrolled region of the view.
   test("the question text is outside the scrolled context region, and only the context scrolls", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const context = one(root, ".question-context");
     const asked = one(root, ".question-text");
     expect(asked.closest(".question-context")).toBe(null);
@@ -791,7 +807,7 @@ describe("DecisionView", () => {
     const { analysisLines } = await import("../../src/render.ts");
     const details = [...prompts.toolInputBlocks({ command: "rm -rf build" }), { kind: "paragraph" as const, pieces: [...plainPieces("The **build** directory holds the "), ref("bundle", "b"), ...plainPieces(".")] }];
     const withDetails = { ...presented, details, explanations: [{ id: "b", term: "bundle", explanation: "The built page." }] };
-    const root = show(DecisionView, { event: { ...(event as object), presented: withDetails } as never, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event: { ...(event as object), presented: withDetails } as never, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const context = one(root, ".question-context");
     expect(context.textContent).toContain(prompts.TOOL_INPUT_HEADING);
     expect(context.querySelector("code")?.textContent).toBe("rm -rf build");
@@ -807,7 +823,7 @@ describe("DecisionView", () => {
   test("one column per option in order, the heading Disadvantages: in each, arguments offset by level, symbols, the recommendation", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const shown: string[] = [];
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => void shown.push("conversation") });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => void shown.push("conversation") });
     const columns = [...root.querySelectorAll<HTMLElement>(".column")];
     expect(columns.map((c) => c.querySelector("h3")?.textContent?.trim())).toEqual(["SQLite", "PostgreSQL"]);
     expect(columns.map((c) => c.querySelector(".disadvantages-heading")?.textContent?.trim())).toEqual(["Disadvantages:", "Disadvantages:"]);
@@ -824,7 +840,7 @@ describe("DecisionView", () => {
   // Issue #35: both headings, and the entries labeled within each heading.
   test("each column has the headings Advantages: and Disadvantages:, and each entry its label", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const columns = [...root.querySelectorAll<HTMLElement>(".column")];
     expect(columns.map((c) => c.querySelector(".advantages-heading")?.textContent?.trim())).toEqual([prompts.ADVANTAGES_HEADING, prompts.ADVANTAGES_HEADING]);
     expect(columns.map((c) => [...c.querySelectorAll(".entry .label")].map((l) => l.textContent?.trim()))).toEqual([[prompts.advantageLabel(1)], [prompts.disadvantageLabel(1)]]);
@@ -833,7 +849,7 @@ describe("DecisionView", () => {
   // Issue #35, decision Q7: exactly the texts the view says oppose the option are marked, and only those are colored.
   test("the texts marked as opposing the option are exactly those the view model says oppose it", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const view = viewOf((event as { analysis: Parameters<typeof viewOf>[0] }).analysis);
     const expected = view.columns.flatMap((c) =>
       c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages].flatMap((e) => [e.opposes, ...e.elements.flatMap((el) => [el.opposes, ...el.arguments.map((a) => a.opposes)])]),
@@ -850,7 +866,7 @@ describe("DecisionView", () => {
   test("an unclear column shows its statement and no headings", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const unclear = { ...(event as object), analysis: { decision: "d", columns: [{ kind: "argued", option: "SQLite", advantages: [entry("E1")], disadvantages: [] }, { kind: "unclear", option: "PostgreSQL", unclear: "It could mean a server or a hosted service." }], recommendation: { option: "", reason: "" } } } as never;
-    const root = show(DecisionView, { event: unclear, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event: unclear, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const column = [...root.querySelectorAll<HTMLElement>(".column")][1];
     expect(column.querySelector("h3")?.textContent?.trim()).toBe("PostgreSQL");
     expect(column.querySelector(".unclear")?.textContent?.trim()).toBe("It could mean a server or a hosted service.");
@@ -860,15 +876,70 @@ describe("DecisionView", () => {
   // W1-R1-3: the recommendation scrolls with the columns, so that a long one cannot squeeze them.
   test("the recommendation is inside the scrolling area, below the row of columns", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const scroller = one(root, ".scroll");
     expect(scroller.querySelector(".recommendation")).not.toBe(null);
     expect(scroller.querySelector(".columns")).not.toBe(null);
   });
 
+  // Issue #87: every entry starts collapsed, its row the label and the whole title; a disputed entry carries the mark.
+  describe("collapsed entries", () => {
+    const view = viewOf((event as { analysis: Parameters<typeof viewOf>[0] }).analysis);
+    const entries = view.columns.flatMap((c) => (c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages]));
+    const closed = async (toggled: [string, boolean][] = []) => {
+      const { default: DecisionView } = await import("./components/DecisionView.svelte");
+      return show(DecisionView, { event, narrow: false, open: () => false, onToggle: (entry: string, open: boolean) => void toggled.push([entry, open]), onShowConversation: () => undefined });
+    };
+    test("each entry is a collapsed button with its label and whole title; its elements, arguments and referents are absent", async () => {
+      const root = await closed();
+      const rows = [...root.querySelectorAll<HTMLButtonElement>(".entry > button.toggle")];
+      expect(rows.map((b) => b.getAttribute("aria-expanded"))).toEqual(entries.map(() => "false"));
+      expect(rows.map((b) => b.querySelector(".title")?.textContent?.trim())).toEqual(entries.map((e) => `${e.label} ${e.title}${e.symbol === null ? "" : ` ${e.symbol}`}`));
+      for (const b of rows) {
+        const controls = b.getAttribute("aria-controls");
+        expect(controls).toBeTruthy();
+        expect(document.getElementById(controls!)).toBe(null);
+      }
+      expect(root.querySelector(".element, .argument, .elements")).toBe(null);
+      expect(root.textContent).not.toContain("But A1.");
+      // Decision Q2 of the task: the whole title, wrapped, never cut.
+      const source = (await import("./components/DecisionView.svelte?raw")).default;
+      expect(source).not.toMatch(/text-overflow:\s*ellipsis|line-clamp/);
+    });
+    test("the mark is on exactly the disputed entries, named for what it means", async () => {
+      const root = await closed();
+      const marks = [...root.querySelectorAll<HTMLElement>(".entry")].map((e) => e.querySelector("[role=img].disputed")?.getAttribute("aria-label") ?? null);
+      expect(marks).toEqual(entries.map((e) => (e.disputed ? prompts.ENTRY_DISPUTED_LABEL : null)));
+      expect(marks.filter((m) => m !== null).length).toBeGreaterThan(0);
+      expect(marks.filter((m) => m === null).length).toBeGreaterThan(0);
+    });
+    test("a click, Enter or Space on a row asks to open it; the button's name says what opens", async () => {
+      const toggled: [string, boolean][] = [];
+      const root = await closed(toggled);
+      const first = one(root, ".entry > button.toggle") as HTMLButtonElement;
+      expect(first.getAttribute("aria-label")).toBe(prompts.entryToggleName(entries[0].label, entries[0].title, false));
+      first.click();
+      // A native button turns Enter and Space into a click; jsdom does not, so the test checks it is a real button.
+      expect(first.tagName).toBe("BUTTON");
+      expect(first.getAttribute("type")).toBe("button");
+      expect(toggled).toEqual([[entries[0].id, true]]);
+    });
+    test("an open entry shows its body, controlled by its button, and asks to close", async () => {
+      const toggled: [string, boolean][] = [];
+      const { default: DecisionView } = await import("./components/DecisionView.svelte");
+      const root = show(DecisionView, { event, narrow: false, open: (id: string) => id === entries[0].id, onToggle: (entry: string, open: boolean) => void toggled.push([entry, open]), onShowConversation: () => undefined });
+      const first = one(root, ".entry > button.toggle");
+      expect(first.getAttribute("aria-expanded")).toBe("true");
+      expect(first.getAttribute("aria-label")).toBe(prompts.entryToggleName(entries[0].label, entries[0].title, true));
+      expect(document.getElementById(first.getAttribute("aria-controls")!)?.textContent).toContain("But A1.");
+      first.click();
+      expect(toggled).toEqual([[entries[0].id, false]]);
+    });
+  });
+
   test("below 390 px the analysis is not laid out; a message asks for a wider window", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: true, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     expect(root.querySelector(".column")).toBe(null);
     expect(one(root, "[role=alert]").textContent).toBe(prompts.ENLARGE_WINDOW_NOTICE);
     expect(prompts.ENLARGE_WINDOW_NOTICE).toMatch(/390/);
@@ -1447,7 +1518,7 @@ test("an answered question in the transcript marks its words; the question besid
   const { default: DecisionView } = await import("./components/DecisionView.svelte");
   const presented = asked;
   const analyzed = { _tag: "DecisionAnalyzed", decision: 1, question: "Use zod?", presented, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } as never;
-  const view = show(DecisionView, { event: analyzed, narrow: false, onShowConversation: () => undefined });
+  const view = show(DecisionView, { event: analyzed, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
   expect([...view.querySelectorAll(".question .term")].length).toBe(2);
 });
 
@@ -1483,7 +1554,7 @@ describe("the shared rule for code in rendered Markdown", () => {
     const pane = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
-    const beside = one(show(DecisionView, { event, narrow: false, onShowConversation: () => undefined }), ".question-context");
+    const beside = one(show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined }), ".question-context");
     const message = show(MessageView, { message: { key: "1-1", author: "program", heading: "", body: "Q?", format: "text", time: "2026-09-30T10:00:00.000Z", showTime: false, band: null, question: presented } });
     for (const [what, root] of [["the pane", pane], ["beside an analysis", beside], ["the transcript", message]] as const) {
       const codes = [...root.querySelectorAll("code")].filter((c) => c.textContent === " a ");
@@ -1513,7 +1584,7 @@ describe("a word that refers to an explanation beside inline formatting in the c
   test("beside an analysis", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
-    const root = show(DecisionView, { event, narrow: false, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     check(one(root, ".question-context"));
   });
 });

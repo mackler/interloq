@@ -1740,6 +1740,10 @@ export function recommendedOption(option: string): string {
 export const ENLARGE_WINDOW_NOTICE = "The analysis needs a window at least 390 pixels wide. Widen the window to read it; you can answer the question below without it.";
 /** Shown when the columns do not fit side by side (decision Q5). */
 export const SCROLL_SIDEWAYS_HINT = "Scroll sideways to see every option.";
+/** Issue #87: the accessible name of the mark beside a collapsed entry that hides a contradicting position. */
+export const ENTRY_DISPUTED_LABEL = "Contains an argument against this entry";
+/** Issue #87: the accessible name of an entry's disclosure button, which says what it opens or closes. */
+export const entryToggleName = (label: string, title: string, open: boolean): string => `${open ? "Hide" : "Show"} the reasoning of ${label} ${title}`;
 export const SHOW_CONVERSATION = "Show the conversation";
 /** The page's question pane (S27): back from the conversation to the pending question. */
 export const SHOW_QUESTION = "Back to the question";

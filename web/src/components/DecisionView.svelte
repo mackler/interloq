@@ -20,8 +20,9 @@
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
 
-  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; onShowConversation: () => void };
-  let { event, narrow, onShowConversation }: Props = $props();
+  /** `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the change asked for. */
+  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void };
+  let { event, narrow, open, onToggle, onShowConversation }: Props = $props();
   const view = $derived(viewOf(event.analysis));
   let row = $state<HTMLElement | null>(null);
   let overflowing = $state(false);
