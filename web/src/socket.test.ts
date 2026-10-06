@@ -299,3 +299,29 @@ describe("socket while a protocol error's close is pending", () => {
     expect(sockets.flatMap((x) => x.sent)).toEqual([]);
   });
 });
+
+// Issue #87: the page's shared state is changed by an action like an answer: queued until the hello, discarded when
+// the server has restarted, but kept for the last run, whose state the server holds too.
+describe("socket and the shared state's action", () => {
+  const flag = { scope: { _tag: "DecisionEntry" as const, decision: 1, entry: "e1" }, open: true };
+  test("a ui action queued before the hello is sent after it, also for a run that has ended", () => {
+    const h = handlers();
+    const c = connect("ws://x/ws", wire(h), env());
+    c.send({ type: "ui", incarnation: "a", run: 1, flag });
+    sockets[0].open();
+    sockets[0].receive({ type: "hello", cwd: "/", current: null, incarnation: "a" });
+    expect(sockets[0].sent.map((s) => JSON.parse(s))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag }]);
+    expect(h.notices).toEqual([]);
+  });
+  test("a ui action of an earlier incarnation is discarded with a notice", () => {
+    const h = handlers();
+    const c = connect("ws://x/ws", wire(h), env());
+    sockets[0].receive({ type: "hello", cwd: "/", current: 1, incarnation: "a" });
+    sockets[0].drop();
+    c.send({ type: "ui", incarnation: "a", run: 1, flag });
+    vi.advanceTimersByTime(1000);
+    sockets[1].receive({ type: "hello", cwd: "/", current: 1, incarnation: "b" });
+    expect(sockets[1].sent).toEqual([]);
+    expect(h.notices).toEqual([prompts.notSentNotice("ui", "restarted")]);
+  });
+});

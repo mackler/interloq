@@ -1350,3 +1350,40 @@ test("property: an answered question joins the transcript exactly as it was pres
     { numRuns: 100 },
   );
 });
+
+// Issue #87 (decision G-R1-1): the run's shared state of the page, kept by the version the server gave it.
+describe("the shared state of a run's page", () => {
+  const scope = (decision: number, entry: string) => ({ _tag: "DecisionEntry" as const, decision, entry });
+  const state = (version: number, ...open: ReturnType<typeof scope>[]) => ({ version, open });
+  test("a ui frame applies to the run it names, and one of a lower version is ignored", () => {
+    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }]);
+    expect(s.run?.ui).toEqual(state(2, scope(1, "e1")));
+    expect(fold([{ type: "ui", run: 1, state: state(1) }], s).run?.ui).toEqual(state(2, scope(1, "e1")));
+    expect(fold([{ type: "ui", run: 1, state: state(3) }], s).run?.ui).toEqual(state(3));
+  });
+  test("the replay sets each replayed run's state", () => {
+    const s = fold([hello(2), { type: "replay", runs: [{ id: 1, events: stamp([started]) }, { id: 2, events: stamp([started]) }], ui: [{ run: 1, state: state(1, scope(1, "a")) }, { run: 2, state: state(4, scope(2, "b")) }] }]);
+    expect(s.last?.ui).toEqual(state(1, scope(1, "a")));
+    expect(s.run?.ui).toEqual(state(4, scope(2, "b")));
+  });
+  test("a ui frame for the last run applies to it", () => {
+    const s = fold([hello(2), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }, { id: 2, events: stamp([started]) }] }, { type: "ui", run: 1, state: state(1, scope(1, "a")) }]);
+    expect(s.last?.ui).toEqual(state(1, scope(1, "a")));
+    expect(s.run?.ui).toEqual(state(0));
+  });
+  test("a hello of another incarnation drops the state with the runs", () => {
+    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", cwd: "/p", current: null, incarnation: "b" }]);
+    expect(s.run).toBe(null);
+  });
+  test("after any order of the server's states, the view holds the state of the highest version", () => {
+    fc.assert(
+      fc.property(fc.array(fc.tuple(fc.nat({ max: 3 }), fc.string({ maxLength: 2 })), { minLength: 1, maxLength: 6 }), fc.integer(), (scopes, seed) => {
+        const states = scopes.map(([d, e], i) => state(i + 1, scope(d, e)));
+        const order = fc.sample(fc.shuffledSubarray(states, { minLength: states.length }), { numRuns: 1, seed })[0];
+        const s = fold([...live([started]), ...order.map((st): ServerMessage => ({ type: "ui", run: 1, state: st }))]);
+        expect(s.run?.ui).toEqual(states.at(-1));
+      }),
+      { numRuns: 50, seed: 20261006 },
+    );
+  });
+});

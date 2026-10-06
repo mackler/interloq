@@ -293,3 +293,21 @@ test("PlanChanged with and without its report survives the round trip", () => {
   const without = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "PlanChanged", phase: 1, plan } } };
   assert.ok(Result.isFailure(decodeServer(JSON.stringify(without))), "a PlanChanged without its step field is not a message of this protocol");
 });
+
+// Issue #87: the frames of the page's shared state.
+test("the ui frames and a replay with shared states decode; an unknown scope and an excess property are refused", () => {
+  const scope = { _tag: "DecisionEntry", decision: 2, entry: "e1" } as const;
+  const frames: ServerMessage[] = [
+    { type: "ui", run: 1, state: { version: 3, open: [scope] } },
+    { type: "replay", runs: [{ id: 1, events: [] }], ui: [{ run: 1, state: { version: 1, open: [scope] } }] },
+  ];
+  for (const f of frames) assert.deepEqual(decoded(decodeServer(JSON.stringify(f))), f);
+  const client: ClientMessage = { type: "ui", incarnation: "a", run: 1, flag: { scope, open: true } };
+  assert.deepEqual(decoded(decodeClient(JSON.stringify(client))), client);
+  for (const bad of [
+    { type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "RailPhase", key: "x" }, open: true } },
+    { type: "ui", incarnation: "a", run: 1, flag: { scope: { ...scope, extra: 1 }, open: true } },
+    { type: "ui", incarnation: "a", run: 1, flag: { scope, open: true }, extra: 1 },
+  ]) assert.ok(Result.isFailure(decodeClient(JSON.stringify(bad))), JSON.stringify(bad));
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "ui", run: 1, state: { version: 1, open: [], extra: 1 } }))));
+});
