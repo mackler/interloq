@@ -258,7 +258,7 @@ declarations unchanged apart from their relative imports and service keys (`"eff
 
 ## Schema acceptance proof (plan step 0.4, run 24 Sep 2026)
 
-This proof, and its repetition of 28 Sep 2026, ran on `effect` 4.0.0-rc.117. It has not been run on
+This proof, and its repetition of 28 Sep 2026, ran on `effect` 4.0.0-rc.117. It covers the schemas as they were on 28 Sep 2026; those changed since are listed in CLAUDE.md under "Not yet known". It has not been run on
 4.0.1; `node prototypes/proto-schema.ts <project> prototypes/proto-schema-output` in a project
 container settles it.
 
