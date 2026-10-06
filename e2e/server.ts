@@ -284,6 +284,14 @@ SCENARIOS.longQuestion = {
   execs: [finished],
 };
 
+// Issue #79 (P2-R1-1): the long context of longQuestion with two short options, so that in a tall window the question
+// pane's context can be shown whole.
+SCENARIOS.longContextShortAnswers = {
+  steps: [{ output: { questions_for_user: [questionOf({ ...LONG_QUESTION_WORDS, options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" }, { output: noQuestions }],
+  reviews: [{ issues: [] }, { issues: [] }],
+  execs: [finished],
+};
+
 // S49 (W4-R1-1): a permission request with a 40-line command, which stays in the details while the question names the
 // action; Help me decide on it shows the analysis beside the question.
 export const LONG_COMMAND = Array.from({ length: 40 }, (_, i) => `echo "line ${i + 1} of a long command that prepares the build directory"`).join("\n");

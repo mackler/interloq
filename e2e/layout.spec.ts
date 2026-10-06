@@ -721,27 +721,37 @@ test.describe("the tests of the longQuestion server, in order", () => {
         await expect(page.locator(name)).toBeInViewport();
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
+      // The pointer is left where Start was clicked; a term may lie under it now and its tooltip cover the answer.
+      await page.mouse.move(0, 0);
       await continueWithoutDeciding(page).click();
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
+});
 
-  // Issue #79: in a tall window the question pane's context takes the room its answers leave, instead of 30 % of the pane.
-  test("(L25) a long question at 1280 × 1700: the context is whole, and no empty room stays below the answers while it is cut", async ({ page }) => {
+test.describe("the tests of the longContextShortAnswers server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  // Issue #79 (P2-R1-1): in a tall window the question pane's context takes the room its answers leave, instead of 30 %
+  // of the pane: with short answers, the whole context is shown, and no room stays empty below the answers.
+  test("(L25) a long context with short answers at 1280 × 1700: the pane's content fits, and the context is whole", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 1700 });
-    await startTask(page, "Choose a database at 1700", LONG_QUESTION_URL);
-    const top = pane(page).locator(".top");
+    await startTask(page, "Choose a database at 1700", layoutUrl("longContextShortAnswers"));
     await expect(pane(page).locator(".question-text")).toBeInViewport();
     const m = await pane(page).evaluate((el) => {
+      const cs = getComputedStyle(el);
       const t = el.querySelector<HTMLElement>(".top")!;
       const bottom = el.querySelector<HTMLElement>(".bottom")!;
+      const kids = [...el.children] as HTMLElement[];
+      const gaps = parseFloat(cs.rowGap || cs.gap) * (kids.length - 1);
+      const content = kids.reduce((n, k) => n + (k === t ? t.scrollHeight : k === bottom ? bottom.scrollHeight : k.getBoundingClientRect().height), 0);
+      const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
       const last = bottom.lastElementChild!.getBoundingClientRect().bottom;
-      const free = el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).paddingBottom) - last;
-      return { client: t.clientHeight, scroll: t.scrollHeight, free };
+      return { content: content + gaps, inner, client: t.clientHeight, scroll: t.scrollHeight, free: el.getBoundingClientRect().bottom - parseFloat(cs.paddingBottom) - last };
     });
-    if (m.client < m.scroll - 1) expect(m.free, "the context is cut while empty room stays below the answers").toBeLessThanOrEqual(1);
+    expect(m.content, "the pane's content does not fit, so the test cannot show the context whole").toBeLessThanOrEqual(m.inner + 1);
     expect(m.client, "the context is cut").toBeGreaterThanOrEqual(m.scroll - 1);
-    await expect(top).toBeVisible();
+    expect(m.client >= m.scroll - 1 || m.free <= 1, "the context is cut while empty room stays below the answers").toBe(true);
     await continueWithoutDeciding(page).click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
