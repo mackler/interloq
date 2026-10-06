@@ -133,7 +133,7 @@
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
          of panels or a resize across 840 px keeps each panel's reading position [user control and freedom]. -->
-    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding}>
+    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} style:--analysis-minimum={analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
@@ -156,7 +156,7 @@
         <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} />
       {/if}
       {#if analysis !== null && deciding}
-        <div class="decision-area" style:min-height={compact && analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
+        <div class="decision-area" style:min-height={analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
           <DecisionView onMinimum={(h) => (analysisMinimum = h)} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
@@ -209,7 +209,10 @@
   .left :global(.panel), .right :global(.panel) { flex: 1; }
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   /* The analysis spans both chat columns in the first row; the prompt and the activity line stay below it. */
-  .run.deciding { grid-template-rows: minmax(0, 1fr) auto; }
+  /* W3-R1-1 of work review 3, decision G-R1-2 at every width: the analysis's row keeps the analysis's minimum total
+     (measured by DecisionView, set inline as --analysis-minimum), and where it and the controls exceed the window the
+     run scrolls instead of clipping. */
+  .run.deciding { grid-template-rows: minmax(var(--analysis-minimum, 0px), 1fr) auto; overflow-y: auto; }
   .run.deciding > :global(.rail) { grid-row: 1 / 3; }
   .decision-area { grid-column: 2 / 4; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .run.paused { grid-template-rows: auto minmax(0, 1fr); }

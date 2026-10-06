@@ -456,6 +456,30 @@ test.describe("the tests of the decide server, in order", () => {
     await expect(analysis).toBeHidden();
   });
 
+  // Work review 3 (W3-R1-1), decision G-R1-2 at every width: in a short wide window the analysis keeps its minimum
+  // total, nothing in it is clipped, and the run scrolls to the answer controls.
+  test("(L27) the analysis at 1280 × 400 keeps its minimum total, and the answers are reached by scrolling", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 400 });
+    const analysis = await openAnalysis(page);
+    const area = await box(analysis);
+    for (const [name, part] of [["the question", analysis.locator(".question-text")], ["the columns", analysis.locator(".sideways")], ["the recommendation", analysis.locator(".recommendation")]] as const) {
+      const b = await box(part);
+      expect(b.y, `${name}'s top is above the analysis`).toBeGreaterThanOrEqual(area.y - 1);
+      expect(b.y + b.height, `${name} is below the analysis's end`).toBeLessThanOrEqual(area.y + area.height + 1);
+    }
+    const strip = await analysis.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--strip")));
+    expect((await box(analysis.locator(".sideways"))).height, "the columns' strip").toBeGreaterThanOrEqual(strip - 1);
+    expect((await box(page.locator(".decision-area"))).height, "the decision area is below its minimum total").toBeGreaterThanOrEqual((await minimumTotal(analysis)) - 1);
+    for (const part of [page.locator("section.pane"), page.locator("[data-activity]")]) {
+      await part.scrollIntoViewIfNeeded();
+      const b = await box(part);
+      expect(b.y).toBeGreaterThanOrEqual(-1);
+      expect(b.y + b.height).toBeLessThanOrEqual(400 + 1);
+    }
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
+    await expect(analysis).toBeHidden();
+  });
+
   test("(L11) the analysis at 390 × 844: one column in view, the other reached by scrolling sideways, no page overflow", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const analysis = await openAnalysis(page);
