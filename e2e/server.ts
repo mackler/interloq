@@ -14,7 +14,7 @@
 // PORT is the port.
 
 import { Effect } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { createServer } from "node:http";

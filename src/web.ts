@@ -3,7 +3,7 @@
 // under the platform runner. The page is served from web/dist (npm run build).
 
 import { Effect, Layer } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as fs from "node:fs";

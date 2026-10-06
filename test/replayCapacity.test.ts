@@ -4,7 +4,7 @@ import { test } from "node:test";
 import * as v8 from "node:v8";
 import * as vm from "node:vm";
 import { Effect, Layer } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { platformLayer } from "../src/platform.ts";
 import type { ServerMessage } from "../src/protocol.ts";

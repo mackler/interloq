@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Clock, Effect, Exit, Layer, Option, Result, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import type { RunError } from "../src/errors.ts";
 import { describe } from "../src/errors.ts";
 import type { StoreShape } from "../src/services.ts";

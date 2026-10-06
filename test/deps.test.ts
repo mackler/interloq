@@ -13,10 +13,20 @@ const dependencies = (): Record<string, string> => readJson("package.json")?.dep
 test("effect and @effect/platform-node are pinned to exact versions", () => {
   const deps = dependencies();
   for (const name of ["effect", "@effect/platform-node"]) {
-    assert.match(deps[name] ?? "(absent)", /^\d+\.\d+\.\d+(-rc\.\d+)?$/, `${name} is not pinned to an exact version`);
+    assert.match(deps[name] ?? "(absent)", /^\d+\.\d+\.\d+$/, `${name} is not pinned to an exact version`);
   }
   for (const [name, version] of Object.entries(deps)) {
     assert.doesNotMatch(version, /[\^~<>*x|]|latest/, `${name} has a version range: ${version}`);
+  }
+});
+
+// The version of effect and @effect/platform-node, which move together (the platform's peerDependencies require it).
+const EFFECT_VERSION = "4.0.1";
+
+test(`effect and @effect/platform-node are pinned to ${EFFECT_VERSION} and installed at it`, () => {
+  for (const name of ["effect", "@effect/platform-node"]) {
+    assert.equal(dependencies()[name], EFFECT_VERSION, `${name} is not pinned to ${EFFECT_VERSION}`);
+    assert.equal(readJson(`node_modules/${name}/package.json`)?.version, EFFECT_VERSION, `installed ${name} is not ${EFFECT_VERSION}`);
   }
 });
 

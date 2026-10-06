@@ -2,7 +2,7 @@
 // the events of the current run and of the last finished one, broadcast to every connected tab.
 
 import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Ref, type Scope, Semaphore, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, type Wiring } from "./program.ts";
 import type { RunEvent, RunRecord, Stamped } from "./protocol.ts";

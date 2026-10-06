@@ -3,7 +3,7 @@
 // API names: docs/effect-v4-api.md.
 
 import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Ref, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, recordPath, reviewedFile, type SubjectId } from "./artifacts.ts";
 import { FileSystemError, GitError } from "./errors.ts";

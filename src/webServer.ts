@@ -2,8 +2,8 @@
 // and the replay, then the live events; from the page start, answer, stop and list.
 
 import { Deferred, Effect, Exit, FileSystem, Path, Queue, Ref, Result, type Scope } from "effect";
-import { HttpPlatform, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { Socket } from "effect/unstable/socket";
+import { HttpPlatform, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Socket } from "effect/socket";
 import { type ClientMessage, decodeClient, inSnapshot, type ServerMessage } from "./protocol.ts";
 import type { Broadcast, Refusal, RunManager } from "./runManager.ts";
 

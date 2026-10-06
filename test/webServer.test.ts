@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Deferred, Effect, Exit, Fiber, Result } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { platformLayer } from "../src/platform.ts";
 import type { ClientMessage, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
