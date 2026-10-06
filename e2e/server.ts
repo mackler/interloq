@@ -165,10 +165,11 @@ export const SCENARIOS: Record<string, TestOptions> = {
     execs: [finished],
   },
   // Decision support: a question with two options, one analysis that converges in its first cycle, then the answer.
+  // Issue #79: a context of about ten lines at 1280 px and a short recommendation, which fit beside the columns.
   decide: {
     steps: [
-      { output: { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
-      { output: DECIDE_ANALYSIS },
+      { output: { questions_for_user: [questionOf({ context: LONG_DECISION_CONTEXT, question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
+      { output: { ...DECIDE_ANALYSIS, recommendation: { option: "SQLite", reason: "Developers set up the service sooner." } } },
       { output: noQuestions },
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],

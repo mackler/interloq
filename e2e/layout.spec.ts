@@ -130,14 +130,28 @@ const openLongAnalysis = async (page: Page, width: number, height: number) => {
     analysis,
     run: page.locator("main.run"),
     area: page.locator(".decision-area"),
-    scroll: analysis.locator(".scroll"),
+    // Issue #81: the region that scrolls sideways, each column's own vertical scroller, and the recommendation's region.
+    sideways: analysis.locator(".sideways"),
+    columns: analysis.locator(".column"),
+    recommendation: analysis.locator(".recommendation"),
     prompt: page.locator("section.pane"),
     activity: page.locator("[data-activity]"),
   };
 };
 type Parts = Awaited<ReturnType<typeof openLongAnalysis>>;
-/** The height of the decision area's floor, min(12rem, 40dvh), in this window. */
-const floorOf = (page: Page) => page.evaluate(() => Math.min(12 * parseFloat(getComputedStyle(document.documentElement).fontSize), 0.4 * window.innerHeight));
+/**
+ * Decision G-R1-2: the least height of the analysis in the compact layout, its heading, the question, two lines each of
+ * the context and the recommendation, and the columns' strip (gaps and paddings left out, so a lower bound).
+ */
+const minimumTotal = (analysis: Locator) =>
+  analysis.evaluate((el) => {
+    const h = (s: string) => el.querySelector(s)?.getBoundingClientRect().height ?? 0;
+    const line = (parseFloat(getComputedStyle(el.querySelector(".question-context")!).lineHeight) || 1.2 * parseFloat(getComputedStyle(el.querySelector(".question-context")!).fontSize));
+    const strip = parseFloat(getComputedStyle(el).getPropertyValue("--strip"));
+    return h(".head") + h(".question-text") + 4 * line + strip;
+  });
+/** Whether some column's own scroller holds more than it shows. */
+const someColumnOverflows = (parts: Parts) => parts.columns.evaluateAll((cs) => cs.some((c) => c.scrollHeight > c.clientHeight + 1));
 /** The decision area, the prompt and the activity line do not overlap, and the prompt shows all of its content. */
 const separateAndWhole = async (parts: Parts) => {
   const rect = (l: Locator) => l.evaluate((el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
@@ -389,6 +403,24 @@ test.describe("the tests of the decide server, in order", () => {
     await expect(analysis).toBeHidden();
   });
 
+  // Issue #79: the context takes the room that is free: at 1280 × 800 a context of about ten lines is shown whole beside
+  // the columns' strip and a short recommendation.
+  test("(L24) a context of about ten lines at 1280 × 800 is shown whole, bounded by the room the rest leaves", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const analysis = await openAnalysis(page);
+    const context = analysis.locator(".question-context");
+    const m = await context.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) || 1.2 * parseFloat(getComputedStyle(el).fontSize) }));
+    expect(m.scroll, "the context is about ten lines").toBeGreaterThan(6 * m.line);
+    expect(m.client, "the context is cut").toBeGreaterThanOrEqual(m.scroll - 1);
+    const strip = await analysis.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--strip")));
+    const [c, q, w, r, a] = await Promise.all([context, analysis.locator(".question-text"), analysis.locator(".sideways"), analysis.locator(".recommendation"), analysis].map(box));
+    expect(w.height, "the columns' strip").toBeGreaterThanOrEqual(strip - 1);
+    expect(q.y).toBeGreaterThanOrEqual(c.y + c.height - 1);
+    expect(r.y + r.height, "the recommendation leaves the analysis").toBeLessThanOrEqual(a.y + a.height + 1);
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
+    await expect(analysis).toBeHidden();
+  });
+
   test("(L11) the analysis at 390 × 844: one column in view, the other reached by scrolling sideways, no page overflow", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const analysis = await openAnalysis(page);
@@ -418,23 +450,21 @@ test.describe("the tests of the decide server, in order", () => {
 test.describe("the tests of the decideLong server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  // W1-R1-3: a recommendation of several paragraphs scrolls with the columns and does not squeeze them.
+  // W1-R1-3, issue #81: a recommendation of several paragraphs has a region of its own below the columns, outside their
+  // scrollers; it does not squeeze them below their strip, and its end is reached inside its own region.
   test("(L13) a long recommendation at 1280 × 800: the columns keep their height, and the recommendation's end can be scrolled into view", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, "Add a database", layoutUrl("decideLong"));
-    await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
-    await expect(analysis).toBeVisible();
-    // Issue #87: the entries start collapsed; the column's height is read with its entry open.
-    await analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
-    expect((await box(analysis.locator(".column").nth(0))).height).toBeGreaterThanOrEqual(200);
-    const last = analysis.getByText("The last paragraph of the recommendation.");
-    await last.scrollIntoViewIfNeeded();
-    await expect(last).toBeInViewport();
-    const [end, area] = [await box(last), await box(analysis)];
-    expect(end.y + end.height).toBeLessThanOrEqual(area.y + area.height + 1);
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
+    const parts = await openLongAnalysis(page, 1280, 800);
+    const strip = await parts.analysis.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--strip")));
+    expect(strip, "the strip").toBeGreaterThan(0);
+    expect((await box(parts.sideways)).height, "the columns' region keeps its strip").toBeGreaterThanOrEqual(strip - 1);
+    expect(await parts.recommendation.evaluate((el) => el.closest(".sideways, .column") === null), "the recommendation is outside the columns' scrollers").toBe(true);
+    expect((await box(parts.recommendation)).y, "the recommendation is below the columns").toBeGreaterThanOrEqual((await box(parts.sideways)).y + (await box(parts.sideways)).height - 1);
+    const last = parts.analysis.getByText("The last paragraph of the recommendation.");
+    await parts.recommendation.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+    const [end, region] = [await box(last), await box(parts.recommendation)];
+    expect(end.y).toBeGreaterThanOrEqual(region.y - 1);
+    expect(end.y + end.height).toBeLessThanOrEqual(region.y + region.height + 1);
+    await answerDismisses(page, parts);
   });
 
   test("(L14) a long analysis at 390 × 844: it scrolls inside itself, and the answer controls are in view", async ({ page }) => {
@@ -447,13 +477,15 @@ test.describe("the tests of the decideLong server, in order", () => {
       expect(b.y, `${name}'s top`).toBeGreaterThanOrEqual(0);
       expect(b.y + b.height, `${name} is below the window`).toBeLessThanOrEqual(844 + 1);
     }
-    const inner = await parts.scroll.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
-    expect(inner.scroll, "the analysis does not scroll inside itself").toBeGreaterThan(inner.client);
+    // Issue #81: the analysis scrolls inside itself, in a column's own scroller (its entry opened, issue #87), and the
+    // recommendation's end is reached inside the recommendation's own region.
+    await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
+    expect(await someColumnOverflows(parts), "no column scrolls inside itself").toBe(true);
     const last = parts.analysis.getByText("The last paragraph of the recommendation.");
-    await last.scrollIntoViewIfNeeded();
-    const [end, scroll] = [await box(last), await box(parts.scroll)];
-    expect(end.y).toBeGreaterThanOrEqual(scroll.y - 1);
-    expect(end.y + end.height).toBeLessThanOrEqual(scroll.y + scroll.height + 1);
+    await parts.recommendation.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+    const [end, region] = [await box(last), await box(parts.recommendation)];
+    expect(end.y).toBeGreaterThanOrEqual(region.y - 1);
+    expect(end.y + end.height).toBeLessThanOrEqual(region.y + region.height + 1);
     expect(await parts.run.evaluate((el) => el.scrollTop), "the run scrolled to show the recommendation").toBe(0);
     await expect(page.getByRole("button", { name: new RegExp(LEFT) })).toHaveCount(0);
     await expect(page.getByRole("button", { name: new RegExp(RIGHT) })).toHaveCount(0);
@@ -461,26 +493,88 @@ test.describe("the tests of the decideLong server, in order", () => {
     await answerDismisses(page, parts);
   });
 
-  test("(L15) a long analysis at 640 × 400: the analysis stays at its floor, and the answer controls can be reached", async ({ page }) => {
+  // Decision G-R1-2: in a short window the analysis keeps its minimum total, and the page scrolls to the answer controls.
+  test("(L15) a long analysis at 640 × 400: the analysis keeps its minimum total, and the answer controls can be reached", async ({ page }) => {
     const parts = await openLongAnalysis(page, 640, 400);
-    const floor = await floorOf(page);
-    expect((await box(parts.area)).height, "the decision area grows beyond its floor").toBeLessThanOrEqual(floor + 1);
-    const inner = await parts.scroll.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
-    expect(inner.scroll, "the analysis does not scroll inside itself").toBeGreaterThan(inner.client);
+    expect((await box(parts.area)).height, "the decision area is below its minimum total").toBeGreaterThanOrEqual((await minimumTotal(parts.analysis)) - 1);
+    await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
+    expect(await someColumnOverflows(parts), "no column scrolls inside itself").toBe(true);
     await separateAndWhole(parts);
     await reachable(parts);
     await answerDismisses(page, parts);
   });
 
-  test("(L16) a long analysis at 390 × 600 with the progress opened: the analysis stays at its floor, and the answer controls can be reached", async ({ page }) => {
+  test("(L16) a long analysis at 390 × 600 with the progress opened: the analysis keeps its minimum total, and the answer controls can be reached", async ({ page }) => {
     // At 844 px the scenario's short timeline leaves the controls and the floor room enough; at 600 px they do not.
     const parts = await openLongAnalysis(page, 390, 600);
     await page.locator("details.progress > summary, details.progress summary").first().click();
     await expect(page.locator("details.progress")).toHaveAttribute("open", "");
-    const floor = await floorOf(page);
-    expect((await box(parts.area)).height, "the decision area grows beyond its floor").toBeLessThanOrEqual(floor + 1);
+    expect((await box(parts.area)).height, "the decision area is below its minimum total").toBeGreaterThanOrEqual((await minimumTotal(parts.analysis)) - 1);
     await separateAndWhole(parts);
     await reachable(parts);
+    await answerDismisses(page, parts);
+  });
+
+  // Issue #81: each column scrolls on its own inside the region that scrolls sideways; decision Q1: the strip is measured
+  // from the closed columns, so opening entries, here or in another tab, moves nothing above or below the columns.
+  test("(L26) each column scrolls on its own; the regions above and below keep their heights whatever is open", async ({ context, page }) => {
+    const parts = await openLongAnalysis(page, 1280, 800);
+    const heights = () => Promise.all([parts.analysis.locator(".question-context"), parts.recommendation].map(async (l) => Math.round((await box(l)).height)));
+    const closed = await heights();
+    await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
+    expect(await heights(), "opening an entry moved the regions above or below the columns").toEqual(closed);
+    const [long, short] = [parts.columns.nth(0), parts.columns.nth(1)];
+    expect(await long.evaluate((el) => el.scrollHeight > el.clientHeight + 1), "the long column does not scroll on its own").toBe(true);
+    const [l, w] = [await box(long), await box(parts.sideways)];
+    expect(l.y).toBeGreaterThanOrEqual(w.y - 1);
+    expect(l.y + l.height).toBeLessThanOrEqual(w.y + w.height + 1);
+    const before = { top: await short.evaluate((el) => el.scrollTop), box: await box(short) };
+    await long.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+    await expect.poll(() => long.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    expect(await short.evaluate((el) => el.scrollTop), "the other column scrolled").toBe(before.top);
+    expect(await box(short)).toEqual(before.box);
+    // An entry open in another tab when this one loads, and a resize with it open: the same heights.
+    const other = await context.newPage();
+    await other.setViewportSize({ width: 1280, height: 800 });
+    await other.goto(layoutUrl("decideLong"));
+    await expect(other.getByRole("region", { name: /^Decision 1: / })).toBeVisible();
+    await page.reload();
+    await expect(parts.analysis.getByRole("button", { name: /^Hide the reasoning of Advantage 1:/ })).toBeVisible();
+    expect(await heights(), "an entry open from another tab moved the regions").toEqual(closed);
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect.poll(heights, { message: "a resize with an entry open moved the regions" }).toEqual(closed);
+    await other.close();
+    await answerDismisses(page, parts);
+  });
+
+  // Decision Q1: a closed column shorter than ten lines in a tall window is its own strip, measured from its content,
+  // not from its scroller, whichever entries are open.
+  test("(L26) short closed columns in a tall window: the strip is the tallest column's closed content", async ({ context, page }) => {
+    const parts = await openLongAnalysis(page, 1280, 1400);
+    const read = () =>
+      parts.analysis.evaluate((el) => {
+        const strip = parseFloat(getComputedStyle(el).getPropertyValue("--strip"));
+        const contents = [...el.querySelectorAll<HTMLElement>(".column")].map((c) => {
+          const cs = getComputedStyle(c);
+          const inner = c.querySelector<HTMLElement>(".column-content")!;
+          const bodies = [...inner.querySelectorAll<HTMLElement>(".elements")].reduce((n, b) => n + b.getBoundingClientRect().height + parseFloat(getComputedStyle(b).marginTop) + parseFloat(getComputedStyle(b).marginBottom), 0);
+          return inner.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) - bodies;
+        });
+        const line = (parseFloat(getComputedStyle(el.querySelector(".question-context")!).lineHeight) || 1.2 * parseFloat(getComputedStyle(el.querySelector(".question-context")!).fontSize));
+        return { strip, closed: Math.max(...contents), ten: 10 * line };
+      });
+    const first = await read();
+    expect(first.closed, "the closed columns are shorter than ten lines").toBeLessThan(first.ten);
+    expect(Math.abs(first.strip - first.closed), "the strip is not the closed columns' content").toBeLessThanOrEqual(1);
+    const other = await context.newPage();
+    await other.setViewportSize({ width: 1280, height: 1400 });
+    await other.goto(layoutUrl("decideLong"));
+    await other.getByRole("region", { name: /^Decision 1: / }).getByRole("button", { name: /^(Show|Hide) the reasoning of Advantage 1:/ }).first().click();
+    await page.reload();
+    await expect(parts.analysis.getByRole("button", { name: /^Hide the reasoning of Advantage 1:/ })).toBeVisible();
+    expect(Math.abs((await read()).strip - first.strip), "an entry open from another tab changed the strip").toBeLessThanOrEqual(1);
+    await other.close();
     await answerDismisses(page, parts);
   });
 
@@ -598,6 +692,26 @@ test.describe("the tests of the longQuestion server, in order", () => {
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
+
+  // Issue #79: in a tall window the question pane's context takes the room its answers leave, instead of 30 % of the pane.
+  test("(L25) a long question at 1280 × 1700: the context is whole, and no empty room stays below the answers while it is cut", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 1700 });
+    await startTask(page, "Choose a database at 1700", LONG_QUESTION_URL);
+    const top = pane(page).locator(".top");
+    await expect(pane(page).locator(".question-text")).toBeInViewport();
+    const m = await pane(page).evaluate((el) => {
+      const t = el.querySelector<HTMLElement>(".top")!;
+      const bottom = el.querySelector<HTMLElement>(".bottom")!;
+      const last = bottom.lastElementChild!.getBoundingClientRect().bottom;
+      const free = el.getBoundingClientRect().bottom - parseFloat(getComputedStyle(el).paddingBottom) - last;
+      return { client: t.clientHeight, scroll: t.scrollHeight, free };
+    });
+    if (m.client < m.scroll - 1) expect(m.free, "the context is cut while empty room stays below the answers").toBeLessThanOrEqual(1);
+    expect(m.client, "the context is cut").toBeGreaterThanOrEqual(m.scroll - 1);
+    await expect(top).toBeVisible();
+    await continueWithoutDeciding(page).click();
+    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
 });
 
 test.describe("the tests of the permissionLong server, in order", () => {
