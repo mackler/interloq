@@ -2,7 +2,8 @@
 // raw. `describe` produces the text that the program prints. Replaces the single Halt class.
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
-import { agentUnreachableText, analysisInvalidText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { type SkipProblem, SkipProblemSchema } from "./premises.ts";
+import { skipConditionInvalidText, agentUnreachableText, analysisInvalidText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -70,6 +71,11 @@ export class PlanInvalid extends Data.TaggedError("PlanInvalid")<{
  * where it is, with its problems. The reply gets the validation repair turn of behaviour 10; a second failure halts.
  */
 export class QuestionInvalid extends Data.TaggedError("QuestionInvalid")<{ readonly questions: QuestionProblems }> {}
+/**
+ * A question list whose skip conditions (issue #99) name an unknown question or answer, the entry itself, or form a cycle:
+ * the validation repair turn of behaviour 10, then a halt.
+ */
+export class SkipConditionInvalid extends Data.TaggedError("SkipConditionInvalid")<{ readonly problems: readonly SkipProblem[] }> {}
 /** A report of report_step that names no step of the plan (Q3): an error for Claude Code, not a halt. */
 export class UnknownStep extends Data.TaggedError("UnknownStep")<{ readonly id: string }> {}
 /** docs/decision-making.md of the program could not be read before the run (decision support, D7). */
@@ -97,6 +103,7 @@ export type RunError =
   | PlanInvalid
   | CorrectionInvalid
   | QuestionInvalid
+  | SkipConditionInvalid
   | AgentUnreachable
   | Interrupted;
 
@@ -173,6 +180,8 @@ export const describe = (error: RunErrorFields): string => {
       return planInvalidText(error);
     case "QuestionInvalid":
       return questionInvalidText(error.questions);
+    case "SkipConditionInvalid":
+      return skipConditionInvalidText(error.problems);
     case "Interrupted":
       return `interrupted during ${error.where}`;
   }
@@ -228,6 +237,7 @@ const RunErrorData = Schema.Union([
     _tag: Schema.Literal("QuestionInvalid"),
     questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(QUESTION_PROBLEM_KINDS), subject: Schema.String })) })),
   }),
+  Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);

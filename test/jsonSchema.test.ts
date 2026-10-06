@@ -30,6 +30,8 @@ const userQuestions = {
     properties: { context: blocks, question: pieces, explanations, options },
   },
 };
+/** Issue #99: an entry's skip condition, null or the question and the answer that make it unnecessary. */
+const skipIf = { anyOf: [{ type: "object", properties: { question: { type: "string" }, answer: { type: "string" } } }, { type: "null" }] };
 /** The legacy question list with the context of each entry (S3), placed after its id, and its texts as pieces (issue #36). */
 const withContext = <T extends { properties: { questions: { items: { properties: object } } } }>(schema: T): T => ({
   ...schema,
@@ -39,7 +41,7 @@ const withContext = <T extends { properties: { questions: { items: { properties:
       ...schema.properties.questions,
       items: {
         ...schema.properties.questions.items,
-        properties: (({ id, default_answer }) => ({ id, context: blocks, question: pieces, reason: blocks, proposed_answers: options, default_answer }))(schema.properties.questions.items.properties as { id: unknown; default_answer: unknown }),
+        properties: (({ id, default_answer }) => ({ id, context: blocks, question: pieces, reason: blocks, proposed_answers: options, default_answer, skip_if: skipIf }))(schema.properties.questions.items.properties as { id: unknown; default_answer: unknown }),
       },
     },
   },

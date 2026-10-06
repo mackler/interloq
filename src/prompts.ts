@@ -5,6 +5,7 @@ import { FILE_CHANGE_FIELD, type Block, type Explanation, type LogEntry, type Pi
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { PauseOrigin, QuestionOrigin } from "./question.ts";
+import type { Skipped, SkipProblem } from "./premises.ts";
 
 const SEVERITY = `Severity: blocking = the work cannot succeed with the file as written; major = the file as written will produce a defect or omits something required; minor = everything else.`;
 
@@ -380,6 +381,17 @@ The rules they break:
 ${rules.join("\n")}
 Return the complete output again, corrected. Do not modify any file.`;
 }
+
+// ---- the skip conditions of the question list (issue #99) -----------------------------------------------------------
+
+/** One problem of a list's skip conditions, as the repair prompt and the halt state it. */
+export const skipConditionProblemLine = (_problem: SkipProblem): string => "";
+/** The halt after the repair turn could not correct the skip conditions. */
+export const skipConditionInvalidText = (_problems: readonly SkipProblem[]): string => "";
+/** The validation repair turn of a question list whose skip conditions are wrong. */
+export const skipConditionRepairPrompt = (_problems: readonly SkipProblem[]): string => "";
+/** The program's note that questions were skipped: to Claude Code after the user's message, and in conversation.md. */
+export const skippedNote = (_skipped: readonly Skipped[]): string => "";
 
 /** How a question for the user is filled (decision Q1 of the decision-support task), with the rules of every question (S1). */
 export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a context, a question, explanations and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.

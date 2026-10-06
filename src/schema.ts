@@ -169,6 +169,13 @@ export const DecisionAnalysis = Schema.Struct({
   recommendation: Schema.Struct({ option: Schema.String, reason: Schema.String }),
 });
 
+/**
+ * The premise of a question-list entry (issue #99): the id of another entry of the list, and the words of the label of one
+ * of that entry's proposed answers. When the user chooses that answer, the entry's question is not asked. One entry names
+ * one condition: a question depending on two others is a case that has not arisen.
+ */
+export const SkipCondition = Schema.Struct({ question: Schema.String, answer: Schema.String });
+
 /** One entry of the question list that Claude Code and Codex agree on before the interview. */
 export const QuestionEntry = Schema.Struct({
   id: Schema.String,
@@ -182,6 +189,8 @@ export const QuestionEntry = Schema.Struct({
   proposed_answers: Schema.Array(PieceOption),
   /** The label of the default answer, compared with the words of each proposed answer's label. */
   default_answer: Schema.String,
+  /** Null when the question is always asked; otherwise the answer of another question that makes it unnecessary (issue #99). */
+  skip_if: Schema.NullOr(SkipCondition),
 });
 
 export const QuestionList = Schema.Struct({ questions: Schema.Array(QuestionEntry) });
@@ -371,6 +380,7 @@ export type RecordedStep = typeof RecordedStep.Type;
 export type RecordedPlan = typeof RecordedPlan.Type;
 export type PlanFile = typeof PlanFile.Type;
 export type QuestionEntry = typeof QuestionEntry.Type;
+export type SkipCondition = typeof SkipCondition.Type;
 export type QuestionList = typeof QuestionList.Type;
 export type QuestionListResponse = typeof QuestionListResponse.Type;
 export type InterviewTurn = typeof InterviewTurn.Type;

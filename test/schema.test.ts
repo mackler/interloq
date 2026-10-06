@@ -41,8 +41,9 @@ const userQuestion: UserQuestion = {
   options: [option("A", "a"), option("B", "b")],
 };
 const plannerResponse: WithQuestions<legacy.PlannerResponse> = { dispositions: [disposition], self_corrections: [selfCorrection], reviewer_feedback: "", questions_for_user: [userQuestion] };
-type QuestionEntry = { id: string; context: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string };
-const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A" };
+// Issue #99: an entry carries its skip condition, null or the question and the answer that make it unnecessary.
+type QuestionEntry = { id: string; context: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string; skip_if: { question: string; answer: string } | null };
+const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A", skip_if: null };
 // Issue #21 (Q6 follow-up) and issue #35 (Q5, Q6): the fields the interview turn has beyond the frozen legacy shape.
 type CurrentQuestion = { current_question: { id: string; context: Block[]; text: Piece[]; explanations: Explanation[]; options: PieceOption[] } };
 const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
@@ -105,6 +106,8 @@ test("each schema rejects a wrong enum value, a missing field and a wrong type",
   rejects(S.SelfCorrection, { ...selfCorrection, new_action: "corrected" }, "new_action corrected");
   rejects(S.PlannerResponse, { ...plannerResponse, reviewer_feedback: 1 }, "numeric reviewer_feedback");
   rejects(S.QuestionEntry, { ...questionEntry, proposed_answers: [{ label: "A" }] }, "a proposed answer without a description");
+  rejects(S.QuestionEntry, (({ skip_if: _, ...rest }) => rest)(questionEntry), "an entry without its skip condition");
+  rejects(S.QuestionEntry, { ...questionEntry, skip_if: { question: "Q0" } }, "a skip condition without its answer");
   rejects(S.InterviewTurn, { ...interviewTurn, complete: "yes" }, "complete as a string");
   rejects(S.InterviewTurn, { message_to_user: "m", current_question: { id: "", context: [], text: [], explanations: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
   rejects(S.InterviewTurn, { message_to_user: "m", asked_ids: [], answered_ids: [], complete: false, summary: "" }, "a turn without current_question");

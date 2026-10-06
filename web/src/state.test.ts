@@ -555,7 +555,7 @@ describe("a replay of a question phase", () => {
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],
-          questions: [{ id: "Q1", context: plainBlocks("c"), question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p") }, { label: plainPieces("SQLite"), description: plainPieces("s") }], default_answer: "PostgreSQL" }],
+          questions: [{ id: "Q1", context: plainBlocks("c"), question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p") }, { label: plainPieces("SQLite"), description: plainPieces("s") }], default_answer: "PostgreSQL", skip_if: null }],
         },
         resultText: "",
       }),

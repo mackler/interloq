@@ -333,6 +333,29 @@
           },
           "default_answer": {
             "type": "string"
+          },
+          "skip_if": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string"
+                  },
+                  "answer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "question",
+                  "answer"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -341,7 +364,8 @@
           "question",
           "reason",
           "proposed_answers",
-          "default_answer"
+          "default_answer",
+          "skip_if"
         ],
         "additionalProperties": false
       }

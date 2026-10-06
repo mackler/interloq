@@ -216,15 +216,17 @@ export const entryOf = (w: Readonly<{ id: string; context: string; question: str
   reason: para(w.reason),
   proposed_answers: w.proposed_answers.map((a) => opt(a.label, a.description)),
   default_answer: w.default_answer,
+  skip_if: null,
 });
 /** An agreed question-list entry of plain words. */
-export const questionEntry = (id: string, question: string, answers: readonly (readonly [string, string])[] = [], extra: Partial<Readonly<{ context: string; reason: string; default_answer: string }>> = {}): S.QuestionEntry => ({
+export const questionEntry = (id: string, question: string, answers: readonly (readonly [string, string])[] = [], extra: Partial<Readonly<{ context: string; reason: string; default_answer: string; skip_if: S.SkipCondition | null }>> = {}): S.QuestionEntry => ({
   id,
   context: para(extra.context ?? `Context of ${id}.`),
   question: plain(question),
   reason: para(extra.reason ?? "r"),
   proposed_answers: answers.map(([l, d]) => opt(l, d)),
   default_answer: extra.default_answer ?? answers[0]?.[0] ?? "",
+  skip_if: extra.skip_if ?? null,
 });
 
 /** `hang` makes the call wait until it is interrupted, recording the abort signal it was given. */

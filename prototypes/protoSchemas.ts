@@ -36,6 +36,8 @@ const QuestionEntry = Schema.Struct({
   reason: Blocks,
   proposed_answers: Schema.Array(PieceOption),
   default_answer: Str,
+  // Issue #99 (6 Oct 2026): the answer of another entry that makes this question unnecessary, or null.
+  skip_if: Schema.NullOr(Schema.Struct({ question: Str, answer: Str })),
 });
 const TermsEntry = Schema.Struct({ id: Str, explanations: Schema.Array(Explanation), context: Blocks, question: Pieces, reason: Blocks, proposed_answers: Schema.Array(PieceOption) });
 
