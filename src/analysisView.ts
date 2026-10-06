@@ -3,7 +3,8 @@
 // module owns the layout that docs/decision-making.md assigns to the renderer: the headings "Advantages:" and
 // "Disadvantages:", the numbered labels of the entries (issue #35), the nesting of counterarguments under the element
 // they dispute, the equivalence symbols, and which texts oppose the column's option (decision Q7 of issue #35: the page
-// colors them, the terminal marks them).
+// colors them, the terminal marks them), and which entries hide a contradicting position (`disputed`, issue #87: the page
+// marks them beside the collapsed entry).
 
 import { ADVANTAGES_HEADING, advantageLabel, DISADVANTAGES_HEADING, disadvantageLabel } from "./prompts.ts";
 import type { Argument, DecisionAnalysis, Element, Entry } from "./schema.ts";
@@ -55,7 +56,7 @@ export const viewOf = (analysis: DecisionAnalysis): AnalysisView => {
     title: e.title,
     symbol: symbols.get(e.id) ?? null,
     opposes: disadvantage,
-    disputed: false,
+    disputed: elementsOf(e).some((el) => el.counterarguments.length > 0),
     elements: elementsOf(e).map((el) => ({
       text: el.text,
       opposes: disadvantage,

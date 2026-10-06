@@ -9,9 +9,10 @@ import type { Argument, DecisionAnalysis, Entry } from "../src/schema.ts";
 // for the other side than the entry's own (a counterargument has level 1 and the opposite `opposes`).
 
 const RUNS = { numRuns: 100, seed: 20261006 };
-const arbArgument: fc.Arbitrary<Argument> = fc.letrec<{ arg: Argument }>((tie) => ({
-  arg: fc.record({ id: fc.string({ minLength: 1, maxLength: 4 }), text: fc.string({ maxLength: 8 }), equivalent_to: fc.constant(""), replies: fc.array(tie("arg"), { maxLength: 2 }) }, { noNullPrototype: true }),
-})).arg;
+/** A counterargument with replies, at most three levels deep (a reply turns the side at each level). */
+const arbArgumentAt = (depth: number): fc.Arbitrary<Argument> =>
+  fc.record({ id: fc.string({ minLength: 1, maxLength: 4 }), text: fc.string({ maxLength: 8 }), equivalent_to: fc.constant(""), replies: depth <= 1 ? fc.constant([] as Argument[]) : fc.array(arbArgumentAt(depth - 1), { maxLength: 2 }) }, { noNullPrototype: true });
+const arbArgument = arbArgumentAt(3);
 const arbElement = fc.record({ text: fc.string({ maxLength: 8 }), counterarguments: fc.oneof({ weight: 3, arbitrary: fc.constant([] as Argument[]) }, { weight: 1, arbitrary: fc.array(arbArgument, { maxLength: 2 }) }) }, { noNullPrototype: true });
 const arbEntry: fc.Arbitrary<Entry> = fc
   .tuple(fc.string({ maxLength: 6 }), fc.array(arbElement, { minLength: 10, maxLength: 10 }))
