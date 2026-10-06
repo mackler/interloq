@@ -425,6 +425,8 @@ test.describe("the tests of the decideLong server, in order", () => {
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
     const analysis = page.getByRole("region", { name: /^Decision 1: / });
     await expect(analysis).toBeVisible();
+    // Issue #87: the entries start collapsed; the column's height is read with its entry open.
+    await analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
     expect((await box(analysis.locator(".column").nth(0))).height).toBeGreaterThanOrEqual(200);
     const last = analysis.getByText("The last paragraph of the recommendation.");
     await last.scrollIntoViewIfNeeded();

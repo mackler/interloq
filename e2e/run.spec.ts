@@ -2,7 +2,7 @@ import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { type RunScenario, runUrl } from "./ports.ts";
-import { AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, stageHeading, stepLabel } from "../src/prompts.ts";
+import { ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -397,6 +397,8 @@ test.describe("the tests of the decide server, in order", () => {
     await expect(analysis).toBeVisible();
     await expect(analysis.locator(".column h3")).toHaveText(["SQLite", "PostgreSQL"]);
     await expect(analysis.getByText("Disadvantages:").first()).toBeVisible();
+    // Issue #87: the entries start collapsed; the counterargument is read after its entry is opened.
+    await analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
     await expect(analysis.getByText("On the other hand, the server needs its own configuration. *")).toBeVisible();
     await expect(left(page)).toBeHidden();
     // The conversation is one click away, and the analysis one click back.
@@ -407,6 +409,39 @@ test.describe("the tests of the decide server, in order", () => {
     await option(page, /PostgreSQL/).click();
     await expect(analysis).toBeHidden();
     await expect(left(page).locator("[data-author=user]").getByText("PostgreSQL — a database server")).toBeVisible();
+    await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
+
+  // Issue #87 (decision G-R1-1): two tabs of one run show the same entries open; the state survives a reload, and the
+  // mark is on the entry that hides a contradicting position in both.
+  test("(24) two tabs agree on which entries of an analysis are open, and a reload keeps them", async ({ context, page }) => {
+    await startTask(page, "decide", "Add a database");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+    const analysisOf = (p: Page) => p.getByRole("region", { name: /^Decision 1: / });
+    await expect(analysisOf(page)).toBeVisible();
+    const other = await context.newPage();
+    await other.goto(url("decide"));
+    await expect(analysisOf(other)).toBeVisible();
+    const advantage = (p: Page) => analysisOf(p).getByRole("button", { name: /^(Show|Hide) the reasoning of Advantage 1:/ });
+    const body = (p: Page) => analysisOf(p).getByText("The comparative condition of E1.");
+    for (const p of [page, other]) {
+      await expect(advantage(p)).toHaveAttribute("aria-expanded", "false");
+      await expect(body(p)).toHaveCount(0);
+      await expect(analysisOf(p).locator(".entry").nth(0).getByRole("img", { name: ENTRY_DISPUTED_LABEL })).toBeVisible();
+      await expect(analysisOf(p).locator(".entry").nth(1).getByRole("img", { name: ENTRY_DISPUTED_LABEL })).toHaveCount(0);
+    }
+    await advantage(page).click();
+    await expect(advantage(other)).toHaveAttribute("aria-expanded", "true");
+    await expect(body(other)).toBeVisible();
+    await advantage(other).click();
+    await expect(advantage(page)).toHaveAttribute("aria-expanded", "false");
+    await expect(body(page)).toHaveCount(0);
+    await advantage(page).click();
+    await other.reload();
+    await expect(advantage(other)).toHaveAttribute("aria-expanded", "true");
+    await expect(body(other)).toBeVisible();
+    await option(page, /PostgreSQL/).click();
     await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
 });

@@ -150,7 +150,7 @@
      focus (10 %) and press (10 %), a focus ring, and the standard easing for the chevron and the body; none of it under
      reduced motion. It asserts that the entry is open or closed and nothing more (docs/ui-review.md). The title wraps
      whole (decision Q2). */
-  .toggle { position: relative; display: flex; align-items: flex-start; gap: 0.5rem; width: 100%; margin: 0; padding: 0.375rem 0.5rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
+  .toggle { position: relative; box-sizing: border-box; display: flex; align-items: flex-start; gap: 0.5rem; width: 100%; margin: 0; padding: 0.375rem 0.5rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
   .toggle::before { content: ""; position: absolute; inset: 0; background: var(--m3c-on-surface); opacity: 0; transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); pointer-events: none; }
   .toggle:hover::before { opacity: 0.08; }
   .toggle:focus-visible::before, .toggle:active::before { opacity: 0.1; }
