@@ -224,7 +224,8 @@
   .columns { display: grid; gap: 0.75rem; height: 100%; min-height: 0; align-items: stretch; }
   .column { box-sizing: border-box; min-height: 0; max-height: 100%; overflow-y: auto; padding: 0 0.75rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container); user-select: text; }
   .column-content { display: flow-root; }
-  .column h3 { margin: 0 0 0.5rem; padding-top: 0.75rem; position: sticky; top: 0; z-index: 2; background: inherit; }
+  /* W2-R1-2: the column's own surface color, opaque, so the arguments scroll behind the sticky option name. */
+  .column h3 { margin: 0 0 0.5rem; padding-top: 0.75rem; position: sticky; top: 0; z-index: 2; background: var(--m3c-surface-container); }
   .advantages-heading { margin: 0 0 0.5rem; }
   .disadvantages-heading { margin: 1rem 0 0.5rem; }
   .unclear { margin: 0; }

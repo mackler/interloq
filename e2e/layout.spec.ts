@@ -554,6 +554,10 @@ test.describe("the tests of the decideLong server, in order", () => {
     await expect.poll(() => long.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
     expect(await short.evaluate((el) => el.scrollTop), "the other column scrolled").toBe(before.top);
     expect(await box(short)).toEqual(before.box);
+    // W2-R1-2: the sticky option heading has the column's opaque surface color, so the scrolled arguments stay behind it.
+    const colors = await long.evaluate((el) => ({ heading: getComputedStyle(el.querySelector("h3")!).backgroundColor, column: getComputedStyle(el).backgroundColor }));
+    expect(colors.heading, "the sticky heading is transparent").not.toBe("rgba(0, 0, 0, 0)");
+    expect(colors.heading, "the sticky heading's color differs from the column's").toBe(colors.column);
     // An entry open in another tab when this one loads, and a resize with it open: the same heights.
     const other = await context.newPage();
     await other.setViewportSize({ width: 1280, height: 800 });
