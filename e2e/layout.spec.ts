@@ -922,6 +922,33 @@ test.describe("the tests of the permissionLong server, in order", () => {
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
+  // The developer's decision at the stop of execution phase 1 of the task of L21: where the analysis box is too short for
+  // its heading and its question, the heading stays on one line beside its "Show conversation" button, its words cut
+  // with an ellipsis where the line is too narrow and its whole text shown on hover (its title).
+  for (const [width, height, cut] of [[640, 400, true], [390, 844, true], [1280, 800, false]] as const) {
+    test(`(L29) the analysis's heading stays on one line beside its button at ${width} × ${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startTask(page, `Prepare the build with a one-line heading at ${width}`, PERMISSION_URL);
+      await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
+      await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+      const analysis = page.getByRole("region", { name: /^Decision 1: / });
+      await expect(analysis).toBeVisible();
+      const m = await analysis.evaluate((el) => {
+        const head = el.querySelector<HTMLElement>(".head")!;
+        const h2 = head.querySelector("h2")!;
+        const button = head.querySelector("button")!;
+        return { row: head.getBoundingClientRect().height, button: button.getBoundingClientRect().height, title: h2.getAttribute("title"), name: el.getAttribute("aria-label"), cut: h2.scrollWidth > h2.clientWidth, overflow: getComputedStyle(h2).textOverflow };
+      });
+      expect(m.row, "the heading's row is taller than its button").toBeLessThanOrEqual(m.button + 1);
+      expect(m.title, "the heading's whole text on hover").toBe(m.name);
+      if (cut) {
+        expect(m.cut, "the heading is cut at this width").toBe(true);
+        expect(m.overflow, "the cut heading ends in an ellipsis").toBe("ellipsis");
+      } else expect(m.cut, "the heading is cut in a wide window").toBe(false);
+      await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
+      await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    });
+  }
   test("(L21a) a permission request at 640 × 400 beside the analysis: the question and the first answer in view with room to spare, the analysis within its own box", async ({ page }) => {
     await page.setViewportSize({ width: 640, height: 400 });
     await startTask(page, "Prepare the build with room to spare", PERMISSION_URL);

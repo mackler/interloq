@@ -783,6 +783,14 @@ describe("DecisionView", () => {
     expect(root.querySelector(".question-text")?.textContent?.trim()).toBe("Which database?");
   });
 
+  // The developer's decision at the stop of execution phase 1 of the task of L21: the heading stays on one line beside its
+  // button, cut with an ellipsis where the line is too narrow, its whole text shown on hover.
+  test("the heading carries its whole text as its title, for the hover where it is cut", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
+    expect(root.querySelector("h2")?.getAttribute("title")).toBe(prompts.decisionViewHeading(2, 4));
+  });
+
   // S39 (W2-R1-2): only the context scrolls; the question text is in no scrolled region of the view.
   test("the question text is outside the scrolled context region, and only the context scrolls", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
@@ -925,8 +933,9 @@ describe("DecisionView", () => {
       }
       expect(root.querySelector(".element, .argument, .elements")).toBe(null);
       expect(root.textContent).not.toContain("But A1.");
-      // Decision Q2 of the task: the whole title, wrapped, never cut.
-      const source = (await import("./components/DecisionView.svelte?raw")).default;
+      // Decision Q2 of the task: the whole title, wrapped, never cut. The analysis's own heading is the one text cut, by
+      // the developer's decision in the task of L21; its rule is removed before the check.
+      const source = (await import("./components/DecisionView.svelte?raw")).default.replace(/^\s*\.head h2 \{[^}]*\}$/m, "");
       expect(source).not.toMatch(/text-overflow:\s*ellipsis|line-clamp/);
     });
     test("the mark is on exactly the disputed entries, named for what it means", async () => {

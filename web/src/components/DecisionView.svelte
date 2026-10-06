@@ -178,7 +178,11 @@
 
 <section class="decision" aria-label={decisionViewHeading(event.decision, event.presented.number)} bind:this={section} style:--strip="{heights === null ? strip : Math.min(strip, heights.columns)}px">
   <div class="head">
-    <h2 class="m3-font-title-medium">{decisionViewHeading(event.decision, event.presented.number)}</h2>
+    <!-- The developer's decision at the stop of execution phase 1 of the task of L21: where the box is too short for its
+         heading and its question, the heading stays on one line beside its button, cut with an ellipsis where the line
+         is too narrow, so that the question and its first answer stay in view [visibility of system status]; its whole
+         text is its title, shown on hover, and the region's name [recognition rather than recall]. -->
+    <h2 class="m3-font-title-medium" title={decisionViewHeading(event.decision, event.presented.number)}>{decisionViewHeading(event.decision, event.presented.number)}</h2>
     <Button variant="tonal" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
   </div>
   <!-- S22: the question the analysis is for, as the user was shown it: its context apart, then the question itself
@@ -245,8 +249,9 @@
   /* The task of L21: columns given no height are hidden, and the gap before them is taken back. */
   .sideways.taken { visibility: hidden; margin-top: calc(-1 * var(--decision-gap)); }
   .decision { --decision-gap: 0.5rem; display: flex; flex-direction: column; gap: var(--decision-gap); flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
-  .head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap; }
-  .head h2 { margin: 0; }
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: nowrap; }
+  .head h2 { margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .head > :global(button) { flex-shrink: 0; }
   /* The question beside its analysis (S39, W2-R1-2): only the context is bounded and scrolls on its own; the question
      text follows it outside any scrolled region, as in QuestionPane, so a long context cannot push it out of view. */
   .question { flex-shrink: 0; display: flex; flex-direction: column; gap: 0.5rem; }

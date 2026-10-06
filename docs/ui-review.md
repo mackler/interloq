@@ -60,6 +60,12 @@ layout now follows M3's window size classes (`web/src/layout.ts`, `App.svelte`, 
   counting what arrived; the latest notice stands above the panels in a compact window, so the server's end or a
   withdrawn draft is seen whichever panel is shown [visibility of system status]; a new prompt is recognised by its
   full identity, so a new run's first prompt selects "You and Interloq" after a reconnection too.
+- **The heading of a decision's analysis** (6 Oct 2026, the developer's decision in the task of L21): it stays on one
+  line beside its "Show conversation" button, its words cut with an ellipsis where the line is too narrow, so that in
+  a short window the analysis's heading and its question fit the room left beside the question's first answer
+  [visibility of system status]. Its whole text is its title, shown on hover, and the analysis region's name, so a
+  screen reader reads it whole [recognition rather than recall]. It is the one text of the analysis that is cut; an
+  entry's title is wrapped, never cut. `e2e/layout.spec.ts` checks it as L29, at 640 × 400, 390 × 844 and 1280 × 800.
 
 `e2e/layout.spec.ts` checks, at 390 × 844 and at 640 × 400, that nothing overflows sideways, that the shown panel is
 at least 300 px wide (and 400 or 200 px high) and the answer field at least 280 px wide, the panel switch, the badge
