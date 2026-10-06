@@ -11,7 +11,8 @@ import type { Argument, DecisionAnalysis, Element, Entry } from "./schema.ts";
 /** `opposes`: the text argues against the column's option (decision Q7 of issue #35). */
 export type ArgumentView = Readonly<{ id: string; text: string; level: number; symbol: string | null; opposes: boolean }>;
 export type ElementView = Readonly<{ text: string; opposes: boolean; arguments: readonly ArgumentView[] }>;
-export type EntryView = Readonly<{ id: string; label: string; title: string; symbol: string | null; opposes: boolean; elements: readonly ElementView[] }>;
+/** `disputed` (issue #87): some element of the entry has a counterargument, so a text under it argues the other side. */
+export type EntryView = Readonly<{ id: string; label: string; title: string; symbol: string | null; opposes: boolean; disputed: boolean; elements: readonly ElementView[] }>;
 export type ArguedColumnView = Readonly<{ kind: "argued"; option: string; advantagesHeading: string; advantages: readonly EntryView[]; disadvantagesHeading: string; disadvantages: readonly EntryView[] }>;
 export type ColumnView = ArguedColumnView | Readonly<{ kind: "unclear"; option: string; unclear: string }>;
 export type AnalysisView = Readonly<{ decision: string; columns: readonly ColumnView[]; recommendation: Readonly<{ option: string; reason: string }> | null }>;
@@ -54,6 +55,7 @@ export const viewOf = (analysis: DecisionAnalysis): AnalysisView => {
     title: e.title,
     symbol: symbols.get(e.id) ?? null,
     opposes: disadvantage,
+    disputed: false,
     elements: elementsOf(e).map((el) => ({
       text: el.text,
       opposes: disadvantage,

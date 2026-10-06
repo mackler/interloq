@@ -110,3 +110,14 @@ test("an unclear column's view is its option and its statement, with no headings
   });
   assert.deepEqual(view.columns[1], { kind: "unclear", option: "B", unclear: "B could mean a copy or a cache." });
 });
+
+test("issue #87: an entry with a counterargument is disputed, one without is not", () => {
+  const analysis: DecisionAnalysis = {
+    decision: "d",
+    columns: [{ kind: "argued", option: "A", advantages: [entry("E1", [arg("A1")])], disadvantages: [entry("E2")] }],
+    recommendation: { option: "", reason: "" },
+  };
+  const column = argued(viewOf(analysis).columns[0]);
+  assert.equal(column.advantages[0].disputed, true);
+  assert.equal(column.disadvantages[0].disputed, false);
+});
