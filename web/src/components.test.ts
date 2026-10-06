@@ -446,7 +446,7 @@ describe("TimelineRail", () => {
     const time = "2026-09-29T00:00:00Z";
     const messages: ServerMessage[] = [
       { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
-      { type: "replay", runs: [] },
+      { type: "replay", ui: [], runs: [] },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", task: "t" } },
       ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
     ];
@@ -584,13 +584,13 @@ describe("App and the draft", () => {
   test("the conversation toggle of one run's decision leaves the next run's decision of the same number displayed", async () => {
     const { root, ws } = await openPage();
     const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
     one(root, "button[name=conversation]").click();
     flushSync();
     expect(root.querySelector('section[aria-label^="Decision 1"]')).toBe(null);
     ws.receive({ type: "hello", cwd: "/p", current: 2, incarnation: "a" });
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
   });
 
@@ -600,7 +600,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null };
     const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: presentedQ, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question: presentedQ } }, analyzed, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question: presentedQ } }, analyzed, asked(1)]) }] });
     expect(root.querySelector(".pane")).not.toBe(null);
     expect(root.querySelector(".pane .question-text")).toBe(null);
     expect(root.querySelector(".pane .top")).toBe(null);
@@ -616,13 +616,13 @@ describe("App and the draft", () => {
 
   test("the right panel is titled Claude and Codex (issue #5)", async () => {
     const { root, ws } = await openPage();
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
     expect(root.querySelector('section[aria-label="Claude and Codex"]')).not.toBe(null);
   });
 
   test("another tab's answer withdraws the draft with a notice; the next prompt's field is empty", async () => {
     const { root, ws } = await openPage();
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     type(field(root), "draft for question one");
     ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
     ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: asked(2) });
@@ -633,7 +633,7 @@ describe("App and the draft", () => {
   // S27 (Q10): a pending prompt's pane takes the left column; the conversation is one click away and back.
   test("a pending prompt hides the conversation behind its pane; Show the conversation and Back to the question toggle", async () => {
     const { root, ws } = await openPage();
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, { _tag: "Said", text: "hello" }, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Said", text: "hello" }, asked(1)]) }] });
     const chat = () => root.querySelector(".left .chat") as HTMLElement;
     expect(chat().classList.contains("hidden")).toBe(true);
     expect(root.querySelector(".pane")).not.toBe(null);
@@ -651,10 +651,10 @@ describe("App and the draft", () => {
 
   test("after a reconnection whose replay answered the prompt, the draft is withdrawn with a notice", async () => {
     const { root, ws } = await openPage();
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     type(field(root), "draft for question one");
     ws.receive({ type: "hello", cwd: "/p", current: 1, incarnation: "a" });
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
     expect(field(root).value).toBe("");
     expect(root.textContent).toMatch(/your unsent text was discarded: «draft for question one»/);
   });
@@ -676,7 +676,7 @@ describe("App and the draft", () => {
   test("a failed page: the banner, Stop disabled, the prompt usable, the queued answer back in its field, a new one refused", async () => {
     vi.useFakeTimers();
     const { root, ws } = await openPage();
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     ws.close();
     flushSync();
     type(field(root), "queued answer");
@@ -698,7 +698,7 @@ describe("App and the draft", () => {
   test("several actions discarded: the newer draft stays, and the answers are kept under Not sent until dismissed", async () => {
     vi.useFakeTimers();
     const { root, ws } = await openPage();
-    ws.receive({ type: "replay", runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     ws.close();
     flushSync();
     type(field(root), "answer A");
@@ -1029,7 +1029,7 @@ test("the activity line shows retry 2 of 3", () => {
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
     { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
-    { type: "replay", runs: [] },
+    { type: "replay", ui: [], runs: [] },
     { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", task: "t" } },
     ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
   ];
@@ -1208,7 +1208,7 @@ describe("TimelineRail: where the indicator is", () => {
     const rail = (list: UiEvent[]) => {
       const messages: ServerMessage[] = [
         { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
-        { type: "replay", runs: [] },
+        { type: "replay", ui: [], runs: [] },
         { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", task: "t" } },
         ...list.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time: CALL, event: { _tag: "Notified", event } })),
       ];

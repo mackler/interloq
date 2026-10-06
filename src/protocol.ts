@@ -4,6 +4,7 @@
 import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
 import type { UiEvent } from "./uiEvents.ts";
+import type { RunUiState, UiFlag } from "./uiState.ts";
 import type { Choice, PromptKind } from "./userPrompts.ts";
 
 
@@ -23,6 +24,8 @@ export type RunEvent =
  */
 export type Stamped = Readonly<{ time: string; event: RunEvent }>;
 export type RunRecord = Readonly<{ id: number; events: readonly Stamped[] }>;
+/** The shared state of the page for one run (issue #87), held beside the run's events and never part of them. */
+export type RunUi = Readonly<{ run: number; state: RunUiState }>;
 /**
  * The incarnation (finding 12 of docs/gui-review.md) names one start of the server: run and prompt numbers restart
  * with the server, so an answer or a stop carries the incarnation it was made in, and the hello says which one is live.
@@ -31,13 +34,17 @@ export type ClientMessage =
   | Readonly<{ type: "start"; project: string; task: string }>
   | Readonly<{ type: "answer"; incarnation: string; run: number; prompt: number; text: string }>
   | Readonly<{ type: "stop"; incarnation: string; run: number }>
-  | Readonly<{ type: "list"; path: string }>;
+  | Readonly<{ type: "list"; path: string }>
+  /** Open or close one scope of the run's shared state (issue #87). */
+  | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>;
 export type ServerMessage =
   | Readonly<{ type: "hello"; cwd: string; current: number | null; incarnation: string }>
-  | Readonly<{ type: "replay"; runs: readonly RunRecord[] }>
+  | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
   | Readonly<{ type: "listing"; path: string; parent: string | null; dirs: readonly string[]; error: string | null }>
   | Readonly<{ type: "refused"; reason: string }>
+  /** The run's whole shared state after a change (issue #87); a tab keeps the state of the higher version. */
+  | Readonly<{ type: "ui"; run: number; state: RunUiState }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
   | Readonly<{ type: "closing" }>;
 
@@ -134,19 +141,25 @@ export const RunEventSchema = Schema.Union([
 ]);
 export const StampedSchema = Schema.Struct({ time: Str, event: RunEventSchema });
 const RunRecordSchema = Schema.Struct({ id: Int, events: Schema.Array(StampedSchema) });
+const UiScopeSchema = Schema.Union([tagged("DecisionEntry", { decision: Int, entry: Str })]);
+const UiFlagSchema = Schema.Struct({ scope: UiScopeSchema, open: Schema.Boolean });
+const RunUiStateSchema = Schema.Struct({ version: Int, open: Schema.Array(UiScopeSchema) });
+const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });
 
 export const ClientMessageSchema = Schema.Union([
   typed("start", { project: Str, task: Str }),
   typed("answer", { incarnation: Str, run: Int, prompt: Int, text: Str }),
   typed("stop", { incarnation: Str, run: Int }),
   typed("list", { path: Str }),
+  typed("ui", { incarnation: Str, run: Int, flag: UiFlagSchema }),
 ]);
 export const ServerMessageSchema = Schema.Union([
   typed("hello", { cwd: Str, current: Schema.NullOr(Int), incarnation: Str }),
-  typed("replay", { runs: Schema.Array(RunRecordSchema) }),
+  typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("listing", { path: Str, parent: Schema.NullOr(Str), dirs: Schema.Array(Str), error: Schema.NullOr(Str) }),
   typed("refused", { reason: Str }),
+  typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("closing", {}),
 ]);
 
@@ -156,6 +169,7 @@ const same = <T extends true>(): T | undefined => undefined;
 void same<Same<typeof UiEventSchema.Type, UiEvent>>();
 void same<Same<typeof RunEventSchema.Type, RunEvent>>();
 void same<Same<typeof StampedSchema.Type, Stamped>>();
+void same<Same<typeof RunUiStateSchema.Type, RunUiState>>();
 void same<Same<typeof ClientMessageSchema.Type, ClientMessage>>();
 void same<Same<typeof ServerMessageSchema.Type, ServerMessage>>();
 

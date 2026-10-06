@@ -11,6 +11,7 @@ import { correctionCount } from "../../src/issueLog.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus } from "../../src/schema.ts";
+import { emptyUiState, type RunUiState } from "../../src/uiState.ts";
 
 export type Author = "program" | "user" | "codex" | "claude";
 /**
@@ -142,6 +143,8 @@ export type RunView = Readonly<{
   plan: Readonly<{ phase: number; plan: RecordedPlan }> | null;
   /** The phases known of the run, begun or ahead (issue #6). */
   foreseen: readonly Phase[];
+  /** The shared state of the page for this run (issue #87): which of its decisions' entries are open in every tab. */
+  ui: RunUiState;
 }>;
 
 export type Listing = Readonly<{ path: string; parent: string | null; dirs: readonly string[]; error: string | null }>;
@@ -195,6 +198,7 @@ export const emptyRun = (id: number): RunView => ({
   dismissed: null,
   plan: null,
   foreseen: [],
+  ui: emptyUiState,
 });
 
 /**
@@ -634,6 +638,8 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       return { ...state, listing: { path: message.path, parent: message.parent, dirs: message.dirs, error: message.error } };
     case "refused":
       return notice(state, message.reason);
+    case "ui":
+      return state;
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.

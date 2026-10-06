@@ -14,7 +14,7 @@ const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptO
 const answered = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "" });
 const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", current, incarnation });
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
-const live = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
+const live = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", ui: [], runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
 const draft: Draft = { key: { incarnation: "a", run: 1, prompt: 1 }, text: "my unsent answer" };
 
 describe("draft", () => {
@@ -31,17 +31,17 @@ describe("draft", () => {
   });
 
   test("a replay after a reconnection in which the prompt was answered meanwhile withdraws the draft with a notice", () => {
-    const view = fold([hello(), { type: "replay", runs: [{ id: 1, events: stamp([started, asked(1), answered(1), asked(2)]) }] }], live([started, asked(1)]));
+    const view = fold([hello(), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), answered(1), asked(2)]) }] }], live([started, asked(1)]));
     expect(reconcile(draft, view)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my unsent answer") });
   });
 
   test("a replay in which the same prompt is still pending keeps the draft", () => {
-    const view = fold([hello(), { type: "replay", runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], live([started, asked(1)]));
+    const view = fold([hello(), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], live([started, asked(1)]));
     expect(reconcile(draft, view)).toEqual({ draft, notice: null });
   });
 
   test("another incarnation of the server withdraws the draft with a notice; an empty draft goes quietly", () => {
-    const view = fold([hello("b"), { type: "replay", runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], live([started, asked(1)]));
+    const view = fold([hello("b"), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], live([started, asked(1)]));
     expect(reconcile(draft, view)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my unsent answer") });
     expect(reconcile({ ...draft, text: "" }, live([started, asked(1), answered(1)]))).toEqual({ draft: null, notice: null });
   });

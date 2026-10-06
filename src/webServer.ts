@@ -104,13 +104,13 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const writer = yield* socket.writer;
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
       const { queue: buffered, overflowed } = yield* subscribeBounded(manager, queueBound);
-      const runs = yield* manager.replay;
+      const { runs, ui } = yield* manager.replay;
       yield* send({ type: "hello", cwd: manager.cwd, current: yield* manager.current, incarnation: manager.incarnation });
-      yield* send({ type: "replay", runs });
+      yield* send({ type: "replay", runs, ui });
       const forward = Effect.gen(function* () {
         for (;;) {
           const event = yield* Queue.take(buffered);
-          if (!inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
+          if (event._tag === "event" && !inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
         }
       });
       yield* Effect.forkScoped(forward);
@@ -127,6 +127,8 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
             return Effect.forkScoped(manager.stop(message.incarnation, message.run).pipe(Effect.flatMap(refuse))).pipe(Effect.asVoid);
           case "list":
             return listing(message.path, fs, path).pipe(Effect.flatMap(send));
+          case "ui":
+            return manager.setUi(message.incarnation, message.run, message.flag).pipe(Effect.flatMap(refuse));
         }
       };
       // Every termination of the socket is a SocketError (Socket.d.ts); it ends the loop.

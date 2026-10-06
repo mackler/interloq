@@ -92,7 +92,7 @@ test("on connect: hello and an empty replay", async () => {
   await serve(await managerOf(repo, []), dist(), async (port) => {
     const c = await connect(port);
     await until("two messages", () => c.messages.length >= 2);
-    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", cwd: repo, current: null, incarnation: "test" }, { type: "replay", runs: [] }]);
+    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", cwd: repo, current: null, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
     c.close();
   });
 });
@@ -384,11 +384,12 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     cwd: "/p",
     incarnation: "test",
     subscribe: (listener) => Effect.acquireRelease(Effect.sync(() => void listeners.push(listener)), () => Effect.sync(() => void listeners.splice(listeners.indexOf(listener), 1))).pipe(Effect.asVoid),
-    replay: Effect.succeed([{ id: 1, events }]),
+    replay: Effect.succeed({ runs: [{ id: 1, events }], ui: [] }),
     current: Effect.succeed(1),
     start: () => Effect.succeed({ refused: "not in this test" }),
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
+    setUi: () => Effect.succeed(null),
   };
   await run(
     Effect.scoped(
@@ -403,7 +404,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
           await until("the subscription", () => listeners.length === 1);
           // A burst of events, faster than the tab's forwarding: its queue holds 3. The session may end during it.
           const listener = listeners[0];
-          await run(Effect.forEach(Array.from({ length: 20 }, (_, i) => i + 21), (seq) => listener({ run: 1, seq, time, event: { _tag: "Said", text: `later ${seq}` } }), { discard: true }));
+          await run(Effect.forEach(Array.from({ length: 20 }, (_, i) => i + 21), (seq) => listener({ _tag: "event", run: 1, seq, time, event: { _tag: "Said", text: `later ${seq}` } }), { discard: true }));
           await until("the close", () => slow.closedAt() !== null);
           assert.ok(refusals(slow).some((r) => /too far behind/.test(r)), `refusals: ${refusals(slow)}`);
           await until("the listener's removal", () => listeners.length === 0);

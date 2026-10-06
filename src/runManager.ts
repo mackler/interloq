@@ -5,11 +5,18 @@ import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Ref, type Scope, Sema
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, type Wiring } from "./program.ts";
-import type { RunEvent, RunRecord, Stamped } from "./protocol.ts";
+import type { RunEvent, RunRecord, RunUi, Stamped } from "./protocol.ts";
+import { emptyUiState, type RunUiState, type UiFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
-export type Broadcast = Readonly<{ run: number; seq: number; time: string; event: RunEvent }>;
+export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
+/** The shared state of the page for a run after a change (issue #87): the whole state, with its version. */
+export type UiBroadcast = Readonly<{ _tag: "ui"; run: number; state: RunUiState }>;
+/** What a listener receives, in the order of publication. */
+export type Broadcast = EventBroadcast | UiBroadcast;
+/** The snapshot a tab starts from: the runs' records and, beside them, their shared states (issue #87). */
+export type Replay = Readonly<{ runs: readonly RunRecord[]; ui: readonly RunUi[] }>;
 /** Why an action of the page was not carried out; shown to the user. */
 export type Refusal = Readonly<{ refused: string }>;
 
@@ -20,8 +27,8 @@ export type RunManager = Readonly<{
   incarnation: string;
   /** Registers a listener for every event appended from now on, until the scope closes. */
   subscribe: (listener: (event: Broadcast) => Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>;
-  /** The last finished run and the current one, as far as they exist, with all their events. */
-  replay: Effect.Effect<readonly RunRecord[]>;
+  /** The last finished run and the current one, as far as they exist, with all their events and their shared states, read in one step. */
+  replay: Effect.Effect<Replay>;
   /** The id of the run in progress, or null. */
   current: Effect.Effect<number | null>;
   /** Starts a run of the program in the project with the task; its id, or why not. */
@@ -30,6 +37,8 @@ export type RunManager = Readonly<{
   stop: (incarnation: string, run: number) => Effect.Effect<Refusal | null>;
   /** The answer to a pending prompt of the run with that id of that incarnation. */
   answer: (incarnation: string, run: number, prompt: number, text: string) => Effect.Effect<Refusal | null>;
+  /** Opens or closes one scope of the shared state of the run with that id of that incarnation, the current or the last one (issue #87). */
+  setUi: (incarnation: string, run: number, flag: UiFlag) => Effect.Effect<Refusal | null>;
 }>;
 
 /** A subscriber of the broadcast. Its contract: it does not block (it offers to its own queue); slow delivery is its own fiber's. */
@@ -52,7 +61,8 @@ export const makePublisher = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readon
     ),
   );
 
-type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number> }>;
+/** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
+type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState }>;
 type State = Readonly<{ nextId: number; current: Run | null; last: Run | null }>;
 const record = (r: Run): RunRecord => ({ id: r.id, events: r.events });
 const ENDED: Refusal = { refused: "that run has ended" };
@@ -81,7 +91,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
         Effect.flatMap((time) =>
           publish((s): readonly [Broadcast | null, State] => {
             if (s.current === null || s.current.id !== id) return [null, s];
-            return [{ run: id, seq: s.current.events.length, time, event }, { ...s, current: { ...s.current, events: [...s.current.events, { time, event }] } }];
+            return [{ _tag: "event", run: id, seq: s.current.events.length, time, event }, { ...s, current: { ...s.current, events: [...s.current.events, { time, event }] } }];
           }),
         ),
         Effect.asVoid,
@@ -93,7 +103,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
           publish((s): readonly [Broadcast | null, State] => {
             if (s.current === null || s.current.id !== id) return [null, s];
             const event: RunEvent = { _tag: "Ended", code };
-            return [{ run: id, seq: s.current.events.length, time, event }, { ...s, current: null, last: { ...s.current, events: [...s.current.events, { time, event }] } }];
+            return [{ _tag: "event", run: id, seq: s.current.events.length, time, event }, { ...s, current: null, last: { ...s.current, events: [...s.current.events, { time, event }] } }];
           }),
         ),
         Effect.asVoid,
@@ -154,7 +164,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
               Effect.forkDetach({ startImmediately: true }),
             );
             const reserved = yield* Ref.modify(state, (s): readonly [number | null, State] =>
-              s.current !== null ? [null, s] : [s.nextId, { ...s, nextId: s.nextId + 1, current: { id: s.nextId, events: [], ui, fiber } }],
+              s.current !== null ? [null, s] : [s.nextId, { ...s, nextId: s.nextId + 1, current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState } }],
             );
             if (reserved === null) {
               yield* Fiber.interrupt(fiber);
@@ -176,7 +186,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
           Ref.update(listeners, (set): ReadonlySet<Listener<Broadcast>> => new Set([...set, listener])),
           () => Ref.update(listeners, (set) => new Set([...set].filter((l) => l !== listener))),
         ).pipe(Effect.asVoid),
-      replay: Ref.get(state).pipe(Effect.map((s) => [s.last, s.current].flatMap((r) => (r === null ? [] : [record(r)])))),
+      replay: Ref.get(state).pipe(Effect.map((s) => ({ runs: [s.last, s.current].flatMap((r) => (r === null ? [] : [record(r)])), ui: [] }))),
       current: Ref.get(state).pipe(Effect.map((s) => s.current?.id ?? null)),
       start,
       stop: (of, id) =>
@@ -193,5 +203,6 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
             return r.ui.answer(prompt, text).pipe(Effect.map((taken): Refusal | null => (taken ? null : { refused: "that question has already been answered" })));
           }),
         ),
+      setUi: () => Effect.succeed(null),
     };
   });

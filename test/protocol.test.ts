@@ -9,6 +9,7 @@ import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
 import { decisionSubject, planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
+import type { RunUiState, UiScope } from "../src/uiState.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { entryOf } from "./helpers.ts";
@@ -130,16 +131,21 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
 // Issue #1: every event carries the time of its publication, beside its seq, not inside the variant.
 const stamped: fc.Arbitrary<Stamped> = fc.record({ time: text, event: runEvent });
 const runRecord: fc.Arbitrary<RunRecord> = fc.record({ id: nat, events: fc.array(stamped, { maxLength: 4 }) });
+// Issue #87: the shared state of a run's page.
+const uiScope: fc.Arbitrary<UiScope> = fc.record({ _tag: fc.constant("DecisionEntry" as const), decision: nat, entry: text });
+const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, open: fc.array(uiScope, { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(
   fc.record({ type: fc.constant("start" as const), project: text, task: text }),
   fc.record({ type: fc.constant("answer" as const), incarnation: text, run: nat, prompt: nat, text }),
   fc.record({ type: fc.constant("stop" as const), incarnation: text, run: nat }),
   fc.record({ type: fc.constant("list" as const), path: text }),
+  fc.record({ type: fc.constant("ui" as const), incarnation: text, run: nat, flag: fc.record({ scope: uiScope, open: fc.boolean() }) }),
 );
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   fc.record({ type: fc.constant("hello" as const), cwd: text, current: fc.option(nat, { nil: null }), incarnation: text }),
   fc.constant({ type: "closing" as const }),
-  fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }) }),
+  fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
+  fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
   fc.record({ type: fc.constant("event" as const), run: nat, seq: nat, time: text, event: runEvent }),
   fc.record({ type: fc.constant("listing" as const), path: text, parent: fc.option(text, { nil: null }), dirs: fc.array(text, { maxLength: 3 }), error: fc.option(text, { nil: null }) }),
   fc.record({ type: fc.constant("refused" as const), reason: text }),
@@ -178,9 +184,9 @@ test("an event frame without its time, a bare replay entry, and a Started that s
   const said = { _tag: "Said", text: "x" };
   for (const frame of [
     { type: "event", run: 1, seq: 0, event: said },
-    { type: "replay", runs: [{ id: 1, events: [said] }] },
+    { type: "replay", ui: [], runs: [{ id: 1, events: [said] }] },
     { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", task: "t", time: T } },
-    { type: "replay", runs: [{ id: 1, events: [{ event: said }] }] },
+    { type: "replay", ui: [], runs: [{ id: 1, events: [{ event: said }] }] },
   ]) assert.ok(Result.isFailure(decodeServer(JSON.stringify(frame))), JSON.stringify(frame));
   const ok: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", task: "t" } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(ok))), ok);
@@ -221,7 +227,7 @@ const responseEvent = (subject: SubjectId, response: QuestionListResponse | Omit
 test("a question review's ResponseReceived survives the round trip, live and in a replay", () => {
   const event: ServerMessage = { type: "event", run: 1, seq: 5, time: T, event: { _tag: "Notified", event: { _tag: "ResponseReceived", subject: "questions", round: 1, response: questionListResponse, resultText: "" } } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(event))), event);
-  const replay: ServerMessage = { type: "replay", runs: [{ id: 1, events: [{ time: event.time, event: event.event }] }] };
+  const replay: ServerMessage = { type: "replay", runs: [{ id: 1, events: [{ time: event.time, event: event.event }] }], ui: [] };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(replay))), replay);
 });
 
@@ -272,7 +278,7 @@ fails<Carried<PlannerResponse & { extra: string }>>();
 // Issue #5: Claude Code's prose travels to the page as data, attributed to Claude.
 test("a ClaudeSaid event survives the round trip, live and in a replay", () => {
   const event: RunEvent = { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "**done**" } };
-  for (const m of [{ type: "event", run: 1, seq: 0, time: T, event }, { type: "replay", runs: [{ id: 1, events: [{ time: T, event }] }] }] as ServerMessage[]) {
+  for (const m of [{ type: "event", run: 1, seq: 0, time: T, event }, { type: "replay", ui: [], runs: [{ id: 1, events: [{ time: T, event }] }] }] as ServerMessage[]) {
     assert.deepEqual(decoded(decodeServer(JSON.stringify(m))), m);
   }
 });

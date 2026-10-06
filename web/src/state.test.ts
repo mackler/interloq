@@ -25,9 +25,9 @@ const BASE = Date.UTC(2026, 8, 27, 14, 0, 0);
 const at = (seconds: number): string => new Date(BASE + seconds * 1000).toISOString();
 const stamp = (events: readonly RunEvent[], times?: readonly number[]): Stamped[] => events.map((event, seq) => ({ time: at(times?.[seq] ?? seq), event }));
 /** The live messages of one run: hello, an empty replay, then the events with seq from 0. */
-const live = (events: readonly RunEvent[], run = 1, times?: readonly number[]): ServerMessage[] => [hello(run), { type: "replay", runs: [] }, ...stamp(events, times).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }))];
+const live = (events: readonly RunEvent[], run = 1, times?: readonly number[]): ServerMessage[] => [hello(run), { type: "replay", ui: [], runs: [] }, ...stamp(events, times).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }))];
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
-const replayed = (events: readonly RunEvent[], run = 1, current: number | null = run, times?: readonly number[]): ViewState => fold([hello(current), { type: "replay", runs: [{ id: run, events: stamp(events, times) }] }]);
+const replayed = (events: readonly RunEvent[], run = 1, current: number | null = run, times?: readonly number[]): ViewState => fold([hello(current), { type: "replay", ui: [], runs: [{ id: run, events: stamp(events, times) }] }]);
 /** A shown plan without its stages' rendering keys: the plan it shows. */
 const bare = (p: ShownPlan | null) => (p === null ? null : { stages: p.stages.map(({ key: _key, ...st }) => st) });
 const bodies = (s: ViewState) => s.run?.left.map((m) => `${m.author}:${m.body}`) ?? [];
@@ -454,8 +454,8 @@ describe("runs, replay and gaps", () => {
       fc.property(fc.array(eventArb, { maxLength: 12 }), fc.array(eventArb, { maxLength: 12 }), gapsArb, gapsArb, (a, b, gapsA, gapsB) => {
         const first = timed([started, ...a, { _tag: "Ended", code: 0 }], gapsA);
         const second = timed([started, ...b], gapsB);
-        const incremental = fold([hello(null), { type: "replay", runs: [] }, ...first.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 1, seq, time, event })), ...second.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 2, seq, time, event }))]);
-        const replay = fold([hello(2), { type: "replay", runs: [{ id: 1, events: first }, { id: 2, events: second }] }]);
+        const incremental = fold([hello(null), { type: "replay", ui: [], runs: [] }, ...first.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 1, seq, time, event })), ...second.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 2, seq, time, event }))]);
+        const replay = fold([hello(2), { type: "replay", ui: [], runs: [{ id: 1, events: first }, { id: 2, events: second }] }]);
         expect(replay.run).toEqual(incremental.run);
         expect(replay.last).toEqual(incremental.last);
         expect(incremental.needsReconnect).toBe(false);
@@ -471,7 +471,7 @@ describe("runs, replay and gaps", () => {
 // Finding 12 of docs/gui-review.md: a hello from another incarnation clears the view of the earlier server's runs.
 describe("a server restart", () => {
   test("a hello with a new incarnation clears the old run's view; the same incarnation keeps it", () => {
-    const withRun = reduce(reduce(initialState, { type: "hello", cwd: "/w", current: 3, incarnation: "a" }), { type: "replay", runs: [{ id: 3, events: [{ time: at(0), event: { _tag: "Started", project: "/p", task: "t" } }] }] });
+    const withRun = reduce(reduce(initialState, { type: "hello", cwd: "/w", current: 3, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: { _tag: "Started", project: "/p", task: "t" } }] }] });
     expect(withRun.run?.id).toBe(3);
     expect(withRun.incarnation).toBe("a");
     expect(reduce(withRun, { type: "hello", cwd: "/w", current: 3, incarnation: "a" }).run?.id).toBe(3);
@@ -566,7 +566,7 @@ describe("a replay of a question phase", () => {
       notified(presentedEvent("Which database should the service use?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" })),
       asked(1, prompts.interviewMessagePrompt),
     ];
-    const frames = [JSON.stringify(hello()), JSON.stringify({ type: "replay", runs: [{ id: 1, events: stamp(events) }] })];
+    const frames = [JSON.stringify(hello()), JSON.stringify({ type: "replay", ui: [], runs: [{ id: 1, events: stamp(events) }] })];
     const messages = frames.map((f) => {
       const d = decodeServer(f);
       if (d._tag !== "Success") throw new Error(`not decoded: ${d.failure}`);
@@ -644,7 +644,7 @@ describe("the time of a message", () => {
     const times = [0, 1, 2, 30, 200, 210, 400];
     const liveView = fold(live(events, 1, times));
     const late = replayed(events, 1, 1, times);
-    const again = fold([hello(1), { type: "replay", runs: [{ id: 1, events: stamp(events, times) }] }], late);
+    const again = fold([hello(1), { type: "replay", ui: [], runs: [{ id: 1, events: stamp(events, times) }] }], late);
     for (const s of [late, again]) {
       expect(s.run?.left).toEqual(liveView.run?.left);
       expect(s.run?.right).toEqual(liveView.run?.right);

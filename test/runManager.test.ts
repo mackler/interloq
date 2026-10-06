@@ -10,7 +10,7 @@ import { codexReviewerLayer } from "../src/codex.ts";
 import { platformLayer } from "../src/platform.ts";
 import { program } from "../src/program.ts";
 import type { RunEvent } from "../src/protocol.ts";
-import { type Broadcast, type Listener, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
+import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
 import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry } from "./helpers.ts";
@@ -18,16 +18,17 @@ import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
 const noQuestions = { questions_for_user: [] };
-type Harness = { manager: RunManager; received: Broadcast[]; scope: Scope.Closeable; repo: string; scripts: TestOptions[] };
+type Harness = { manager: RunManager; received: EventBroadcast[]; uiReceived: UiBroadcast[]; scope: Scope.Closeable; repo: string; scripts: TestOptions[] };
 
 /** A manager whose runs use, in turn, the scripted wiring of each options object; a listener collects the broadcast. */
 const harness = async (repo: string, scripts: TestOptions[], wiringOf = (options: TestOptions) => testWiring(repo, options).wiring): Promise<Harness> => {
   const queue = [...scripts];
   const manager = await run(makeRunManager((ui) => ({ ...wiringOf(queue.shift() ?? {}), ui: Effect.succeed(ui) }), repo, "test").pipe(Effect.provide(platformLayer)));
-  const received: Broadcast[] = [];
+  const received: EventBroadcast[] = [];
+  const uiReceived: UiBroadcast[] = [];
   const scope = await run(Scope.make());
-  await run(manager.subscribe((b) => Effect.sync(() => void received.push(b))).pipe(Scope.provide(scope)));
-  return { manager, received, scope, repo, scripts };
+  await run(manager.subscribe((b: Broadcast) => Effect.sync(() => void (b._tag === "event" ? received.push(b) : uiReceived.push(b)))).pipe(Scope.provide(scope)));
+  return { manager, received, uiReceived, scope, repo, scripts };
 };
 const until = async (what: string, condition: () => boolean, ms = 30_000): Promise<void> => {
   for (let waited = 0; waited < ms; waited += 5) {
@@ -119,13 +120,13 @@ test("stop interrupts the run like Ctrl+C; answers and stops naming an ended run
   const second = await started(h, repo);
   assert.equal(second, first + 1);
   const { time, ...firstOfSecond } = h.received.find((b) => b.run === second)!;
-  assert.deepEqual(firstOfSecond, { run: second, seq: 0, event: eventsOf(h, second)[0] });
+  assert.deepEqual(firstOfSecond, { _tag: "event", run: second, seq: 0, event: eventsOf(h, second)[0] });
   assert.ok(!Number.isNaN(Date.parse(time)), "the broadcast carries its time");
   assert.match(((await run(h.manager.answer(h.manager.incarnation, first, asked.prompt, "late"))) as Refusal).refused, /that run has ended/);
   await ended(h, second);
   assert.equal(endCode(h, second), 0);
   // After the end, the replay holds the last run only.
-  assert.deepEqual((await run(h.manager.replay)).map((r) => r.id), [second]);
+  assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id), [second]);
 });
 
 test("the replay during a run holds the last run and the current one", async () => {
@@ -134,7 +135,7 @@ test("the replay during a run holds the last run and the current one", async () 
   const first = await started(h, repo);
   await ended(h, first);
   const second = await started(h, repo);
-  const replay = await run(h.manager.replay);
+  const { runs: replay } = await run(h.manager.replay);
   assert.deepEqual(replay.map((r) => r.id), [first, second]);
   assert.deepEqual(replay[0].events, h.received.filter((b) => b.run === first).map((b) => ({ time: b.time, event: b.event })));
   await run(h.manager.stop(h.manager.incarnation, second));
@@ -249,7 +250,7 @@ test("start interrupted while Started is being delivered leaves a run that can b
   const release = await run(Deferred.make<void>());
   await run(
     h.manager
-      .subscribe((b) => (b.event._tag === "Started" && b.run === 1 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void))
+      .subscribe((b) => (b._tag === "event" && b.event._tag === "Started" && b.run === 1 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void))
       .pipe(Scope.provide(h.scope)),
   );
   const starting = Effect.runFork(h.manager.start(repo, "t"));
@@ -326,7 +327,7 @@ test("append and end stamp every event with the Clock's time; the replay holds t
   const times = mine.map((b) => Date.parse(b.time));
   assert.deepEqual(times, [...times].sort((a, b) => a - b), "one run publishes in order, so its times do not decrease along seq");
   assert.equal(await run(h.manager.current), null);
-  const replay = await run(h.manager.replay);
+  const { runs: replay } = await run(h.manager.replay);
   assert.deepEqual(replay.map((r) => r.id), [id]);
   assert.deepEqual(replay[0].events, mine.map((b) => ({ time: b.time, event: b.event })));
   await run(Scope.close(h.scope, Exit.void));

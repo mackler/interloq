@@ -91,7 +91,7 @@ describe("socket", () => {
     vi.advanceTimersByTime(1);
     expect(sockets.length).toBe(4);
     sockets[3].receive({ type: "hello", cwd: "/", current: null, incarnation: "a" });
-    sockets[3].receive({ type: "replay", runs: [] });
+    sockets[3].receive({ type: "replay", ui: [], runs: [] });
     sockets[3].drop();
     vi.advanceTimersByTime(1000);
     expect(sockets.length).toBe(5);
@@ -104,7 +104,7 @@ describe("socket", () => {
     vi.advanceTimersByTime(1000);
     sockets[1].open();
     sockets[1].receive({ type: "hello", cwd: "/", current: 1, incarnation: "a" });
-    sockets[1].receive({ type: "replay", runs: [{ id: 1, events: [] }] });
+    sockets[1].receive({ type: "replay", ui: [], runs: [{ id: 1, events: [] }] });
     expect(h.messages.map((m) => m.type)).toEqual(["hello", "replay"]);
   });
 
@@ -205,7 +205,7 @@ describe("socket and a frame that does not decode", () => {
     failOnce(1);
     vi.advanceTimersByTime(2000);
     sockets[2].receive(hello);
-    sockets[2].receive({ type: "replay", runs: [] });
+    sockets[2].receive({ type: "replay", ui: [], runs: [] });
     sockets[2].receiveRaw("not json");
     expect(h.errors.map(([, n]) => n)).toEqual([1, 2, 1]);
     vi.advanceTimersByTime(1000);
@@ -280,7 +280,7 @@ describe("socket while a protocol error's close is pending", () => {
     vi.advanceTimersByTime(60_000);
     expect(sockets.length).toBe(2);
     sockets[1].receive(hello);
-    sockets[1].receive({ type: "replay", runs: [] });
+    sockets[1].receive({ type: "replay", ui: [], runs: [] });
     expect(sockets[1].sent.map((x) => JSON.parse(x))).toEqual([answer]);
   });
 
