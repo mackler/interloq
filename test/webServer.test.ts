@@ -11,6 +11,8 @@ import type { ClientMessage, RunEvent, ServerMessage, Stamped } from "../src/pro
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
 import { finished, type TestOptions, tempDir, tempRepo, testWiring, questionOf } from "./helpers.ts";
+import { initialState, reduce } from "../web/src/state.ts";
+import { isOpen } from "../src/uiState.ts";
 
 const run = Effect.runPromise;
 // Plan step 3.4: the server over NodeHttpServer.layerTest, with Node's WebSocket as the scripted client.
@@ -417,4 +419,41 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+});
+
+// Issue #87 (decision G-R1-1): the seam of the shared state. Two tabs of one run, and a third that connects later, fold
+// the server's frames with the page's own reducer and agree on which entries are open; an entry of one decision is a
+// different entry from one of another decision with the same id. The state is the server's, held beside the run, so the
+// run here waits in its first call and reaches no decision: the state's key, not the run's events, is what is tested.
+test("tabs of one run agree on the open entries, live and from the replay, keyed by decision and entry", async () => {
+  const repo = tempRepo();
+  await serve(await managerOf(repo, [{ steps: [{ hang: true }] }]), dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    a.send({ type: "start", project: repo, task: "task" });
+    await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
+    const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).run;
+    const e1 = (decision: number) => ({ _tag: "DecisionEntry" as const, decision, entry: "e1" });
+    a.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(1), open: true } });
+    await until("the state in both tabs", () => view(a)?.ui.version === 1 && view(b)?.ui.version === 1);
+    for (const c of [a, b]) {
+      assert.equal(isOpen(view(c)!.ui, e1(1)), true);
+      assert.equal(isOpen(view(c)!.ui, e1(2)), false, "decision 2's entry e1 is another entry");
+    }
+    // A change interleaved with the run's events: every tab ends with the same view.
+    b.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(2), open: true } });
+    b.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(1), open: false } });
+    await until("the second state in both tabs", () => view(a)?.ui.version === 3 && view(b)?.ui.version === 3);
+    const c = await connect(port);
+    await until("the third tab's replay", () => c.messages.length >= 2);
+    assert.deepEqual(view(c)!.ui, view(a)!.ui);
+    assert.deepEqual(view(b)!.ui, view(a)!.ui);
+    assert.deepEqual([isOpen(view(c)!.ui, e1(1)), isOpen(view(c)!.ui, e1(2))], [false, true]);
+    contiguous(a);
+    a.send({ type: "stop", incarnation, run: 1 });
+    await until("the end of run 1", () => hasEnded(a, 1));
+    for (const x of [a, b, c]) x.close();
+  });
 });

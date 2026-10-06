@@ -345,3 +345,49 @@ test("End the run in the page ends the run with code 130 as an interruption, and
   assert.ok(eventsOf(h, first).some((e) => e._tag === "Said" && /INTERRUPTED by the user/.test(e.text)));
   assert.equal(await started(h, repo), first + 1);
 });
+
+// Issue #87 (decision G-R1-1): the shared state of a run's page, held beside the run's events and never in them.
+const entryScope = (decision: number, entry: string) => ({ _tag: "DecisionEntry" as const, decision, entry });
+test("setUi broadcasts the run's whole state with a rising version; the replay holds it; the run's events are unchanged", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [{ steps: [{ hang: true }] }]);
+  const id = await started(h, repo);
+  await until("the hanging call", () => eventsOf(h, id).some((e) => e._tag === "Said" && /^Planning: requesting the initial plan/.test(e.text)));
+  const before = (await run(h.manager.replay)).runs.find((r) => r.id === id)!.events;
+  assert.equal(await run(h.manager.setUi(h.manager.incarnation, id, { scope: entryScope(1, "e1"), open: true })), null);
+  assert.equal(await run(h.manager.setUi(h.manager.incarnation, id, { scope: entryScope(2, "e1"), open: true })), null);
+  assert.deepEqual(h.uiReceived.map((b) => [b.run, b.state.version]), [[id, 1], [id, 2]]);
+  const replay = await run(h.manager.replay);
+  assert.deepEqual(replay.ui, [{ run: id, state: h.uiReceived[1].state }]);
+  assert.deepEqual(replay.runs.find((r) => r.id === id)!.events, before, "the shared state adds nothing to the run's record");
+  await run(h.manager.stop(h.manager.incarnation, id));
+  await ended(h, id);
+});
+
+test("setUi of another incarnation or of an unknown run is refused; the last run's state can still change", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [converging]);
+  const id = await started(h, repo);
+  await ended(h, id);
+  const flag = { scope: entryScope(1, "e1"), open: true };
+  assert.match(((await run(h.manager.setUi("another", id, flag))) as Refusal).refused, /earlier start of the server/);
+  assert.match(((await run(h.manager.setUi(h.manager.incarnation, id + 5, flag))) as Refusal).refused, /that run has ended/);
+  assert.equal(await run(h.manager.setUi(h.manager.incarnation, id, flag)), null, "the last run, still shown in the page");
+  assert.deepEqual((await run(h.manager.replay)).ui.map((u) => [u.run, u.state.version]), [[id, 1]]);
+});
+
+test("a run's shared state leaves with the run when it is no longer the last one", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [converging, converging, converging]);
+  const first = await started(h, repo);
+  await ended(h, first);
+  await run(h.manager.setUi(h.manager.incarnation, first, { scope: entryScope(1, "e1"), open: true }));
+  const second = await started(h, repo);
+  await ended(h, second);
+  const third = await started(h, repo);
+  await ended(h, third);
+  const replay = await run(h.manager.replay);
+  assert.deepEqual(replay.runs.map((r) => r.id), [third]);
+  assert.deepEqual(replay.ui.map((u) => u.run), [third]);
+  assert.match(((await run(h.manager.setUi(h.manager.incarnation, first, { scope: entryScope(1, "e1"), open: false }))) as Refusal).refused, /that run has ended/);
+});
