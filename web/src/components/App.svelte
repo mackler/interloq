@@ -129,12 +129,26 @@
     void run?.pending;
     const el = runElement;
     untrack(measureRoom);
-    if (el === null || typeof ResizeObserver === "undefined") return;
+    if (el === null || typeof ResizeObserver === "undefined" || typeof MutationObserver === "undefined") return;
     // The run and its children other than the decision area, whose heights do not depend on the analysis's floor.
     const observer = new ResizeObserver(() => measureRoom());
-    observer.observe(el);
-    for (const k of el.children) if (!k.classList.contains("decision-area")) observer.observe(k);
-    return () => observer.disconnect();
+    const observeChildren = () => {
+      observer.disconnect();
+      observer.observe(el);
+      for (const k of el.children) if (!k.classList.contains("decision-area")) observer.observe(k);
+    };
+    observeChildren();
+    // W2-R1-1 of work review 2: a child that appears or goes while the analysis is shown (a notice, the progress) takes
+    // or gives back room above the first answer, so the room is measured again and the new children are observed.
+    const children = new MutationObserver(() => {
+      observeChildren();
+      measureRoom();
+    });
+    children.observe(el, { childList: true });
+    return () => {
+      children.disconnect();
+      observer.disconnect();
+    };
   });
 </script>
 

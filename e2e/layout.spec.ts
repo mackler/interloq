@@ -908,6 +908,31 @@ test.describe("the tests of the permissionLong server, in order", () => {
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
+  // Finding W2-R1-1 of work review 2: a notice that appears while the analysis is shown takes room above the decision
+  // area, and the room is measured again, so the question and the first answer stay in view without a resize. The
+  // server sends a refusal only to the tab whose action it refuses, so no action of another tab gives this tab a
+  // notice; the test delivers the server's own `refused` frame to the page through Playwright's WebSocket routing.
+  test("(L21b) a notice that appears beside the analysis at 640 × 400: the question and the first answer stay in view", async ({ page }) => {
+    let toPage: ((frame: string) => void) | null = null;
+    await page.routeWebSocket(/\/\/127\.0\.0\.1:\d+/, (ws) => {
+      ws.connectToServer();
+      toPage = (frame) => ws.send(frame);
+    });
+    await page.setViewportSize({ width: 640, height: 400 });
+    await startTask(page, "Prepare the build with a notice", PERMISSION_URL);
+    await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
+    await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    await expect(analysis).toBeVisible();
+    await questionWithFirstAnswer(page, analysis, 400);
+    const reason = "a run is in progress; stop it or wait for its end";
+    expect(toPage, "the page's WebSocket was not routed").not.toBeNull();
+    toPage!(JSON.stringify({ type: "refused", reason }));
+    await expect(page.getByRole("alert").filter({ hasText: reason })).toBeVisible();
+    await questionWithFirstAnswer(page, analysis, 400);
+    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
+    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
 });
 
 test.describe("the tests of the whitespace server, in order", () => {
