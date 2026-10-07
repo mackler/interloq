@@ -600,7 +600,7 @@ test.describe("the tests of the decideLong server, in order", () => {
     // Issue #81: the analysis scrolls inside itself, in a column's own scroller (its entry opened, issue #87), and the
     // recommendation's end is reached inside the recommendation's own region.
     await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
-    expect(await someColumnOverflows(parts), "no column scrolls inside itself").toBe(true);
+    await expect.poll(() => someColumnOverflows(parts), { message: "no column scrolls inside itself" }).toBe(true);
     const last = parts.analysis.getByText("The last paragraph of the recommendation.");
     await parts.recommendation.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
     const [end, region] = [await box(last), await box(parts.recommendation)];
@@ -633,8 +633,11 @@ test.describe("the tests of the decideLong server, in order", () => {
     await page.locator("details.progress > summary, details.progress summary").first().click();
     await expect(page.locator("details.progress")).toHaveAttribute("open", "");
     await questionWithFirstAnswer(page, parts.analysis, 600);
-    await yieldOrder(parts.analysis);
-    await separateAndWhole(parts);
+    // Opening the progress changes the room the analysis is allotted, so its measurements are retried until it settles.
+    await expect(async () => {
+      await yieldOrder(parts.analysis);
+      await separateAndWhole(parts);
+    }).toPass({ timeout: 60_000 });
     await reachable(parts);
     await answerDismisses(page, parts);
   });
@@ -648,7 +651,7 @@ test.describe("the tests of the decideLong server, in order", () => {
     await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
     expect(await heights(), "opening an entry moved the regions above or below the columns").toEqual(closed);
     const [long, short] = [parts.columns.nth(0), parts.columns.nth(1)];
-    expect(await long.evaluate((el) => el.scrollHeight > el.clientHeight + 1), "the long column does not scroll on its own").toBe(true);
+    await expect.poll(() => long.evaluate((el) => el.scrollHeight > el.clientHeight + 1), { message: "the long column does not scroll on its own" }).toBe(true);
     const [l, w] = [await box(long), await box(parts.sideways)];
     expect(l.y).toBeGreaterThanOrEqual(w.y - 1);
     expect(l.y + l.height).toBeLessThanOrEqual(w.y + w.height + 1);
