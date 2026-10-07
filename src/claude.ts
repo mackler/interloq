@@ -7,7 +7,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
 import { type CallOutcome, decodeQuestions, decodeToolTarget, execReport, interpretExecution, type Question, reduceMessages, type Stop } from "./claudeEvents.ts";
-import { ClaudeCallFailed, type RunError, TransportFault } from "./errors.ts";
+import { ClaudeCallFailed, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import type { ExecOutcome } from "./schema.ts";
@@ -27,9 +27,21 @@ const EDIT_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
  * data, or the error of a decision loop that the user started from a relayed question or a permission request.
  */
 type CallbackError = RunError;
-/** A failed call: TransportFault when src/transport.ts identifies a transport fault, ClaudeCallFailed otherwise (issue #26). */
-const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | TransportFault =>
-  classifyClaude(failure).kind === "transport" ? new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null }) : new ClaudeCallFailed({ message });
+/**
+ * A failed call: TransportFault when src/transport.ts identifies a transport fault (issue #26), UsageLimited for a usage
+ * limit with a stated reset (issue #68), ClaudeCallFailed otherwise.
+ */
+const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | TransportFault | UsageLimited => {
+  const kind = classifyClaude(failure);
+  switch (kind.kind) {
+    case "transport":
+      return new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null });
+    case "limited":
+      return new UsageLimited({ agent: "claude", message, resetsAtMs: kind.resetsAtMs, limitType: kind.limitType });
+    case "permanent":
+      return new ClaudeCallFailed({ message });
+  }
+};
 
 /** Runs an Effect inside a callback of the SDK; on failure the call is aborted and `fallback` is answered. */
 type InCallback = <A>(effect: Effect.Effect<A, CallbackError>, fallback: A) => Promise<A>;
@@ -399,7 +411,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
          * prompt, with the same hooks, stop and report_step server. It fails with TransportFault only for a transport fault
          * without a recorded stop and without a valid report; otherwise the outcome is interpreted.
          */
-        const attempt = (n: number): Effect.Effect<ExecOutcome, CallbackError | TransportFault> =>
+        const attempt = (n: number): Effect.Effect<ExecOutcome, CallbackError | TransportFault | UsageLimited> =>
           Effect.gen(function* () {
             const outcome = yield* call(
               session,
@@ -419,11 +431,13 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
               }),
             );
             const recorded = yield* Ref.get(stop);
-            const transport = outcome.error !== null && classifyClaude(outcome.failure).kind === "transport";
-            if (transport && recorded === null && execReport(outcome.structured) === null) {
-              return yield* Effect.fail(new TransportFault({ agent: "claude", message: outcome.error ?? "", status: outcome.failure?.apiStatus ?? null }));
+            // Issue #68: a usage limit with a stated reset is waited out like a transport fault is retried, under the
+            // same conditions; a valid report before either stands.
+            const temporary = outcome.error !== null && classifyClaude(outcome.failure).kind !== "permanent";
+            if (temporary && recorded === null && execReport(outcome.structured) === null) {
+              return yield* Effect.fail(callFailure(outcome.error ?? "", outcome.failure) as TransportFault | UsageLimited);
             }
-            return interpretExecution(outcome, recorded, transport);
+            return interpretExecution(outcome, recorded, temporary);
           });
         // The retry lives here, where the call's session, stop and reporter are (P2-R2-1): no TransportFault leaves.
         return yield* withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(

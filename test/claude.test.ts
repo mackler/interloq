@@ -8,29 +8,31 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import type { CanUseTool, HookCallback, HookJSONOutput, Options, PermissionResult, PreToolUseHookInput, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Effect, Fiber, Layer } from "effect";
+import { Clock, Effect, Fiber, Layer } from "effect";
 import { claudeEnv, makeClaudePlanner, toSdkAnswers } from "../src/claude.ts";
 import { FileSystemError, type RunError } from "../src/errors.ts";
 import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
-import { Decider, type DeciderShape, type PlannerShape, RunConfig, Sdk, Store, type StoreShape, Ui } from "../src/services.ts";
+import { Decider, type DeciderShape, Planner, type PlannerShape, RunConfig, Sdk, Store, type StoreShape, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { assistantText, assistantTool, failure, FakeSdk, init, messages, reportStep, success, type Script } from "./fakeSdk.ts";
-import { noDecider, noReporter, ScriptedUi, tempRepo, questionOf, plain, term } from "./helpers.ts";
+import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
+import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, plain, term } from "./helpers.ts";
+import { planningCall } from "../src/review.ts";
+import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
 
 /** Runs an effect with a Decider that no test here expects to be used, unless a test gives its own. */
 const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape = noDecider): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Decider, decider)));
 
 /** A Claude Code planner over a fake SDK, a scripted Ui and a store on a temporary repository. */
-const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string }> => {
+const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig> }> => {
   const store = await run(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
   await run(store.init("task"));
   const ui = new ScriptedUi(answers);
   const sdk = new FakeSdk(scripts);
   const deps = Layer.mergeAll(Layer.succeed(Store, { ...store, ...storeOverride }), Layer.succeed(Ui, ui), Layer.succeed(Sdk, sdk), Layer.succeed(RunConfig, { ...S.defaultConfig, ...config }));
-  return { planner: await run(makeClaudePlanner.pipe(Effect.provide(deps))), sdk, ui, dir: store.dir, project: store.project };
+  return { planner: await run(makeClaudePlanner.pipe(Effect.provide(deps))), sdk, ui, dir: store.dir, project: store.project, deps };
 };
 
 // The schema of most planning calls in these tests; the output the fake returns matches it where the output is read.
@@ -981,4 +983,89 @@ test("the context call's facts name the unknown fields and ask for each to be ex
   assert.match(facts, /overwrite/);
   assert.match(facts, /file_path \(The file\): \/x/);
   assert.ok(facts.includes(prompts.unknownSettingsRequest(["overwrite"])));
+});
+
+// Issue #68: a call rejected for a usage limit with a stated reset is waited out and made again; without a reset it
+// fails or is aborted exactly as before.
+const LIMIT_START = Date.UTC(2026, 8, 30, 5, 32);
+const LIMIT_RESET_S = LIMIT_START / 1000 + 9_000;
+const LIMIT_MARGIN_MS = USAGE_LIMIT_MARGIN_SECONDS * 1000;
+const rejectedWith = (resetsAt: number | undefined): SDKMessage[] => [rateLimit({ status: "rejected", rateLimitType: "five_hour", ...(resetsAt === undefined ? {} : { resetsAt }) }), limitError(), limitResult()];
+const limitedCall = (resetsAt: number | undefined, before: (call: Parameters<Script>[0]) => Promise<void> = async () => undefined, rateEvent = true): Script => (call) => (async function* () {
+  yield init("session-exec");
+  await before(call);
+  for (const m of rateEvent ? rejectedWith(resetsAt) : rejectedWith(resetsAt).slice(1)) yield m;
+})();
+
+test("a planning call rejected with a reset fails with UsageLimited carrying the instant; through planningCall it waits and is made again", async () => {
+  const limitedOnce = await planner([limitedCall(LIMIT_RESET_S)]);
+  const result = await run(Effect.result(limitedOnce.planner.planning("write the plan", schema)));
+  assert.ok(result._tag === "Failure");
+  const limited = result.failure as { _tag: string; message: string; resetsAtMs: number; limitType: string | null };
+  assert.deepEqual([limited._tag, limited.message, limited.resetsAtMs, limited.limitType], ["UsageLimited", "You've hit your session limit", LIMIT_RESET_S * 1000, "five_hour"]);
+
+  const fake = await planner([limitedCall(LIMIT_RESET_S), messages(init("session-exec"), success({ questions_for_user: [] }))]);
+  const { clock, sleeps } = steppingClock(LIMIT_START);
+  const called = planningCall("write the plan", schema).pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps), Effect.provideService(Clock.Clock, clock));
+  const out = await run(called);
+  assert.deepEqual(out.output, { questions_for_user: [] });
+  assert.deepEqual(sleeps, [9_000_000 + LIMIT_MARGIN_MS]);
+  assert.equal(fake.sdk.calls.length, 2);
+  assert.deepEqual(fake.ui.asked, []);
+});
+
+test("an execution call rejected with a reset waits, resumes its session with the continue prompt, and finishes; the step's end runs once", async () => {
+  const reports: string[] = [];
+  const reporter = (id: string, status: "started" | "done") => Effect.sync(() => (reports.push(`${id}:${status}`), { text: "ok", isError: false }));
+  const first = limitedCall(LIMIT_RESET_S, (call) => reportStep(call.options, "S1", "started").then(() => undefined));
+  const second: Script = (call) => (async function* () {
+    yield init("session-exec");
+    await reportStep(call.options, "S1", "done");
+    yield success(report);
+  })();
+  const fake = await planner([first, second]);
+  const { clock, sleeps } = steppingClock(LIMIT_START);
+  const outcome = await run(fake.planner.executing("implement the plan", reporter).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(outcome.status, "finished");
+  assert.deepEqual(sleeps, [9_000_000 + LIMIT_MARGIN_MS]);
+  assert.equal(fake.sdk.calls.length, 2);
+  assert.equal(fake.sdk.calls[1].prompt, prompts.executionContinuePrompt);
+  assert.equal(fake.sdk.calls[1].options.resume, "session-exec");
+  assert.ok(fake.sdk.calls[1].options.allowedTools?.includes(prompts.REPORT_STEP_TOOL_NAME));
+  assert.ok(fake.sdk.calls[1].options.mcpServers?.[prompts.REPORT_STEP_SERVER] !== undefined);
+  assert.deepEqual(reports, ["S1:started", "S1:done"]);
+  assert.deepEqual(fake.ui.asked, []);
+  assert.equal(fake.ui.notified.filter((e) => e._tag === "UsageLimitWaiting").length, 1);
+});
+
+test("without a reset, or with no rate-limit event at all: planning fails with ClaudeCallFailed and execution is aborted, with no wait", async () => {
+  for (const [resetsAt, rateEvent] of [[undefined, true], [LIMIT_RESET_S, false]] as const) {
+    const p = await planner([limitedCall(resetsAt, undefined, rateEvent)]);
+    const result = await run(Effect.result(p.planner.planning("write the plan", schema)));
+    assert.ok(result._tag === "Failure");
+    assert.equal(tag(result.failure), "ClaudeCallFailed");
+    const e = await planner([limitedCall(resetsAt, undefined, rateEvent)]);
+    const { clock, sleeps } = steppingClock(LIMIT_START);
+    const outcome = await run(e.planner.executing("implement the plan", noReporter).pipe(Effect.provideService(Clock.Clock, clock)));
+    assert.equal(outcome.status, "aborted");
+    assert.deepEqual(sleeps, []);
+    assert.equal(e.sdk.calls.length, 1);
+    assert.ok(!e.ui.notified.some((ev) => ev._tag === "UsageLimitWaiting"));
+  }
+});
+
+test("a stop or a valid report before the rejection ends the execution call without a wait", async () => {
+  const questions = [{ question: "A or B?", options: [{ label: "A", description: "a" }] }];
+  const stopped = await planner([limitedCall(LIMIT_RESET_S, (call) => permission(call.options)("AskUserQuestion", { questions }, callContext()).then(() => undefined))], ["A"]);
+  assert.equal((await run(stopped.planner.executing("implement the plan", noReporter))).status, "needs_input");
+  assert.equal(stopped.sdk.calls.length, 1);
+  const reported: Script = () => (async function* () {
+    yield init("session-exec");
+    yield success(report);
+    yield rateLimit({ status: "rejected", resetsAt: LIMIT_RESET_S, rateLimitType: "five_hour" });
+    throw new Error("rate limited");
+  })();
+  const fake = await planner([reported]);
+  assert.equal((await run(fake.planner.executing("implement the plan", noReporter))).status, "finished");
+  assert.equal(fake.sdk.calls.length, 1);
 });
