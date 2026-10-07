@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { marked } from "marked";
 import type { PresentedQuestion } from "../src/question.ts";
-import { confirmingRead } from "../src/confirmEnd.ts";
 import { programWritten } from "../src/questionContext.ts";
-import { CONTEXT_REQUEST_HEADING, permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { CONTEXT_REQUEST_HEADING, confirmEndText, permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { promptOf } from "../src/userPrompts.ts";
 import { type Block, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
 import { askOffering, permissionDraft } from "../src/offer.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
@@ -19,7 +19,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import type { Schema } from "effect";
 import type { RunError } from "../src/errors.ts";
 import { AgentUnreachable, ClaudeCallFailed, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
-import { parseAskLine, parseMessage } from "../src/input.ts";
+import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
 import type { Wiring } from "../src/program.ts";
 import { pathOf, type SubjectId } from "../src/artifacts.ts";
 import { run } from "../src/run.ts";
@@ -95,7 +95,7 @@ export class ScriptedUi implements UiShape {
   private questions = 0;
   private readonly answers: ScriptedAnswer[];
   private readonly asks = readiness();
-  /** `confirmEnds`: an answer that ends the run is confirmed first, as in the terminal (S24, confirmingRead). */
+  /** `confirmEnds`: an answer that ends the run is confirmed first, as the page's dialog confirms it (S24, S25): the next scripted answer replies to the confirmation. */
   private readonly confirmEnds: boolean;
   constructor(answers: readonly ScriptedAnswer[], confirmEnds = false) {
     this.answers = [...answers];
@@ -117,7 +117,7 @@ export class ScriptedUi implements UiShape {
   get nextQuestion(): Effect.Effect<number> {
     return Effect.sync(() => ++this.questions);
   }
-  /** The commands are the terminal's (src/input.ts): "q" ends the run at a one-line prompt. */
+  /** The commands of src/input.ts, which the page sends: "q" ends the run at a one-line prompt. */
   ask(prompt: string): Effect.Effect<string, UserStopped> {
     return this.take(prompt, "ask", (text) => {
       const parsed = parseAskLine(text);
@@ -132,8 +132,17 @@ export class ScriptedUi implements UiShape {
     });
   }
   private take(prompt: string, mode: "ask" | "message", interpret: (text: string) => Effect.Effect<string, UserStopped>): Effect.Effect<string, UserStopped> {
-    const raw = (p: string) => this.raw(p);
-    return (this.confirmEnds ? confirmingRead(raw, raw, prompt, mode) : raw(prompt)).pipe(Effect.flatMap(interpret));
+    return (this.confirmEnds ? this.confirming(prompt, mode) : this.raw(prompt)).pipe(Effect.flatMap(interpret));
+  }
+  /** An answer that ends the run (endingOf) is returned only after a confirming reply (y); any other reply asks the question again. */
+  private confirming(prompt: string, mode: "ask" | "message"): Effect.Effect<string> {
+    return this.raw(prompt).pipe(
+      Effect.flatMap((text) => {
+        const ending = endingOf(promptOf(prompt).kind, mode, text);
+        if (ending === null) return Effect.succeed(text);
+        return this.raw(confirmEndText(ending)).pipe(Effect.flatMap((reply) => (parseConfirmEnd(reply) ? Effect.succeed(text) : this.confirming(prompt, mode))));
+      }),
+    );
   }
   private raw(prompt: string): Effect.Effect<string> {
     return Effect.suspend(() => {
@@ -459,7 +468,7 @@ export const respond = (dispositions: [string, PlannerResponse["dispositions"][n
 export const finished: ExecOutcome = { status: "finished", summary: "done", question: "", remainingWork: "", userInput: null };
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The terminal's confirmation before an answer ends the run (S24). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked

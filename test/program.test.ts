@@ -131,8 +131,8 @@ test("q at a question, confirmed, ends the run as an interruption with exit code
   const { wiring, probe } = testWiring(tempRepo(), { ...withQuestion, answers: ["q", "y"], confirmEnds: true });
   const code = await runProgram(["task"], wiring);
   assert.equal(code, 130);
-  assert.equal(code, statedCode(prompts.confirmEndPrompt("endRun")), "the confirmation states another exit code");
-  assert.ok(probe.ui.asked.includes(prompts.confirmEndPrompt("endRun")));
+  assert.equal(code, statedCode(prompts.confirmEndText("endRun")), "the confirmation states another exit code");
+  assert.ok(probe.ui.asked.includes(prompts.confirmEndText("endRun")));
   assert.match(said(probe), /INTERRUPTED by the user\. State is preserved in .*plan-review\./);
   assert.doesNotMatch(said(probe), /HALTED/);
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*Interrupted by the user\.\*\*\n$/);
@@ -165,11 +165,11 @@ test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; decline
   const halted = limited(["", "y"]);
   const code = await runProgram(["task"], halted.wiring);
   assert.equal(code, 1);
-  assert.equal(code, statedCode(prompts.confirmEndPrompt("limitStop")));
+  assert.equal(code, statedCode(prompts.confirmEndText("limitStop")));
   assert.match(said(halted.probe), /HALTED: stopped by the user at the cycle limit/);
   const declined = limited(["0", "n", "0", "y"]);
   assert.equal(await runProgram(["task"], declined.wiring), 1);
-  assert.equal(declined.probe.ui.asked.filter((a) => a === prompts.confirmEndPrompt("limitStop")).length, 2);
+  assert.equal(declined.probe.ui.asked.filter((a) => a === prompts.confirmEndText("limitStop")).length, 2);
 });
 
 // Issue #68 (P1-R1-1): an interrupted wait for a usage limit is recorded as actually spent before the summary is printed.

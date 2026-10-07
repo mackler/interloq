@@ -1493,10 +1493,6 @@ export function confirmEndAction(ending: "endRun" | "stopTask" | "limitStop"): s
   return ending === "endRun" ? END_RUN_LABEL : ending === "stopTask" ? "Stop task" : "Stop the run";
 }
 export const CANCEL_END = "Cancel";
-/** The terminal's confirmation: the text and how to answer it. */
-export function confirmEndPrompt(ending: "endRun" | "stopTask" | "limitStop"): string {
-  return `${confirmEndText(ending)} y = yes; anything else = back to the question > `;
-}
 /** The answers of the cycle limit's options (S8); a whole number above zero adds that many cycles. */
 export const LIMIT_ANSWERS = { proceed: "p", stop: "0" } as const;
 export const LIMIT_PROCEED = "Proceed without convergence";
