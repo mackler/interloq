@@ -85,6 +85,12 @@ export type TimelineEntry = Readonly<{
    * clears it, and only a new report of the step makes it current again.
    */
   currentStep: string | null;
+  /**
+   * The step of the plan named by the latest 'started' report in this Implementation (issue #63, P1-R1-1, P1-R2-1): unlike
+   * `currentStep`, neither the end of the execution call nor the end of the phase clears it, so that the rail can find the
+   * stage the call was working on when the run halts or asks the user after the call. Null for every other phase.
+   */
+  lastStarted: string | null;
   /** The ids of the steps of the plan whose status changed, or that were reported, while the entry was active (issue #54, Q3). */
   acted: readonly string[];
   /** An ended Implementation's steps as they stood when it ended, those of `acted` alone (issue #54, Q3, Q6); null before its end. */
@@ -274,18 +280,19 @@ const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
   began: null,
   ended: null,
   currentStep: null,
+  lastStarted: null,
   acted: [],
   record: null,
 });
 /** The index of the last element that satisfies `p`, or -1 (the page's library has no findLastIndex). */
 const lastIndex = <T>(list: readonly T[], p: (t: T) => boolean): number => list.reduce((found, t, i) => (p(t) ? i : found), -1);
 /** The entry that the run is in: the active one, else the last one begun. */
-const currentIndex = (timeline: readonly TimelineEntry[]): number => {
+export const currentIndex = (timeline: readonly TimelineEntry[]): number => {
   const active = lastIndex(timeline, (e) => e.state === "active");
   return active >= 0 ? active : lastIndex(timeline, (e) => e.state !== "ahead" && e.state !== "notReached");
 };
 /** The step that an entry is in: the active one, else the last one begun. */
-const currentStepIndex = (steps: readonly TimelineStep[]): number => {
+export const currentStepIndex = (steps: readonly TimelineStep[]): number => {
   const active = lastIndex(steps, (st) => st.state === "active");
   return active >= 0 ? active : lastIndex(steps, (st) => st.state !== "ahead" && st.state !== "notReached" && st.state !== "skipped");
 };
@@ -569,7 +576,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // Q5, Q9: the plan on the Implementation of its phase. Issue #54: the active one records the steps it acts on.
       const carries = (e: TimelineEntry) => e.phase.kind === "execution" && e.phase.n === event.phase;
       const acting = (e: TimelineEntry): TimelineEntry => (e.state === "active" ? { ...e, acted: actedAfter(e.acted, run.plan?.plan ?? null, event.plan, event.step) } : e);
-      const timeline = run.timeline.map((e) => (carries(e) ? { ...acting(e), currentStep: currentAfter(e.currentStep, event.step, event.plan) } : e));
+      const lastStarted = (e: TimelineEntry) => (e.state === "active" && event.step !== null && event.step.status === "started" ? event.step.id : e.lastStarted);
+      const timeline = run.timeline.map((e) => (carries(e) ? { ...acting(e), currentStep: currentAfter(e.currentStep, event.step, event.plan), lastStarted: lastStarted(e) } : e));
       return reshow({ ...run, plan: { phase: event.phase, plan: event.plan }, timeline });
     }
     case "ClaudeSaid":

@@ -2,11 +2,13 @@ import fc from "fast-check";
 import { describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
-import { foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
+import { foreseenPhases, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
+import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
+import { conditionOf, railView } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
-import { limitWaitView, type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { bandKey, limitWaitView, type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", current, incarnation: "a" });
@@ -1434,5 +1436,154 @@ describe("a wait for a usage limit", () => {
       }),
       { numRuns: 300, seed: 20261007 },
     );
+  });
+});
+
+// Issue #63: the rail collapses. Everything is collapsed at the start and opened by the run as it arrives; the user's
+// choice wins over the automatic opening; a branch is held open while something inside it needs the user; a collapsed
+// row carries the running step's label, its condition in one word and its tally of steps.
+describe("the rail as a tree that collapses", () => {
+  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: foreseenPhases(questions, iterations) });
+  const began = (phase: Phase) => notified({ _tag: "PhaseBegan", phase });
+  const ended = (phase: Phase, result = "converged") => notified({ _tag: "PhaseEnded", phase, result } as UiEvent);
+  const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose });
+  const callEnded = notified({ _tag: "AgentCallEnded", agent: "claude", ok: true });
+  type Status = "pending" | "started" | "done" | "unfinished";
+  const layout = [["S1", "S2", "S3"], ["S4"]] as const;
+  const planWith = (statuses: Record<string, Status>) => ({
+    stages: layout.map((ids, s) => ({ number: s + 1, title: `stage ${s + 1}`, steps: ids.map((id) => ({ id, number: Number(id.slice(1)), label: `step ${id}`, text: id, status: statuses[id] ?? ("pending" as const) })) })),
+  });
+  /** The reports in order, each PlanChanged carrying the plan as recorded after it. */
+  const reports = (list: readonly (readonly [string, "started" | "done"])[], from: Record<string, Status> = {}): RunEvent[] => {
+    const statuses: Record<string, Status> = { ...from };
+    return list.map(([id, status]) => {
+      statuses[id] = status;
+      return notified({ _tag: "PlanChanged", phase: 1, plan: planWith(statuses), step: { id, status } });
+    });
+  };
+  const planning: Phase = { kind: "planning", n: 1 };
+  const implementation: Phase = { kind: "execution", n: 1 };
+  const flags = (...list: readonly UiFlag[]): ServerMessage => ({ type: "ui", run: 1, state: list.reduce(withFlag, emptyUiState) });
+  const phaseScope = (phase: Phase): UiScope => ({ _tag: "RailPhase", phase: bandKey(phase) });
+  const stageScope = (n: number): UiScope => ({ _tag: "RailBranch", phase: bandKey(implementation), branch: `stage:current-${n}` });
+  const viewOf = (s: ViewState) => railView(s.run!, executing(s.run!), s.run!.busy);
+  const phaseNode = (s: ViewState, phase: Phase) => viewOf(s).phases.find((p) => samePhaseKey(p.entry.phase, phase))!.node;
+  const samePhaseKey = (a: Phase, b: Phase) => bandKey(a) === bandKey(b);
+  const branch = (s: ViewState, phase: Phase, key: string) => viewOf(s).phases.find((p) => samePhaseKey(p.entry.phase, phase))!.branches.get(key);
+  const planned = notified({ _tag: "PlanChanged", phase: 1, plan: planWith({}), step: null });
+  const executingS1: RunEvent[] = [started, foreseen(false, 1), began(planning), planned, ended(planning), began(implementation), call(), ...reports([["S1", "started"]])];
+
+  test("everything is collapsed at the start", () => {
+    const s = fold(live([started, foreseen(true, 1), planned]));
+    for (const p of viewOf(s).phases) {
+      expect(p.node.open).toBe(false);
+      for (const b of p.branches.values()) expect(b.open).toBe(false);
+    }
+    expect([...(viewOf(s).phases.find((p) => p.entry.phase.kind === "execution")?.branches.keys() ?? [])]).toEqual(["stage:current-1", "stage:current-2"]);
+  });
+
+  test("a phase opens when it begins and stays open when it ends; a stage opens when one of its steps begins", () => {
+    const s = fold(live([started, foreseen(false, 1), began(planning)]));
+    expect(phaseNode(s, planning).open).toBe(true);
+    expect(phaseNode(s, implementation).open).toBe(false);
+    const after = fold(live(executingS1));
+    expect(phaseNode(after, planning).open).toBe(true);
+    expect(phaseNode(after, implementation).open).toBe(true);
+    expect(branch(after, implementation, "stage:current-1")?.open).toBe(true);
+    expect(branch(after, implementation, "stage:current-2")?.open).toBe(false);
+  });
+
+  test("a step of Gather Requirements opens when it begins", () => {
+    const s = fold(live([started, foreseen(true, 1), began({ kind: "questions" })]));
+    expect(branch(s, { kind: "questions" }, "step:formulate")?.open).toBe(true);
+    expect(branch(s, { kind: "questions" }, "step:clarification")?.open).toBe(false);
+  });
+
+  test("a phase the user closed stays closed when it begins; one he opened stays open; one he never touched follows the run", () => {
+    const closed = fold([...live([started, foreseen(false, 1)]), flags({ scope: phaseScope(planning), open: false }), ...live([began(planning)]).slice(2).map((m) => (m.type === "event" ? { ...m, seq: 2 } : m))]);
+    expect(phaseNode(closed, planning).open).toBe(false);
+    const opened = fold([...live([started, foreseen(false, 1)]), flags({ scope: phaseScope(implementation), open: true })]);
+    expect(phaseNode(opened, implementation).open).toBe(true);
+    expect(phaseNode(opened, planning).open).toBe(false);
+    const untouched = fold([...live([started, foreseen(false, 1), began(planning)]), flags({ scope: phaseScope(implementation), open: true })]);
+    expect(phaseNode(untouched, planning).open).toBe(true);
+  });
+
+  test("a closed phase is held open by a prompt inside it, and returns to the user's choice once the prompt is answered", () => {
+    const close = flags({ scope: phaseScope(planning), open: false });
+    const waiting = fold([...live([started, foreseen(false, 1), began(planning), asked(1, prompts.decisionPrompt)]), close]);
+    expect(phaseNode(waiting, planning)).toMatchObject({ open: true, held: true });
+    const answered = fold([...live([started, foreseen(false, 1), began(planning), asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }]), close]);
+    expect(phaseNode(answered, planning)).toMatchObject({ open: false, held: false });
+  });
+
+  test("a halt holds the stopped phase open", () => {
+    const s = fold([...live([started, foreseen(false, 1), began(planning), { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
+    expect(phaseNode(s, planning)).toMatchObject({ open: true, held: true });
+  });
+
+  // P1-R1-1: after a halt, the stage of the step the halted execution call was working on.
+  test("a halt after the execution call ended holds the phase and the stage of the step last reported running", () => {
+    const events: RunEvent[] = [started, foreseen(false, 1), began(planning), planned, ended(planning), began(implementation), call(), ...reports([["S4", "started"], ["S4", "done"], ["S1", "started"]]), callEnded, { _tag: "Ended", code: 1 }];
+    const s = fold([...live(events), flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false }, { scope: stageScope(2), open: false })]);
+    const entry = s.run!.timeline.find((e) => e.phase.kind === "execution")!;
+    expect(entry.currentStep).toBe(null);
+    expect(entry.lastStarted).toBe("S1");
+    expect(phaseNode(s, implementation)).toMatchObject({ open: true, held: true });
+    expect(branch(s, implementation, "stage:current-1")).toMatchObject({ open: true, held: true });
+    expect(branch(s, implementation, "stage:current-2")).toMatchObject({ open: false, held: false });
+  });
+
+  // P1-R2-1: the question asked after the execution call ended needing the user's input.
+  test("the question after an execution call that needs the user holds the phase and the stage until it is answered", () => {
+    const close = flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false });
+    const prefix: RunEvent[] = [...executingS1, callEnded, notified({ _tag: "ExecutionEnded", phase: 1, outcome: { status: "needs_input", question: "Which?", summary: "" } } as UiEvent), ended(implementation, "needs_input"), asked(1, prompts.decisionPrompt)];
+    const waiting = fold([...live(prefix), close]);
+    expect(phaseNode(waiting, implementation)).toMatchObject({ open: true, held: true });
+    expect(branch(waiting, implementation, "stage:current-1")).toMatchObject({ open: true, held: true });
+    const answered = fold([...live([...prefix, { _tag: "Answered", prompt: 1, text: "go on" }]), close]);
+    expect(phaseNode(answered, implementation)).toMatchObject({ open: false, held: false });
+    expect(branch(answered, implementation, "stage:current-1")).toMatchObject({ open: false, held: false });
+    const later = fold([...live([...prefix, { _tag: "Answered", prompt: 1, text: "go on" }, began({ kind: "planning", n: 2 }), asked(2, prompts.decisionPrompt)]), close]);
+    expect(phaseNode(later, implementation).held).toBe(false);
+    expect(branch(later, implementation, "stage:current-1")?.held).toBe(false);
+  });
+
+  test("a collapsed phase and stage carry the running step's label while it runs", () => {
+    const s = fold(live(executingS1));
+    expect(phaseNode(s, implementation).collapsed.running).toBe(`${prompts.stageHeading(1, "stage 1")} — ${prompts.planStepLabel(1, "step S1")}`);
+    expect(branch(s, implementation, "stage:current-1")?.collapsed.running).toBe(prompts.planStepLabel(1, "step S1"));
+    expect(branch(s, implementation, "stage:current-2")?.collapsed.running).toBe(null);
+    expect(phaseNode(fold(live([...executingS1, callEnded])), implementation).collapsed.running).toBe(null);
+    const gather = fold(live([started, foreseen(true, 1), began({ kind: "questions" }), call("questions")]));
+    expect(phaseNode(gather, { kind: "questions" }).collapsed.running).toBe(prompts.stepLabel("formulate"));
+  });
+
+  test("the condition in each of its three cases, and a step begun and never finished leaves the branch partially completed", () => {
+    const none = fold(live([started, foreseen(false, 1), planned]));
+    expect(branch(none, implementation, "stage:current-1")?.collapsed.condition).toBe("notStarted");
+    const partial = fold(live([...executingS1, callEnded]));
+    expect(branch(partial, implementation, "stage:current-1")?.collapsed.condition).toBe("partial");
+    expect(phaseNode(partial, implementation).collapsed.condition).toBe("partial");
+    const complete = fold(live([...executingS1, ...reports([["S4", "started"], ["S4", "done"]], { S1: "started" })]));
+    expect(branch(complete, implementation, "stage:current-2")?.collapsed.condition).toBe("completed");
+    expect(phaseNode(fold(live([started, foreseen(false, 1)])), planning).collapsed).toEqual({ running: null, condition: null, tally: null });
+  });
+
+  test("the tally counts the steps complete of the steps hidden", () => {
+    const s = fold(live([...executingS1, ...reports([["S1", "done"]], { S1: "started" })]));
+    expect(branch(s, implementation, "stage:current-1")?.collapsed.tally).toEqual({ done: 1, total: 3 });
+    expect(phaseNode(s, implementation).collapsed.tally).toEqual({ done: 1, total: 4 });
+  });
+
+  test("conditionOf: not started when none started, completed when all finished, partially completed otherwise", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 20 }).chain((total) => fc.integer({ min: 0, max: total }).chain((started) => fc.tuple(fc.constant(total), fc.constant(started), fc.integer({ min: 0, max: started })))), ([total, started, finished]) => {
+        const expected = started === 0 ? "notStarted" : finished === total ? "completed" : "partial";
+        expect(conditionOf(started, finished, total)).toBe(expected);
+      }),
+      { numRuns: 200 },
+    );
+    expect(conditionOf(0, 0, 0)).toBe(null);
   });
 });

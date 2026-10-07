@@ -378,7 +378,7 @@ describe("QuestionPane", () => {
 });
 
 /** The fields of a timeline entry that its tests do not concern: the entry of a phase with no times yet. */
-const fresh = { began: null, ended: null, currentStep: null, acted: [], record: null } as const;
+const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null } as const;
 
 describe("TimelineRail", () => {
   const cycle = (round: number, raised: number | null, counted: number | null = raised) => ({ round, raised, counted, reviewIds: [] });
