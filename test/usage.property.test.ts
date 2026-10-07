@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { summarizeUsage, type UsageLine } from "../src/usage.ts";
+import { type LimitWait, summarizeUsage, type UsageLine } from "../src/usage.ts";
 
 // Row 7 of the table in recommendation E of docs/functional-design-review.md.
 const RUNS = { numRuns: 200, seed: 20260925 };
@@ -57,6 +57,23 @@ test("property: earlier totals of a session do not change the result, and interl
       }
       merged.push(...a.slice(i), ...b.slice(j));
       close(summarizeUsage({ calls: merged, waits: [] }).costUsd, summarizeUsage({ calls: [...a, ...b], waits: [] }).costUsd);
+    }),
+    RUNS,
+  );
+});
+
+// Issue #68: the time waited is the sum of the waits' actual spans, whatever their scheduled ends.
+const arbWait: fc.Arbitrary<LimitWait> = fc
+  .tuple(fc.nat(1e12), fc.nat(1e9), fc.nat(1e9), fc.constantFrom("lifted" as const, "interrupted" as const))
+  .map(([fromMs, scheduled, actual, outcome]) => ({ agent: "claude", limitType: null, fromMs, untilMs: fromMs + scheduled, endedMs: fromMs + actual, outcome }));
+
+test("property: waitedMs is the sum of endedMs - fromMs over the waits, and limitWaits their count", () => {
+  fc.assert(
+    fc.property(arbLines, fc.array(arbWait, { maxLength: 6 }), (calls, waits) => {
+      const summary = summarizeUsage({ calls, waits });
+      assert.equal(summary.waitedMs, waits.reduce((sum, w) => sum + (w.endedMs - w.fromMs), 0));
+      assert.equal(summary.limitWaits, waits.length);
+      assert.equal(summary.lastInterrupted, waits.at(-1)?.outcome === "interrupted");
     }),
     RUNS,
   );

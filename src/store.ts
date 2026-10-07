@@ -15,7 +15,7 @@ import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
-import type { UsageLine } from "./usage.ts";
+import type { LimitWait, UsageLine } from "./usage.ts";
 
 /** The store of one project. `ignorePaths` are the paths the change detection ignores (config). */
 export const makeStore = (projectDir: string, ignorePaths: readonly string[]): Effect.Effect<StoreShape, never, Platform> =>
@@ -278,6 +278,9 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
         Effect.gen(function* () {
           if (!(yield* exists(usageFile))) return { calls: [], waits: [] };
           const records = yield* Effect.fromResult(readUsage(usageFile, yield* readText(usageFile)));
+          const waits = records.flatMap((r): LimitWait[] =>
+            "kind" in r ? [{ agent: r.agent, limitType: r.limit_type, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until), endedMs: Date.parse(r.ended), outcome: r.outcome }] : [],
+          );
           const calls = records.flatMap((r): UsageLine[] =>
             "kind" in r
               ? []
@@ -285,9 +288,15 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
                 ? [{ agent: "claude", session: r.session, turns: r.num_turns, totalCostUsd: r.total_cost_usd }]
                 : [{ agent: "codex", thread: r.thread, inputTokens: r.input_tokens, outputTokens: r.output_tokens }],
           );
-          return { calls, waits: [] };
+          return { calls, waits };
         }),
-      recordLimitWait: (_wait) => Effect.void,
+      /** A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one. */
+      recordLimitWait: (wait) =>
+        Effect.gen(function* () {
+          const iso = (ms: number) => new Date(ms).toISOString();
+          const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait", agent: wait.agent, time: yield* now, limit_type: wait.limitType, from: iso(wait.fromMs), until: iso(wait.untilMs), ended: iso(wait.endedMs), outcome: wait.outcome };
+          yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
+        }),
       fileHash: (subject) =>
         typeof subject === "object" && "work" in subject
           ? diffText().pipe(Effect.map((text) => (text === null ? "" : createHash("sha256").update(text).digest("hex"))))

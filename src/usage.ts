@@ -1,6 +1,8 @@
 // The usage summary as a pure fold over the lines of usage.jsonl (findings 9 and 27 of the functional design
 // review; decision Q8). The store reads the lines; program.ts renders the summary.
 
+import { durationText } from "./prompts.ts";
+
 /** One line of usage.jsonl, per agent. A Claude Code line's session is null when the SDK reported none. */
 export type UsageLine =
   | Readonly<{ agent: "claude"; session: string | null; turns: number | null; totalCostUsd: number | null }>
@@ -32,7 +34,7 @@ export type UsageSummary = Readonly<{
   lastInterrupted: boolean;
 }>;
 
-export const summarizeUsage = ({ calls: lines }: UsageLines): UsageSummary => {
+export const summarizeUsage = ({ calls: lines, waits }: UsageLines): UsageSummary => {
   const claude = lines.flatMap((l) => (l.agent === "claude" ? [l] : []));
   const codex = lines.flatMap((l) => (l.agent === "codex" ? [l] : []));
   // The Agent SDK's total is the running total of a session, so a session counts its last value;
@@ -57,13 +59,15 @@ export const summarizeUsage = ({ calls: lines }: UsageLines): UsageSummary => {
     codexTurns: codex.length,
     inputTokens: codex.reduce((sum, l) => sum + l.inputTokens, 0),
     outputTokens: codex.reduce((sum, l) => sum + l.outputTokens, 0),
-    limitWaits: 0,
-    waitedMs: 0,
-    lastInterrupted: false,
+    limitWaits: waits.length,
+    waitedMs: waits.reduce((sum, w) => sum + (w.endedMs - w.fromMs), 0),
+    lastInterrupted: waits.at(-1)?.outcome === "interrupted",
   };
 };
 
 export const renderUsage = (s: UsageSummary): string => {
   const unidentified = s.unidentifiedCalls > 0 ? `, ${s.unidentifiedCalls} calls without a session id` : "";
-  return `Claude Code: ${s.claudeCalls} calls in ${s.claudeSessions} sessions${unidentified}, total_cost_usd = ${s.costUsd.toFixed(2)} (the sessions' last reported running totals, an estimate by the client). Codex: ${s.codexTurns} turns, ${s.inputTokens} input tokens, ${s.outputTokens} output tokens. Details: plan-review/usage.jsonl`;
+  const waited =
+    s.limitWaits === 0 ? "" : ` Waited for Claude Code's usage limits: ${s.limitWaits} ${s.limitWaits === 1 ? "time" : "times"}, ${durationText(s.waitedMs)} in all${s.lastInterrupted ? " (the last interrupted)" : ""}.`;
+  return `Claude Code: ${s.claudeCalls} calls in ${s.claudeSessions} sessions${unidentified}, total_cost_usd = ${s.costUsd.toFixed(2)} (the sessions' last reported running totals, an estimate by the client). Codex: ${s.codexTurns} turns, ${s.inputTokens} input tokens, ${s.outputTokens} output tokens. Details: plan-review/usage.jsonl${waited}`;
 };

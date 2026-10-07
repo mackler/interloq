@@ -98,6 +98,23 @@ test("init archives an earlier run and keeps config.json; the records are writte
   assert.deepEqual(await Effect.runPromise(s.loadLog({ plan: 1 })), []);
 });
 
+// Issue #68: a wait for a usage limit is a line of usage.jsonl, read back apart from the calls' usage.
+test("recordLimitWait appends a usage_limit_wait line, and usageLines returns it under waits and the calls under calls", async () => {
+  const s = await initialised();
+  const from = Date.UTC(2026, 9, 7, 5, 32);
+  const wait = { agent: "claude" as const, limitType: "five_hour", fromMs: from, untilMs: from + 9_000_000, endedMs: from + 60_000, outcome: "interrupted" as const };
+  await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s", turns: 1, totalCostUsd: 1.5 }));
+  await Effect.runPromise(s.recordLimitWait(wait));
+  const lines = fs.readFileSync(path.join(s.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  assert.equal(lines.length, 2);
+  const { time, ...line } = lines[1] ?? {};
+  assert.equal(typeof time, "string");
+  assert.deepEqual(line, { version: 2, kind: "usage_limit_wait", agent: "claude", limit_type: "five_hour", from: new Date(from).toISOString(), until: new Date(from + 9_000_000).toISOString(), ended: new Date(from + 60_000).toISOString(), outcome: "interrupted" });
+  const read = await Effect.runPromise(s.usageLines());
+  assert.deepEqual(read.waits, [wait]);
+  assert.deepEqual(read.calls, [{ agent: "claude", session: "s", turns: 1, totalCostUsd: 1.5 }]);
+});
+
 test("the records: decisions, feedback, usage and the invalid-reply files", async () => {
   const s = await initialised();
   await Effect.runPromise(s.appendDecision({ subject: "issue A", id: null, decision: "keep it", phase: 1, round: 1 }));
