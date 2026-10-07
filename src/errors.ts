@@ -264,8 +264,7 @@ export const decodeRunError = (error: unknown): RunErrorFields | null => {
 };
 
 /**
- * What the entry point prints for an error, or null if the error is none of ours, in which case the
- * entry point rethrows it.
+ * The HALTED line for an error, or null if the error is none of ours.
  */
 export const haltMessage = (error: unknown): string | null => {
   const decoded = decodeRunError(error);

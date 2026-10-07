@@ -44,15 +44,15 @@ export type RunStart = Readonly<{ task: Task; project: string }>;
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
 
 /**
- * Runs the program and returns the exit code; everything else is printed through the Ui.
- * A typed error of the run prints HALTED and gives 1; UserStopped (End the run: q, /quit, the page's button) prints
- * INTERRUPTED and gives 130 (S24). An interruption (Ctrl+C, Stop task) prints INTERRUPTED
- * from a finalizer and leaves the fiber interrupted; `exitCodeOf` turns that into 130. In every
- * case the Claude Code session id and the usage summary are printed last.
+ * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
+ * A typed error of the run says HALTED and gives 1; UserStopped (End the run: q, /quit, the page's button) says
+ * INTERRUPTED and gives 130 (S24). An interruption (Stop task) says INTERRUPTED from a finalizer and leaves the
+ * fiber interrupted; `exitCodeOf` turns that into 130. In every case the Claude Code session id and the usage
+ * summary are said last.
  */
 export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const task = start.task;
+    const { task } = start;
     const project = path.resolve(start.project);
     const dir = path.join(project, "plan-review");
     const ui = yield* wiring.ui;
@@ -127,10 +127,10 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
   });
 
 /**
- * The exit code for the program's exit: its own code, 130 when it was interrupted, 1 for a defect or
- * any other failure. Typed loosely, because the runner's Teardown is generic over the exit.
+ * The code a run ends with, from the exit of its fiber: the program's own code, 130 when it was interrupted, 1 for
+ * a defect (the program's error channel is empty).
  */
-export const exitCodeOf = (exit: Exit.Exit<unknown, unknown>): number => {
-  if (Exit.isSuccess(exit)) return typeof exit.value === "number" ? exit.value : 0;
+export const exitCodeOf = (exit: Exit.Exit<number>): number => {
+  if (Exit.isSuccess(exit)) return exit.value;
   return Cause.hasInterruptsOnly(exit.cause) ? 130 : 1;
 };
