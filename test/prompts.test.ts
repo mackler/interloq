@@ -161,9 +161,9 @@ test("the status lines of the phases name Gather Requirements and Implementation
 
 // The Q5 follow-up of issue #21: the user reads "clarification" where the records say "interview".
 test("the clarification's headings and help", () => {
-  assert.equal(prompts.clarificationHeading("clarification"), "Clarification");
-  assert.equal(prompts.clarificationHeading("followUp"), "Follow-up clarification");
-  assert.equal(prompts.interviewHelp("Clarification"), "Clarification. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.");
+  assert.equal(prompts.clarificationHeading("clarification"), prompts.USER_DECISIONS);
+  assert.equal(prompts.clarificationHeading("followUp"), "More user decisions");
+  assert.equal(prompts.interviewHelp("User Decisions"), "User Decisions. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.");
   assert.equal(prompts.END_CLARIFICATION, "Finish clarification and start planning");
 });
 
@@ -195,7 +195,14 @@ test("a finished loop's line reads n issues resolved in m cycles", () => {
 // Issue #33: the first step of Gather Requirements identifies the choices; the other steps keep their names.
 test("the steps of Gather Requirements", () => {
   assert.equal(prompts.stepLabel("formulate"), "Identify choices");
-  assert.equal(prompts.stepLabel("clarification"), "Clarification");
+  assert.equal(prompts.stepLabel("clarification"), prompts.USER_DECISIONS);
+  assert.equal(prompts.stepLabel("terms"), "Define terms");
+});
+
+// Issue #113: "more" names questions an intervening phase separates from the first ones; a further question asked inside
+// the conversation is not one of them, so its origin line keeps its own words.
+test("a further question's origin line does not borrow \"more\"", () => {
+  assert.doesNotMatch(prompts.originLine({ kind: "followUp", id: "F1" }, null), /\bmore\b/i);
 });
 
 // Issue #21 (Q6 follow-up): Claude reports every question asked, follow-ups with ids of their own, and the answered ones.

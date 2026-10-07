@@ -443,9 +443,9 @@ describe("TimelineRail", () => {
   const stepRows = (root: HTMLElement) => [...root.querySelectorAll("[data-step]")].map((e) => `${e.getAttribute("data-step")}:${e.querySelector("[data-step-label]")?.textContent?.trim()}:${e.getAttribute("aria-current") ?? "-"}`);
 
   test("during a clarification: the first step done with its loop's line, Clarification active with its count", () => {
-    const root = showRail({ busy: true, timeline: [gather("active", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", "Clarification", "active", { answered: 3, total: 7 })])] });
+    const root = showRail({ busy: true, timeline: [gather("active", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", prompts.stepLabel("clarification"), "active", { answered: 3, total: 7 })])] });
     expect(root.querySelector("[data-label]")?.textContent?.trim()).toBe("Gather Requirements");
-    expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, "active:Clarification:step"]);
+    expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `active:${prompts.stepLabel("clarification")}:step`]);
     expect([...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 1, "converged")]);
     expect(root.querySelector("[data-step=active] [data-count]")?.textContent?.trim()).toBe("3 of 7 answered");
     expect(root.textContent).not.toMatch(/Question phase|Interview|round/);
@@ -455,14 +455,14 @@ describe("TimelineRail", () => {
   // answered, and the requirements review's two cycles are one line.
   test("a finished phase with a follow-up shows one Clarification step with the summed count and one loop summary", () => {
     const q = { kind: "questions" as const };
-    const turn = (answered: number, total: number): UiEvent => ({ _tag: "InterviewTurn", heading: "Clarification", message: "Hi", summary: null, answered, total });
+    const turn = (answered: number, total: number): UiEvent => ({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Hi", summary: null, answered, total });
     const events: UiEvent[] = [
       { _tag: "PhaseBegan", phase: q },
-      { _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 8 },
+      { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 8 },
       turn(8, 8),
       { _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 },
       { _tag: "ReviewReceived", subject: "requirements", round: 1, review: { issues: [] }, counted: 2 },
-      { _tag: "InterviewOpened", heading: "Clarification", stage: "followUp", total: 2 },
+      { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "followUp", total: 2 },
       turn(2, 2),
       { _tag: "RoundBegan", subject: "requirements", round: 2, limit: 5 },
       { _tag: "LoopFinished", subject: "requirements", result: "converged" },
@@ -480,23 +480,23 @@ describe("TimelineRail", () => {
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `done:${prompts.stepLabel("clarification")}:-`]);
     expect([...root.querySelectorAll("[data-count]")].map((e) => e.textContent?.trim())).toEqual([prompts.clarificationProgress(10, 10)]);
     expect([...root.querySelectorAll("[data-step] [data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 0, "converged")]);
-    expect(root.textContent).not.toMatch(/Follow-up/);
+    expect(root.textContent).not.toMatch(/More user decisions|Follow-up/);
   });
 
   // The re-check after #21: #14's labels and cycle lines render beside the steps of Gather Requirements.
   test("Gather Requirements with its steps, a planning loop's cycles and Implementation, together", () => {
     const planning: TimelineEntry = { ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning 1", state: "done", groups: [{ subject: { plan: 1 }, heading: "Planning phase 1", rounds: [cycle(1, 2), cycle(2, 0)], corrections: 2, result: "converged", done: true }], steps: [], plan: null };
     const implementation: TimelineEntry = { ...fresh, phase: { kind: "execution", n: 1 }, label: "Implementation 1", state: "active", groups: [], steps: [], plan: null };
-    const root = showRail({ busy: false, timeline: [gather("done", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", "Clarification", "done", { answered: 2, total: 2 })]), planning, implementation] });
+    const root = showRail({ busy: false, timeline: [gather("done", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", prompts.stepLabel("clarification"), "done", { answered: 2, total: 2 })]), planning, implementation] });
     expect([...root.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(["Gather Requirements", "Planning 1", "Implementation 1"]);
     expect([...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 1, "converged"), prompts.loopSummary(2, 2, "converged")]);
-    expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, "done:Clarification:-"]);
+    expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `done:${prompts.stepLabel("clarification")}:-`]);
     expect(root.textContent).not.toMatch(/Question phase|Execution|Interview|round| of 5/);
   });
 
   test("a stopped step shows the stopped mark and is not the current step", () => {
-    const root = showRail({ busy: false, timeline: [gather("stopped", [step("formulate", prompts.stepLabel("formulate"), "done", null), step("clarification", "Clarification", "stopped", { answered: 0, total: 3 })])] });
-    expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, "stopped:Clarification:-"]);
+    const root = showRail({ busy: false, timeline: [gather("stopped", [step("formulate", prompts.stepLabel("formulate"), "done", null), step("clarification", prompts.stepLabel("clarification"), "stopped", { answered: 0, total: 3 })])] });
+    expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `stopped:${prompts.stepLabel("clarification")}:-`]);
     expect(root.querySelector("[data-step=stopped] .mark")?.getAttribute("aria-label")).toBe("stopped");
   });
 

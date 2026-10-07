@@ -306,8 +306,8 @@ describe("the cycles of a review loop in the timeline", () => {
 // Follow-up clarification, each done, active or stopped, with its cycles and the clarification's count.
 describe("the steps of Gather Requirements", () => {
   const q = { kind: "questions" as const };
-  const turn = (answered: number, total: number, summary: string | null = null) => notified({ _tag: "InterviewTurn", heading: "Clarification", message: "Hi", summary, answered, total });
-  const opened = (stage: "clarification" | "followUp", total: number) => notified({ _tag: "InterviewOpened", heading: "Clarification", stage, total });
+  const turn = (answered: number, total: number, summary: string | null = null) => notified({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Hi", summary, answered, total });
+  const opened = (stage: "clarification" | "followUp", total: number) => notified({ _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage, total });
   const round = (subject: "questions" | "requirements", n: number) => notified({ _tag: "RoundBegan", subject, round: n, limit: 5 });
   const finished = (subject: "questions" | "requirements") => notified({ _tag: "LoopFinished", subject, result: "converged" });
   const steps = (s: ViewState) => s.run?.timeline[0].steps.map((st) => [st.label, st.state, st.count === null ? null : `${st.count.answered}/${st.count.total}`, st.groups.map((g) => `${g.heading}:${g.rounds.map((c) => c.round).join(",")}`).join(";")]);
@@ -331,13 +331,21 @@ describe("the steps of Gather Requirements", () => {
     expect(steps(clarified)?.map((st) => [st[0], st[1], st[2]])).toEqual([
       [prompts.stepLabel("formulate"), "done", null],
       [prompts.stepLabel("terms"), "done", null],
-      ["Clarification", "active", "1/2"],
+      [prompts.stepLabel("clarification"), "active", "1/2"],
     ]);
+  });
+
+  // Issue #113, the seam: the heading above the conversation and the rail's step name one activity, from one source.
+  test("the conversation's heading and the rail's step name one activity, User Decisions", () => {
+    const heading = prompts.clarificationHeading("clarification");
+    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: q }), notified({ _tag: "InterviewOpened", heading, stage: "clarification", total: 1 })]));
+    const step = s.run?.timeline[0].steps.find((st) => st.kind === "clarification");
+    expect([heading, step?.label]).toEqual([prompts.USER_DECISIONS, prompts.USER_DECISIONS]);
   });
 
   test("InterviewOpened ends the first step and opens Clarification with its total; each turn updates the count", () => {
     const s = fold(live(through));
-    expect(steps(s)).toEqual([[prompts.stepLabel("formulate"), "done", null, "Question review:1"], ["Clarification", "active", "3/7", ""]]);
+    expect(steps(s)).toEqual([[prompts.stepLabel("formulate"), "done", null, "Question review:1"], [prompts.stepLabel("clarification"), "active", "3/7", ""]]);
     expect(replayed(through).run?.timeline).toEqual(s.run?.timeline);
   });
 
@@ -345,13 +353,13 @@ describe("the steps of Gather Requirements", () => {
   // step: the counts are summed, and the requirements review is one group of cycles under it.
   test("a follow-up clarification folds into the Clarification step: counts summed, one group of the requirements review", () => {
     const followUp = [...through, turn(7, 7, "# R"), round("requirements", 1), opened("followUp", 2)];
-    expect(steps(fold(live(followUp)))?.at(-1)).toEqual(["Clarification", "active", "7/9", "Requirements review:1"]);
-    expect(steps(fold(live([...followUp, turn(1, 2)])))?.at(-1)).toEqual(["Clarification", "active", "8/9", "Requirements review:1"]);
+    expect(steps(fold(live(followUp)))?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "7/9", "Requirements review:1"]);
+    expect(steps(fold(live([...followUp, turn(1, 2)])))?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "8/9", "Requirements review:1"]);
     const events = [...followUp, turn(1, 2), turn(2, 2, "# R2"), round("requirements", 2), finished("requirements"), notified({ _tag: "PhaseEnded", phase: q, result: "converged" })];
     const s = fold(live(events));
     expect(steps(s)).toEqual([
       [prompts.stepLabel("formulate"), "done", null, "Question review:1"],
-      ["Clarification", "done", "9/9", "Requirements review:1,2"],
+      [prompts.stepLabel("clarification"), "done", "9/9", "Requirements review:1,2"],
     ]);
     expect(s.run?.timeline[0].steps[1].groups.length).toBe(1);
     expect(s.run?.timeline[0].steps[1].groups[0].result).toBe("converged");
@@ -362,8 +370,8 @@ describe("the steps of Gather Requirements", () => {
   test("every further follow-up folds in the same way", () => {
     const events = [...through, turn(7, 7, "# R"), round("requirements", 1), opened("followUp", 1), turn(1, 1, "# R2"), round("requirements", 2), opened("followUp", 3), turn(2, 3), round("requirements", 3), finished("requirements")];
     const s = fold(live(events));
-    expect(steps(s)?.map((st) => st[0])).toEqual([prompts.stepLabel("formulate"), "Clarification"]);
-    expect(steps(s)?.at(-1)).toEqual(["Clarification", "active", "10/11", "Requirements review:1,2,3"]);
+    expect(steps(s)?.map((st) => st[0])).toEqual([prompts.stepLabel("formulate"), prompts.stepLabel("clarification")]);
+    expect(steps(s)?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "10/11", "Requirements review:1,2,3"]);
     expect(replayed(events).run?.timeline).toEqual(s.run?.timeline);
   });
 
@@ -381,9 +389,9 @@ describe("the steps of Gather Requirements", () => {
   });
 
   test("the compact progress line names the active step and its count, or its latest cycle", () => {
-    expect(progressOf(fold(live(through)).run!)).toBe("Progress: Gather Requirements — Clarification, 3 of 7 answered");
+    expect(progressOf(fold(live(through)).run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(3, 7)));
     expect(progressOf(fold(live(through.slice(0, 3))).run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
-    expect(progressOf(fold(live([...through, turn(7, 7, "# R"), round("requirements", 1)])).run!)).toBe("Progress: Gather Requirements — Clarification, cycle 1");
+    expect(progressOf(fold(live([...through, turn(7, 7, "# R"), round("requirements", 1)])).run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), "cycle 1"));
   });
 });
 

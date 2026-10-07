@@ -2,7 +2,7 @@ import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { type RunScenario, runUrl } from "./ports.ts";
-import { ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, stageHeading, stepLabel, stepsCompleteLabel } from "../src/prompts.ts";
+import { clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, stageHeading, stepLabel, stepsCompleteLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -208,17 +208,17 @@ test.describe("the tests of the interview server, in order", () => {
     await expect(asking(page, DATABASE)).toBeVisible();
     // S27: the conversation is one click away while the question waits.
     await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
-    await expect(left(page).getByText("Clarification. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.")).toBeVisible();
+    await expect(left(page).getByText(interviewHelp(clarificationHeading("clarification")))).toBeVisible();
     await page.getByRole("button", { name: SHOW_QUESTION }).click();
     await expect(left(page).getByText('"""')).toHaveCount(0);
     // Issue #21: Gather Requirements shows its steps; the clarification counts the agreed question, answered or not.
     const step = (label: string) => rail(page).locator("[data-step]", { has: page.locator("[data-step-label]", { hasText: label }) });
     await expect(step(stepLabel("formulate"))).toHaveAttribute("data-step", "done");
-    await expect(step("Clarification")).toHaveAttribute("data-step", "active");
-    await expect(step("Clarification").locator("[data-count]")).toHaveText("0 of 1 answered");
+    await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "active");
+    await expect(step(stepLabel("clarification")).locator("[data-count]")).toHaveText("0 of 1 answered");
     await option(page, /PostgreSQL/).click();
     await expect(pane(page).getByText("Anything else?")).toBeVisible();
-    await expect(step("Clarification").locator("[data-count]")).toHaveText("1 of 1 answered");
+    await expect(step(stepLabel("clarification")).locator("[data-count]")).toHaveText("1 of 1 answered");
     await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
     // Issue #2 (Q5): in the left panel Claude and Interloq speak from the left, the user from the right.
     const list = left(page).locator(".list");
@@ -239,8 +239,8 @@ test.describe("the tests of the interview server, in order", () => {
     // Four review loops and an execution follow; the run takes about 5 s alone and longer under the whole suite's load.
     await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
     await expect(rail(page).getByText("Gather Requirements", { exact: true })).toBeVisible();
-    await expect(step("Clarification")).toHaveAttribute("data-step", "done");
-    await expect(step("Clarification").getByText(loopSummary(1, 0, "converged"), { exact: true })).toBeVisible();
+    await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "done");
+    await expect(step(stepLabel("clarification")).getByText(loopSummary(1, 0, "converged"), { exact: true })).toBeVisible();
   });
 });
 

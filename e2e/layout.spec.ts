@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
-import { CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { clarificationProgress, progressLine, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS } from "./longAnswers.ts";
 import { layoutUrl } from "./ports.ts";
 
@@ -401,7 +401,7 @@ test.describe("the tests of the longChoices server, in order", () => {
       await startTask(page, `Show the time at ${width}`, LONG_CHOICES_URL);
       await expect(page.getByRole("button", { name: END_CLARIFICATION })).toBeVisible();
       // Issue #21: a narrow window's progress line names the step and its count.
-      if (width < 840) await expect(page.locator("details.progress summary")).toHaveText("Progress: Gather Requirements — Clarification, 0 of 1 answered");
+      if (width < 840) await expect(page.locator("details.progress summary")).toHaveText(progressLine(stepOfPhase("Gather Requirements", stepLabel("clarification")), clarificationProgress(0, 1)));
       const group = page.getByRole("group", { name: "Proposed answers" });
       await expect(group.getByRole("button")).toHaveCount(3);
       const cards = group.getByRole("button");

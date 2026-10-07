@@ -84,11 +84,11 @@ test("the question phase notifies its beginning and end and every interview turn
   assert.deepEqual(probe.ui.notified[1], { _tag: "PhaseBegan", phase: { kind: "questions" } });
   const turns = probe.ui.notified.filter((e) => e._tag === "InterviewTurn");
   assert.deepEqual(turns, [
-    { _tag: "InterviewTurn", heading: "Clarification", message: "Anything to add?", summary: null, answered: 0, total: 1 },
-    { _tag: "InterviewTurn", heading: "Clarification", message: "Done.", summary: "# Requirements\n\nNone.", answered: 0, total: 1 },
+    { _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Anything to add?", summary: null, answered: 0, total: 1 },
+    { _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Done.", summary: "# Requirements\n\nNone.", answered: 0, total: 1 },
   ]);
   // Issue #21: the clarification counts the agreed questions.
-  assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 1 });
+  assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 1 });
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
   assert.ok(tags.indexOf("PhaseEnded") < tags.lastIndexOf("PhaseBegan"), "the question phase ends before planning begins");
   // The line said for a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.

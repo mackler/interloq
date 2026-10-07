@@ -122,9 +122,9 @@ test("a gap that Claude Code accepts produces a second interview and a revised r
   // Issue #31 (G-R1-1): the requirements' change is measured from the response through the second interview.
   const [gap] = await probe.loadLog("requirements");
   assert.deepEqual(gap !== undefined && "file_change" in gap ? gap.file_change : undefined, { changed: true, added: 1, removed: 0 });
-  // The user reads "Clarification" and "Follow-up clarification"; conversation.md keeps its record headings.
+  // The user reads "User Decisions" and "More user decisions" (issue #113); conversation.md keeps its record headings.
   const headings = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" || e._tag === "InterviewTurn" ? [e.heading] : []));
-  assert.deepEqual([...new Set(headings)], ["Clarification", "Follow-up clarification"]);
+  assert.deepEqual([...new Set(headings)], [prompts.clarificationHeading("clarification"), prompts.clarificationHeading("followUp")]);
   // Issue #21 (Q6, Q7): each clarification opens with its total, the agreed questions or the accepted gaps, and each
   // turn carries the count of answered questions against the total so far.
   const counted = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" ? [`opened ${e.stage} ${e.total}`] : e._tag === "InterviewTurn" ? [`${e.answered} of ${e.total}`] : []));
