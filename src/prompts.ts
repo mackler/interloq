@@ -5,7 +5,7 @@ import { FILE_CHANGE_FIELD, type Block, type Explanation, type LogEntry, type Pi
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { PauseOrigin, QuestionOrigin } from "./question.ts";
-import type { Skipped, SkipProblem } from "./premises.ts";
+import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 
 const SEVERITY = `Severity: blocking = the work cannot succeed with the file as written; major = the file as written will produce a defect or omits something required; minor = everything else.`;
 
@@ -420,8 +420,38 @@ ${SKIP_IF_FIELD}
 Return the complete output again, corrected. Do not modify any file.`;
 /** The line under a question-list entry with a skip condition, in conversation.md. */
 export const skipIfLine = (condition: Readonly<{ question: string; answer: string }>): string => `Not asked if ${condition.question} is answered ${JSON.stringify(condition.answer)}.`;
-/** The program's note that questions were skipped: to Claude Code after the user's message, and in conversation.md. */
-export const skippedNote = (_skipped: readonly Skipped[]): string => "";
+/**
+ * The program's note that questions were skipped, or are to be asked after all: to Claude Code after the user's message,
+ * to the user, and in conversation.md.
+ */
+export const skippedNote = (skipped: readonly Skipped[], restored: readonly string[]): string =>
+  [
+    ...skipped.map((k) =>
+      k.cause === "answered"
+        ? `The program does not put question ${k.id} to the user: the user answered question ${k.question} ${JSON.stringify(k.answer)}, which makes it unnecessary.`
+        : `The program does not put question ${k.id} to the user: question ${k.question}, on whose answer it depends, is itself skipped.`,
+    ),
+    ...restored.map((id) => `Question ${id}, skipped before, is to be asked after all: the user changed the answer that made it unnecessary.`),
+  ].join(" ");
+const turnSkipProblemText = (problem: TurnSkipProblem): string => {
+  switch (problem.kind) {
+    case "skippedAsked":
+      return `the turn asks question ${problem.id}, which the program skipped because it depends on the answer ${JSON.stringify(problem.answer)} to question ${problem.question}`;
+    case "askedBeforePremise":
+      return `the turn asks question ${problem.id} before question ${problem.premise}, whose answer can make it unnecessary, has been answered`;
+    case "summaryOmits":
+      return `the summary does not name the skipped question${problem.ids.length > 1 ? "s" : ""} ${problem.ids.join(", ")}`;
+  }
+};
+/** The halt after the repair turn of an interview turn could not correct what it did against the skipped questions. */
+export const interviewTurnInvalidText = (problems: readonly TurnSkipProblem[]): string => `an interview turn is invalid: ${problems.map(turnSkipProblemText).join("; ")}`;
+/** The validation repair turn of an interview turn that asked a skipped question or one before its premise, or omitted one. */
+export const interviewTurnRepairPrompt = (problems: readonly TurnSkipProblem[]): string => `Your structured output matched the schema, but the program cannot accept it:
+${problems.map((p) => `- ${turnSkipProblemText(p)}.`).join("\n")}
+${SKIPPED_RULE}
+Return the complete output again, corrected. Do not modify any file.`;
+/** What the interview does with the questions the program skips (issue #99): in the interview's rules and its repair turn. */
+export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
 
 /** How a question for the user is filled (decision Q1 of the decision-support task), with the rules of every question (S1). */
 export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a context, a question, explanations and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.
@@ -536,26 +566,27 @@ const INTERVIEW_RULES = `Rules for the interview.
 Each of your turns produces these output fields. message_to_user: what you say to the user in this turn, in plain text without Markdown tables: the record of his earlier answer, an answer to his question, a remark. The question you ask now is not repeated in it; the program shows that question below your message.
 current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of plan-review/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its text, its explanations and its options: the context paragraph as blocks, the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
 ${QUESTION_TEXT_FORMAT}
-asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that you assign to each follow-up question. answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far. complete: true only when every agreed question has been answered and you need nothing further from the user. summary: an empty string while complete is false.
+asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that you assign to each follow-up question. answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far. complete: true only when every agreed question has been answered or the program has reported it skipped, and you need nothing further from the user. summary: an empty string while complete is false.
 When complete is true, summary contains the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
 Ask one question per message. The user may answer with the number of an option, its label, or free text.
+${SKIPPED_RULE}
 ${questionWritingRules()}
 You may ask any follow-up question that the conversation makes necessary. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
 Do not use the AskUserQuestion tool; the program relays the conversation. Do not modify any file. Do not write a plan.`;
 
-export const interviewOpenPrompt = `Conduct an interview with the user. plan-review/questions.json contains the task and the agreed questions. Cover every agreed question, in the order of the list unless the conversation makes another order more useful.
+export const interviewOpenPrompt = `Conduct an interview with the user. plan-review/questions.json contains the task and the agreed questions. Cover every agreed question except those the program reports skipped, in the order of the list unless the conversation makes another order more useful.
 ${INTERVIEW_RULES}
 Begin now with your first message to the user.`;
 
 export function interviewGapsPrompt(reviewFile: string, ids: string[]): string {
   return `The reviewer has examined plan-review/requirements.md, the confirmed result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
-Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids.
+Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in plan-review/requirements.md.
 ${INTERVIEW_RULES}
 When complete is true, summary contains the complete revised requirements document, not only the changes.
 Begin now with your first message to the user.`;
 }
 
-export const interviewDonePrompt = `The user ends the interview now. Return complete = true. In the summary, list every agreed question that was not answered under 'Open points', with the default that will be assumed.`;
+export const interviewDonePrompt = `The user ends the interview now. Return complete = true. In the summary, list every agreed question that was not answered and that the program has not reported skipped under 'Open points', with the default that will be assumed, and every skipped question under 'Skipped questions'.`;
 
 export function interviewUserMessage(text: string): string {
   return `User: ${text}`;
@@ -571,7 +602,7 @@ export function requirementsReviewPrompt(round: number): string {
   if (round > 1) return laterRound(pathOf({ kind: "requirements" }), pathOf({ kind: "log", subject: "requirements" }), "G", round);
   return `Review plan-review/requirements.md. It is the result of an interview between the planner and the user, confirmed by the user. plan-review/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
 The planner will write an implementation plan from the task and this file.
-Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent.
+Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent. An agreed question listed under 'Skipped questions' was not put to the user because his answer to another question denied its premise; it is not an issue unless you name what in the task, the codebase or the file establishes that premise.
 Put the question id or the heading in the location field.
 ${logRules(pathOf({ kind: "log", subject: "requirements" }), "G", round)}`;
 }

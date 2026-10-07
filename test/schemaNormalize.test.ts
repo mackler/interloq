@@ -44,12 +44,14 @@ test("normalizeQuestionList fails with QuestionListInvalid for duplicate or empt
 
 // Issue #21 (Q6): "x of N answered", N the agreed questions and the follow-ups asked so far.
 test("clarificationCount: the agreed and the asked questions make the total, the answered among them the count", () => {
-  assert.deepEqual(clarificationCount(["Q1", "Q2", "Q3"], [], []), { answered: 0, total: 3 });
-  assert.deepEqual(clarificationCount(["Q1", "Q2", "Q3"], ["Q1", "Q2"], ["Q1"]), { answered: 1, total: 3 });
-  assert.deepEqual(clarificationCount(["Q1", "Q2"], ["Q1", "F1", "Q2", "F2"], ["Q1", "F1"]), { answered: 2, total: 4 }, "follow-ups raise the total");
-  assert.deepEqual(clarificationCount(["Q1"], ["Q1", "Q1", "F1", "F1"], ["F1", "F1", "Q1"]), { answered: 2, total: 2 }, "repeated ids have no effect");
-  assert.deepEqual(clarificationCount(["Q1"], ["Q1"], ["Q1", "Z9"]), { answered: 1, total: 1 }, "an answered id that was neither agreed nor asked is not counted");
-  assert.deepEqual(clarificationCount([], [], []), { answered: 0, total: 0 });
+  assert.deepEqual(clarificationCount(["Q1", "Q2", "Q3"], [], [], []), { answered: 0, total: 3 });
+  assert.deepEqual(clarificationCount(["Q1", "Q2", "Q3"], ["Q1", "Q2"], ["Q1"], []), { answered: 1, total: 3 });
+  assert.deepEqual(clarificationCount(["Q1", "Q2"], ["Q1", "F1", "Q2", "F2"], ["Q1", "F1"], []), { answered: 2, total: 4 }, "follow-ups raise the total");
+  assert.deepEqual(clarificationCount(["Q1"], ["Q1", "Q1", "F1", "F1"], ["F1", "F1", "Q1"], []), { answered: 2, total: 2 }, "repeated ids have no effect");
+  assert.deepEqual(clarificationCount(["Q1"], ["Q1"], ["Q1", "Z9"], []), { answered: 1, total: 1 }, "an answered id that was neither agreed nor asked is not counted");
+  assert.deepEqual(clarificationCount([], [], [], []), { answered: 0, total: 0 });
+  assert.deepEqual(clarificationCount(["Q1", "Q2", "Q3"], ["Q1", "Q3"], ["Q1"], ["Q2"]), { answered: 1, total: 2 }, "issue #99: a skipped question is not counted");
+  assert.deepEqual(clarificationCount(["Q1", "Q2"], ["Q1", "Q2"], ["Q1"], ["Q2"]), { answered: 1, total: 1 }, "issue #99: nor is a skipped one asked earlier");
 });
 
 // S3: the question an interview turn asks now reaches the Ui whole, with its context, terms and options.

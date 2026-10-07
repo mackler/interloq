@@ -2,11 +2,12 @@
 // src/interview.ts (the question phase) so that src/subjects.ts can use it without an import cycle (finding 28).
 
 import { Effect, Result } from "effect";
-import type { RunError } from "./errors.ts";
+import { InterviewTurnInvalid, type RunError } from "./errors.ts";
+import { type AgreedAnswers, skippedQuestions, type TurnSkipProblem, waitingFor } from "./premises.ts";
 import { parseInterviewMessage } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { interviewSays, recordHeading } from "./render.ts";
-import { planningCall, questionsValidation, type Validation } from "./review.ts";
+import { bothValidations, planningCall, questionsValidation, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import type { QuestionsFile, TermsEntry } from "./schema.ts";
 import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNormalize.ts";
@@ -22,6 +23,36 @@ import type { InterviewStage } from "./uiEvents.ts";
  * records (S18), and a turn that asks nothing are not checked.
  */
 export const turnValidation =
+  (recorded: readonly string[], premises: Premises | null): Validation<S.InterviewTurn> =>
+    bothValidations(questionRules(recorded), premises === null ? null : premiseValidation(premises));
+
+/**
+ * What an interview knows of the premises of its agreed questions (issue #99): the list with its skip conditions and the
+ * user's choices so far. Only the first interview has it; the second asks accepted requirements issues, which name none.
+ */
+export type Premises = Readonly<{ questions: QuestionsFile["questions"]; answers: AgreedAnswers }>;
+
+/**
+ * A turn may not ask a skipped question, nor a question before its premise is answered, and its summary names every
+ * skipped question; each a failure with the validation repair turn of behaviour 10.
+ */
+export const premiseValidation =
+  (premises: Premises): Validation<S.InterviewTurn> =>
+  (turn) => {
+    const skipped = skippedQuestions(premises.questions, premises.answers);
+    const id = turn.current_question.id;
+    const asked = skipped.find((k) => k.id === id);
+    const premise = id === "" ? null : waitingFor(premises.questions, premises.answers, id);
+    const omitted = turn.complete && turn.summary.trim() !== "" ? skipped.filter((k) => !turn.summary.includes(k.id)).map((k) => k.id) : [];
+    const problems: readonly TurnSkipProblem[] = [
+      ...(asked !== undefined ? [{ kind: "skippedAsked" as const, id, question: asked.question, answer: asked.answer }] : premise !== null ? [{ kind: "askedBeforePremise" as const, id, premise }] : []),
+      ...(omitted.length > 0 ? [{ kind: "summaryOmits" as const, ids: omitted }] : []),
+    ];
+    return problems.length === 0 ? Result.succeed({ value: turn, notes: [] }) : Result.fail({ error: new InterviewTurnInvalid({ problems }), repair: prompts.interviewTurnRepairPrompt(problems) });
+  };
+
+/** The rules of every question, for a question the turn asks outside questions.json. */
+const questionRules =
   (recorded: readonly string[]): Validation<S.InterviewTurn> =>
   (turn) => {
     const current = turn.current_question;
@@ -82,17 +113,21 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
     // The user reads "Clarification" (issue #21); conversation.md, a record, keeps its heading.
     const heading = prompts.clarificationHeading(stage);
     // Each interface renders its own help (finding 8 of docs/gui-review.md): the terminal its """ convention, the page Shift+Enter.
-    yield* ui.notify({ _tag: "InterviewOpened", heading, stage, total: clarificationCount(agreed, [], []).total });
+    yield* ui.notify({ _tag: "InterviewOpened", heading, stage, total: clarificationCount(agreed, [], [], []).total });
     yield* store.converse(`## ${recordHeading(stage)}\n\n`);
     // S16, S18: the questions of questions.json were reviewed, and are presented from the records with their terms; any
     // other question a turn asks is held to the rules here.
     const records: AgreedRecords = { questions: (yield* store.loadQuestions()).questions, terms: yield* store.loadTerms() };
     const recorded = records.questions.map((q) => q.id);
     let prompt = opening;
+    // Issue #99: the user's choice for each agreed question, replaced after each reply; the first interview alone skips.
+    let answers: AgreedAnswers = new Map();
     for (;;) {
-      const turn = normalizeTurn((yield* planningCall(prompt, S.InterviewTurn, "interview", "records", turnValidation(recorded))).output);
+      const premises: Premises | null = stage === "clarification" ? { questions: records.questions, answers } : null;
+      const skippedIds = premises === null ? [] : skippedQuestions(premises.questions, answers).map((k) => k.id);
+      const turn = normalizeTurn((yield* planningCall(prompt, S.InterviewTurn, "interview", "records", turnValidation(recorded, premises))).output);
       const [messageLine] = interviewSays(turn);
-      yield* ui.notify({ _tag: "InterviewTurn", heading, message: turn.message, summary: turn.kind === "summary_proposed" ? turn.summary : null, ...clarificationCount(agreed, turn.asked, turn.answered) });
+      yield* ui.notify({ _tag: "InterviewTurn", heading, message: turn.message, summary: turn.kind === "summary_proposed" ? turn.summary : null, ...clarificationCount(agreed, turn.asked, turn.answered, skippedIds) });
       yield* ui.say(messageLine);
       yield* store.converse(`**Claude Code:** ${turn.message}\n\n`);
 
@@ -112,10 +147,27 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
       }
 
       // A blank message is asked again inside the offer, so that it is never recorded as the choice (W1-R1-1).
-      const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.interviewMessagePrompt, turnDraft(turn, records), (m) => m !== ""));
+      const draft = turnDraft(turn, records);
+      const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.interviewMessagePrompt, draft, (m) => m !== ""));
       if (reply.kind === "empty") continue;
       yield* store.converse(`**User:** ${reply.kind === "done" ? "/done" : reply.text}\n\n`);
-      prompt = reply.kind === "done" ? prompts.interviewDonePrompt : prompts.interviewUserMessage(reply.text);
+      if (reply.kind === "done") {
+        prompt = prompts.interviewDonePrompt;
+        continue;
+      }
+      prompt = prompts.interviewUserMessage(reply.text);
+      if (premises === null || draft.origin.kind !== "clarification") continue;
+      // The reply to an agreed question: the option it chooses, or text that chooses none (issue #99).
+      const chosen = draft.options.find((o) => o.matches(reply.text));
+      answers = new Map([...answers, [draft.origin.id, chosen === undefined ? { kind: "text" } : { kind: "option", label: chosen.label }]]);
+      const now = skippedQuestions(records.questions, answers);
+      const added = now.filter((k) => !skippedIds.includes(k.id));
+      const restored = skippedIds.filter((id) => !now.some((k) => k.id === id));
+      if (added.length === 0 && restored.length === 0) continue;
+      const note = prompts.skippedNote(added, restored);
+      yield* ui.say(note);
+      yield* store.converse(`**Note:** ${note}\n\n`);
+      prompt = `${prompt}\n\n${note}`;
     }
   });
 

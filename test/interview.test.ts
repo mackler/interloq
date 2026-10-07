@@ -189,3 +189,106 @@ test("a turn without a current question asks for the user's reply, its message t
   assert.deepEqual([reply.origin, reply.context, questionText(reply), reply.options], [{ kind: "reply" }, { blocks: [{ kind: "document", markdown: "Tell me about the deployment." }], by: "agent" }, prompts.REPLY_QUESTION, []]);
   assert.ok(!probe.ui.asked[0].startsWith(prompts.OFFER_LINE));
 });
+
+// Issue #99 (S4): a question whose premise the user denied is not asked. The program records the user's choice for each
+// agreed question, skips the questions that the choice removes, says so to the user, to Claude Code and in
+// conversation.md, counts over the questions that remain, and holds the turns to it with the validation repair turn.
+const premised = (): readonly QuestionEntry[] => [q("Q1"), { ...q("Q2"), skip_if: { question: "Q1", answer: "A" } }];
+const asking = (id: string, asked: string[], answered: string[]) => ({ ...turn(`${id}?`, false, ""), current_question: { id, context: [], text: [], explanations: [], options: [] }, asked_ids: asked, answered_ids: answered });
+const completing = (summary: string, asked: string[], answered: string[]) => ({ ...turn("Complete.", true, summary), asked_ids: asked, answered_ids: answered });
+const SUMMARY = "# Requirements\n\nQ1: A\n\n## Skipped questions\n\nQ2: not asked, since Q1 was answered A.";
+const skipped = [{ id: "Q2", question: "Q1", answer: "A", cause: "answered" as const }];
+
+test("a question whose premise the user denied is skipped, recorded and not counted, and the interview completes without /done", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [
+      { output: { questions: premised() } },
+      { output: asking("Q1", ["Q1"], []) },
+      { output: completing(SUMMARY, ["Q1"], ["Q1"]) },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  assert.deepEqual(presentedQuestions(probe.ui).flatMap((p) => (p.origin.kind === "clarification" ? [p.origin.id] : [])), ["Q1"]);
+  const note = prompts.skippedNote(skipped, []);
+  assert.ok(note.includes("Q2") && note.includes("Q1") && note.includes('"A"'), note);
+  assert.ok(probe.planner.prompts.includes(`${prompts.interviewUserMessage("1")}\n\n${note}`), probe.planner.prompts.join("\n---\n").slice(-2000));
+  assert.ok(read(probe.dir, "conversation.md").includes(`**Note:** ${note}`));
+  assert.ok(probe.ui.said.some((line) => line.includes(note)));
+  const counts = probe.ui.notified.flatMap((e) => (e._tag === "InterviewTurn" ? [`${e.answered} of ${e.total}`] : []));
+  assert.deepEqual(counts, ["0 of 2", "1 of 1"]);
+  assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
+});
+
+test("a turn that asks a skipped question, asks one before its premise, or proposes a summary that omits a skipped one gets the repair turn", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [
+      { output: { questions: premised() } },
+      { output: asking("Q2", ["Q2"], []) },
+      { output: asking("Q1", ["Q1"], []) },
+      { output: asking("Q2", ["Q1", "Q2"], ["Q1"]) },
+      { output: completing("# Requirements\n\nQ1: A", ["Q1"], ["Q1"]) },
+      { output: completing("# Requirements\n\nQ1: A", ["Q1"], ["Q1"]) },
+      { output: completing(SUMMARY, ["Q1"], ["Q1"]) },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runFails(layer, "InterviewTurnInvalid", /Q2/);
+  assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "askedBeforePremise", id: "Q2", premise: "Q1" }])));
+  assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "skippedAsked", id: "Q2", question: "Q1", answer: "A" }])));
+  assert.ok(prompts.interviewTurnRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }]).includes("Q2"));
+});
+
+test("a summary that omits a skipped question gets the repair turn, and the repaired summary is confirmed", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [
+      { output: { questions: premised() } },
+      { output: asking("Q1", ["Q1"], []) },
+      { output: completing("# Requirements\n\nQ1: A", ["Q1"], ["Q1"]) },
+      { output: completing(SUMMARY, ["Q1"], ["Q1"]) },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
+  assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
+});
+
+test("a free-text answer to the premise question skips nothing: the dependent question is asked", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["it depends", "1", ""],
+    steps: [
+      { output: { questions: premised() } },
+      { output: asking("Q1", ["Q1"], []) },
+      { output: asking("Q2", ["Q1", "Q2"], ["Q1"]) },
+      { output: completing("# Requirements\n\nQ1: it depends\nQ2: A", ["Q1", "Q2"], ["Q1", "Q2"]) },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  assert.deepEqual(presentedQuestions(probe.ui).flatMap((p) => (p.origin.kind === "clarification" ? [p.origin.id] : [])), ["Q1", "Q2"]);
+  assert.ok(!read(probe.dir, "conversation.md").includes("not asked"));
+});
+
+test("the interview's prompts exclude the skipped questions from completion and coverage", () => {
+  assert.match(prompts.interviewOpenPrompt, /Cover every agreed question except those the program reports skipped/);
+  assert.match(prompts.interviewOpenPrompt, /complete: true only when every agreed question has been answered or the program has reported it skipped/);
+  assert.match(prompts.interviewDonePrompt, /skipped/);
+  assert.match(prompts.requirementsReviewPrompt(1), /Skipped questions/);
+  assert.match(prompts.interviewGapsPrompt("r.json", ["G-R1-1"]), /premise the user denied/);
+});

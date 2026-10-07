@@ -2,8 +2,8 @@
 // raw. `describe` produces the text that the program prints. Replaces the single Halt class.
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
-import { type SkipProblem, SkipProblemSchema } from "./premises.ts";
-import { skipConditionInvalidText, agentUnreachableText, analysisInvalidText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
+import { interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, analysisInvalidText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -76,6 +76,8 @@ export class QuestionInvalid extends Data.TaggedError("QuestionInvalid")<{ reado
  * the validation repair turn of behaviour 10, then a halt.
  */
 export class SkipConditionInvalid extends Data.TaggedError("SkipConditionInvalid")<{ readonly problems: readonly SkipProblem[] }> {}
+/** An interview turn that asks a skipped question or one before its premise, or omits a skipped one from its summary (issue #99). */
+export class InterviewTurnInvalid extends Data.TaggedError("InterviewTurnInvalid")<{ readonly problems: readonly TurnSkipProblem[] }> {}
 /** A report of report_step that names no step of the plan (Q3): an error for Claude Code, not a halt. */
 export class UnknownStep extends Data.TaggedError("UnknownStep")<{ readonly id: string }> {}
 /** docs/decision-making.md of the program could not be read before the run (decision support, D7). */
@@ -104,6 +106,7 @@ export type RunError =
   | CorrectionInvalid
   | QuestionInvalid
   | SkipConditionInvalid
+  | InterviewTurnInvalid
   | AgentUnreachable
   | Interrupted;
 
@@ -183,6 +186,8 @@ export const describe = (error: RunErrorFields): string => {
       return questionInvalidText(error.questions);
     case "SkipConditionInvalid":
       return skipConditionInvalidText(error.problems);
+    case "InterviewTurnInvalid":
+      return interviewTurnInvalidText(error.problems);
     case "Interrupted":
       return `interrupted during ${error.where}`;
   }
@@ -239,6 +244,7 @@ const RunErrorData = Schema.Union([
     questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(QUESTION_PROBLEM_KINDS), subject: Schema.String })) })),
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
+  Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnSkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);

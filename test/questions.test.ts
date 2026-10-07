@@ -276,11 +276,11 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
   const { Result } = await import("effect");
   const base = turn("m", []);
   const asking = { ...base, current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", explanation: "" }] } };
-  const failed = turnValidation([])(asking);
+  const failed = turnValidation([], null)(asking);
   assert.ok(Result.isFailure(failed));
   assert.equal(failed.failure.repair, prompts.questionRepairPrompt([{ where: "the current question", problems: [{ kind: "blankContext", subject: "" }, { kind: "notLast", subject: "" }, { kind: "blankExplanation", subject: "one" }] }]));
-  assert.ok(Result.isSuccess(turnValidation([])(base)));
-  assert.ok(Result.isSuccess(turnValidation(["Q1"])({ ...base, current_question: { ...none, id: "Q1" } })));
+  assert.ok(Result.isSuccess(turnValidation([], null)(base)));
+  assert.ok(Result.isSuccess(turnValidation(["Q1"], null)({ ...base, current_question: { ...none, id: "Q1" } })));
   // The seam: turnDraft presents as a reply exactly the turns asksNothing names.
   const { turnDraft } = await import("../src/conversation.ts");
   const { normalizeTurn } = await import("../src/schemaNormalize.ts");

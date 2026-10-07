@@ -122,3 +122,14 @@ export const waitingFor = (questions: readonly PremiseEntry[], answers: AgreedAn
   const premise = q === undefined ? null : premiseOf(questions, q);
   return premise !== null && !answers.has(premise) ? premise : null;
 };
+
+/** What an interview turn did against the skipped questions and the order of the premises (issue #99), as data. */
+export const TurnSkipProblemSchema = Schema.Union([
+  /** The turn asks a question the user's answers removed. */
+  Schema.Struct({ kind: Schema.Literal("skippedAsked"), id: Schema.String, question: Schema.String, answer: Schema.String }),
+  /** The turn asks a question before the question its condition names has been answered. */
+  Schema.Struct({ kind: Schema.Literal("askedBeforePremise"), id: Schema.String, premise: Schema.String }),
+  /** The proposed summary does not name these skipped questions. */
+  Schema.Struct({ kind: Schema.Literal("summaryOmits"), ids: Schema.Array(Schema.String) }),
+]);
+export type TurnSkipProblem = typeof TurnSkipProblemSchema.Type;

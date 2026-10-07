@@ -59,9 +59,10 @@ export const normalizeQuestionList = (list: QuestionList): Result.Result<Normali
 
 /**
  * The count of a clarification (issue #21, Q6): the total is the agreed questions and every question asked so far
- * (follow-ups raise it, and it is never below the agreed count); the count is the answered ones among them.
+ * (follow-ups raise it, and it is never below the agreed count less the skipped ones); the count is the answered ones among them.
  */
-export const clarificationCount = (agreed: readonly string[], asked: readonly string[], answered: readonly string[]): Readonly<{ answered: number; total: number }> => {
-  const questions = new Set([...agreed, ...asked]);
+export const clarificationCount = (agreed: readonly string[], asked: readonly string[], answered: readonly string[], skipped: readonly string[]): Readonly<{ answered: number; total: number }> => {
+  // Issue #99: a question the user's answers removed is neither asked nor counted.
+  const questions = new Set([...agreed, ...asked].filter((id) => !skipped.includes(id)));
   return { answered: new Set(answered.filter((id) => questions.has(id))).size, total: questions.size };
 };
