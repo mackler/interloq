@@ -1960,6 +1960,31 @@ describe("TimelineRail: the tree that collapses", () => {
     expect(toggles).toEqual([[phaseScope("execution-1"), false], [stageScope(2), true]]);
   });
 
+  // W1-R1-2: a row's button names its container whether the row is open or closed; the container holds the children
+  // when open and the collapsed summary when closed.
+  test("a collapsed row's button names a container that exists, holding the summary; open, the same id holds the children", () => {
+    const controlled = (root: HTMLElement, button: HTMLButtonElement) => {
+      const id = button.getAttribute("aria-controls");
+      expect(id).not.toBe(null);
+      return one(root, `#${CSS.escape(id!)}`);
+    };
+    const closed = render({ timeline: [implementation(null, { S1: "done" }, ["S1"])], flags: [{ scope: phaseScope("execution-1"), open: false }] });
+    const phaseBody = controlled(closed, toggleOf(row(closed, "Implementation")));
+    expect(phaseBody.querySelector("[data-collapsed]")).not.toBe(null);
+    expect(phaseBody.querySelector("[data-stage], [data-plan-step]")).toBe(null);
+    const stageClosed = render({ timeline: [implementation(null, {})], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] });
+    const stageBody = controlled(stageClosed, toggleOf(row(stageClosed, prompts.stageHeading(2, "second"))));
+    expect(stageBody.querySelector("[data-collapsed]")).not.toBe(null);
+    expect(stageBody.querySelector("[data-plan-step]")).toBe(null);
+    const open = render({ timeline: [implementation(null, {})], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: true }] });
+    expect(controlled(open, toggleOf(row(open, "Implementation"))).querySelector("[data-stage]")).not.toBe(null);
+    expect(controlled(open, toggleOf(row(open, prompts.stageHeading(2, "second")))).querySelector("[data-plan-step]")).not.toBe(null);
+    const gatherStep: TimelineStep = { kind: "formulate", label: prompts.stepLabel("formulate"), state: "done", count: null, base: { answered: 0, total: 0 }, groups: [] };
+    const gather: TimelineEntry = { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "active", began: "2026-09-29T09:00:00.000Z", groups: [], steps: [gatherStep], plan: null };
+    const stepClosed = render({ timeline: [gather], flags: [{ scope: phaseScope("questions"), open: true }, { scope: { _tag: "RailBranch", phase: "questions", branch: "step:formulate" }, open: false }] });
+    controlled(stepClosed, toggleOf(row(stepClosed, prompts.stepLabel("formulate"))));
+  });
+
   test("a row held open says why and does not close", () => {
     const toggles: unknown[] = [];
     const root = render({ timeline: [planning("active")], pending: true, flags: [{ scope: phaseScope("planning-1"), open: false }], onToggle: (...a) => toggles.push(a) });

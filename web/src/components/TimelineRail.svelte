@@ -65,7 +65,7 @@
     type="button"
     class="rail-toggle"
     aria-expanded={node.open}
-    aria-controls={node.open ? idOf(node, "body") : undefined}
+    aria-controls={idOf(node, "body")}
     aria-disabled={node.held ? "true" : undefined}
     aria-describedby={node.held ? idOf(node, "held") : undefined}
     aria-label={railToggleName(label, node.open, node.collapsed.condition === null ? null : RAIL_CONDITION_LABEL[node.collapsed.condition], node.collapsed.running)}
@@ -128,10 +128,12 @@
         {@render toggleButton(node, entry.label, "m3-font-label-large", "data-label")}
         {#if phaseTime(entry, now) !== null}<span class="m3-font-body-small phase-time" data-phase-time>{phaseTime(entry, now)}</span>{/if}
         {#if phaseBusy}{@render elapsed()}{/if}
+        <!-- W1-R1-2: one container per row, named by its button whether the row is open or closed: the children when
+             open, the collapsed summary when closed. -->
+        <div class="body" id={idOf(node, "body")}>
         {#if !node.open}
           {@render collapsedRow(node.collapsed)}
         {:else}
-        <div class="body" id={idOf(node, "body")}>
         {@render loops(entry.groups)}
         {#if entry.steps.length > 0}
           <ol class="steps">
@@ -146,7 +148,7 @@
                 {@render toggleButton(stepNode, step.label, "m3-font-label-medium", "data-step-label")}
                 {#if step.state === "active" && busy}{@render elapsed()}{/if}
                 {#if step.count !== null}<span class="m3-font-body-small count" data-count>{clarificationProgress(step.count.answered, step.count.total)}</span>{/if}
-                {#if stepNode.open}<div class="body" id={idOf(stepNode, "body")}>{@render loops(step.groups)}</div>{/if}
+                <div class="body" id={idOf(stepNode, "body")}>{#if stepNode.open}{@render loops(step.groups)}{/if}</div>
               </li>
             {/each}
           </ol>
@@ -157,10 +159,11 @@
               {@const stageNode = branchNode(i, `stage:${stage.key}`)}
               <li class="stage">
                 {@render toggleButton(stageNode, stageHeading(stage.number, stage.title), "m3-font-label-medium", "data-stage")}
+                <div id={idOf(stageNode, "body")}>
                 {#if !stageNode.open}
                   {@render collapsedRow(stageNode.collapsed)}
                 {:else}
-                <ol id={idOf(stageNode, "body")}>
+                <ol>
                   {#each stage.steps as step (step.id)}
                     {@const state = planStepState(entry, step, executing)}
                     <li class="plan-step {state}" data-plan-step={state} aria-current={state === "current" ? "step" : undefined}>
@@ -175,12 +178,13 @@
                   {/each}
                 </ol>
                 {/if}
+                </div>
               </li>
             {/each}
           </ol>
         {/if}
-        </div>
         {/if}
+        </div>
       </li>
     {/each}
   </ol>
