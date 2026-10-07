@@ -1354,7 +1354,7 @@ test("property: an answered question joins the transcript exactly as it was pres
 // Issue #87 (decision G-R1-1): the run's shared state of the page, kept by the version the server gave it.
 describe("the shared state of a run's page", () => {
   const scope = (decision: number, entry: string) => ({ _tag: "DecisionEntry" as const, decision, entry });
-  const state = (version: number, ...open: ReturnType<typeof scope>[]) => ({ version, open });
+  const state = (version: number, ...open: ReturnType<typeof scope>[]) => ({ version, choices: open.map((sc) => ({ scope: sc, open: true })) });
   test("a ui frame applies to the run it names, and one of a lower version is ignored", () => {
     const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }]);
     expect(s.run?.ui).toEqual(state(2, scope(1, "e1")));

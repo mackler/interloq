@@ -132,8 +132,13 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
 const stamped: fc.Arbitrary<Stamped> = fc.record({ time: text, event: runEvent });
 const runRecord: fc.Arbitrary<RunRecord> = fc.record({ id: nat, events: fc.array(stamped, { maxLength: 4 }) });
 // Issue #87: the shared state of a run's page.
-const uiScope: fc.Arbitrary<UiScope> = fc.record({ _tag: fc.constant("DecisionEntry" as const), decision: nat, entry: text });
-const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, open: fc.array(uiScope, { maxLength: 3 }) });
+const uiScope: fc.Arbitrary<UiScope> = fc.oneof(
+  fc.record({ _tag: fc.constant("DecisionEntry" as const), decision: nat, entry: text }),
+  // Issue #63: the progress rail's phases and branches.
+  fc.record({ _tag: fc.constant("RailPhase" as const), phase: text }),
+  fc.record({ _tag: fc.constant("RailBranch" as const), phase: text, branch: text }),
+);
+const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, choices: fc.array(fc.record({ scope: uiScope, open: fc.boolean() }), { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(
   fc.record({ type: fc.constant("start" as const), project: text, task: text }),
   fc.record({ type: fc.constant("answer" as const), incarnation: text, run: nat, prompt: nat, text }),
@@ -298,8 +303,8 @@ test("PlanChanged with and without its report survives the round trip", () => {
 test("the ui frames and a replay with shared states decode; an unknown scope and an excess property are refused", () => {
   const scope = { _tag: "DecisionEntry", decision: 2, entry: "e1" } as const;
   const frames: ServerMessage[] = [
-    { type: "ui", run: 1, state: { version: 3, open: [scope] } },
-    { type: "replay", runs: [{ id: 1, events: [] }], ui: [{ run: 1, state: { version: 1, open: [scope] } }] },
+    { type: "ui", run: 1, state: { version: 3, choices: [{ scope, open: true }] } },
+    { type: "replay", runs: [{ id: 1, events: [] }], ui: [{ run: 1, state: { version: 1, choices: [{ scope, open: true }] } }] },
   ];
   for (const f of frames) assert.deepEqual(decoded(decodeServer(JSON.stringify(f))), f);
   const client: ClientMessage = { type: "ui", incarnation: "a", run: 1, flag: { scope, open: true } };
@@ -309,5 +314,5 @@ test("the ui frames and a replay with shared states decode; an unknown scope and
     { type: "ui", incarnation: "a", run: 1, flag: { scope: { ...scope, extra: 1 }, open: true } },
     { type: "ui", incarnation: "a", run: 1, flag: { scope, open: true }, extra: 1 },
   ]) assert.ok(Result.isFailure(decodeClient(JSON.stringify(bad))), JSON.stringify(bad));
-  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "ui", run: 1, state: { version: 1, open: [], extra: 1 } }))));
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "ui", run: 1, state: { version: 1, choices: [], extra: 1 } }))));
 });

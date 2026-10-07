@@ -12,7 +12,7 @@ import { type Broadcast, makeRunManager, type RunManager } from "../src/runManag
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
 import { finished, type TestOptions, tempDir, tempRepo, testWiring, questionOf } from "./helpers.ts";
 import { initialState, reduce } from "../web/src/state.ts";
-import { isOpen } from "../src/uiState.ts";
+import { choiceOf, isOpen } from "../src/uiState.ts";
 
 const run = Effect.runPromise;
 // Plan step 3.4: the server over NodeHttpServer.layerTest, with Node's WebSocket as the scripted client.
@@ -452,6 +452,36 @@ test("tabs of one run agree on the open entries, live and from the replay, keyed
     assert.deepEqual(view(b)!.ui, view(a)!.ui);
     assert.deepEqual([isOpen(view(c)!.ui, e1(1)), isOpen(view(c)!.ui, e1(2))], [false, true]);
     contiguous(a);
+    a.send({ type: "stop", incarnation, run: 1 });
+    await until("the end of run 1", () => hasEnded(a, 1));
+    for (const x of [a, b, c]) x.close();
+  });
+});
+
+// Issue #63: a rail phase the user closed reaches every tab, live and from the replay, as closed, beside an open entry
+// of a decision of the same run; a phase nobody touched stays untouched.
+test("tabs of one run agree that a rail phase is closed, live and from the replay, beside an open decision entry", async () => {
+  const repo = tempRepo();
+  await serve(await managerOf(repo, [{ steps: [{ hang: true }] }]), dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    a.send({ type: "start", project: repo, task: "task" });
+    await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
+    const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).run;
+    const phase = { _tag: "RailPhase" as const, phase: "planning-1" };
+    const entry = { _tag: "DecisionEntry" as const, decision: 1, entry: "e1" };
+    a.send({ type: "ui", incarnation, run: 1, flag: { scope: phase, open: false } });
+    b.send({ type: "ui", incarnation, run: 1, flag: { scope: entry, open: true } });
+    await until("both states in both tabs", () => view(a)?.ui.version === 2 && view(b)?.ui.version === 2);
+    const c = await connect(port);
+    await until("the third tab's replay", () => c.messages.length >= 2);
+    for (const x of [a, b, c]) {
+      assert.equal(choiceOf(view(x)!.ui, phase), "closed");
+      assert.equal(choiceOf(view(x)!.ui, entry), "open");
+      assert.equal(choiceOf(view(x)!.ui, { _tag: "RailPhase", phase: "execution-1" }), "untouched");
+    }
     a.send({ type: "stop", incarnation, run: 1 });
     await until("the end of run 1", () => hasEnded(a, 1));
     for (const x of [a, b, c]) x.close();

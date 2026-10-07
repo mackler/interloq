@@ -607,7 +607,7 @@ describe("App and the draft", () => {
     one(root, ".entry > button.toggle").click();
     flushSync();
     expect(ws.sent.map((m) => JSON.parse(m))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "DecisionEntry", decision: 3, entry: "e1" }, open: true } }]);
-    ws.receive({ type: "ui", run: 1, state: { version: 1, open: [{ _tag: "DecisionEntry", decision: 3, entry: "e1" }] } });
+    ws.receive({ type: "ui", run: 1, state: { version: 1, choices: [{ scope: { _tag: "DecisionEntry", decision: 3, entry: "e1" }, open: true }] } });
     expect(one(root, ".entry > button.toggle").getAttribute("aria-expanded")).toBe("true");
   });
 
