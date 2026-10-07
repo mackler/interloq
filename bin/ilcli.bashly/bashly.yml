@@ -4,7 +4,7 @@ help: |-
 
   The docker commands (run, shell, review, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
 
-  Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After run and review, --help and -h are not ilcli's but passed on to claude and main.ts; their usage is bin/ilcli help run and bin/ilcli help review.
+  Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help, bin/ilcli review -- --help).
 
   The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test on GitHub and advances the release branch only if it passes, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
 version: "1"
@@ -15,17 +15,19 @@ commands:
   help: |-
     Start the container if needed, then start Claude Code in it
 
-    --help and -h are passed to claude; ilcli's own usage of run is bin/ilcli help run.
+    --help and -h show this usage; -- passes the rest on to claude unchanged, so bin/ilcli run -- --help is Claude Code's own help.
+
+    -c, --continue   continue the most recent session (passed to claude, not read by ilcli)
   catch_all:
     label: claude arguments
-    help: Passed to claude unchanged, --help and -- included
-    catch_help: true
+    help: Passed to claude unchanged, -- included
   examples:
   - bin/ilcli                  new session
   - bin/ilcli --continue       most recent session
+  - bin/ilcli run -c           most recent session
   - bin/ilcli run --resume     session list
-  - bin/ilcli run --help       Claude Code's own help
-  - bin/ilcli help run         this usage
+  - bin/ilcli run -- --help    Claude Code's own help
+  - bin/ilcli run --help       this usage
 
 - name: shell
   help: Start the container if needed, then open a Bash shell in it
@@ -37,13 +39,13 @@ commands:
   help: |-
     Start the container if needed, then run Interloq in the terminal inside it
 
-    --help and -h are passed to main.ts; ilcli's own usage of review is bin/ilcli help review.
+    --help and -h show this usage; -- passes the rest on to main.ts unchanged, so bin/ilcli review -- --help is main.ts's own usage.
   catch_all:
     label: arguments
     help: 'Passed to node /opt/interloq/src/main.ts unchanged: "task description" [project directory]'
-    catch_help: true
   examples:
   - bin/ilcli review "task description" /path/to/project
+  - bin/ilcli review -- --help    main.ts's own usage
 
 - name: build
   help: Build the image from ../claude-code-image

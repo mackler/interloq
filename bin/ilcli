@@ -15,7 +15,7 @@ version_command() {
 ilcli_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli\n\n"
-    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, review, build, down) and release run on the\n  host in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After run and review, --help and -h are not\n  ilcli's but passed on to claude and main.ts; their usage is bin/ilcli help run\n  and bin/ilcli help review.\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
+    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, review, build, down) and release run on the\n  host in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help, bin/ilcli review -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
   else
     printf "ilcli - Interloq's development container, and the route of a change to the installed copy.\n\n"
   fi
@@ -54,7 +54,7 @@ ilcli_usage() {
 ilcli_run_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli run\n\n"
-    printf "  Start the container if needed, then start Claude Code in it\n  \n  --help and -h are passed to claude; ilcli's own usage of run is bin/ilcli help\n  run.\n\n"
+    printf "  Start the container if needed, then start Claude Code in it\n  \n  --help and -h show this usage; -- passes the rest on to claude unchanged, so\n  bin/ilcli run -- --help is Claude Code's own help.\n  \n  -c, --continue   continue the most recent session (passed to claude, not read\n  by ilcli)\n\n"
   else
     printf "ilcli run - Start the container if needed, then start Claude Code in it\n\n"
   fi
@@ -66,18 +66,25 @@ ilcli_run_usage() {
 
   if [[ -n "$long_usage" ]]; then
 
+    printf "%s\n" "Options:"
+
+    printf "  %s\n" "--help, -h"
+    printf "    Show this help\n"
+    echo
+
     printf "%s\n" "Arguments:"
 
     echo "  CLAUDE ARGUMENTS..."
-    printf "    Passed to claude unchanged, --help and -- included\n"
+    printf "    Passed to claude unchanged, -- included\n"
     echo
 
     printf "%s\n" "Examples:"
     printf "  bin/ilcli                  new session\n"
     printf "  bin/ilcli --continue       most recent session\n"
+    printf "  bin/ilcli run -c           most recent session\n"
     printf "  bin/ilcli run --resume     session list\n"
-    printf "  bin/ilcli run --help       Claude Code's own help\n"
-    printf "  bin/ilcli help run         this usage\n"
+    printf "  bin/ilcli run -- --help    Claude Code's own help\n"
+    printf "  bin/ilcli run --help       this usage\n"
     echo
 
   fi
@@ -111,7 +118,7 @@ ilcli_shell_usage() {
 ilcli_review_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli review\n\n"
-    printf "  Start the container if needed, then run Interloq in the terminal inside it\n  \n  --help and -h are passed to main.ts; ilcli's own usage of review is bin/ilcli\n  help review.\n\n"
+    printf "  Start the container if needed, then run Interloq in the terminal inside it\n  \n  --help and -h show this usage; -- passes the rest on to main.ts unchanged, so\n  bin/ilcli review -- --help is main.ts's own usage.\n\n"
   else
     printf "ilcli review - Start the container if needed, then run Interloq in the terminal inside it\n\n"
   fi
@@ -123,6 +130,12 @@ ilcli_review_usage() {
 
   if [[ -n "$long_usage" ]]; then
 
+    printf "%s\n" "Options:"
+
+    printf "  %s\n" "--help, -h"
+    printf "    Show this help\n"
+    echo
+
     printf "%s\n" "Arguments:"
 
     echo "  ARGUMENTS..."
@@ -131,6 +144,7 @@ ilcli_review_usage() {
 
     printf "%s\n" "Examples:"
     printf "  bin/ilcli review \"task description\" /path/to/project\n"
+    printf "  bin/ilcli review -- --help    main.ts's own usage\n"
     echo
 
   fi
@@ -594,6 +608,12 @@ ilcli_run_parse_requirements() {
   while [[ $# -gt 0 ]]; do
     key="$1"
     case "$key" in
+      --help | -h)
+        long_usage=yes
+        ilcli_run_usage
+        exit
+        ;;
+
       *)
         break
         ;;
@@ -684,6 +704,12 @@ ilcli_review_parse_requirements() {
   while [[ $# -gt 0 ]]; do
     key="$1"
     case "$key" in
+      --help | -h)
+        long_usage=yes
+        ilcli_review_usage
+        exit
+        ;;
+
       *)
         break
         ;;

@@ -26,10 +26,24 @@ expect_log() {
   expect_log "$(up)" "$(claude --continue)"
 }
 
-@test "run --help and run -h reach claude" {
-  run "$ILCLI" run --help
-  run "$ILCLI" run -h
-  expect_log "$(up)" "$(claude --help)" "$(up)" "$(claude -h)"
+# The developer's decision of 7 Oct 2026 (issue #10), which replaced the narrower one of 27 Sep 2026: --help and -h
+# after every subcommand, run and review included, show its usage; -- passes the rest on.
+@test "run --help and run -h show run's usage and make no docker call" {
+  for flag in --help -h; do
+    run "$ILCLI" run $flag
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ilcli run"* ]] || { echo "run $flag: no usage"; echo "$output"; return 1; }
+    [[ "$output" == *"Usage"* ]]
+  done
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "-c and --continue reach claude unchanged" {
+  run "$ILCLI" --continue
+  run "$ILCLI" -c
+  run "$ILCLI" run -c
+  run "$ILCLI" run --continue
+  expect_log "$(up)" "$(claude --continue)" "$(up)" "$(claude -c)" "$(up)" "$(claude -c)" "$(up)" "$(claude --continue)"
 }
 
 @test "run --resume reaches claude" {
@@ -91,10 +105,20 @@ expect_log() {
   expect_log "$(up)" "$(review_line "a task" /p)"
 }
 
-@test "review --help reaches main.ts, and review -- keeps the --" {
-  run "$ILCLI" review --help
+@test "review --help and review -h show review's usage and make no docker call" {
+  for flag in --help -h; do
+    run "$ILCLI" review $flag
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ilcli review"* ]] || { echo "review $flag: no usage"; echo "$output"; return 1; }
+    [[ "$output" == *"Usage"* ]]
+  done
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "review -- --help reaches main.ts, and review -- keeps the --" {
+  run "$ILCLI" review -- --help
   run "$ILCLI" review -- /p
-  expect_log "$(up)" "$(review_line --help)" "$(up)" "$(review_line -- /p)"
+  expect_log "$(up)" "$(review_line -- --help)" "$(up)" "$(review_line -- /p)"
 }
 
 @test "a failing 'up -d' shows its output, says so, exits 1 and runs no exec" {

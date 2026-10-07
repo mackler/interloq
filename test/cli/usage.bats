@@ -38,18 +38,25 @@ setup() { common_setup; }
   [ ! -s "$STUB_LOG" ]
 }
 
-# W2-R1-1: after shell, build and down, --help and -h are ilcli's (the developer's decision of 27 Sep 2026), so
-# their usage offers them truthfully; after run and review they are passed on, and the usage says so beside
-# bashly's fixed usage line, which cannot be removed the supported way.
-@test "the usage of shell, build and down offers --help; run and review say that --help is passed on" {
-  for command in shell build down; do
+# The developer's decision of 7 Oct 2026 (issue #10), replacing the narrower one of 27 Sep 2026: --help and -h after
+# every subcommand show its usage, and -- passes the rest on to the program that run and review start.
+@test "every subcommand's usage offers --help, and run and review say that -- passes the rest on" {
+  for command in run shell review build down; do
     run "$ILCLI" help "$command"
     [[ "$output" == *"ilcli $command --help | -h"* ]] || { echo "help $command"; echo "$output"; return 1; }
-    [[ "$output" != *"--help and -h are ignored"* ]]
+    [[ "$output" != *"are passed to claude"* && "$output" != *"are passed to main.ts"* ]] || { echo "help $command"; echo "$output"; return 1; }
   done
   run "$ILCLI" help run
-  [[ "$output" == *"--help and -h are passed to claude"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"-- passes the rest on to claude"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"-c, --continue"*"most recent session"* ]] || { echo "$output"; return 1; }
   run "$ILCLI" help review
-  [[ "$output" == *"--help and -h are passed to main.ts"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"-- passes the rest on to main.ts"* ]] || { echo "$output"; return 1; }
+  run "$ILCLI" --help
+  # bashly wraps the text at 80 columns, so it is compared with its line breaks and indentation collapsed.
+  local text
+  text="$(printf '%s' "$output" | tr -s ' \n' '  ')"
+  [[ "$text" == *"--help and -h show that command's usage"* ]] || { echo "$output"; return 1; }
+  [[ "$text" == *"-- passes the rest on"* ]] || { echo "$output"; return 1; }
+  [[ "$text" != *"are not ilcli's"* ]]
   [ ! -s "$STUB_LOG" ]
 }
