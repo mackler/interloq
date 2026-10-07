@@ -6,6 +6,8 @@ import { test } from "node:test";
 import { Clock, Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
 import { finished, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
+import { workReviewBeganLine } from "../src/prompts.ts";
+import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
 const runProgram = (args: readonly string[], wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(args, wiring)));
@@ -44,7 +46,7 @@ test("the project directory argument is used, and the config of that project app
   assert.match(said(probe), /\nPlanning: requesting the initial plan/);
   assert.match(said(probe), /\nImplementation: Claude Code implements the plan/);
   assert.match(said(probe), /\nImplementation ended with status: finished/);
-  assert.match(said(probe), /\nWork review: Codex reviews the changes/);
+  assert.ok(said(probe).includes(workReviewBeganLine(phaseName({ kind: "work", n: 1 }, 1))));
   assert.match(said(probe), /finished after 1 implementation phase\(s\)\./);
 });
 

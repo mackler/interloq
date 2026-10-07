@@ -880,9 +880,9 @@ describe("the whole run in the timeline", () => {
 
   test("the entries foreseen at the start, with and without the question phase", () => {
     const withQuestions = fold(live([started, foreseen(true, 1)]));
-    expect(entries(withQuestions)).toEqual([["Gather Requirements", "ahead"], ["Planning", "ahead"], ["Implementation", "ahead"], ["Work review", "ahead"]]);
+    expect(entries(withQuestions)).toEqual([["Gather Requirements", "ahead"], ["Planning", "ahead"], ["Implementation", "ahead"], ["Code review", "ahead"]]);
     expect(withQuestions.run?.timeline[0].steps.map((st) => [st.label, st.state])).toEqual([[prompts.stepLabel("formulate"), "ahead"], [prompts.stepLabel("clarification"), "ahead"]]);
-    expect(entries(fold(live([started, foreseen(false, 1)])))).toEqual([["Planning", "ahead"], ["Implementation", "ahead"], ["Work review", "ahead"]]);
+    expect(entries(fold(live([started, foreseen(false, 1)])))).toEqual([["Planning", "ahead"], ["Implementation", "ahead"], ["Code review", "ahead"]]);
   });
 
   test("the seam of the labels: Planning becomes Planning 1 in the rail and in its band the moment Planning 2 is foreseen", () => {
@@ -892,13 +892,13 @@ describe("the whole run in the timeline", () => {
     for (const s of [fold(live([...before, foreseen(false, 2)])), replayed([...before, foreseen(false, 2)])]) {
       expect(s.run?.timeline[0].label).toBe(phaseName({ kind: "planning", n: 1 }, 2));
       expect(s.run?.left[0].band?.name).toBe(s.run?.timeline[0].label);
-      expect(entries(s).map(([label]) => label)).toEqual(["Planning 1", "Implementation 1", "Work review 1", "Planning 2", "Implementation 2", "Work review 2"]);
+      expect(entries(s).map(([label]) => label)).toEqual(["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]);
     }
   });
 
   test("a phase that begins turns its entry active; a run that halts leaves the phases ahead not reached", () => {
     const s = fold(live([started, foreseen(false, 1), began({ kind: "planning", n: 1 }), { _tag: "Ended", code: 1 }]));
-    expect(entries(s)).toEqual([["Planning", "stopped"], ["Implementation", "notReached"], ["Work review", "notReached"]]);
+    expect(entries(s)).toEqual([["Planning", "stopped"], ["Implementation", "notReached"], ["Code review", "notReached"]]);
     const finished = fold(live([started, foreseen(false, 1), began({ kind: "planning", n: 1 }), { _tag: "Ended", code: 0 }]));
     expect(entries(finished)[1]).toEqual(["Implementation", "ahead"]);
   });
@@ -1087,7 +1087,7 @@ describe("phase times", () => {
     const events: RunEvent[] = [started, foreseen(false, 1), notified({ _tag: "PhaseBegan", phase: planning }), notified({ _tag: "PhaseEnded", phase: planning, result: "converged" })];
     const seconds = [0, 1, 10, 670];
     for (const s of [fold(live(events, 1, seconds)), replayed(events, 1, 1, seconds)]) {
-      expect(times(s)).toEqual([["Planning", at(10), at(670)], ["Implementation", null, null], ["Work review", null, null]]);
+      expect(times(s)).toEqual([["Planning", at(10), at(670)], ["Implementation", null, null], ["Code review", null, null]]);
     }
   });
 
@@ -1095,7 +1095,7 @@ describe("phase times", () => {
     const events: RunEvent[] = [started, foreseen(false, 1), notified({ _tag: "PhaseBegan", phase: planning }), { _tag: "Ended", code: 130 }];
     const seconds = [0, 1, 10, 95];
     for (const s of [fold(live(events, 1, seconds)), replayed(events, 1, 1, seconds)]) {
-      expect(times(s)).toEqual([["Planning", at(10), at(95)], ["Implementation", null, null], ["Work review", null, null]]);
+      expect(times(s)).toEqual([["Planning", at(10), at(95)], ["Implementation", null, null], ["Code review", null, null]]);
     }
   });
 

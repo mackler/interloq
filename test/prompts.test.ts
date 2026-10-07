@@ -389,8 +389,8 @@ test("the plan review and the work review read plan.json with its statuses", () 
 
 // Issue #6 (numbering): a kind with one instance in the run carries no number; with two or more, every one does.
 test("phaseLabel numbers a phase only when the run holds more than one of its kind", () => {
-  assert.deepEqual([prompts.phaseLabel("planning", 1, 1), prompts.phaseLabel("execution", 1, 1), prompts.phaseLabel("work", 1, 1)], ["Planning", "Implementation", "Work review"]);
-  assert.deepEqual([prompts.phaseLabel("planning", 1, 2), prompts.phaseLabel("execution", 2, 2), prompts.phaseLabel("work", 2, 3)], ["Planning 1", "Implementation 2", "Work review 2"]);
+  assert.deepEqual([prompts.phaseLabel("planning", 1, 1), prompts.phaseLabel("execution", 1, 1), prompts.phaseLabel("work", 1, 1)], ["Planning", "Implementation", "Code review"]);
+  assert.deepEqual([prompts.phaseLabel("planning", 1, 2), prompts.phaseLabel("execution", 2, 2), prompts.phaseLabel("work", 2, 3)], ["Planning 1", "Implementation 2", "Code review 2"]);
   assert.equal(prompts.phaseLabel("questions", 0, 1), "Gather Requirements");
 });
 

@@ -79,7 +79,7 @@ export const countOfKind = (phases: readonly Phase[], kind: Phase["kind"]): numb
 const numberedName = (phase: Phase): string => phaseName(phase, 2);
 /**
  * The phases known of a run (issue #6): Gather Requirements when the question phase is configured, then Planning,
- * Implementation and Work review of each iteration known so far.
+ * Implementation and Code review of each iteration known so far.
  */
 export const foreseenPhases = (questionPhase: boolean, iterations: number): readonly Phase[] => [
   ...(questionPhase ? [{ kind: "questions" } as const] : []),

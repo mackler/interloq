@@ -51,14 +51,14 @@ test("phaseName names the phases as the page shows them", () => {
   assert.equal(phaseName({ kind: "planning", n: 1 }, 1), "Planning");
   assert.equal(phaseName({ kind: "planning", n: 1 }, 2), "Planning 1");
   assert.equal(phaseName({ kind: "execution", n: 2 }, 2), "Implementation 2");
-  assert.equal(phaseName({ kind: "work", n: 3 }, 3), "Work review 3");
+  assert.equal(phaseName({ kind: "work", n: 3 }, 3), "Code review 3");
   // Issue #6: the count of a kind among the known phases.
   const phases = foreseenPhases(true, 2);
   assert.deepEqual([countOfKind(phases, "questions"), countOfKind(phases, "planning"), countOfKind(phases.slice(0, 4), "work")], [1, 2, 1]);
 });
 
 // Issue #6: the run's shape, known from the start, and each further iteration as soon as it is known.
-test("foreseenPhases lists Gather Requirements when configured, then Planning, Implementation and Work review per iteration", () => {
+test("foreseenPhases lists Gather Requirements when configured, then Planning, Implementation and Code review per iteration", () => {
   assert.deepEqual(foreseenPhases(true, 1), [{ kind: "questions" }, { kind: "planning", n: 1 }, { kind: "execution", n: 1 }, { kind: "work", n: 1 }]);
   assert.deepEqual(foreseenPhases(false, 2), [1, 2].flatMap((n) => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]));
 });

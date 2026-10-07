@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Fiber } from "effect";
 import { run } from "../src/run.ts";
-import type { UiEvent } from "../src/uiEvents.ts";
+import { countOfKind, foreseenPhases, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
@@ -597,8 +597,25 @@ test("the terminal's phase lines carry numbers only once a second iteration is f
     execs: [stopped, finished],
   });
   await runTask(layer);
-  const lines = probe.ui.said.filter((l) => /^\n?(Planning|Implementation|Work review)( \d)?:/.test(l)).map((l) => l.trim().replace(/:.*/, ""));
-  assert.deepEqual(lines, ["Planning", "Implementation", "Work review 1", "Planning 2", "Implementation 2", "Work review 2"]);
+  const lines = probe.ui.said.filter((l) => /^\n?(Planning|Implementation|Code review)( \d)?:/.test(l)).map((l) => l.trim().replace(/:.*/, ""));
+  assert.deepEqual(lines, ["Planning", "Implementation", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]);
+});
+
+// Issue #60: the seam of the terminal's phase lines. Each line's label is phaseName's, with the count of the phases known
+// when it is printed: one iteration for the first Planning and Implementation, two from the first Code review on, since
+// the stop has made the second iteration known. A line that writes a phase's name by hand fails whatever the name is.
+test("the seam of the phase names: the terminal's phase lines open with phaseName's names", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [stopped, finished],
+  });
+  await runTask(layer);
+  const known: readonly (readonly [Phase, number])[] = [[{ kind: "planning", n: 1 }, 1], [{ kind: "execution", n: 1 }, 1], [{ kind: "work", n: 1 }, 2], [{ kind: "planning", n: 2 }, 2], [{ kind: "execution", n: 2 }, 2], [{ kind: "work", n: 2 }, 2]];
+  const expected = known.map(([phase, iterations]) => phaseName(phase, countOfKind(foreseenPhases(false, iterations), phase.kind)));
+  const candidates = [1, 2].flatMap((iterations) => foreseenPhases(false, 2).map((phase) => phaseName(phase, countOfKind(foreseenPhases(false, iterations), phase.kind))));
+  const opened = probe.ui.said.map((l) => l.trim()).flatMap((l) => candidates.filter((name) => l.startsWith(`${name}:`)).sort((a, b) => b.length - a.length).slice(0, 1));
+  assert.deepEqual(opened, expected);
 });
 
 // Issue #26 (S20): an execution call whose retries are exhausted and stopped halts the run with AgentUnreachable; the end

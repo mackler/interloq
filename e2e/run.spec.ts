@@ -84,7 +84,7 @@ test.describe("the tests of the converge server, in order", () => {
     // Issue #6: one iteration, so the phases carry no number.
     await expect(rail(page).getByText("Planning", { exact: true })).toBeVisible();
     await expect(rail(page).getByText("Implementation", { exact: true })).toBeVisible();
-    await expect(rail(page).getByText("Work review", { exact: true })).toBeVisible();
+    await expect(rail(page).getByText("Code review", { exact: true })).toBeVisible();
     await expect(right(page).getByText("The step names no file.")).toBeVisible();
     await expect(right(page).getByText(/accepted: rationale P1-R1-1/)).toBeVisible();
     await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
@@ -265,7 +265,7 @@ test.describe("the tests of the workCorrection server, in order", () => {
   test("(6) a work correction runs planning, execution and the work review a second time", async ({ page }) => {
     await startTask(page, "workCorrection", "Write the tool");
     await expect(left(page).getByText(/finished after 2 implementation phase/)).toBeVisible();
-    for (const phase of ["Planning 1", "Implementation 1", "Work review 1", "Planning 2", "Implementation 2", "Work review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
+    for (const phase of ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
     // Issue #14 (G-R1-1): the work review that led to the second planning phase names its corrections due.
     await expect(rail(page).getByText(loopSummary(1, 1, "revise"), { exact: true })).toBeVisible();
     await expect(right(page).getByText("The step misses its test.")).toBeVisible();
@@ -506,7 +506,7 @@ test.describe("the tests of the planSteps server, in order", () => {
     // Issue #50: the indicator is on the step that runs, not under the phase.
     await expect(step(planStepLabel(2, "The store")).getByRole("progressbar")).toBeVisible();
     await expect(rail(page).getByRole("progressbar")).toHaveCount(1);
-    for (const phase of ["Planning 1", "Implementation 1", "Work review 1", "Planning 2", "Implementation 2", "Work review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
+    for (const phase of ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
     // The revised plan hangs under Implementation 2 (Q5, Q9), with its new stage and step, without the step done before it.
     await expect(implementation2.getByText(stageHeading(2, "the page"), { exact: true })).toBeVisible();
     await expect(implementation2.locator("[data-plan-step]")).toHaveCount(2);

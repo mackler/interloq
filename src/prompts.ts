@@ -1088,7 +1088,7 @@ export function phaseLabel(kind: "questions" | "planning" | "execution" | "work"
     case "execution":
       return numbered("Implementation");
     case "work":
-      return numbered("Work review");
+      return numbered("Code review");
   }
 }
 /** The purpose of an agent call as the activity line names it: the events keep the program's words (issues #14, #21). */

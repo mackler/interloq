@@ -11,7 +11,7 @@ import TimelineRail from "./components/TimelineRail.svelte";
 import CircularIndeterminate from "./components/CircularIndeterminate.svelte";
 import ActivityLine from "./components/ActivityLine.svelte";
 import type { ServerMessage } from "../../src/protocol.ts";
-import type { UiEvent } from "../../src/uiEvents.ts";
+import { countOfKind, foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import type { Room } from "./layout.ts";
 import TopBar from "./components/TopBar.svelte";
@@ -1119,7 +1119,7 @@ describe("TimelineRail: the plan", () => {
     ],
   });
   const entry = (state: TimelineEntry["state"], plan: TimelineEntry["plan"]): TimelineEntry => ({ ...fresh, phase: { kind: "execution", n: 1 }, label: "Implementation", state, groups: [], steps: [], plan, currentStep: "S2" });
-  const ahead = (kind: "planning" | "work", state: TimelineEntry["state"]): TimelineEntry => ({ ...fresh, phase: { kind, n: 1 }, label: kind === "planning" ? "Planning" : "Work review", state, groups: [], steps: [], plan: null });
+  const ahead = (kind: "planning" | "work", state: TimelineEntry["state"]): TimelineEntry => ({ ...fresh, phase: { kind, n: 1 }, label: phaseName({ kind, n: 1 }, 1), state, groups: [], steps: [], plan: null });
   const rows = (root: HTMLElement) => [...root.querySelectorAll("[data-plan-step]")].map((e) => `${e.getAttribute("data-plan-step")}:${e.querySelector("[data-plan-step-label]")?.textContent?.trim()}`);
 
   test("the stages and the numbered steps hang under the Implementation that carries the plan, each with its mark", () => {
@@ -1783,4 +1783,22 @@ test("the activity line shows a determinate progressbar and the time remaining d
   const plain = show(ActivityLine, { text: "Codex — review", busy: false, wait: null });
   expect(plain.querySelector("[role=progressbar]")).toBe(null);
   expect(plain.querySelector("[data-remaining]")).toBe(null);
+});
+
+// Issue #60: every place the page shows a phase's name derives it from phaseLabel (through phaseName). The expected
+// names come from phaseName alone, so a rail entry or a band that writes a name by hand fails whatever the name is.
+test("the seam of the phase names: the rail and the bands show phaseName's names", () => {
+  const time = "2026-10-07T14:00:00.000Z";
+  const phases = foreseenPhases(false, 2);
+  const events: unknown[] = [
+    { _tag: "Started", project: "/p", task: "t" },
+    { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },
+    ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Said", text: `line ${i}` }]),
+  ];
+  const state = [{ type: "hello", cwd: "/p", current: 1, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
+  const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
+  const rail = show(TimelineRail, { busy: false, timeline: state.run?.timeline ?? [] });
+  expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);
+  const panel = show(ChatPanel, { title: "You and Interloq", messages: state.run?.left ?? [], empty: "none" });
+  expect([...panel.querySelectorAll(".phase-label")].map((e) => e.textContent?.trim())).toEqual(names.map((n) => prompts.phaseBandLabel(n, clockTime(time))));
 });
