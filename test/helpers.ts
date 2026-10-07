@@ -18,7 +18,7 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
 import type { Schema } from "effect";
 import type { RunError } from "../src/errors.ts";
-import { AgentUnreachable, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
+import { AgentUnreachable, ClaudeCallFailed, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
 import { parseAskLine, parseMessage } from "../src/input.ts";
 import type { Wiring } from "../src/program.ts";
 import { pathOf, type SubjectId } from "../src/artifacts.ts";
@@ -236,8 +236,11 @@ export const questionEntry = (id: string, question: string, answers: readonly (r
  * detection tests); `usage` appends a line to usage.jsonl during the call, as the adapter does.
  */
 /** `fault` fails the call with a TransportFault of that message after its other effects (issue #26). */
-/** `limit` fails the call with UsageLimited, a usage limit with a stated reset, after its other effects (issue #68). */
-export type PlanningStep = { fault?: string; limit?: Readonly<{ resetsAtMs: number; limitType: string | null }>; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean };
+/**
+ * `limit` fails the call with UsageLimited, a usage limit with a stated reset, after its other effects (issue #68);
+ * `callFailed` fails it with ClaudeCallFailed, as the adapter fails a usage limit without one.
+ */
+export type PlanningStep = { fault?: string; limit?: Readonly<{ resetsAtMs: number; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean };
 
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
@@ -295,7 +298,7 @@ export class ScriptedPlanner implements PlannerShape {
     return this;
   });
   /** Returns the scripted output as it is: the caller decodes it, as with the real agent. */
-  planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability: PlanningCapability = "records"): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited> {
+  planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability: PlanningCapability = "records"): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed> {
     // S17: the explanations of the terms (their writing, their responses, their repairs) have their own script, and
     // without one no question needs a term.
     if (schema === S.TermsWrite || schema === S.TermsResponse) {
@@ -341,6 +344,7 @@ export class ScriptedPlanner implements PlannerShape {
       }
       if (step.usage) fs.appendFileSync(path.join(records, "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", session: "test-session", num_turns: 1, total_cost_usd: 0.1 }) + "\n");
       if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
+      if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", resetsAtMs: step.limit.resetsAtMs, limitType: step.limit.limitType }));
       return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
     });
