@@ -41,7 +41,7 @@ const plannerResponse = fc.record({
   reviewer_feedback: text,
   questions_for_user: fc.array(userQuestion, { maxLength: 2 }),
 });
-const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength: 2 }), question: pieces, reason: fc.array(block, { maxLength: 2 }), proposed_answers: fc.array(pieceOption, { maxLength: 2 }), default_answer: text });
+const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength: 2 }), question: pieces, reason: fc.array(block, { maxLength: 2 }), proposed_answers: fc.array(pieceOption, { maxLength: 2 }), default_answer: text, skip_if: fc.option(fc.record({ question: text, answer: text }), { nil: null }) });
 // Defect A of docs/page-question-phase-defects.md: the question subject's response carries the amended list too.
 const response = fc.oneof(plannerResponse, fc.tuple(plannerResponse, fc.array(questionEntry, { maxLength: 2 })).map(([r, questions]) => ({ ...r, questions })));
 const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }) });

@@ -114,3 +114,14 @@ test("determinateOptions alone says that a label names the outcome and the descr
   const outcome = byId("askOutcome");
   for (const text of [outcome.rule, outcome.criterion]) assert.doesNotMatch(text, /label|make those outcomes the options/);
 });
+
+// Issue #97 (S7): a consequence is computed for the configuration the task names, not described in general terms.
+test("readerConsequence asks for the consequence computed for the configuration the task names", () => {
+  const consequence = prompts.QUESTION_RULES.find((r) => r.id === "readerConsequence")!;
+  for (const text of [consequence.rule, consequence.criterion]) {
+    for (const example of ["a window size", "a file", "a count", "a version"]) assert.ok(text.includes(example), example);
+    assert.match(text, /when X is taller than Y/);
+    assert.match(text, /cannot be (had|computed)/);
+    for (const cost of ["time", "work that falls to someone later", "a risk", "money"]) assert.ok(text.includes(cost), cost);
+  }
+});

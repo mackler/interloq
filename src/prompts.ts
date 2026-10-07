@@ -140,10 +140,11 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: `an option's description does not read correctly after "${OPTION_DIFFERENCE_PREAMBLE}", describes an aspect it shares with another option, states a difference from only some options without naming them first, or does not order its differences by how many other options they distinguish it from.`,
   },
   {
-    // Issue #92 (5 Oct 2026): each option says what choosing it changes for the reader.
+    // Issue #92 (5 Oct 2026): each option says what choosing it changes for the reader; issue #97 (6 Oct 2026): computed
+    // for the configuration the task names.
     id: "readerConsequence",
-    rule: "In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently.",
-    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run).",
+    rule: "In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently. Where the task names a concrete configuration (a window size, a file, a count, a version), compute each option's consequence for that configuration and state it in those terms, not in general terms or as a condition the reader must evaluate ('when X is taller than Y'); where the numbers cannot be had without building something, say so in the option.",
+    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run); or, where the task names a concrete configuration (a window size, a file, a count, a version), an option describes its consequence in general terms or as a condition the reader must evaluate ('when X is taller than Y') instead of computing it for that configuration, without saying that it cannot be computed without building something.",
   },
   {
     // Issue #93 (5 Oct 2026): a conclusion states its warrant.
