@@ -734,7 +734,7 @@ test("a multi-line value and its escapes note keep the nesting of the settings a
 
 // S1, moved here from test/questionRules.test.ts on 5 Oct 2026 (the requirements name this file): the one list of the
 // ids of QUESTION_RULES, with the seven of issues #59, #91, #92 and #93.
-const RULE_IDS = ["selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
+const RULE_IDS = ["whetherToAsk", "selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
 
 test("QUESTION_RULES holds one entry per rule, with unique ids and a rule and a criterion each", () => {
   assert.deepEqual(prompts.QUESTION_RULES.map((r) => r.id), RULE_IDS);
@@ -758,4 +758,27 @@ test("no rule restates another: no two entries of QUESTION_RULES or QUESTION_FOR
   assert.equal(new Set(ids).size, ids.length);
   const texts = [...prompts.QUESTION_RULES.flatMap((r) => [r.rule, r.criterion]), ...prompts.QUESTION_FORMAT.flatMap((c) => [c.text, c.criterion])].filter((x) => x !== "");
   assert.equal(new Set(texts).size, texts.length);
+});
+
+// Issue #95 (S5): whether to ask is stated once, in QUESTION_RULES; no prompt that asks for a question states an inclusion
+// test of its own beside it, as questionListPrompt and questionReviewPrompt once did.
+test("no prompt that asks for a question states an inclusion test of its own", () => {
+  const own = [/only if its answer/, /only questions that/, /is unnecessary because/, /determines (it|the answer)/, /user alone can answer/];
+  const texts: Readonly<Record<string, string>> = {
+    questionListPrompt: prompts.questionListPrompt("t"),
+    questionReviewPrompt: prompts.questionReviewPrompt(1),
+    questionRespondPrompt: prompts.questionRespondPrompt(1),
+    initialPlanPrompt: prompts.initialPlanPrompt("t", true),
+    revisePlanPrompt: prompts.revisePlanPrompt,
+    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(1, { stopped: true, workReview: "converged" }),
+    planRespondPrompt: prompts.planRespondPrompt(1, 1),
+    interviewOpenPrompt: prompts.interviewOpenPrompt,
+    interviewGapsPrompt: prompts.interviewGapsPrompt("r.json", ["G-R1-1"]),
+    termsPrompt: prompts.termsPrompt("t"),
+    executePrompt: prompts.executePrompt,
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    const outside = text.split(prompts.questionWritingRules()).join("").split(prompts.questionReviewCriteria()).join("");
+    for (const pattern of own) assert.doesNotMatch(outside, pattern, `${name} states its own inclusion test`);
+  }
 });

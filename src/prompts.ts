@@ -51,6 +51,12 @@ export type QuestionRule = Readonly<{ id: string; rule: string; criterion: strin
  */
 export const QUESTION_RULES: readonly QuestionRule[] = [
   {
+    // Issues #95 and #99 (6 Oct 2026): the one statement of whether to ask, and of the premise a question's options share.
+    id: "whetherToAsk",
+    rule: "Where you decide whether to ask a question, ask it only if all three hold: its answer changes the plan or the work; nothing available settles it, neither the task text, the codebase, the project documentation, nor an answer the user has already given; and a difference the reader can act on, as stated below for each option, can be named between its options. Where any of the three fails, do not ask: settle the matter yourself and say what you settled. Before asking, state the premise the options share, what is true if any of them is chosen. If the same sources do not settle that premise, the premise is the question, and it is asked first; a question whose options all rest on an unsettled premise is not asked until the premise is.",
+    criterion: "a question is asked that the task text, the codebase, the project documentation or an earlier answer of the user settles (name the file or the answer), or whose answer changes neither the plan nor the work, or whose options differ in nothing the reader can act on; or every proposed answer of a question assumes a premise that none of those sources establishes (name the premise and the files that would have settled it), and the premise is not asked first.",
+  },
+  {
     id: "selfContained",
     rule: "Make every question self-contained: it depends on nothing outside itself and its own options. Use no 'also', 'that', 'the above', 'as discussed' or other pointer to earlier material; where the question depends on an earlier decision, state that decision in its own words.",
     criterion: "a question depends on something outside itself and its own options: an 'also', 'that', 'the above' or 'as discussed', or an earlier decision pointed at instead of stated.",
@@ -135,8 +141,8 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
   {
     // Issue #92 (5 Oct 2026): each option says what choosing it changes for the reader.
     id: "readerConsequence",
-    rule: "In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently. Where you decide whether to ask and no such difference can be named for the options, do not ask: settle the matter yourself and say what you settled.",
-    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run), or a question is asked whose options differ in none of these, which the writer should have settled and reported instead.",
+    rule: "In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently.",
+    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run).",
   },
   {
     // Issue #93 (5 Oct 2026): a conclusion states its warrant.
@@ -477,7 +483,7 @@ Use new_action 'accepted' with the id of an issue that you rejected earlier and 
 Use new_action 'rejected' with the id of an accepted issue whose correction you now consider wrong; do not act on it, the user will decide.
 Use new_action 'plan_error' with an empty id for an error that concerns no issue; correct it.
 Return an empty self_corrections array when there is none.
-Return exactly one disposition per issue id. Put in questions_for_user only questions that the user alone can answer.
+Return exactly one disposition per issue id. Put in questions_for_user only the questions the rule on whether to ask, below, allows.
 ${QUESTION_OPTIONS_RULE}
 Do not use the AskUserQuestion tool.`;
 }
@@ -490,8 +496,8 @@ export const FOLLOW_UP_PREFIX = "F";
 export function questionListPrompt(task: string): string {
   return `Do not write a plan yet. Read the task below and inspect the codebase without changing anything.
 Return in 'questions' the questions whose answers you need from the user before you can write an implementation plan for the task.
-Include a question only if its answer affects the plan and neither the task text nor the codebase nor the project documentation determines it.
-Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. question: one decision per question, as pieces. reason: why the plan depends on the answer, and why the codebase does not determine it, with the files you inspected, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
+Include a question only as the rule on whether to ask, below, allows.
+Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. question: one decision per question, as pieces. reason: what in the plan depends on the answer, and the files you inspected that do not settle it, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
 ${SKIP_IF_FIELD}
 How the text of an entry is written:
 ${formatClauses(["blocks", "pieces", "code", "inline"])}
@@ -506,7 +512,7 @@ export function questionReviewPrompt(round: number): string {
   if (round > 1) return laterRound(pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round);
   return `Review the question list in plan-review/questions.json against the task text in the same file and against the codebase. Do not modify any file.
 The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
-Raise an issue when: a question whose answer the plan needs is missing; a question is unnecessary because the task text or the codebase determines the answer (name the file); a question is ambiguous or combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
+Raise an issue when: a question whose answer the plan needs is missing; a question is ambiguous or combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
 ${questionReviewCriteria()}
 These criteria apply to the question, its context, its reason, its proposed answers and its default alike. Any question in the list may be put to decision support, which works out the arguments for and against each proposed answer, so hold every proposed answer to that standard.
 Put the question id, or 'list' for an issue that concerns the list as a whole, in the location field.
@@ -650,7 +656,7 @@ ${requirements}${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file. Do not implement anything.
-Put in questions_for_user only questions that the user alone can answer and without whose answer the plan cannot be written; otherwise return an empty array.
+Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
 }
@@ -662,7 +668,7 @@ ${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
-Put in questions_for_user only questions that the user alone can answer and without whose answer the plan cannot be revised; otherwise return an empty array.
+Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}`;
 
 export const planApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file and amend the plan in plan-review/plan.json where a decision requires it.
@@ -990,7 +996,7 @@ ${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
 ${PLAN_ID_RULE}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
-Put in questions_for_user only questions that the user alone can answer and without whose answer the plan cannot be revised; otherwise return an empty array.
+Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}`;
 }
 

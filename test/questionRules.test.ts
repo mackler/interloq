@@ -82,3 +82,18 @@ test("the seven rules of 5 Oct 2026 say, in the rule and in the criterion, what 
   for (const text of both("contextBearsOnChoice")) assert.match(text, /five points .*this one governs|disagree, this one governs/);
   for (const text of both("readerConsequence")) for (const cost of ["time", "work that falls to someone later", "a risk", "money"]) assert.ok(text.includes(cost), cost);
 });
+
+// Issues #95 and #99 (S5): one statement of whether to ask, over the four sources, with the premise its options share.
+test("whetherToAsk names the three conditions, the four sources and the premise, in the rule and in the criterion", () => {
+  const rule = prompts.QUESTION_RULES.find((r) => r.id === "whetherToAsk");
+  assert.ok(rule !== undefined, "QUESTION_RULES has no entry whetherToAsk");
+  for (const text of [rule.rule, rule.criterion]) {
+    for (const source of ["the task text", "the codebase", "the project documentation"]) assert.ok(text.includes(source), source);
+    assert.match(text, /answer the user has already given|earlier answer of the user/);
+    assert.match(text, /premise/);
+  }
+  assert.match(rule.rule, /settle the matter yourself and say what you settled/);
+  const consequence = prompts.QUESTION_RULES.find((r) => r.id === "readerConsequence")!;
+  assert.doesNotMatch(consequence.rule, /whether to ask/, "readerConsequence no longer states the inclusion test");
+  assert.doesNotMatch(consequence.criterion, /should have settled/);
+});
