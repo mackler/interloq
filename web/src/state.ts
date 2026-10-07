@@ -505,7 +505,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       };
       const timeline = inQuestionPhase(run.timeline, opened);
       // The page's own help (finding 8): no terminal """ convention, which the page does not implement.
-      return withLeft({ ...run, timeline }, message(run, time, "program", interviewHelp(event.heading, "page"), "text"));
+      return withLeft({ ...run, timeline }, message(run, time, "program", interviewHelp(event.heading), "text"));
     }
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;

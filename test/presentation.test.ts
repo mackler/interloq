@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
-import { questionLines } from "../src/render.ts";
+import { renderQuestionRecord } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
 import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
@@ -78,13 +78,13 @@ test("S7: every ask is preceded by the presentation of its question, and every k
   const questions = presentedQuestions(probe.ui);
   // S19: the plan writer's question reaches the user once, as its presented question; nothing else announces it.
   assert.equal(questions.filter((q) => q.origin.kind === "planner").length, 1);
-  assert.ok(!probe.ui.said.some((line) => line.includes(piecesText(plannerQuestion.question))), "the terminal announced the question in its own way");
+  assert.ok(!probe.ui.said.some((line) => line.includes(piecesText(plannerQuestion.question))), "the run announced the question in its own way");
   const shape = (q: PresentedQuestion) => Object.keys(q).sort();
   for (const q of questions) {
     assert.deepEqual(shape(q), shape(questions[0]));
-    const lines = questionLines(q).filter((l) => l !== "");
-    assert.equal(lines[0], prompts.questionTitle(q.number));
-    assert.ok(lines.includes(questionText(q).split("\n")[0]));
+    const lines = renderQuestionRecord(q).split("\n").filter((l) => l !== "");
+    assert.ok(lines[0].startsWith(`### ${prompts.questionTitle(q.number)}`), lines[0]);
+    assert.ok(lines.some((l) => l.includes(questionText(q).split("\n")[0])));
     assert.ok(contextText(q).trim() !== "", `question ${q.number} has no context`);
   }
 });
@@ -241,14 +241,14 @@ test("S5: a plan writer's question with a piece that refers to an explanation re
   assert.deepEqual(q.question, asked.question);
   assert.deepEqual(q.explanations, asked.explanations);
   assert.deepEqual(q.options.map((o) => [o.label, o.description]), asked.options.map((o) => [o.label, o.description]));
-  // The terminal's block names the explanation by its term, not by the words of a piece.
-  assert.ok(questionLines(q).some((l) => l.trim() === "order: What a customer buys."));
+  // conversation.md's block names the explanation by its term, not by the words of a piece.
+  assert.ok(renderQuestionRecord(q).split("\n").some((l) => l.trim() === "- order: What a customer buys."));
 });
 
 // S37 (the developer's decision of 4 Oct 2026): a plain piece carries no code. A plan writer's question whose plain piece
-// holds an unclosed backtick, and another that ends in a backslash right before a code piece, is written to the terminal
-// and to conversation.md so that only its code pieces read back as code.
-test("S37: a plain piece's backtick and trailing backslash reach the terminal and conversation.md as characters", async () => {
+// holds an unclosed backtick, and another that ends in a backslash right before a code piece, is written to
+// conversation.md so that only its code pieces read back as code.
+test("S37: a plain piece's backtick and trailing backslash reach conversation.md as characters", async () => {
   const code = (text: string): Piece => ({ text, ref: "", code: true });
   const asked = {
     context: [{ kind: "paragraph" as const, pieces: plain("Claude Code, the planning agent, needs a command.") }],
@@ -266,7 +266,7 @@ test("S37: a plain piece's backtick and trailing backslash reach the terminal an
   const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
   const expected = "Should the step run \\``ls` or C:\\\\`dir` first?";
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
-  const shown = [conversation.split("\n").find((l) => l.includes("Should the step run")) ?? "", questionLines(q).find((l) => l.includes("Should the step run")) ?? ""];
+  const shown = [conversation.split("\n").find((l) => l.includes("Should the step run")) ?? "", renderQuestionRecord(q).split("\n").find((l) => l.includes("Should the step run")) ?? ""];
   for (const line of shown) {
     assert.ok(line.includes(expected), line);
     assert.deepEqual(readBack(line).code, ["ls", "dir"], line);

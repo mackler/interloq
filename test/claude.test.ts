@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { programWritten } from "../src/questionContext.ts";
-import { questionLines } from "../src/render.ts";
+import { renderQuestionRecord } from "../src/render.ts";
 import { blocksMarkdown, piecesText, plainBlocks } from "../src/pieces.ts";
 import type { ContextRequest } from "../src/prompts.ts";
 import * as fs from "node:fs";
@@ -957,7 +957,7 @@ const permissionAsked = async (tool: string, input: Record<string, unknown>, exp
 test("an Edit permission shows the file and both texts under plain labels, never the raw keys, with the program's context", async () => {
   const { q, conversation } = await permissionAsked("Edit", { file_path: "/tmp/config", old_string: "safe", new_string: "unsafe" });
   assert.equal(q.context.by, "program");
-  for (const text of [blocksMarkdown(q.details), questionLines(q).join("\n"), conversation]) {
+  for (const text of [blocksMarkdown(q.details), renderQuestionRecord(q), conversation]) {
     for (const shown of ["/tmp/config", "safe", "unsafe", prompts.TOOL_INPUT_HEADING]) assert.ok(text.includes(shown), `${shown} in ${text}`);
     for (const raw of ["file_path", "old_string", "new_string"]) assert.ok(!text.includes(raw), `${raw} in ${text}`);
   }

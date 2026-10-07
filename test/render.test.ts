@@ -1,25 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { analysisLines, interviewSays, recordHeading, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
+import { interviewSays, recordHeading, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
 import { issue, para, plain, questionEntry, respond, term } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { viewOf } from "../src/analysisView.ts";
-import type { Argument, DecisionAnalysis, Entry, LogEntry } from "../src/schema.ts";
-import { OPPOSES_MARKER } from "../src/prompts.ts";
+import type { LogEntry } from "../src/schema.ts";
 import * as prompts from "../src/prompts.ts";
-
-/** A question as the user was shown it, for an analysis's header (S22). */
-const presentedOf = (question: string, number: number): PresentedQuestion => ({
-  number,
-  origin: { kind: "relayed" },
-  context: { blocks: [{ kind: "paragraph", pieces: [term("Claude Code", "t1"), ...plain(", the coding agent, asks.")] }], by: "agent" },
-  explanations: [{ id: "t1", term: "Claude Code", explanation: "the coding agent" }],
-  question: plain(question),
-  options: [],
-  details: [],
-  decision: null,
-});
 
 // Finding 27 / recommendation D: the Store writes; the text of the records is composed here.
 test("subject headings", () => {
@@ -79,97 +65,10 @@ test("conversation.md's headings of the interviews are unchanged", () => {
   assert.equal(recordHeading("followUp"), "Second interview");
 });
 
-// Decision support, plan step 5.1: the terminal shows each option's arguments one after another.
-test("analysisLines: each option in turn, Disadvantages:, arguments indented by level, symbols, the recommendation", () => {
-  const el = (text: string, counterarguments: Argument[] = []) => ({ text, counterarguments });
-  const entry = (id: string, counter: Argument[] = []): Entry => ({
-    id,
-    title: `Title ${id}.`,
-    comparative_condition: el(`c ${id}`, counter),
-    starting_cause: el(`s ${id}`),
-    intermediate_steps: el(`i ${id}`),
-    threshold: el(`t ${id}`),
-    effect_on_persons: el(`e ${id}`),
-    reason_the_effect_matters: el(`r ${id}`),
-    extent: { per_person: el(`pp ${id}`), persons_affected: el(`pa ${id}`), likelihood: el(`l ${id}`), timing: el(`w ${id}`) },
-  });
-  const analysis: DecisionAnalysis = {
-    decision: "d",
-    columns: [
-      { kind: "argued", option: "SQLite", advantages: [entry("E1", [{ id: "A1", text: "But x.", equivalent_to: "", replies: [{ id: "A2", text: "On the other hand y.", equivalent_to: "E2", replies: [] }] }])], disadvantages: [] },
-      { kind: "argued", option: "PostgreSQL", advantages: [], disadvantages: [entry("E2")] },
-    ],
-    recommendation: { option: "SQLite", reason: "It is sooner." },
-  };
-  const all = analysisLines(2, presentedOf("Which database?", 5), viewOf(analysis));
-  const m = OPPOSES_MARKER;
-  // S22: the header names the decision and the question's number; the question's context, terms and text follow it.
-  assert.deepEqual(all.slice(0, 2), ["", prompts.decisionViewHeading(2, 5)]);
-  const lines = ["", all[1], ...all.slice(all.indexOf("Which database?") + 1)];
-  assert.deepEqual(lines.slice(0, 11), ["", prompts.decisionViewHeading(2, 5), "", "Option 1: SQLite", "", "  Advantages:", "", "  Advantage 1: Title E1.", "    - c E1", `        ${m}But x.`, "          On the other hand y. *"]);
-  const second = lines.indexOf("Option 2: PostgreSQL");
-  assert.ok(second > 0);
-  assert.equal(lines.filter((l) => l === "  Advantages:").length, 2);
-  assert.equal(lines.filter((l) => l === "  Disadvantages:").length, 2);
-  assert.ok(lines.includes(`  ${m}Disadvantage 1: Title E2. *`));
-  assert.ok(lines.includes(`    ${m}- c E2`));
-  assert.deepEqual(lines.slice(-3), ["", "Recommended option: SQLite", "It is sooner."]);
-});
-
-// Issue #35 (Q9): the terminal marks exactly the texts the page colors, both derived from the view of one analysis.
-test("analysisLines marks exactly the texts that oppose the column's option, and an unclear column shows its statement", () => {
-  const el = (text: string, counterarguments: Argument[] = []) => ({ text, counterarguments });
-  const entry = (id: string, counter: Argument[] = []): Entry => ({
-    id,
-    title: `Title ${id}.`,
-    comparative_condition: el(`c ${id}`, counter),
-    starting_cause: el(`s ${id}`),
-    intermediate_steps: el(`i ${id}`),
-    threshold: el(`t ${id}`),
-    effect_on_persons: el(`e ${id}`),
-    reason_the_effect_matters: el(`r ${id}`),
-    extent: { per_person: el(`pp ${id}`), persons_affected: el(`pa ${id}`), likelihood: el(`l ${id}`), timing: el(`w ${id}`) },
-  });
-  // W1-R1-2: texts of several lines, opposing and not: every physical line is checked.
-  const chain = (p: string): Argument[] => [{ id: `${p}1`, text: `${p} one.\n${p} one, continued.`, equivalent_to: "", replies: [{ id: `${p}2`, text: `${p} two.\n${p} two, continued.`, equivalent_to: "", replies: [{ id: `${p}3`, text: `${p} three.`, equivalent_to: "", replies: [] }] }] }];
-  const multiline = (e: Entry): Entry => ({ ...e, title: `${e.title}\nTitle continued.`, comparative_condition: { ...e.comparative_condition, text: `${e.comparative_condition.text}\nElement continued.` } });
-  const analysis: DecisionAnalysis = {
-    decision: "d",
-    columns: [
-      { kind: "argued", option: "SQLite", advantages: [multiline(entry("E1", chain("a")))], disadvantages: [multiline(entry("E2", chain("d")))] },
-      { kind: "unclear", option: "PostgreSQL", unclear: "It could mean a server\nor a hosted service." },
-    ],
-    recommendation: { option: "", reason: "" },
-  };
-  const view = viewOf(analysis);
-  const marked = (text: string, symbol: string | null) => (symbol === null ? text : `${text} ${symbol}`);
-  // Each item's physical lines, as [indentation, the text after the marker, opposes]: a bullet's continuation lines are
-  // indented past its "- ", and every line of an opposing text carries the marker after the indentation.
-  const physical = (indent: number, prefix: string, text: string, opposes: boolean) =>
-    text.split("\n").map((part, i) => [indent, `${i === 0 ? prefix : " ".repeat(prefix.length)}${part}`, opposes] as const);
-  const expected = view.columns.flatMap((c) =>
-    c.kind === "unclear"
-      ? physical(2, "", c.unclear, false)
-      : [...c.advantages, ...c.disadvantages].flatMap((e) => [
-          ...physical(2, "", `${e.label} ${marked(e.title, e.symbol)}`, e.opposes),
-          ...e.elements.flatMap((x) => [...physical(4, "- ", x.text, x.opposes), ...x.arguments.flatMap((a) => physical(6 + 2 * a.level, "", marked(a.text, a.symbol), a.opposes))]),
-        ]),
-  );
-  const all = analysisLines(1, presentedOf("Which?", 1), view);
-  const lines = all.slice(all.indexOf("Which?") + 1);
-  const rendered = ([indent, text, opposes]: readonly [number, string, boolean]) => `${" ".repeat(indent)}${opposes ? OPPOSES_MARKER : ""}${text}`;
-  const items = lines.filter((l) => l !== "" && !/^(Decision|Option) \d/.test(l) && l.trim() !== "Advantages:" && l.trim() !== "Disadvantages:");
-  assert.deepEqual(items, expected.map(rendered));
-  assert.ok(expected.some(([, , opposes]) => opposes));
-  assert.ok(expected.some(([, text]) => text.startsWith("  ")), "a bullet's continuation line is in the fixture");
-  const unclear = lines.indexOf("Option 2: PostgreSQL");
-  assert.deepEqual(lines.slice(unclear, unclear + 4), ["Option 2: PostgreSQL", "", "  It could mean a server", "  or a hosted service."]);
-});
-
-// S8: every question is printed in the one shape: heading with its number, the line saying where it came from, the
-// context set apart and indented, the terms, the question itself apart from the context, the options with their answers.
-test("questionLines prints the heading, the origin, the context, the terms, the question and the options, in that order", async () => {
-  const { questionLines } = await import("../src/render.ts");
+// S8: every question is recorded in the one shape, in conversation.md: heading with its number, the line saying where it
+// came from, the context set apart, what the question is about, the terms, the question itself, the options.
+test("renderQuestionRecord writes the heading, the origin, the context, the details, the terms, the question and the options, in that order", async () => {
+  const { renderQuestionRecord } = await import("../src/render.ts");
   const q: PresentedQuestion = {
     number: 4,
     origin: { kind: "relayed" },
@@ -180,35 +79,18 @@ test("questionLines prints the heading, the origin, the context, the terms, the 
       { label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } },
       { label: plain("More cycles"), description: [], answer: { numeric: true } },
     ],
-    details: [],
+    details: para("Codex says: the migration is missing."),
     decision: null,
   };
-  const lines = questionLines(q);
-  const at = (text: string) => lines.findIndex((l) => l.includes(text));
-  const question = "Should Zod's package be declared as a dependency?";
-  assert.equal(lines.find((l) => l.trim() !== ""), prompts.questionTitle(4));
-  const order = [prompts.originLine(q.origin, null).slice(0, 30), "is writing the tool's input check", prompts.TERMS_HEADING, "zod: a library", question, "1. Declare it", "add it to package.json", "More cycles (type the number)"].map(at);
-  assert.ok(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1])), JSON.stringify({ order, lines }));
+  const record = renderQuestionRecord(q);
+  const at = (text: string) => record.indexOf(text);
+  const order = [prompts.questionTitle(4), prompts.originLine(q.origin, null).slice(0, 30), "is writing the tool's input check", "Codex says", prompts.TERMS_HEADING, "zod: a library", "Should Zod's package be declared as a dependency?", "Declare it", "add it to package.json", "More cycles"].map(at);
+  assert.ok(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1])), JSON.stringify({ order, record }));
   // S11 (issue #36): the Terms line is labeled with the explanation's term, not with the words of the piece.
-  assert.ok(!lines.some((l) => l.includes("Zod's package:")), JSON.stringify(lines));
-  // S11 (issue #59): the label on its own line, the description on the next, indented under the label.
-  assert.equal(lines[at("1. Declare it")], "  1. Declare it");
-  assert.equal(lines[at("1. Declare it") + 1], "     add it to package.json");
-  // The context is indented and set apart by blank lines; the question is not indented.
-  assert.match(lines[at("is writing the tool's input check")], /^ {4}\S/);
-  assert.equal(lines[at("is writing the tool's input check") - 1], "");
-  assert.equal(lines[at(question)], question);
-  assert.equal(lines[at(question) - 1], "");
-  // S11: what the question is about follows the context, before the terms and the question.
-  const withDetails = questionLines({ ...q, details: para("Codex says: the migration is missing.") });
-  const d = withDetails.findIndex((l) => l.includes("Codex says"));
-  assert.ok(d > withDetails.findIndex((l) => l.includes("is writing the tool's input check")) && d < withDetails.findIndex((l) => l.includes(prompts.TERMS_HEADING)));
+  assert.ok(!record.includes("Zod's package:"), record);
   // A context the program wrote is marked as the program's.
-  assert.ok(questionLines({ ...q, context: { blocks: para("x"), by: "program" } }).some((l) => l.includes(prompts.CONTEXT_BY_PROGRAM)));
-  assert.ok(!lines.some((l) => l.includes(prompts.CONTEXT_BY_PROGRAM)));
-  // A document block, Claude Code's message, is printed whole.
-  const doc = questionLines({ ...q, context: { blocks: [{ kind: "document", markdown: "# Title\n\n- one\n- two" }], by: "agent" } });
-  for (const line of ["    # Title", "    - one", "    - two"]) assert.ok(doc.includes(line), line);
+  assert.ok(renderQuestionRecord({ ...q, context: { blocks: para("x"), by: "program" } }).includes(prompts.CONTEXT_BY_PROGRAM));
+  assert.ok(!record.includes(prompts.CONTEXT_BY_PROGRAM));
 });
 
 test("a question inside a decision says in its origin line that it belongs to that decision and why it is asked (issue #57)", () => {
@@ -267,25 +149,14 @@ test("pauseProse writes every kind of pause as prose, without the record's field
   assert.ok(all.flat().every((b) => b.kind !== "paragraph" || b.pieces.every((p) => p.ref === "" && !p.code)));
 });
 
-// S22: the question beside its analysis is the one the user was shown: its number, its context and its terms.
-test("an analysis's terminal header carries the question's number, context and terms before the question", () => {
-  const analysis: DecisionAnalysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-  const lines = analysisLines(3, presentedOf("Which?", 9), viewOf(analysis));
-  const at = (text: string) => lines.findIndex((l) => l.includes(text));
-  assert.equal(lines[1], prompts.decisionViewHeading(3, 9));
-  assert.match(prompts.decisionViewHeading(3, 9), /Decision 3.*Question 9/);
-  const order = [at("Claude Code, the coding agent, asks."), at(prompts.TERMS_HEADING), at("Claude Code: the coding agent"), lines.indexOf("Which?")];
-  assert.ok(order.every((i, n) => i > 1 && (n === 0 || i > order[n - 1])), JSON.stringify(lines));
-});
-
-// S49: the permission question says the input is "shown above": the terminal prints the details before the question.
-test("questionLines prints a permission's input before its question", async () => {
-  const { questionLines } = await import("../src/render.ts");
+// S49: the permission question says the input is "shown above": conversation.md records the details before the question.
+test("renderQuestionRecord writes a permission's input before its question", async () => {
+  const { renderQuestionRecord } = await import("../src/render.ts");
   const { permissionDraft, presentedQuestion } = await import("../src/offer.ts");
   const q = presentedQuestion(permissionDraft("Bash", { command: "rm -rf build" }), 1);
-  const lines = questionLines(q);
-  const input = lines.findIndex((l) => l.includes("rm -rf build"));
-  const asked = lines.indexOf(piecesText(q.question));
-  assert.ok(input > 0 && asked > input, JSON.stringify(lines));
-  assert.ok(lines.some((l) => l.includes(prompts.TOOL_INPUT_HEADING)));
+  const record = renderQuestionRecord(q);
+  const input = record.indexOf("rm -rf build");
+  const asked = record.indexOf(piecesText(q.question));
+  assert.ok(input > 0 && asked > input, record);
+  assert.ok(record.includes(prompts.TOOL_INPUT_HEADING));
 });

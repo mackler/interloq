@@ -1047,11 +1047,9 @@ export const END_CLARIFICATION = "Finish clarification and start planning";
 export const END_RUN_LABEL = "End the run";
 export const CONTINUE_WITHOUT_DECIDING = "Continue without deciding";
 export const CONFIRM_SUMMARY_LABEL = "Confirm";
-/** The interview's opening help (finding 8 of docs/gui-review.md), for the terminal or the page. */
-export function interviewHelp(heading: string, ui: "terminal" | "page"): string {
-  return ui === "terminal"
-    ? `\n${heading}. Commands: /done = end the clarification; /quit = end the run; """ on its own line starts and ends a message of several lines.`
-    : `${heading}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`;
+/** The interview's opening help in the page (finding 8 of docs/gui-review.md). */
+export function interviewHelp(heading: string): string {
+  return `${heading}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`;
 }
 
 // ---- the page's help and notices (W2-R1-4) --------------------------------------------------------------------------
@@ -1814,8 +1812,6 @@ export const PLANNER_POSITION = "Follow Claude Code (the planner)";
 
 /** The heading above a column's disadvantages (docs/decision-making.md, "Layout and wording"); the renderer places it. */
 export const DISADVANTAGES_HEADING = "Disadvantages:";
-/** The terminal's mark of a text that argues against the column's option, where the page uses the error color (issue #35, Q9). */
-export const OPPOSES_MARKER = "✗ ";
 /** The heading above a column's advantages (issue #35). */
 export const ADVANTAGES_HEADING = "Advantages:";
 /** The label of the n-th entry under each heading (issue #35), numbered from one within each heading of each column. */
@@ -1830,10 +1826,6 @@ export function decisionViewHeading(k: number, question: number): string {
   return `Decision ${k}: the analysis of ${questionTitle(question)}`;
 }
 export const RECOMMENDATION_HEADING = "Recommendation";
-/** The terminal's heading of an option's arguments. */
-export function optionHeading(n: number, label: string): string {
-  return `Option ${n}: ${label}`;
-}
 export function recommendedOption(option: string): string {
   return `Recommended option: ${option}`;
 }

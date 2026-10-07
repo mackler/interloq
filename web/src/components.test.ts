@@ -849,10 +849,9 @@ describe("DecisionView", () => {
     }
   });
 
-  // S46 (W3-R1-3): the question's details are shown with its context beside the analysis, as in the terminal.
+  // S46 (W3-R1-3): the question's details are shown with its context beside the analysis.
   test("the question's details are shown in the context region, their pieces marked, the question outside", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const { analysisLines } = await import("../../src/render.ts");
     const details = [...prompts.toolInputBlocks({ command: "rm -rf build" }), { kind: "paragraph" as const, pieces: [...plainPieces("The **build** directory holds the "), ref("bundle", "b"), ...plainPieces(".")] }];
     const withDetails = { ...presented, details, explanations: [{ id: "b", term: "bundle", explanation: "The built page." }] };
     const root = show(DecisionView, { event: { ...(event as object), presented: withDetails } as never, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
@@ -862,10 +861,6 @@ describe("DecisionView", () => {
     expect(context.querySelector("strong")?.textContent).toBe("build");
     expect([...context.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["bundle"]);
     expect(one(root, ".question-text").closest(".question-context")).toBe(null);
-    // The terminal prints the same details beside its analysis.
-    const lines = analysisLines(2, withDetails as never, { columns: [], recommendation: null } as never).join("\n");
-    expect(lines).toContain(prompts.TOOL_INPUT_HEADING);
-    expect(lines).toContain("rm -rf build");
   });
 
   test("one column per option in order, the heading Disadvantages: in each, arguments offset by level, symbols, the recommendation", async () => {
@@ -1728,11 +1723,11 @@ describe("the confirmation before a run ends, in the page", () => {
   });
 });
 
-// S25, the seam: the page and the terminal confirm by the one predicate, endingOf of src/input.ts.
-test("the question pane and the terminal's confirmation both take endingOf from src/input.ts", async () => {
+// S25, the seam: the page confirms by the one predicate, endingOf of src/input.ts, which the scripted Ui of the tests uses too.
+test("the question pane and the scripted Ui both take endingOf from src/input.ts", async () => {
   const pane = (await import("./components/QuestionPane.svelte?raw")).default;
-  const terminal = (await import("../../src/confirmEnd.ts?raw")).default;
-  for (const source of [pane, terminal]) expect(source).toMatch(/import \{[^}]*\bendingOf\b[^}]*\} from "(\.\.\/\.\.\/\.\.\/src|\.)\/input\.ts"/);
+  const scripted = (await import("../../test/helpers.ts?raw")).default;
+  for (const source of [pane, scripted]) expect(source).toMatch(/import \{[^}]*\bendingOf\b[^}]*\} from "(\.\.\/\.\.\/\.\.\/src|\.\.\/src)\/input\.ts"/);
 });
 
 // S28: the words of an answered question in the transcript, and of the question beside its analysis, carry their

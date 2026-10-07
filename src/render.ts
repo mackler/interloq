@@ -2,8 +2,7 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
-import type { AnalysisView, EntryView } from "./analysisView.ts";
-import { CONTEXT_BY_PROGRAM, decisionViewHeading, OPPOSES_MARKER, optionHeading, originLine, questionTitle, recommendedOption, TERMS_HEADING } from "./prompts.ts";
+import { CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type Piece, type PieceOption, piecesMarkdown, piecesText } from "./pieces.ts";
 import { type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry } from "./question.ts";
 import * as words from "./prompts.ts";
@@ -65,8 +64,6 @@ export const renderTerms = (entries: readonly TermsEntry[]): string =>
 export const interviewSays = (turn: TurnText): readonly string[] =>
   turn.kind === "summary_proposed" ? [`\n${turn.message}\n`, `Summary proposed by Claude Code:\n\n${turn.summary}\n`] : [`\n${turn.message}\n`];
 
-/** Claude Code's prose as the terminal prints it (issue #5): the prefix is the terminal's only attribution. */
-export const claudeLine = (text: string): string => `[claude] ${text}`;
 
 /** Codex's half of a round (the page shows it as Codex's message). */
 export const renderReview = (review: Review): string =>
@@ -107,81 +104,10 @@ export const renderPlanRenumbered = (): string => "**Plan renumbered:** the stag
 /** The user's answer after decision k (decision Q4), in conversation.md. */
 export const renderChoice = (k: number, answer: string, option: string | null): string =>
   `**User choice** after decision ${k}: ${answer === "" ? "(none)" : answer}${option === null ? "" : ` (${option})`}\n\n`;
-/**
- * A decision's analysis as the terminal prints it (decision support): the options one after another, each with the
- * heading "Advantages:", its labeled advantages ("Advantage 1:"), the heading "Disadvantages:" and its labeled
- * disadvantages (issue #35); every element a bullet, each counterargument indented under the element it disputes, two
- * more spaces per level; the equivalence symbols after titles and sentences. A line whose text argues against the
- * option carries OPPOSES_MARKER after its indentation, where the page uses the error color (issue #35, Q9). An unclear
- * option shows what is unclear in place of its headings.
- */
-export const analysisLines = (k: number, question: PresentedQuestion, view: AnalysisView): readonly string[] => {
-  const marked = (text: string, symbol: string | null) => (symbol === null ? text : `${text} ${symbol}`);
-  // Every physical line of a text (W1-R1-2): its indentation, the marker where it opposes the option, and the first-line
-  // prefix ("- " for an element), whose width indents the continuation lines so that they align under the text.
-  const lines = (indent: number, prefix: string, opposes: boolean, text: string): readonly string[] =>
-    text.split("\n").map((part, i) => `${" ".repeat(indent)}${opposes ? OPPOSES_MARKER : ""}${i === 0 ? prefix : " ".repeat(prefix.length)}${part}`);
-  const entryLines = (entry: EntryView): readonly string[] => [
-    ...lines(2, "", entry.opposes, `${entry.label} ${marked(entry.title, entry.symbol)}`),
-    ...entry.elements.flatMap((el) => [...lines(4, "- ", el.opposes, el.text), ...el.arguments.flatMap((a) => lines(6 + 2 * a.level, "", a.opposes, marked(a.text, a.symbol)))]),
-  ];
-  const columns = view.columns.flatMap((column, i) => [
-    optionHeading(i + 1, column.option),
-    "",
-    ...(column.kind === "unclear"
-      ? lines(2, "", false, column.unclear)
-      : [`  ${column.advantagesHeading}`, ...column.advantages.flatMap((e) => ["", ...entryLines(e)]), "", `  ${column.disadvantagesHeading}`, ...column.disadvantages.flatMap((e) => ["", ...entryLines(e)])]),
-    "",
-  ]);
-  const recommendation = view.recommendation === null ? [] : [recommendedOption(view.recommendation.option), view.recommendation.reason];
-  // S22: the question as the user was shown it, with its context and terms, between the heading and the columns.
-  const head = ["", decisionViewHeading(k, question.number), "", ...questionContextLines(question), "", ...piecesMarkdown(question.question).split("\n"), ""];
-  return [...head, ...columns, ...recommendation];
-};
+// ---- a question in conversation.md (S6, S8) --------------------------------------------------------------------------
 
-// ---- the one presentation of a question (S8) --------------------------------------------------------------------------
-
-/**
- * How an option is chosen in the terminal (S8), with its label on its own line and its description below it (S11, issue
- * #59): the answer and the label, then the description indented under the label.
- */
-export const optionLines = (o: PresentedOption): readonly string[] => {
-  const head = "token" in o.answer ? `  ${o.answer.token}. ` : "  ";
-  const label = `${head}${piecesMarkdown(o.label)}${"token" in o.answer ? "" : " (type the number)"}`;
-  const description = piecesMarkdown(o.description);
-  return [label, ...(description.trim() === "" ? [] : indented(description, " ".repeat(head.length)))];
-};
-const indented = (text: string, by: string): readonly string[] => text.split("\n").map((line) => (line.trim() === "" ? "" : `${by}${line}`));
 /** The "Terms:" block of a question, from its explanations, one line per term labeled with its canonical name (decision Q6 of the run of 29-30 Sep 2026). */
 const termLines = (q: PresentedQuestion): readonly string[] => q.explanations.map((e) => `${e.term}: ${e.explanation}`);
-/** A question's context, the details it is about and its terms, indented and set apart (S8, S11, S22). */
-const questionContextLines = (q: PresentedQuestion): readonly string[] => {
-  const context = blocksMarkdown(q.context.blocks);
-  const details = blocksMarkdown(q.details);
-  return [
-    ...indented(q.context.by === "program" ? `${context} (${CONTEXT_BY_PROGRAM})` : context, "    "),
-    ...(details.trim() === "" ? [] : ["", ...indented(details, "    ")]),
-    ...(q.explanations.length === 0 ? [] : ["", `    ${TERMS_HEADING}`, ...termLines(q).flatMap((t) => indented(t, "      "))]),
-  ];
-};
-/**
- * A question as the terminal prints it (S8), the same shape whatever produced it: the heading with its number and the
- * line saying where it came from; the context paragraph, indented and set apart, marked when the program wrote it; what
- * the question is about (a pause's facts, the summary to confirm; S11); the terms with their explanations (decision Q6); the question itself, not indented, so that it reads apart from the
- * context; and the options, each with the answer that chooses it.
- */
-export const questionLines = (q: PresentedQuestion): readonly string[] => [
-  "",
-  questionTitle(q.number),
-  ...indented(originLine(q.origin, q.decision), "  "),
-  "",
-  ...questionContextLines(q),
-  "",
-  ...piecesMarkdown(q.question).split("\n"),
-  ...(q.options.length === 0 ? [] : ["", ...q.options.flatMap(optionLines)]),
-  "",
-];
-
 /** The id by which a record names the question (S6): an agreed question's, a follow-up's, an issue's; null for the others. */
 export const recordIdOf = (origin: QuestionOrigin): string | null =>
   origin.kind === "clarification" || origin.kind === "followUp" ? origin.id : origin.kind === "pause" && "id" in origin ? origin.id : null;

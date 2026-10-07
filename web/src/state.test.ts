@@ -508,7 +508,7 @@ describe("the interview's opening help", () => {
   test("the page message names /done, /quit and Shift+Enter, and has no triple quotes", () => {
     const s = fold(live([started, notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 })]));
     const body = s.run?.left.at(-1)?.body ?? "";
-    expect(body).toBe(prompts.interviewHelp("Interview", "page"));
+    expect(body).toBe(prompts.interviewHelp("Interview"));
     expect(body).toMatch(/Shift\+Enter/);
     expect(body).toMatch(/\/done/);
     expect(body).not.toMatch(/"""/);
@@ -579,7 +579,7 @@ describe("a replay of a question phase", () => {
     expect(right.length).toBe(2);
     expect(right[0]).toMatch(/^codex:.*The list does not ask for the database\./s);
     expect(right[1]).toMatch(/^claude:.*\[Q-R1-1\]\*\* accepted: Added the database question\./s);
-    expect(bodies(s).slice(0, 2)).toEqual([`program:${prompts.interviewHelp("Interview", "page")}`, "claude:Which database should the service use?\n1. PostgreSQL\n2. SQLite"]);
+    expect(bodies(s).slice(0, 2)).toEqual([`program:${prompts.interviewHelp("Interview")}`, "claude:Which database should the service use?\n1. PostgreSQL\n2. SQLite"]);
     expect(s.run?.pending?.asked.kind).toBe("interviewMessage");
     expect(s.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
     expect(s.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
