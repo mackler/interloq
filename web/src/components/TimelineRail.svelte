@@ -46,8 +46,8 @@
     const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
-  // Text glyphs, not an icon set (docs/ui-review.md): ahead and not reached are hollow, not reached muted; skipped is a
-  // dash: the phase ended without needing the step.
+  // Text glyphs, not an icon set (docs/ui-review.md): ahead and not reached are hollow, not reached muted by a translucent
+  // color (never an opacity; issue #109); skipped is a dash: the phase ended without needing the step.
   const MARK: Record<StepState, string> = { done: "✓", active: "●", stopped: "■", ahead: "○", notReached: "○", skipped: "–" };
   const LABEL = TIMELINE_STATE_LABEL;
   const STEP_MARK: Record<ReturnType<typeof planStepState>, string> = { done: "✓", current: "●", unfinished: "◐", pending: "○" };
