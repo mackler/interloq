@@ -764,6 +764,8 @@ test.describe("the tests of the planSteps server, in order", () => {
         await page.locator("details.progress > summary, details.progress summary").first().click();
         await expect(page.locator("details.progress")).toHaveAttribute("open", "");
       }
+      // Issue #63: the stage that holds the step is collapsed until it is opened.
+      await page.getByRole("navigation", { name: "Progress of the run" }).getByRole("button", { name: /^Stage 2: the page, collapsed/ }).click();
       const button = page.locator("[data-plan-step] button", { hasText: "The long step" });
       await expect(button).toBeVisible();
       await button.focus();
@@ -788,6 +790,8 @@ test.describe("the tests of the planSteps server, in order", () => {
   test("(L18) a long step text at 1280 × 800: hovered, the tooltip stays open while the pointer moves into it and scrolls with the wheel", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await startTask(page, "Build the rail", layoutUrl("planSteps"));
+    // Issue #63: the stage that holds the step is collapsed until it is opened.
+    await page.getByRole("navigation", { name: "Progress of the run" }).getByRole("button", { name: /^Stage 2: the page, collapsed/ }).click();
     const button = page.locator("[data-plan-step] button", { hasText: "The long step" });
     await expect(button).toBeVisible();
     // The pointer may rest where the confirmation of an earlier run's stop was clicked (S25), over another step.
