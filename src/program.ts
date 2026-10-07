@@ -1,7 +1,7 @@
 // The program: arguments, configuration, the live services, the run, and what is printed at the
 // end. The run manager runs it for the page (src/runManager.ts); the tests run it with scripted services.
 
-import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, type Scope } from "effect";
+import { type Brand, Cause, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe } from "./errors.ts";
@@ -29,16 +29,19 @@ export type Wiring = Readonly<{
   sharedConfig: string;
   /** The format of a decision analysis, read before the run (D7); by default docs/decision-making.md of this repository. */
   decisionFormat?: string;
-  /** The project directory when the arguments name none (live: process.cwd()). */
-  cwd: string;
-  /** Where the usage text goes when there is no task (live: stderr). */
-  usage: (text: string) => Effect.Effect<void>;
 }>;
+
+/** The task of a run: a text with at least one character other than whitespace (issue #88). */
+export type Task = Brand.Branded<string, "Task">;
+/** A task that is empty or whitespace alone, which no run is started with. */
+export class BlankTask extends Data.TaggedError("BlankTask")<{}> {}
+/** The task, or BlankTask; the text is kept unchanged. */
+export const taskOf = (text: string): Result.Result<Task, BlankTask> => (text.trim() === "" ? Result.fail(new BlankTask()) : Result.succeed(text as Task));
+/** What a run starts with: its task and its project directory. */
+export type RunStart = Readonly<{ task: Task; project: string }>;
 
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
-
-export const USAGE = 'usage: node main.ts "task description" [project directory]';
 
 /**
  * Runs the program and returns the exit code; everything else is printed through the Ui.
@@ -47,14 +50,10 @@ export const USAGE = 'usage: node main.ts "task description" [project directory]
  * from a finalizer and leaves the fiber interrupted; `exitCodeOf` turns that into 130. In every
  * case the Claude Code session id and the usage summary are printed last.
  */
-export const program = (args: readonly string[], wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const task = args[0];
-    if (task === undefined || task === "") {
-      yield* wiring.usage(USAGE);
-      return 2;
-    }
-    const project = path.resolve(args[1] ?? wiring.cwd);
+    const task = start.task;
+    const project = path.resolve(start.project);
     const dir = path.join(project, "plan-review");
     const ui = yield* wiring.ui;
     const store = (ignorePaths: readonly string[]) => makeStore(project, ignorePaths).pipe(Effect.provide(wiring.platform));

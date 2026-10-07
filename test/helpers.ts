@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after } from "node:test";
-import { Cause, Clock, Duration, Effect, Exit, FileSystem, Layer, Option, PlatformError } from "effect";
+import { Cause, Clock, Duration, Effect, Exit, FileSystem, Layer, Option, PlatformError, Result } from "effect";
 import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
@@ -20,7 +20,7 @@ import type { Schema } from "effect";
 import type { RunError } from "../src/errors.ts";
 import { AgentUnreachable, ClaudeCallFailed, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
-import type { Wiring } from "../src/program.ts";
+import { type Task, taskOf, type Wiring } from "../src/program.ts";
 import { pathOf, type SubjectId } from "../src/artifacts.ts";
 import { run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
@@ -542,8 +542,12 @@ export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag
   return error.value;
 }
 
-/** What a program test inspects: the scripted implementations, the paths, and the usage lines. */
-export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; dir: string; usageLines: string[] };
+/** What a program test inspects: the scripted implementations and the paths. */
+export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string };
+
+const scripted = taskOf("task");
+/** The task of every scripted run (issue #88): a Task, never a Result, so that no test passes a blank one by accident. */
+export const scriptedTask: Task = Result.isSuccess(scripted) ? scripted.success : assert.fail("the scripted task is blank");
 
 /**
  * The wiring of the program with scripted agents and Ui over a temporary repository. The shared
@@ -563,7 +567,6 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   planner.terms = [...(options.terms ?? [])];
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
-  const usageLines: string[] = [];
   const wiring: Wiring = {
     ui: Effect.succeed(ui),
     platform: platformLayer,
@@ -581,10 +584,8 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
       Layer.succeed(Reviewer, reviewer),
     ),
     sharedConfig: shared,
-    cwd: paths.project,
-    usage: (text) => Effect.sync(() => void usageLines.push(text)),
   };
-  return { wiring, probe: { ui, planner, reviewer, dir, usageLines } };
+  return { wiring, probe: { ui, planner, reviewer, project: paths.project, dir } };
 }
 
 // S37: Markdown read back with marked (a devDependency of the page), for the tests alone; the program reads no Markdown.

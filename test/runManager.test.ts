@@ -13,7 +13,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { finished, scriptedPlan, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry } from "./helpers.ts";
+import { finished, scriptedPlan, scriptedTask, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -60,7 +60,7 @@ const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], 
 test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identical to a direct run of the program over the same script", async () => {
   const direct = tempRepo();
   const { wiring } = testWiring(direct, converging);
-  assert.equal(await run(Effect.scoped(program(["task", direct], wiring))), 0);
+  assert.equal(await run(Effect.scoped(program({ task: scriptedTask, project: direct }, wiring))), 0);
 
   const repo = tempRepo();
   const h = await harness(repo, [converging]);
@@ -102,6 +102,21 @@ test("start while a run is active is refused; a bad project path is refused with
   const file = path.join(repo, "a.txt");
   assert.match(((await run(h.manager.start(file, "t"))) as Refusal).refused, /not a directory/);
   assert.match(((await run(h.manager.start(tempDir("pr-plain-"), "t"))) as Refusal).refused, /not a git repository/);
+});
+
+// Issue #88: a run never lacks a task. A start frame with a blank task, which the page's disabled Start button does not
+// send but another client could, is refused before the project is examined; no run is reserved and nothing is published.
+test("a blank task is refused, before the project check; no run starts and nothing is published", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [converging]);
+  for (const task of ["", "   ", "\n\t "]) {
+    const refused = (await run(h.manager.start(repo, task))) as Refusal;
+    assert.match(refused.refused ?? "", /the task is empty/, JSON.stringify(task));
+    assert.match(((await run(h.manager.start(path.join(repo, "nope"), task))) as Refusal).refused ?? "", /the task is empty/);
+  }
+  assert.equal(await run(h.manager.current), null);
+  assert.deepEqual(h.received, []);
+  await run(Scope.close(h.scope, Exit.void));
 });
 
 test("stop interrupts the run like Ctrl+C; answers and stops naming an ended run are refused; a new run gets a new id", async () => {

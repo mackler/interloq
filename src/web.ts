@@ -40,8 +40,6 @@ const wiringOf = (ui: WebUi): Wiring => ({
   sdk,
   agents: Layer.mergeAll(claudePlannerLayer, codexReviewerLayer),
   sharedConfig: fileURLToPath(new URL("../config.json", import.meta.url)),
-  cwd: process.cwd(),
-  usage: (text) => Effect.sync(() => void process.stderr.write(text + "\n")),
 });
 
 /** This start of the server (finding 12 of docs/gui-review.md): run and prompt numbers restart, the incarnation does not. */

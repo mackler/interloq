@@ -5,12 +5,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Clock, Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
-import { finished, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
+import { finished, scriptedTask, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
 import { workReviewBeganLine } from "../src/prompts.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
-const runProgram = (args: readonly string[], wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(args, wiring)));
+const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)));
 const said = (probe: WiringProbe): string => probe.ui.said.join("\n");
 
 /** The lines every ending prints last: the Claude Code session id and the usage summary. */
@@ -22,7 +22,7 @@ const assertTail = (probe: WiringProbe): void => {
 
 test("a finished run prints the plan path and exits 0", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
-  assert.equal(await runProgram(["task"], wiring), 0);
+  assert.equal(await runProgram(probe, wiring), 0);
   assert.match(said(probe), /Claude Code reports that the task is finished after 1 implementation phase\(s\)\./);
   assert.match(said(probe), new RegExp(`Plan: ${path.join(probe.dir, "plan.md")}\\nConversation record: ${probe.dir}/conversation.md`));
   assert.match(said(probe), /Claude Code session id: test-session/);
@@ -32,15 +32,15 @@ test("a finished run prints the plan path and exits 0", async () => {
 test("a halt prints HALTED and the reason, the session id and the usage, and exits 1", async () => {
   // Issue #6 (F1): a plan write without the plan, twice, halts after the repair turn.
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions }, { output: noQuestions }] });
-  assert.equal(await runProgram(["task"], wiring), 1);
+  assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: the reply of Claude Code does not match its schema: [^]*\nState is preserved in .*plan-review\./);
   assertTail(probe);
 });
 
-test("the project directory argument is used, and the config of that project applies", async () => {
+test("the project directory of the start is used, and the config of that project applies", async () => {
   const repo = tempRepo();
   const { wiring, probe } = testWiring(repo, { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished], config: { maxRounds: 3 } });
-  assert.equal(await runProgram(["task", repo], { ...wiring, cwd: "/nonexistent" }), 0);
+  assert.equal(await runProgram(probe, wiring), 0);
   assert.match(said(probe), /Planning phase 1, cycle 1: Codex review \.\.\./);
   // Issue #6: one iteration, so the phases carry no number.
   assert.match(said(probe), /\nPlanning: requesting the initial plan/);
@@ -50,18 +50,11 @@ test("the project directory argument is used, and the config of that project app
   assert.match(said(probe), /finished after 1 implementation phase\(s\)\./);
 });
 
-test("a missing task prints the usage and exits 2", async () => {
-  const { wiring, probe } = testWiring(tempRepo());
-  assert.equal(await runProgram([], wiring), 2);
-  assert.match(probe.usageLines[0] ?? "", /^usage: node main\.ts "task description" \[project directory\]$/);
-  assert.deepEqual(probe.ui.said, []);
-});
-
 test("an invalid config prints HALTED with the file and field and exits 1, before any agent call and without records", async () => {
   const repo = tempRepo();
   const { wiring, probe } = testWiring(repo, { steps: [{ output: noQuestions, plan: "v1" }] });
   fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ maxRounds: "5" }));
-  assert.equal(await runProgram(["task"], wiring), 1);
+  assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: Expected number \(at maxRounds\)/);
   assert.match(said(probe), /Claude Code session id: none/);
   assertTail(probe);
@@ -73,7 +66,7 @@ test("an invalid config prints HALTED with the file and field and exits 1, befor
 test("an unreadable decision-making format prints HALTED with the file and exits 1, before any agent call and without records", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
   const missing = path.join(probe.dir, "no-such-format.md");
-  assert.equal(await runProgram(["task"], { ...wiring, decisionFormat: missing }), 1);
+  assert.equal(await runProgram(probe, { ...wiring, decisionFormat: missing }), 1);
   assert.match(said(probe), new RegExp(`HALTED: the decision-making format ${missing} could not be read`));
   assertTail(probe);
   assert.deepEqual(probe.planner.prompts, []);
@@ -81,8 +74,8 @@ test("an unreadable decision-making format prints HALTED with the file and exits
 });
 
 /** Runs the program in a fiber, waits for the double to be reached, interrupts it, and returns its exit. */
-const interruptWhen = async (wiring: Wiring, reached: Promise<void>): Promise<Exit.Exit<number, never>> => {
-  const fiber = Effect.runFork(Effect.scoped(program(["task"], wiring)));
+const interruptWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promise<void>): Promise<Exit.Exit<number, never>> => {
+  const fiber = Effect.runFork(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)));
   await Promise.race([reached, sleep(30_000).then(() => assert.fail("the program did not reach the point to interrupt within 30 s"))]);
   await sleep(10);
   await Effect.runPromise(Fiber.interrupt(fiber));
@@ -103,13 +96,13 @@ test("interrupt while the UI waits for input", async () => {
     reviews: [{ issues: [] }],
     execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null }],
   });
-  const exit = await interruptWhen(wiring, probe.ui.nextAsk());
+  const exit = await interruptWhen(probe, wiring, probe.ui.nextAsk());
   assertInterrupted(probe, exit);
 });
 
 test("interrupt while a scripted agent call is pending", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ hang: true }] });
-  const exit = await interruptWhen(wiring, probe.planner.nextHang());
+  const exit = await interruptWhen(probe, wiring, probe.planner.nextHang());
   assertInterrupted(probe, exit);
   assert.equal(probe.planner.hangSignals[0].aborted, true, "the pending call was not aborted");
 });
@@ -129,7 +122,7 @@ const statedCode = (text: string): number => Number(/exit code (\d+)/.exec(text)
 test("q at a question, confirmed, ends the run as an interruption with exit code 130", async () => {
   const prompts = await import("../src/prompts.ts");
   const { wiring, probe } = testWiring(tempRepo(), { ...withQuestion, answers: ["q", "y"], confirmEnds: true });
-  const code = await runProgram(["task"], wiring);
+  const code = await runProgram(probe, wiring);
   assert.equal(code, 130);
   assert.equal(code, statedCode(prompts.confirmEndText("endRun")), "the confirmation states another exit code");
   assert.ok(probe.ui.asked.includes(prompts.confirmEndText("endRun")));
@@ -148,7 +141,7 @@ test("/quit in the clarification, confirmed, ends the run with exit code 130", a
     answers: ["/quit", "y"],
     confirmEnds: true,
   });
-  assert.equal(await runProgram(["task"], wiring), 130);
+  assert.equal(await runProgram(probe, wiring), 130);
   assert.match(said(probe), /INTERRUPTED by the user/);
 });
 
@@ -163,12 +156,12 @@ test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; decline
       confirmEnds: true,
     });
   const halted = limited(["", "y"]);
-  const code = await runProgram(["task"], halted.wiring);
+  const code = await runProgram(halted.probe, halted.wiring);
   assert.equal(code, 1);
   assert.equal(code, statedCode(prompts.confirmEndText("limitStop")));
   assert.match(said(halted.probe), /HALTED: stopped by the user at the cycle limit/);
   const declined = limited(["0", "n", "0", "y"]);
-  assert.equal(await runProgram(["task"], declined.wiring), 1);
+  assert.equal(await runProgram(declined.probe, declined.wiring), 1);
   assert.equal(declined.probe.ui.asked.filter((a) => a === prompts.confirmEndText("limitStop")).length, 2);
 });
 
@@ -186,7 +179,7 @@ test("interrupt one minute into a weekly usage-limit wait: the summary printed r
     currentTimeMillisUnsafe: () => time,
     sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
   };
-  const fiber = Effect.runFork(Effect.scoped(program(["task"], wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  const fiber = Effect.runFork(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
   await Promise.race([waiting, sleep(30_000).then(() => assert.fail("the wait did not begin within 30 s"))]);
   await Effect.runPromise(Fiber.interrupt(fiber));
   const exit = await Effect.runPromise(Fiber.await(fiber));

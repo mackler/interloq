@@ -1,10 +1,10 @@
 // The run manager of the web GUI (plan step 3.3): one run at a time, started, answered and stopped from the page;
 // the events of the current run and of the last finished one, broadcast to every connected tab.
 
-import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Ref, type Scope, Semaphore, Stream } from "effect";
+import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
-import { exitCodeOf, program, type Wiring } from "./program.ts";
+import { exitCodeOf, program, taskOf, type Wiring } from "./program.ts";
 import type { RunEvent, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
@@ -144,6 +144,9 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
 
     const start = (project: string, task: string): Effect.Effect<number | Refusal> =>
       Effect.gen(function* () {
+        // Issue #88: a run never lacks a task; a blank one is refused before the project is examined.
+        const checked = taskOf(task);
+        if (Result.isFailure(checked)) return { refused: "the task is empty" };
         const invalid = yield* invalidProject(project);
         if (invalid !== null) return { refused: invalid };
         const gate = yield* Deferred.make<void>();
@@ -159,7 +162,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program([task, project], wiring(ui)))),
+              Effect.andThen(Effect.scoped(program({ task: checked.success, project }, wiring(ui)))),
               Effect.onExit((exit: Exit.Exit<number>) => Ref.get(idRef).pipe(Effect.flatMap((id) => end(id, exitCodeOf(exit))))),
               Effect.forkDetach({ startImmediately: true }),
             );
