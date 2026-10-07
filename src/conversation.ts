@@ -3,7 +3,7 @@
 
 import { Effect, Result } from "effect";
 import { InterviewTurnInvalid, type RunError } from "./errors.ts";
-import { type AgreedAnswers, skippedQuestions, type TurnSkipProblem, waitingFor } from "./premises.ts";
+import { type AgreedAnswers, mentionsId, skippedQuestions, type TurnSkipProblem, waitingFor } from "./premises.ts";
 import { parseInterviewMessage } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { interviewSays, recordHeading } from "./render.ts";
@@ -43,7 +43,7 @@ export const premiseValidation =
     const id = turn.current_question.id;
     const asked = skipped.find((k) => k.id === id);
     const premise = id === "" ? null : waitingFor(premises.questions, premises.answers, id);
-    const omitted = turn.complete && turn.summary.trim() !== "" ? skipped.filter((k) => !turn.summary.includes(k.id)).map((k) => k.id) : [];
+    const omitted = turn.complete && turn.summary.trim() !== "" ? skipped.filter((k) => !mentionsId(turn.summary, k.id)).map((k) => k.id) : [];
     const problems: readonly TurnSkipProblem[] = [
       ...(asked !== undefined ? [{ kind: "skippedAsked" as const, id, question: asked.question, answer: asked.answer }] : premise !== null ? [{ kind: "askedBeforePremise" as const, id, premise }] : []),
       ...(omitted.length > 0 ? [{ kind: "summaryOmits" as const, ids: omitted }] : []),

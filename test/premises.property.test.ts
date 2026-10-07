@@ -102,3 +102,19 @@ test("property: the answers skip exactly the questions whose premise answer was 
     RUNS,
   );
 });
+
+// W1-R1-1: an id joined with arbitrary text is found exactly when the characters around it are not id characters.
+test("property: mentionsId finds an id exactly when it stands apart from other id characters", async () => {
+  const { mentionsId } = await import("../src/premises.ts");
+  const idChar = /[A-Za-z0-9_-]/;
+  const chars = fc.constantFrom("a", "Z", "0", "7", "-", "_", " ", ":", ".", "(", ")", "\n", ",");
+  const side = fc.array(chars, { maxLength: 4 }).map((cs) => cs.join(""));
+  fc.assert(
+    fc.property(side, side, (before, after) => {
+      const apart = (before === "" || !idChar.test(before.at(-1)!)) && (after === "" || !idChar.test(after[0]));
+      // The sides hold no "Q", so the joined text has one occurrence of the id.
+      assert.equal(mentionsId(`${before}Q2${after}`, "Q2"), apart, JSON.stringify([before, after]));
+    }),
+    RUNS,
+  );
+});

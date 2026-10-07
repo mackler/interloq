@@ -51,3 +51,10 @@ test("a skipped question names the question and the answer that removed it; one 
   ]);
   assert.deepEqual(skippedQuestions(list, new Map([["Q1", { kind: "option", label: "Yes" }]])), []);
 });
+
+// W1-R1-1: a summary names a skipped question by its whole id, not as part of a longer one.
+test("mentionsId finds an id as a whole token and not inside a longer id", async () => {
+  const { mentionsId } = await import("../src/premises.ts");
+  for (const text of ["Q2", "Q2: no", "see Q2.", "(Q2)", "Q1 and Q2", "Q2\nnext", "- Q2, skipped"]) assert.ok(mentionsId(text, "Q2"), text);
+  for (const text of ["Q20: answered.", "Q2a", "AQ2", "Q2-R1", "Q2_x", "", "Q1"]) assert.ok(!mentionsId(text, "Q2"), text);
+});

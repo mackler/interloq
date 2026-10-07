@@ -133,3 +133,10 @@ export const TurnSkipProblemSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("summaryOmits"), ids: Schema.Array(Schema.String) }),
 ]);
 export type TurnSkipProblem = typeof TurnSkipProblemSchema.Type;
+
+/**
+ * Whether `text` names `id` as a whole token (W1-R1-1): the character before it and the one after it are each absent or
+ * not an id character (a letter, a digit, '-' or '_'), so that Q20, Q2a, AQ2 and Q2-R1 do not count as Q2.
+ */
+export const mentionsId = (text: string, id: string): boolean =>
+  id !== "" && new RegExp(`(?<![A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_-])`).test(text);

@@ -292,3 +292,23 @@ test("the interview's prompts exclude the skipped questions from completion and 
   assert.match(prompts.requirementsReviewPrompt(1), /Skipped questions/);
   assert.match(prompts.interviewGapsPrompt("r.json", ["G-R1-1"]), /premise the user denied/);
 });
+
+// W1-R1-1: a summary that names Q20 does not name the skipped Q2; it gets the repair turn.
+test("a summary naming a longer id that contains a skipped question's id gets the repair turn", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [
+      { output: { questions: premised() } },
+      { output: asking("Q1", ["Q1"], []) },
+      { output: completing("# Requirements\n\nQ1: A\nQ20: answered.", ["Q1"], ["Q1"]) },
+      { output: completing(SUMMARY, ["Q1"], ["Q1"]) },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
+  assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
+});
