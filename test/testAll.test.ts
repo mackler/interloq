@@ -1,29 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
+import { controlled, tick } from "./stagesFake.ts";
 import { runStages, spawnStage, type Stage, type StageResult, type Stages, testStages, verdict } from "../scripts/test-all.ts";
 
 // Issue #75: npm test runs the stages that share nothing at once, and the end-to-end tests only after all of them passed.
 
-/** A fake process boundary whose stages end only when the test ends them. */
-const controlled = () => {
-  const started: string[] = [];
-  const pending = new Map<string, (code: number) => void>();
-  const start = (stage: Stage): Promise<StageResult> =>
-    new Promise((resolve) => {
-      started.push(stage.name);
-      pending.set(stage.name, (code) => resolve({ stage, code, output: `${stage.name} output` }));
-    });
-  const end = async (name: string, code: number) => {
-    const resolve = pending.get(name);
-    assert.ok(resolve !== undefined, `${name} was not started`);
-    pending.delete(name);
-    resolve(code);
-    await new Promise((r) => setImmediate(r));
-  };
-  return { started, start, end };
-};
-const tick = () => new Promise((r) => setImmediate(r));
 const names = testStages.parallel.map((s) => s.name);
 const finalStage: Stage = testStages.kind === "thenFinal" ? testStages.final : assert.fail("npm test has no final stage");
 

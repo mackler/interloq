@@ -29,7 +29,10 @@
     "vitest": "5.0.2"
   },
   "scripts": {
-    "check": "tsc --noEmit && tsc --noEmit -p web && svelte-check --tsconfig web/tsconfig.json --fail-on-warnings",
+    "check": "node scripts/check.ts",
+    "check:program": "tsc --noEmit",
+    "check:web": "tsc --noEmit -p web",
+    "check:svelte": "svelte-check --tsconfig web/tsconfig.json --fail-on-warnings",
     "build": "vite build --config web/vite.config.ts",
     "test:unit": "node --test test/*.test.ts",
     "test:cli": "bats test/cli",

@@ -70,8 +70,15 @@ export const spawnStage =
       child.on("close", (code, signal) => resolve({ stage: s, code: code ?? 1, output: `${Buffer.concat(chunks).toString()}${signal === null ? "" : `killed by ${signal}\n`}` }));
     });
 
-const report = (r: StageResult): void => {
+/** Prints one stage's output whole, under its name and exit code, when it ends. */
+export const report = (r: StageResult): void => {
   process.stdout.write(`\n=== ${r.stage.name}: ${r.code === 0 ? "passed" : `FAILED (exit code ${r.code})`} ===\n${r.output}`);
+};
+
+/** A runner's last line: that every stage passed, or which failed. */
+export const summary = (label: string, outcome: Outcome): string => {
+  const { failed } = verdict(outcome.results);
+  return failed.length === 0 ? `${label}: every stage passed.` : `${label}: failed: ${failed.join(", ")}.`;
 };
 
 const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
@@ -79,8 +86,7 @@ if (isMain) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const streamed = (s: Stage): boolean => testStages.kind === "thenFinal" && s === testStages.final;
   void runStages(testStages, spawnStage(npm, (s) => ["run", "--silent", s.script], streamed), report).then((outcome) => {
-    const { failed } = verdict(outcome.results);
-    process.stdout.write(failed.length === 0 ? "\nnpm test: every stage passed.\n" : `\nnpm test: failed: ${failed.join(", ")}.\n`);
+    process.stdout.write(`\n${summary("npm test", outcome)}\n`);
     process.exitCode = outcome.code;
   });
 }
