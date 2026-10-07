@@ -34,8 +34,9 @@ test("the question list prompt carries the writer's rules and asks for a context
   assert.match(list, /The rules apply to the question, its reason, its proposed answers and its default alike/);
   const review = prompts.questionReviewPrompt(1);
   assert.ok(review.includes(prompts.questionReviewCriteria()));
-  // The criteria the review had before stay.
-  assert.match(review, /a question is ambiguous or combines several decisions/);
+  // The criteria the review had before stay; ambiguity is the criterion of determinateOptions since issue #96.
+  assert.match(review, /a question combines several decisions/);
+  assert.doesNotMatch(review, /a question is ambiguous or combines/);
   const respond = prompts.questionRespondPrompt(1);
   assert.ok(respond.includes(prompts.questionWritingRules()));
 });
@@ -96,4 +97,20 @@ test("whetherToAsk names the three conditions, the four sources and the premise,
   const consequence = prompts.QUESTION_RULES.find((r) => r.id === "readerConsequence")!;
   assert.doesNotMatch(consequence.rule, /whether to ask/, "readerConsequence no longer states the inclusion test");
   assert.doesNotMatch(consequence.criterion, /should have settled/);
+});
+
+// Issue #96 (S6): what an option's label carries and what its description carries is stated once, in determinateOptions.
+test("determinateOptions alone says that a label names the outcome and the description what produces it", () => {
+  const byId = (id: string) => prompts.QUESTION_RULES.find((r) => r.id === id)!;
+  const options = byId("determinateOptions");
+  for (const text of [options.rule, options.criterion]) {
+    assert.match(text, /label/);
+    assert.match(text, /outcome/);
+    assert.match(text, /mechanism/);
+    assert.match(text, /taken two ways/);
+  }
+  assert.ok(options.rule.includes("docs/decision-making.md"));
+  assert.match(options.rule, /as they are now/);
+  const outcome = byId("askOutcome");
+  for (const text of [outcome.rule, outcome.criterion]) assert.doesNotMatch(text, /label|make those outcomes the options/);
 });

@@ -125,13 +125,14 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
   {
     // Issue #92 (5 Oct 2026): a question asks which outcome the reader wants, not how the program is arranged.
     id: "askOutcome",
-    rule: "Ask which outcome the reader wants. Never ask where a line of code goes, which module holds a value, or which of two arrangements of the same program to adopt: where two implementations are being chosen between, name the outcomes that differ and make those outcomes the options; how the program is arranged then follows from the answer. A question in the right tense can still break this rule.",
+    rule: "Ask which outcome the reader wants. Never ask where a line of code goes, which module holds a value, or which of two arrangements of the same program to adopt: where two implementations are being chosen between, ask about the outcomes that differ; how the program is arranged then follows from the answer. A question in the right tense can still break this rule.",
     criterion: "a question asks where code goes, which module holds a value, or which arrangement of the same program to adopt, instead of which of the outcomes that differ the reader wants.",
   },
   {
+    // Issue #96 (6 Oct 2026): the label names the outcome, the description what produces it.
     id: "determinateOptions",
-    rule: "Give every option a meaning that cannot be taken two ways and that says what produces its outcome, so that the arguments for and against it can be worked out from what the option says, as docs/decision-making.md requires of an analysis.",
-    criterion: "an option could be taken two ways, or states an outcome without saying what produces it, so that the arguments for and against it cannot be worked out from what it says, as docs/decision-making.md requires of an analysis.",
+    rule: "Give every option a meaning that cannot be taken two ways. Its label names the outcome the reader gets, in the reader's terms, never the mechanism that produces it; its description says what produces that outcome, so that the arguments for and against it can be worked out from what the option says, as docs/decision-making.md requires of an analysis. A label that refers to a state in time ('as they are now', 'the current one') says which: the behavior before the change, or the state at the moment of asking.",
+    criterion: "a question or an option can be taken two ways (a label such as 'as they are now' that does not say whether it means the behavior before the change or the state at the moment of asking included), or an option's label names the mechanism instead of the outcome the reader gets, or its description does not say what produces that outcome, so that the arguments for and against it cannot be worked out from what it says, as docs/decision-making.md requires of an analysis.",
   },
   {
     id: "optionDifferences",
@@ -512,7 +513,7 @@ export function questionReviewPrompt(round: number): string {
   if (round > 1) return laterRound(pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round);
   return `Review the question list in plan-review/questions.json against the task text in the same file and against the codebase. Do not modify any file.
 The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
-Raise an issue when: a question whose answer the plan needs is missing; a question is ambiguous or combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
+Raise an issue when: a question whose answer the plan needs is missing; a question combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
 ${questionReviewCriteria()}
 These criteria apply to the question, its context, its reason, its proposed answers and its default alike. Any question in the list may be put to decision support, which works out the arguments for and against each proposed answer, so hold every proposed answer to that standard.
 Put the question id, or 'list' for an issue that concerns the list as a whole, in the location field.
