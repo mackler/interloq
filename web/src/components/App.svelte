@@ -18,7 +18,8 @@
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
-  import { isOpen } from "../../../src/uiState.ts";
+  import { isOpen, type UiScope } from "../../../src/uiState.ts";
+  import { railView } from "../rail.ts";
   import DirectoryDialog from "./DirectoryDialog.svelte";
   import QuestionPane from "./QuestionPane.svelte";
   import StartForm from "./StartForm.svelte";
@@ -77,6 +78,10 @@
   const TITLES: Record<Pane, string> = { left: "You and Interloq", right: "Claude and Codex" };
 
   const run = $derived(view.run);
+  // Issue #63: a node of the rail opened or closed is a change of the run's shared state, as a decision's entry is.
+  const toggleRail = (scope: UiScope, open: boolean) => {
+    if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope, open } });
+  };
   // S27: the pending prompt whose conversation the user chose to see instead of its question (by its full key).
   let conversationForPrompt = $state<string | null>(null);
   const promptKey = $derived(JSON.stringify(pendingKey(view)));
@@ -191,7 +196,7 @@
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
-          <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} />
+          <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
         </details>
         <!-- While the analysis is shown both panels are hidden, so the buttons would select nothing; "Show the
              conversation" is the way back (W4-R1-1) [aesthetic and minimalist design]. -->
@@ -207,7 +212,7 @@
         <!-- The latest notice above the panels, whichever is shown (W2-R1-2) [visibility of system status]. -->
         {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
       {:else}
-        <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} />
+        <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
       {/if}
       {#if analysis !== null && deciding}
         <div class="decision-area" style:min-height={analysisMinimum !== null && analysisMinimum > 0 ? `${analysisMinimum}px` : null}>

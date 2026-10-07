@@ -1231,6 +1231,29 @@ export function phaseElapsed(ms: number): string {
 export function stepWorkingLabel(step: "phaseStep" | "planStep"): string {
   return `${step === "phaseStep" ? TIMELINE_STATE_LABEL.active : PLAN_STEP_STATE_LABEL.current}: ${AGENT_WORKING_LABEL}`;
 }
+/**
+ * The condition of a collapsed branch of the progress rail in one word (issue #63), from the steps it hides: none begun,
+ * some begun and not all finished, all finished.
+ */
+export const RAIL_CONDITION_LABEL: Record<"notStarted" | "partial" | "completed", string> = {
+  notStarted: "not started",
+  partial: "partially completed",
+  completed: "completed",
+};
+/** The accessible name and value of a collapsed branch's bar (issue #63): a count of steps, never a time. */
+export function stepsCompleteLabel(done: number, total: number): string {
+  return `${done} of ${total} ${total === 1 ? "step" : "steps"} complete`;
+}
+/**
+ * The accessible name of a row of the progress rail that opens and closes (issue #63): its label, whether it is expanded,
+ * and, collapsed, what it carries of what it hides: its condition and the step that runs inside it.
+ */
+export function railToggleName(label: string, expanded: boolean, condition: string | null, running: string | null): string {
+  if (expanded) return `${label}, expanded`;
+  return [label, "collapsed", ...(condition === null ? [] : [condition]), ...(running === null ? [] : [`working on ${running}`])].join(", ");
+}
+/** The description of a row the run holds open (issue #63): something inside it needs the user, so it does not close. */
+export const RAIL_HELD_OPEN_LABEL = "Kept open: something inside needs your answer";
 /** The accessible name of the plan's list under its Implementation entry. */
 export const PLAN_LIST_LABEL = "The steps of the plan";
 /**

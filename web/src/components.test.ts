@@ -18,6 +18,8 @@ import TopBar from "./components/TopBar.svelte";
 import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
 import { clockTime, fullTime, TOOLTIP_GRACE_MS } from "./time.ts";
+import { railView, type RailView } from "./rail.ts";
+import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
 import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
@@ -380,10 +382,22 @@ describe("QuestionPane", () => {
 /** The fields of a timeline entry that its tests do not concern: the entry of a phase with no times yet. */
 const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null } as const;
 
+/**
+ * The rail with every node opened by the user (issue #63), so that the tests of what an open node shows are unchanged:
+ * the scopes come from railView itself, and each is flagged open.
+ */
+const allOpen = (timeline: readonly TimelineEntry[], executing: boolean, busy: boolean): RailView => {
+  const run = { ...emptyRun(1), timeline, busy };
+  const scopes = railView(run, executing, busy).phases.flatMap((p) => [p.node.scope, ...[...p.branches.values()].map((b) => b.scope)]);
+  return railView({ ...run, ui: scopes.reduce((st, scope) => withFlag(st, { scope, open: true }), emptyUiState) }, executing, busy);
+};
+type RailProps = { timeline: readonly TimelineEntry[]; busy: boolean; executing?: boolean; callStartedAt?: string | null };
+const showRail = (props: RailProps) => show(TimelineRail, { ...props, rail: allOpen(props.timeline, props.executing ?? false, props.busy), onToggle: () => undefined });
+
 describe("TimelineRail", () => {
   const cycle = (round: number, raised: number | null, counted: number | null = raised) => ({ round, raised, counted, reviewIds: [] });
   test("phases in order with their state, and the cycles grouped under each review with their issues, no limit", () => {
-    const root = show(TimelineRail, {
+    const root = showRail({
       busy: true,
       timeline: [
         { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "done", groups: [{ subject: "questions", heading: "Question review", rounds: [cycle(1, 0)], corrections: 0, result: "converged", done: true }], steps: [], plan: null },
@@ -398,12 +412,14 @@ describe("TimelineRail", () => {
     // A phase with one review loop does not repeat its name as a sub-heading.
     expect(root.textContent).not.toMatch(/Planning phase 1/);
     expect(root.textContent).not.toMatch(/Question review/);
-    expect(root.querySelector("[data-busy]")).not.toBe(null);
+    // Issue #63: the active phase's mark is the circular indicator; no linear bar remains.
+    expect(root.querySelector("[data-state=active] > .mark .circular-indeterminate")).not.toBe(null);
+    expect(root.querySelector("[data-busy]")).toBe(null);
   });
 
   test("a finished loop collapses to its one line, for each way it can end", () => {
     const finished = (result: "converged" | "proceed" | "revise", corrections: number) =>
-      show(TimelineRail, { busy: false, timeline: [{ ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning 1", state: "done", groups: [{ subject: { plan: 1 }, heading: "Planning phase 1", rounds: [cycle(1, 2), cycle(2, 0)], corrections, result, done: true }], steps: [], plan: null }] });
+      showRail({ busy: false, timeline: [{ ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning 1", state: "done", groups: [{ subject: { plan: 1 }, heading: "Planning phase 1", rounds: [cycle(1, 2), cycle(2, 0)], corrections, result, done: true }], steps: [], plan: null }] });
     const summary = (root: HTMLElement) => [...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim());
     const converged = finished("converged", 2);
     expect(summary(converged)).toEqual([prompts.loopSummary(2, 2, "converged")]);
@@ -419,7 +435,7 @@ describe("TimelineRail", () => {
   const stepRows = (root: HTMLElement) => [...root.querySelectorAll("[data-step]")].map((e) => `${e.getAttribute("data-step")}:${e.querySelector("[data-step-label]")?.textContent?.trim()}:${e.getAttribute("aria-current") ?? "-"}`);
 
   test("during a clarification: the first step done with its loop's line, Clarification active with its count", () => {
-    const root = show(TimelineRail, { busy: true, timeline: [gather("active", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", "Clarification", "active", { answered: 3, total: 7 })])] });
+    const root = showRail({ busy: true, timeline: [gather("active", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", "Clarification", "active", { answered: 3, total: 7 })])] });
     expect(root.querySelector("[data-label]")?.textContent?.trim()).toBe("Gather Requirements");
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, "active:Clarification:step"]);
     expect([...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 1, "converged")]);
@@ -452,7 +468,7 @@ describe("TimelineRail", () => {
       ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
     ];
     const s = messages.reduce(reduce, initialState);
-    const root = show(TimelineRail, { busy: false, timeline: s.run?.timeline ?? [] });
+    const root = showRail({ busy: false, timeline: s.run?.timeline ?? [] });
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `done:${prompts.stepLabel("clarification")}:-`]);
     expect([...root.querySelectorAll("[data-count]")].map((e) => e.textContent?.trim())).toEqual([prompts.clarificationProgress(10, 10)]);
     expect([...root.querySelectorAll("[data-step] [data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 0, "converged")]);
@@ -463,7 +479,7 @@ describe("TimelineRail", () => {
   test("Gather Requirements with its steps, a planning loop's cycles and Implementation, together", () => {
     const planning: TimelineEntry = { ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning 1", state: "done", groups: [{ subject: { plan: 1 }, heading: "Planning phase 1", rounds: [cycle(1, 2), cycle(2, 0)], corrections: 2, result: "converged", done: true }], steps: [], plan: null };
     const implementation: TimelineEntry = { ...fresh, phase: { kind: "execution", n: 1 }, label: "Implementation 1", state: "active", groups: [], steps: [], plan: null };
-    const root = show(TimelineRail, { busy: false, timeline: [gather("done", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", "Clarification", "done", { answered: 2, total: 2 })]), planning, implementation] });
+    const root = showRail({ busy: false, timeline: [gather("done", [step("formulate", prompts.stepLabel("formulate"), "done", null, [questionReview]), step("clarification", "Clarification", "done", { answered: 2, total: 2 })]), planning, implementation] });
     expect([...root.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(["Gather Requirements", "Planning 1", "Implementation 1"]);
     expect([...root.querySelectorAll("[data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 1, "converged"), prompts.loopSummary(2, 2, "converged")]);
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, "done:Clarification:-"]);
@@ -471,13 +487,13 @@ describe("TimelineRail", () => {
   });
 
   test("a stopped step shows the stopped mark and is not the current step", () => {
-    const root = show(TimelineRail, { busy: false, timeline: [gather("stopped", [step("formulate", prompts.stepLabel("formulate"), "done", null), step("clarification", "Clarification", "stopped", { answered: 0, total: 3 })])] });
+    const root = showRail({ busy: false, timeline: [gather("stopped", [step("formulate", prompts.stepLabel("formulate"), "done", null), step("clarification", "Clarification", "stopped", { answered: 0, total: 3 })])] });
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, "stopped:Clarification:-"]);
     expect(root.querySelector("[data-step=stopped] .mark")?.getAttribute("aria-label")).toBe("stopped");
   });
 
   test("the heading and the text before any phase (issue #14, Q4)", () => {
-    const root = show(TimelineRail, { busy: false, timeline: [] });
+    const root = showRail({ busy: false, timeline: [] });
     expect(root.querySelector("h2")?.textContent).toBe("Progress");
     expect(root.textContent).toMatch(/No phase has begun\./);
   });
@@ -609,6 +625,29 @@ describe("App and the draft", () => {
     expect(ws.sent.map((m) => JSON.parse(m))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "DecisionEntry", decision: 3, entry: "e1" }, open: true } }]);
     ws.receive({ type: "ui", run: 1, state: { version: 1, choices: [{ scope: { _tag: "DecisionEntry", decision: 3, entry: "e1" }, open: true }] } });
     expect(one(root, ".entry > button.toggle").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  // Issue #63: the rail in the page: everything collapsed at the start, a phase opened when it becomes active, a closed
+  // one opened by a prompt inside it, and a toggle sent as the run's shared state.
+  test("the rail collapses: closed at the start, opened by the run and by a prompt, a toggle sent as a ui frame", async () => {
+    const { root, ws } = await openPage();
+    const foreseen = { _tag: "Notified", event: { _tag: "PhasesForeseen", phases: foreseenPhases(false, 1) } };
+    const began = { _tag: "Notified", event: { _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } } };
+    const event = (seq: number, e: unknown) => ws.receive({ type: "event", run: 1, seq, time: TIME, event: e });
+    const toggle = (label: string) => [...root.querySelectorAll<HTMLButtonElement>("button.rail-toggle")].find((b) => b.querySelector("[data-label]")?.textContent?.trim() === label)!;
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, foreseen]) }] });
+    ws.onopen?.({});
+    expect([...root.querySelectorAll("button.rail-toggle")].map((b) => b.getAttribute("aria-expanded"))).toEqual(["false", "false", "false"]);
+    event(2, began);
+    expect(toggle("Planning").getAttribute("aria-expanded")).toBe("true");
+    ws.sent = [];
+    toggle("Planning").click();
+    flushSync();
+    expect(ws.sent.map((m) => JSON.parse(m))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "RailPhase", phase: "planning-1" }, open: false } }]);
+    ws.receive({ type: "ui", run: 1, state: { version: 1, choices: [{ scope: { _tag: "RailPhase", phase: "planning-1" }, open: false }] } });
+    expect(toggle("Planning").getAttribute("aria-expanded")).toBe("false");
+    event(3, asked(1));
+    expect(toggle("Planning").getAttribute("aria-expanded")).toBe("true");
   });
 
   // S27 with decision support: beside an analysis, which shows the question, the pane keeps only its answers; the
@@ -1123,7 +1162,7 @@ describe("TimelineRail: the plan", () => {
   const rows = (root: HTMLElement) => [...root.querySelectorAll("[data-plan-step]")].map((e) => `${e.getAttribute("data-plan-step")}:${e.querySelector("[data-plan-step-label]")?.textContent?.trim()}`);
 
   test("the stages and the numbered steps hang under the Implementation that carries the plan, each with its mark", () => {
-    const root = show(TimelineRail, { busy: true, executing: true, timeline: [ahead("planning", "done"), entry("active", recorded()), ahead("work", "ahead")] });
+    const root = showRail({ busy: true, executing: true, timeline: [ahead("planning", "done"), entry("active", recorded()), ahead("work", "ahead")] });
     expect([...root.querySelectorAll("[data-stage]")].map((e) => e.textContent?.trim())).toEqual([prompts.stageHeading(1, "the schema and its records"), prompts.stageHeading(2, "the page")]);
     expect(rows(root)).toEqual([
       `done:${prompts.planStepLabel(1, "Structured user questions (Q1)")}`,
@@ -1138,12 +1177,12 @@ describe("TimelineRail: the plan", () => {
   });
 
   test("without a running execution call a started step shows as unfinished, not current", () => {
-    const root = show(TimelineRail, { busy: false, executing: false, timeline: [entry("active", recorded())] });
+    const root = showRail({ busy: false, executing: false, timeline: [entry("active", recorded())] });
     expect(rows(root)[1]).toBe(`unfinished:${prompts.planStepLabel(2, "The store")}`);
   });
 
   test("a phase ahead and a phase not reached have marks and names of their own", () => {
-    const root = show(TimelineRail, { busy: false, executing: false, timeline: [ahead("planning", "stopped"), entry("notReached", null), ahead("work", "ahead")] });
+    const root = showRail({ busy: false, executing: false, timeline: [ahead("planning", "stopped"), entry("notReached", null), ahead("work", "ahead")] });
     const marks = [...root.querySelectorAll(".entry > .mark")].map((e) => [e.closest("[data-state]")?.getAttribute("data-state"), e.getAttribute("aria-label")]);
     expect(marks).toEqual([["stopped", prompts.TIMELINE_STATE_LABEL.stopped], ["notReached", prompts.TIMELINE_STATE_LABEL.notReached], ["ahead", prompts.TIMELINE_STATE_LABEL.ahead]]);
   });
@@ -1151,7 +1190,7 @@ describe("TimelineRail: the plan", () => {
   test("a step its phase ended without has a mark and a name of its own, apart from ahead and not reached", () => {
     const step = (kind: TimelineStep["kind"], state: TimelineStep["state"]): TimelineStep => ({ kind, label: prompts.stepLabel(kind), state, count: null, base: { answered: 0, total: 0 }, groups: [] });
     const questions: TimelineEntry = { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "done", groups: [], steps: [step("formulate", "done"), step("clarification", "skipped")], plan: null };
-    const root = show(TimelineRail, { busy: false, executing: false, timeline: [questions, { ...entry("notReached", null), steps: [step("formulate", "notReached")] }, { ...ahead("work", "ahead"), steps: [step("formulate", "ahead")] }] });
+    const root = showRail({ busy: false, executing: false, timeline: [questions, { ...entry("notReached", null), steps: [step("formulate", "notReached")] }, { ...ahead("work", "ahead"), steps: [step("formulate", "ahead")] }] });
     const mark = (state: string) => root.querySelector(`[data-step=${state}] .mark`);
     expect(mark("skipped")?.getAttribute("aria-label")).toBe(prompts.TIMELINE_STATE_LABEL.skipped);
     expect(typeof prompts.TIMELINE_STATE_LABEL.skipped).toBe("string");
@@ -1162,7 +1201,7 @@ describe("TimelineRail: the plan", () => {
   });
 
   test("focus opens the step's full text as a tooltip described by the step, and Escape closes it", () => {
-    const root = show(TimelineRail, { busy: false, executing: false, timeline: [entry("active", recorded())] });
+    const root = showRail({ busy: false, executing: false, timeline: [entry("active", recorded())] });
     const button = one(root, "[data-plan-step] button");
     button.dispatchEvent(new FocusEvent("focus"));
     flushSync();
@@ -1181,7 +1220,7 @@ describe("TimelineRail: the plan", () => {
   test("after the pointer leaves the button the tooltip waits for it, stays open over the tooltip, and closes after both are left", () => {
     vi.useFakeTimers();
     try {
-      const root = show(TimelineRail, { busy: false, executing: false, timeline: [entry("active", recorded())] });
+      const root = showRail({ busy: false, executing: false, timeline: [entry("active", recorded())] });
       const button = one(root, "[data-plan-step] button");
       const anchor = button.parentElement as HTMLElement;
       button.dispatchEvent(new MouseEvent("mouseenter"));
@@ -1207,7 +1246,7 @@ describe("TimelineRail: the plan", () => {
   });
 
   test("a step's text is sanitized: no script and no event handler survives", () => {
-    const root = show(TimelineRail, { busy: false, executing: false, timeline: [entry("active", recorded('<script>window.bad = 1</script><img src="x" onerror="window.bad = 2">'))] });
+    const root = showRail({ busy: false, executing: false, timeline: [entry("active", recorded('<script>window.bad = 1</script><img src="x" onerror="window.bad = 2">'))] });
     const button = one(root, "[data-plan-step] button");
     button.dispatchEvent(new FocusEvent("focus"));
     flushSync();
@@ -1218,27 +1257,30 @@ describe("TimelineRail: the plan", () => {
 });
 
 // Issue #42 (Q7): an indeterminate indicator written by hand, with no value and no completion, and the elapsed time of
-// the current call beside it, ticking once per second.
+// the current call beside it, ticking once per second. Issue #63: it is the circular indicator on the phase's mark, not
+// a linear bar under the phase.
 describe("TimelineRail: the busy indicator", () => {
   const active: TimelineEntry = { ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning", state: "active", groups: [], steps: [], plan: null };
   afterEach(() => vi.useRealTimers());
 
   test("it is indeterminate: a progressbar without a value, and no element sized or moved by a value", () => {
-    const root = show(TimelineRail, { busy: true, executing: false, timeline: [active], callStartedAt: new Date().toISOString() });
+    const root = showRail({ busy: true, executing: false, timeline: [active], callStartedAt: new Date().toISOString() });
     const bar = one(root, "[role=progressbar]");
-    expect(bar.getAttribute("aria-label")).toBe(prompts.AGENT_WORKING_LABEL);
+    expect(bar.getAttribute("aria-label")).toBe(prompts.stepWorkingLabel("phaseStep"));
     for (const attribute of ["aria-valuenow", "aria-valuemin", "aria-valuemax", "value"]) expect(bar.hasAttribute(attribute)).toBe(false);
     for (const el of [bar, ...bar.querySelectorAll<HTMLElement>("*")]) {
       expect(el.style.width, "a width set from a value").toBe("");
       expect(el.style.transform, "a transform set from a value").toBe("");
     }
-    expect(bar.closest("[data-busy]")).not.toBe(null);
+    expect(bar.classList.contains("circular-indeterminate")).toBe(true);
+    expect(bar.closest(".entry > .mark")).not.toBe(null);
+    expect(root.querySelector("[data-busy], .indeterminate")).toBe(null);
   });
 
   test("the elapsed time of the call advances once per second from the call's start, and nothing marks it complete", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-28T12:00:05.000Z"));
-    const root = show(TimelineRail, { busy: true, executing: false, timeline: [active], callStartedAt: "2026-09-28T12:00:00.000Z" });
+    const root = showRail({ busy: true, executing: false, timeline: [active], callStartedAt: "2026-09-28T12:00:00.000Z" });
     expect(one(root, "[data-elapsed]").textContent?.trim()).toBe(prompts.runningFor(5_000));
     vi.advanceTimersByTime(60_000);
     flushSync();
@@ -1273,18 +1315,13 @@ test("the activity line shows retry 2 of 3", () => {
 });
 
 // W1-R1-4: the activity line shows the indeterminate indicator while the program waits to retry: no value, no estimate.
-test("the activity line shows an indeterminate progressbar only while busy, with the markup of the rail's indicator", () => {
+test("the activity line shows an indeterminate progressbar only while busy", () => {
   const busy = show(ActivityLine, { text: "Codex — connection lost, retry 1 of 3 (x)", busy: true });
   const bar = one(busy, "[role=progressbar]");
   expect(bar.hasAttribute("aria-valuenow")).toBe(false);
   expect(bar.getAttribute("aria-label")).toBe(prompts.RETRY_WAITING_LABEL);
   const idle = show(ActivityLine, { text: "Codex — review", busy: false });
   expect(idle.querySelector("[role=progressbar]")).toBe(null);
-  // The seam: the rail's indicator and the activity line's are the same markup.
-  const rail = show(TimelineRail, { timeline: [{ phase: { kind: "planning", n: 1 }, label: "Planning", state: "active", steps: [], plan: null } as unknown as TimelineEntry], busy: true });
-  const railBar = one(rail, "[role=progressbar]");
-  expect(bar.className).toBe(railBar.className);
-  expect(bar.innerHTML.replace(/<!--.*?-->/g, "")).toBe(railBar.innerHTML.replace(/<!--.*?-->/g, ""));
 });
 
 // Issue #50: M3's indeterminate circular progress indicator, written by hand: no value and no end, an SVG arc in the
@@ -1324,10 +1361,11 @@ describe("TimelineRail: where the indicator is", () => {
     plan: { stages: [{ key: "current-1", number: 1, title: "t", steps: ["S1", "S2"].map((id, i) => planStep(id, i + 1, statuses[id] ?? "pending")) }] },
   });
   const CALL = "2026-09-29T10:00:00.000Z";
-  const entryBar = (root: HTMLElement) => root.querySelector(".entry > [data-busy]");
+  // Issue #63: the phase's indicator is its mark's circular indicator, with the call's time beside it.
+  const entryBar = (root: HTMLElement) => root.querySelector(".entry > .mark [role=progressbar]");
 
   test("Gather Requirements: the indicator and the call's time are inside the active step, not in the step ahead or under the phase", () => {
-    const root = show(TimelineRail, { busy: true, timeline: [gather([gatherStep("formulate", "active"), gatherStep("clarification", "ahead")])], callStartedAt: CALL });
+    const root = showRail({ busy: true, timeline: [gather([gatherStep("formulate", "active"), gatherStep("clarification", "ahead")])], callStartedAt: CALL });
     const active = one(root, "[data-step=active]");
     expect(active.querySelector("[role=progressbar]")).not.toBe(null);
     expect(active.querySelector("[data-elapsed]")).not.toBe(null);
@@ -1339,7 +1377,7 @@ describe("TimelineRail: where the indicator is", () => {
   });
 
   test("Implementation: the indicator and the call's time are inside the current plan step, not under the phase", () => {
-    const root = show(TimelineRail, { busy: true, executing: true, timeline: [implementation("S2", { S1: "done", S2: "started" })], callStartedAt: CALL });
+    const root = showRail({ busy: true, executing: true, timeline: [implementation("S2", { S1: "done", S2: "started" })], callStartedAt: CALL });
     const current = one(root, "[data-plan-step=current]");
     expect(current.querySelector("[role=progressbar]")).not.toBe(null);
     expect(current.querySelector("[data-elapsed]")).not.toBe(null);
@@ -1350,22 +1388,22 @@ describe("TimelineRail: where the indicator is", () => {
   test("Implementation with no step current: the phase carries the indicator, and a step left open shows as unfinished without one", () => {
     const cases: Record<string, "pending" | "started" | "done" | "unfinished">[] = [{}, { S1: "started", S2: "done" }];
     for (const statuses of cases) {
-      const root = show(TimelineRail, { busy: true, executing: true, timeline: [implementation(null, statuses)], callStartedAt: CALL });
-      expect(entryBar(root)?.querySelector("[role=progressbar]")).not.toBe(null);
-      expect(entryBar(root)?.querySelector("[data-elapsed]")).not.toBe(null);
+      const root = showRail({ busy: true, executing: true, timeline: [implementation(null, statuses)], callStartedAt: CALL });
+      expect(entryBar(root)).not.toBe(null);
+      expect(root.querySelector(".entry > [data-elapsed]")).not.toBe(null);
       expect(root.querySelector("[data-plan-step] [role=progressbar]")).toBe(null);
     }
   });
 
   test("an active step while no call runs shows its static mark and no indicator", () => {
-    const root = show(TimelineRail, { busy: false, timeline: [gather([gatherStep("formulate", "done"), gatherStep("clarification", "active")])] });
+    const root = showRail({ busy: false, timeline: [gather([gatherStep("formulate", "done"), gatherStep("clarification", "active")])] });
     expect(root.querySelector("[role=progressbar]")).toBe(null);
     expect(one(root, "[data-step=active] .mark").getAttribute("aria-label")).toBe(prompts.TIMELINE_STATE_LABEL.active);
   });
 
   test("the running indicator is named for the step and the work; the step keeps aria-current; the mark's box stays", () => {
-    const idle = show(TimelineRail, { busy: false, timeline: [gather([gatherStep("formulate", "active")])] });
-    const running = show(TimelineRail, { busy: true, timeline: [gather([gatherStep("formulate", "active")])], callStartedAt: CALL });
+    const idle = showRail({ busy: false, timeline: [gather([gatherStep("formulate", "active")])] });
+    const running = showRail({ busy: true, timeline: [gather([gatherStep("formulate", "active")])], callStartedAt: CALL });
     const bar = one(running, "[data-step=active] [role=progressbar]");
     expect(bar.getAttribute("aria-label")).toBe(prompts.stepWorkingLabel("phaseStep"));
     expect(one(running, "[data-step=active]").getAttribute("aria-current")).toBe("step");
@@ -1373,7 +1411,7 @@ describe("TimelineRail: where the indicator is", () => {
     const mark = (root: HTMLElement) => one(root, "[data-step=active] > .mark");
     expect(mark(running).className).toBe(mark(idle).className);
     expect(bar.parentElement).toBe(mark(running));
-    const plan = show(TimelineRail, { busy: true, executing: true, timeline: [implementation("S2", { S2: "started" })], callStartedAt: CALL });
+    const plan = showRail({ busy: true, executing: true, timeline: [implementation("S2", { S2: "started" })], callStartedAt: CALL });
     expect(one(plan, "[data-plan-step=current] [role=progressbar]").getAttribute("aria-label")).toBe(prompts.stepWorkingLabel("planStep"));
     expect(one(plan, "[data-plan-step=current]").getAttribute("aria-current")).toBe("step");
     expect(one(plan, "[data-plan-step=current] [role=progressbar]").parentElement?.classList.contains("mark")).toBe(true);
@@ -1383,7 +1421,7 @@ describe("TimelineRail: where the indicator is", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-29T10:11:00.000Z"));
     const at = (iso: string) => `2026-09-29T${iso}.000Z`;
-    const root = show(TimelineRail, {
+    const root = showRail({
       busy: false,
       timeline: [
         { ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning", state: "done", groups: [], steps: [], plan: null, began: at("09:00:00"), ended: at("09:11:02") },
@@ -1402,7 +1440,7 @@ describe("TimelineRail: where the indicator is", () => {
   test("a step shown under two Implementations: each tooltip has its own id, and each step is described by its own", () => {
     const ended: TimelineEntry = { ...implementation(null, { S1: "unfinished" }), state: "done", label: "Implementation 1" };
     const later: TimelineEntry = { ...implementation(null, { S1: "done" }), phase: { kind: "execution", n: 2 }, label: "Implementation 2" };
-    const root = show(TimelineRail, { busy: false, timeline: [ended, later] });
+    const root = showRail({ busy: false, timeline: [ended, later] });
     const buttons = [...root.querySelectorAll<HTMLElement>("[data-plan-step] button")].filter((b) => b.textContent?.includes("step S1"));
     expect(buttons.length).toBe(2);
     buttons[0].dispatchEvent(new FocusEvent("focus"));
@@ -1420,7 +1458,7 @@ describe("TimelineRail: where the indicator is", () => {
       state: "done",
       plan: { stages: [{ key: "current-2", number: 2, title: "now", steps: [planStep("S3", 1, "done")] }, { key: "record-2", number: 2, title: "then", steps: [planStep("S1", 1, "unfinished")] }] },
     };
-    const root = show(TimelineRail, { busy: false, timeline: [entry] });
+    const root = showRail({ busy: false, timeline: [entry] });
     expect([...root.querySelectorAll("[data-stage]")].map((e) => e.textContent?.trim())).toEqual([prompts.stageHeading(2, "now"), prompts.stageHeading(2, "then")]);
   });
 
@@ -1447,7 +1485,7 @@ describe("TimelineRail: where the indicator is", () => {
         ...list.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time: CALL, event: { _tag: "Notified", event } })),
       ];
       const run = messages.reduce(reduce, initialState).run!;
-      return show(TimelineRail, { timeline: run.timeline, busy: run.busy, executing: executing(run), callStartedAt: callStartedAt(run) });
+      return showRail({ timeline: run.timeline, busy: run.busy, executing: executing(run), callStartedAt: callStartedAt(run) });
     };
     const where = (root: HTMLElement) => one(root, "[role=progressbar]").closest("[data-plan-step], .entry")?.querySelector("[data-plan-step-label], [data-label]")?.textContent?.trim();
     expect(where(rail(events))).toBe(prompts.planStepLabel(2, "step S2"));
@@ -1797,8 +1835,119 @@ test("the seam of the phase names: the rail and the bands show phaseName's names
   ];
   const state = [{ type: "hello", cwd: "/p", current: 1, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
   const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
-  const rail = show(TimelineRail, { busy: false, timeline: state.run?.timeline ?? [] });
+  const rail = showRail({ busy: false, timeline: state.run?.timeline ?? [] });
   expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);
   const panel = show(ChatPanel, { title: "You and Interloq", messages: state.run?.left ?? [], empty: "none" });
   expect([...panel.querySelectorAll(".phase-label")].map((e) => e.textContent?.trim())).toEqual(names.map((n) => prompts.phaseBandLabel(n, clockTime(time))));
+});
+
+// Issue #63: the rail collapses. A collapsed row carries what its children would have shown: the running step's label
+// with the circular indicator, its condition in one word, and a determinate bar of steps complete; it hides the cycle
+// lines. Each row is a native button with aria-expanded; a row held open says why and does not close.
+describe("TimelineRail: the tree that collapses", () => {
+  const planStep = (id: string, number: number, status: "pending" | "started" | "done" | "unfinished") => ({ id, number, label: `step ${id}`, text: `text ${id}`, status });
+  type Statuses = Record<string, "pending" | "started" | "done" | "unfinished">;
+  const plan = (statuses: Statuses) => ({
+    stages: [
+      { key: "current-1", number: 1, title: "first", steps: ["S1", "S2"].map((id, i) => planStep(id, i + 1, statuses[id] ?? "pending")) },
+      { key: "current-2", number: 2, title: "second", steps: ["S3", "S4"].map((id, i) => planStep(id, i + 1, statuses[id] ?? "pending")) },
+    ],
+  });
+  const implementation = (currentStep: string | null, statuses: Statuses, acted: string[] = []): TimelineEntry => ({
+    ...fresh,
+    phase: { kind: "execution", n: 1 },
+    label: "Implementation",
+    state: "active",
+    began: "2026-09-29T10:00:00.000Z",
+    groups: [],
+    steps: [],
+    currentStep,
+    acted,
+    plan: plan(statuses),
+  });
+  const planning = (state: TimelineEntry["state"]): TimelineEntry => ({ ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning", state, began: "2026-09-29T09:00:00.000Z", ended: state === "done" ? "2026-09-29T09:11:02.000Z" : null, groups: [{ subject: { plan: 1 }, heading: "Planning phase 1", rounds: [{ round: 1, raised: 2, counted: 2, reviewIds: [] }], corrections: 0, result: state === "done" ? "converged" : null, done: state === "done" }], steps: [], plan: null });
+  const phaseScope = (key: string): UiScope => ({ _tag: "RailPhase", phase: key });
+  const stageScope = (n: number): UiScope => ({ _tag: "RailBranch", phase: "execution-1", branch: `stage:current-${n}` });
+  type Shown = { timeline: TimelineEntry[]; busy?: boolean; executing?: boolean; flags?: { scope: UiScope; open: boolean }[]; pending?: boolean; onToggle?: (scope: UiScope, open: boolean) => void };
+  const render = ({ timeline, busy = false, executing = false, flags = [], pending = false, onToggle = () => undefined }: Shown) => {
+    const run = { ...emptyRun(1), timeline, busy, ui: flags.reduce(withFlag, emptyUiState), pending: pending ? ({ asked: { prompt: 1 } } as unknown as Widget) : null };
+    return show(TimelineRail, { timeline, busy, executing, callStartedAt: "2026-09-29T10:00:00.000Z", rail: railView(run, executing, busy), onToggle });
+  };
+  const row = (root: HTMLElement, label: string) => [...root.querySelectorAll<HTMLElement>("[data-label], [data-stage], [data-step-label]")].find((e) => e.textContent?.trim() === label)!.closest("li")!;
+  const toggleOf = (li: HTMLElement) => li.querySelector<HTMLButtonElement>(":scope > button.rail-toggle")!;
+
+  test("a collapsed phase hides its plan and carries the running step, its condition and its bar of steps", () => {
+    const root = render({ timeline: [implementation("S2", { S1: "done", S2: "started" }, ["S1", "S2"])], busy: true, executing: true, flags: [{ scope: phaseScope("execution-1"), open: false }] });
+    expect(root.querySelector("[data-plan-step], [data-stage]")).toBe(null);
+    const li = row(root, "Implementation");
+    const running = one(li, "[data-collapsed] [data-running]");
+    expect(running.textContent).toContain(`${prompts.stageHeading(1, "first")} — ${prompts.planStepLabel(2, "step S2")}`);
+    expect(running.querySelector(".circular-indeterminate")).not.toBe(null);
+    expect(one(li, "[data-collapsed] [data-condition]").textContent?.trim()).toBe(prompts.RAIL_CONDITION_LABEL.partial);
+    const bar = one(li, "[data-collapsed] [data-tally] [role=progressbar]");
+    expect(bar.getAttribute("aria-valuenow")).toBe("25");
+    expect(bar.getAttribute("aria-valuetext")).toBe(prompts.stepsCompleteLabel(1, 4));
+    expect(bar.getAttribute("aria-label")).toBe(prompts.stepsCompleteLabel(1, 4));
+    expect(bar.getAttribute("aria-label")).not.toMatch(/time|remaining|left/);
+    const toggle = toggleOf(li);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.getAttribute("aria-label")).toBe(prompts.railToggleName("Implementation", false, prompts.RAIL_CONDITION_LABEL.partial, `${prompts.stageHeading(1, "first")} — ${prompts.planStepLabel(2, "step S2")}`));
+  });
+
+  test("the condition of a collapsed stage in each of its three cases, and its bar's filled fraction", () => {
+    const cases: [Statuses, keyof typeof prompts.RAIL_CONDITION_LABEL, string][] = [
+      [{}, "notStarted", "0"],
+      [{ S3: "unfinished" }, "partial", "0"],
+      [{ S3: "done", S4: "done" }, "completed", "100"],
+    ];
+    for (const [statuses, condition, percent] of cases) {
+      const root = render({ timeline: [implementation(null, statuses)], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] });
+      const stage = row(root, prompts.stageHeading(2, "second"));
+      expect(stage.querySelector("[data-plan-step]")).toBe(null);
+      expect(one(stage, "[data-condition]").textContent?.trim()).toBe(prompts.RAIL_CONDITION_LABEL[condition]);
+      expect(one(stage, "[data-tally] [role=progressbar]").getAttribute("aria-valuenow")).toBe(percent);
+    }
+  });
+
+  test("a collapsed phase hides its cycle lines and keeps its own time", () => {
+    const open = render({ timeline: [planning("done")], flags: [{ scope: phaseScope("planning-1"), open: true }] });
+    const closed = render({ timeline: [planning("done")], flags: [{ scope: phaseScope("planning-1"), open: false }] });
+    expect(open.querySelectorAll("[data-summary]").length).toBe(1);
+    expect(closed.querySelectorAll("[data-cycle], [data-summary]").length).toBe(0);
+    for (const root of [open, closed]) expect(one(root, ".entry > [data-phase-time]").textContent?.trim()).toBe(prompts.phaseTook(662_000));
+  });
+
+  test("a row is a native button with aria-expanded and aria-controls; a click sends the opposite of what it shows", () => {
+    const toggles: [UiScope, boolean][] = [];
+    const root = render({ timeline: [implementation(null, {}, ["S1"])], flags: [{ scope: phaseScope("execution-1"), open: true }], onToggle: (scope, open) => toggles.push([scope, open]) });
+    const phase = toggleOf(row(root, "Implementation"));
+    expect(phase.tagName).toBe("BUTTON");
+    expect(phase.type).toBe("button");
+    expect(phase.getAttribute("aria-expanded")).toBe("true");
+    expect(root.querySelector(`#${CSS.escape(phase.getAttribute("aria-controls")!)}`)).not.toBe(null);
+    phase.click();
+    const stage = toggleOf(row(root, prompts.stageHeading(2, "second")));
+    expect(stage.getAttribute("aria-expanded")).toBe("false");
+    stage.click();
+    expect(toggles).toEqual([[phaseScope("execution-1"), false], [stageScope(2), true]]);
+  });
+
+  test("a row held open says why and does not close", () => {
+    const toggles: unknown[] = [];
+    const root = render({ timeline: [planning("active")], pending: true, flags: [{ scope: phaseScope("planning-1"), open: false }], onToggle: (...a) => toggles.push(a) });
+    const toggle = toggleOf(row(root, "Planning"));
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(one(root, `#${CSS.escape(toggle.getAttribute("aria-describedby")!)}`).textContent?.trim()).toBe(prompts.RAIL_HELD_OPEN_LABEL);
+    toggle.click();
+    expect(toggles).toEqual([]);
+  });
+
+  test("an active phase with no running step carries the circular indicator on its mark, and no linear bar", () => {
+    for (const open of [true, false]) {
+      const root = render({ timeline: [planning("active")], busy: true, flags: [{ scope: phaseScope("planning-1"), open }] });
+      expect(one(root, ".entry > .mark [role=progressbar]").classList.contains("circular-indeterminate")).toBe(true);
+      expect(root.querySelector("[data-busy], .indeterminate")).toBe(null);
+    }
+  });
 });
