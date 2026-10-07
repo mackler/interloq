@@ -1767,3 +1767,20 @@ test("each option card shows its label in bold as its own element and its descri
   expect(one(root, ".options button .option-label strong").textContent).toBe("SQLite");
   expect(one(root, ".options button .option-description").textContent).toBe("one file, no server");
 });
+
+// Issue #68: during a wait for a usage limit, the activity line shows M3's determinate linear indicator with the fraction of
+// the wait elapsed and the time remaining, in place of the indeterminate one.
+test("the activity line shows a determinate progressbar and the time remaining during a usage-limit wait", () => {
+  const now = Date.now();
+  const wait = { agent: "claude" as const, limitType: "five_hour", fromMs: now - 3_600_000, untilMs: now + 3_600_000 };
+  const root = show(ActivityLine, { text: "Claude — waiting", busy: false, wait });
+  const bar = one(root, "[role=progressbar]");
+  expect(bar.getAttribute("aria-label")).toBe(prompts.USAGE_LIMIT_WAITING_LABEL);
+  const value = Number(bar.getAttribute("aria-valuenow"));
+  expect(value).toBeGreaterThanOrEqual(49);
+  expect(value).toBeLessThanOrEqual(51);
+  expect(one(root, "[data-remaining]").textContent).toMatch(/^(1:00:00|59:5\d) left$/);
+  const plain = show(ActivityLine, { text: "Codex — review", busy: false, wait: null });
+  expect(plain.querySelector("[role=progressbar]")).toBe(null);
+  expect(plain.querySelector("[data-remaining]")).toBe(null);
+});

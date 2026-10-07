@@ -4,7 +4,7 @@
 import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, ServerMessage, Stamped } from "../../src/protocol.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { correctionCount } from "../../src/issueLog.ts";
@@ -121,6 +121,8 @@ export type RunView = Readonly<{
    * of its agent; every call's end clears it (W1-R1-3).
    */
   retry: Readonly<{ agent: "claude" | "codex"; text: string }> | null;
+  /** A wait for a usage limit while it lasts (issue #68): from its start to its scheduled end, both known. */
+  limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
   ended: number | null;
   /** Internal to the fold: the terminal lines of the last interview turn still to absorb, and the options of the last question presented (S5). */
@@ -187,6 +189,7 @@ export const emptyRun = (id: number): RunView => ({
   busy: false,
   calls: [],
   retry: null,
+  limitWait: null,
   timeline: [],
   ended: null,
   absorb: [],
@@ -499,7 +502,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
-      return { ...run, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
+      return { ...run, limitWait: null, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
     }
     case "ToolUsed":
       return { ...run, activity: `${run.calls.at(-1)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, "") };
@@ -512,10 +515,11 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "TransportRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
-    // Issue #68: a wait for a usage limit (S8 of its plan shows it).
+    // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
+      return { ...run, limitWait: { agent: event.agent, limitType: event.limitType, fromMs: event.fromMs, untilMs: event.untilMs }, activity: `${AGENT[event.agent]} — ${usageLimitActivity(event.limitType, event.untilMs)}` };
     case "UsageLimitLifted":
-      return run;
+      return { ...run, limitWait: null, activity: run.calls.at(-1)?.label ?? "" };
     case "AgentCallEnded": {
       // P1-R2-1: a nested call ends and the one it ran in is shown again.
       const ended = run.calls.at(-1);
@@ -605,7 +609,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "Notified":
         return notifiedEvent(r, event.event, time);
       case "Ended": {
-        const ended: RunView = { ...r, ended: event.code, pending: null, activity: "", busy: false, calls: [], retry: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...r, ended: event.code, pending: null, activity: "", busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }
@@ -682,6 +686,19 @@ export const progressOf = (run: RunView): string => {
   const running = step.groups.filter((g) => !g.done);
   const detail = running.length > 0 ? latestCycle(running) : step.count === null ? latestCycle(step.groups) : clarificationProgress(step.count.answered, step.count.total);
   return progressLine(stepOfPhase(entry.label, step.label), detail);
+};
+
+/** A wait for a usage limit as the page holds it (issue #68). */
+export type LimitWait = Readonly<{ agent: "claude" | "codex"; limitType: string | null; fromMs: number; untilMs: number }>;
+
+/**
+ * A wait for a usage limit at an instant (issue #68): the percentage of it elapsed, 0 to 100 and never falling, and the
+ * time remaining, none at or after its end. Pure: the component reads the clock.
+ */
+export const limitWaitView = (wait: LimitWait, nowMs: number): Readonly<{ percent: number; remainingMs: number }> => {
+  const span = wait.untilMs - wait.fromMs;
+  const elapsed = Math.min(Math.max(nowMs - wait.fromMs, 0), span);
+  return { percent: span <= 0 ? 100 : (elapsed / span) * 100, remainingMs: Math.max(wait.untilMs - nowMs, 0) };
 };
 
 /** Whether the program waits to retry a call (issue #26, W1-R1-4): a retry is pending and no call runs. */

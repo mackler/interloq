@@ -1895,9 +1895,13 @@ export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string 
 export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
   return `${agentName(agent)}: the usage limit has lifted after ${durationText(waitedMs)}; continuing`;
 }
-/** The page's activity line during a wait for a usage limit (issue #68): what is waited for, until when, and how long remains. */
-export function usageLimitActivity(limitType: string | null, untilMs: number, remainingMs: number): string {
-  return `${limitName(limitType)} reached — waiting until ${utcMinute(untilMs)}, ${durationText(remainingMs)} left`;
+/** The page's activity line during a wait for a usage limit (issue #68): what is waited for and until when. */
+export function usageLimitActivity(limitType: string | null, untilMs: number): string {
+  return `${limitName(limitType)} reached — waiting until ${utcMinute(untilMs)}`;
+}
+/** The time remaining of a wait for a usage limit, beside its indicator on the page (issue #68). */
+export function usageLimitRemaining(remainingMs: number): string {
+  return `${durationText(remainingMs)} left`;
 }
 /** A call that succeeded after a retry. */
 export function transportRecoveredLine(agent: "claude" | "codex"): string {

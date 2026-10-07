@@ -248,7 +248,7 @@
         <div class="chat" class:hidden={deciding}>
           <ChatPanel title={TITLES.right} messages={run.right} empty="No review yet." visible={shown("right") && !deciding} />
         </div>
-        <ActivityLine text={run.activity} busy={waiting(run)} />
+        <ActivityLine text={run.activity} busy={waiting(run)} wait={run.limitWait} />
       </div>
     </main>
   {/if}

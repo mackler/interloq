@@ -6,7 +6,7 @@ import { foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
-import { type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { limitWaitView, type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", current, incarnation: "a" });
@@ -1384,6 +1384,55 @@ describe("the shared state of a run's page", () => {
         expect(s.run?.ui).toEqual(states.at(-1));
       }),
       { numRuns: 50, seed: 20261006 },
+    );
+  });
+});
+
+// Issue #68: a wait for a usage limit, from its start to its scheduled end, shown with what is waited for and until when.
+describe("a wait for a usage limit", () => {
+  const FROM = Date.UTC(2026, 8, 30, 5, 32);
+  const UNTIL = FROM + 9_060_000;
+  const call: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" };
+  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false };
+  const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: FROM, untilMs: UNTIL };
+  const lifted: UiEvent = { _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_060_000 };
+  const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
+
+  test("the wait sets limitWait, and the activity line names the limit and the instant it lifts", () => {
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor)])) {
+      expect(s.run?.limitWait).toEqual({ agent: "claude", limitType: "five_hour", fromMs: FROM, untilMs: UNTIL });
+      expect(s.run?.activity).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", UNTIL)}`);
+      expect(s.run?.activity).toContain("five-hour session limit");
+      expect(s.run?.activity).toContain("08:03 UTC");
+    }
+  });
+
+  test("the lift, the run's end, and the next call's start each clear it", () => {
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted)])) expect(s.run?.limitWait).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(s.run?.limitWait).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted), notified(call)])) expect(s.run?.activity).toBe("Claude — planning");
+  });
+
+  test("limitWaitView: the fraction elapsed and the time remaining at an instant", () => {
+    const wait = { agent: "claude" as const, limitType: "five_hour", fromMs: FROM, untilMs: UNTIL };
+    expect(limitWaitView(wait, FROM)).toEqual({ percent: 0, remainingMs: 9_060_000 });
+    expect(limitWaitView(wait, FROM + 4_530_000)).toEqual({ percent: 50, remainingMs: 4_530_000 });
+    expect(limitWaitView(wait, UNTIL + 5000)).toEqual({ percent: 100, remainingMs: 0 });
+  });
+
+  test("property: percent lies in [0, 100] and does not fall as time passes; 0 at or before the start, 100 with nothing left at or after the end", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 1e12 }), fc.integer({ min: 1, max: 1e9 }), fc.integer({ min: -1e9, max: 2e9 }), fc.nat(1e9), (fromMs, span, t, later) => {
+        const wait = { agent: "claude" as const, limitType: null, fromMs, untilMs: fromMs + span };
+        const a = limitWaitView(wait, fromMs + t);
+        const b = limitWaitView(wait, fromMs + t + later);
+        expect(a.percent).toBeGreaterThanOrEqual(0);
+        expect(a.percent).toBeLessThanOrEqual(100);
+        expect(b.percent).toBeGreaterThanOrEqual(a.percent);
+        if (t <= 0) expect(a.percent).toBe(0);
+        if (t >= span) expect(a).toEqual({ percent: 100, remainingMs: 0 });
+      }),
+      { numRuns: 300, seed: 20261007 },
     );
   });
 });
