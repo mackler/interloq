@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
-import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Effect, Exit } from "effect";
 import fc from "fast-check";
 import { chooseOption, parseAskLine, parseExtraRounds, parseMessage } from "../src/input.ts";
-import { terminalUi } from "../src/ui.ts";
-import { ScriptedUi } from "./helpers.ts";
 
 // Row 6 of the table in recommendation E of docs/functional-design-review.md.
 const RUNS = { numRuns: 200, seed: 20260925 };
@@ -39,43 +35,3 @@ test("property: parseAskLine and parseMessage keep the text apart from the trimm
   );
 });
 
-// One line, without a newline, as a terminal user would type it.
-const arbLine = fc.stringMatching(/^[a-zA-Z0-9 \/"q]{0,12}$/);
-type Outcome = { kind: "quit" } | { kind: "value"; value: string };
-const outcome = async (effect: Effect.Effect<string, unknown>): Promise<Outcome> => {
-  const exit = await Effect.runPromiseExit(effect);
-  return Exit.isSuccess(exit) ? { kind: "value", value: exit.value } : { kind: "quit" };
-};
-
-test("property: the scripted Ui and the terminal Ui agree on every generated line, for ask and for askMessage", async () => {
-  await fc.assert(
-    fc.asyncProperty(arbLine, fc.boolean(), async (line, asMessage) => {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      output.resume();
-      const live = Effect.scoped(terminalUi(input, output).pipe(Effect.flatMap((ui) => (asMessage ? ui.askMessage("> ") : ui.ask("> ")))));
-      const livePromise = outcome(live);
-      input.write(line + "\n");
-      const scripted = new ScriptedUi([line]);
-      const fromScripted = await outcome(asMessage ? scripted.askMessage("> ") : scripted.ask("> "));
-      assert.deepEqual(await livePromise, fromScripted);
-    }),
-    { numRuns: 60, seed: 20260925 },
-  );
-});
-
-test("property: a triple-quoted block of generated lines is returned as its trimmed content", async () => {
-  await fc.assert(
-    fc.asyncProperty(fc.array(fc.stringMatching(/^[a-zA-Z0-9 ]{0,8}$/).filter((l) => l !== '"""'), { minLength: 1, maxLength: 4 }), async (lines) => {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      output.resume();
-      const live = Effect.scoped(terminalUi(input, output).pipe(Effect.flatMap((ui) => ui.askMessage("> "))));
-      const result = outcome(live);
-      input.write(['"""', ...lines, '"""', ""].join("\n"));
-      const expected = parseMessage(lines.join("\n"));
-      assert.deepEqual(await result, expected.kind === "quit" ? { kind: "quit" } : { kind: "value", value: expected.text });
-    }),
-    { numRuns: 40, seed: 20260925 },
-  );
-});

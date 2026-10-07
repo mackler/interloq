@@ -15,7 +15,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Effect.succeed` | 1414 | `<A>(value: A) => Effect<A>` |
 | `Effect.fail` | 2056 | `<E>(error: E) => Effect<never, E>` |
 | `Effect.sync` | 1578 | `<A>(thunk: LazyArg<A>) => Effect<A>` |
-| `Effect.void` | 1579 (`void_ as void`, 1587) | `Effect<void>`: succeeds with nothing; the terminal Ui's `notify` |
+| `Effect.void` | 1579 (`void_ as void`, 1587) | `Effect<void>`: succeeds with nothing; the web server's refusals and the publisher's empty broadcasts |
 | `Effect.die` | 2179 | `(defect: unknown) => Effect<never>` |
 | `Effect.try` | 2180 (`try_ as try`) | `({ try: LazyArg<A>, catch: (error: unknown) => E }) => Effect<A, E>`. Used where a synchronous call of foreign code may throw (`sdk.query(...)` starting the CLI): a bare call inside `Effect.gen` turns a throw into a defect (found by a Codex review, 25 Sep) |
 | `Effect.tryPromise` | 1242 | `({ try: (signal: AbortSignal) => PromiseLike<A>, catch: (error: unknown) => E }) => Effect<A, E>`. The `signal` is aborted when the fiber is interrupted. This is how SDK calls get their abort signal. |
@@ -53,11 +53,10 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Effect.suspend` | 1538 | `(effect: LazyArg<Effect<A, E, R>>) => Effect<A, E, R>`; used by `lift` to turn a throwing call into a failure or a defect |
 | `Effect.catch` (`catch_ as catch`) | 4143 | `(f: (e: E) => Effect<A2, E2, R2>)`: handles every failure (v3 `catchAll`); used by `liftPromise` |
 | `Effect.map` | 3568 | data-first and data-last |
-| `Effect.runPromise` rejection | 16833 | **Observed**: a typed failure rejects with the error object itself (`instanceof` the tagged class, `_tag` set), so `haltMessage(e)` in main.ts recognises it; a defect rejects with the defect |
+| `Effect.runPromise` rejection | 16833 | **Observed**: a typed failure rejects with the error object itself (`instanceof` the tagged class, `_tag` set), so `haltMessage(e)` can recognise it; a defect rejects with the defect |
 | `Option.isSome` / `isNone` | Option.d.ts:350 / 324 | type guards; `Cause.findErrorOption(exit.cause)` is `None` for a defect (observed) |
 | `Option.some` / `Option.none` / `Option.getOrNull` (read 28 Sep, issue #6) | Option.d.ts:268 / 239 / 1125 | `some(value)`, `none<A>()`; `getOrNull(self): A \| null`. `Store.loadPlan` returns an Option (no plan before the first write); `src/run.ts` and `src/planSteps.ts` take the plan or null |
-| `Effect.callback` (verified stage 5.3) | 1633 | `(register: (resume: (effect: Effect<A, E, R>) => void, signal: AbortSignal) => void \| Effect<void>) => Effect<A, E, R>`; the returned Effect runs when the waiting fiber is interrupted (used by `terminalUi.nextLine` to drop its waiter) |
-| `Effect.acquireRelease` (verified stage 5.3) | 12124 | `(acquire, release: (a, exit) => Effect<unknown, never>) => Effect<A, E, R \| Scope>`; the readline interface of `terminalUi` |
+| `Effect.acquireRelease` (verified stage 5.3) | 12124 | `(acquire, release: (a, exit) => Effect<unknown, never>) => Effect<A, E, R \| Scope>`; the web server's resources and the run manager's subscriptions |
 | `Effect.scoped` (verified stage 5.3) | 12017 | closes the scope of `acquireRelease` at the end or on interruption; **observed**: interrupting a fiber that waits in `ask` closes the interface and removes its listeners from the input |
 | `Effect.runSync` / `Effect.runFork` | 16998 / 16662 | `runSync(effect): A`; `runFork(effect): Fiber` |
 | `Fiber.interrupt` (verified stage 5.3) | Fiber.d.ts:347 | `(fiber) => Effect<void>`, completes after the finalizers ran |
@@ -87,7 +86,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Cause.squash` | Cause.d.ts:827 | `(self) => unknown` |
 | `Cause.pretty` | Cause.d.ts:1192 | `(cause) => string` |
 | `Ref.make` / `get` / `set` / `update` | Ref.d.ts:149 / 175 / 210 / 587 | `make(value) => Effect<Ref<A>>`; `set(self, value)`; `update(self, f)` |
-| `Ref.updateAndGet` (read 29 Sep, S6 of issues #46 and #59) | Ref.d.ts:617 | dual: `(self, f: (a) => A) => Effect<A>`: the new value; the run's question counter in `src/ui.ts` and `src/webUi.ts` |
+| `Ref.updateAndGet` (read 29 Sep, S6 of issues #46 and #59) | Ref.d.ts:617 | dual: `(self, f: (a) => A) => Effect<A>`: the new value; the run's question counter in `src/webUi.ts` |
 | `Ref.modify` (read 26 Sep, web GUI stage 3.2) | Ref.d.ts:397 | dual: `(self, f: (a) => readonly [B, A]) => Effect<B>`: reads and replaces in one step (the web Ui's prompt table, the run manager's state) |
 
 ## Services and Layers
@@ -156,7 +155,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | Name | Line | Notes |
 |---|---|---|
 | `Semaphore.make` | 231 | `(permits: number) => Effect<Semaphore>`; `export * as Semaphore` in index.d.ts:465 |
-| `Semaphore#withPermits` | 76 | `(permits) => <A, E, R>(self: Effect<A, E, R>) => Effect<A, E, R>`: acquires before, releases when the effect completes (also on failure or interruption). `withPermits(1)` serializes the terminal dialogue in `src/ui.ts` (finding 20) |
+| `Semaphore#withPermits` | 76 | `(permits) => <A, E, R>(self: Effect<A, E, R>) => Effect<A, E, R>`: acquires before, releases when the effect completes (also on failure or interruption). `withPermits(1)` serializes the page's dialogue in `src/webUi.ts`, the step reports in `src/planSteps.ts` and the publisher in `src/runManager.ts` |
 
 ## Schema (`effect/dist/Schema.d.ts`)
 
