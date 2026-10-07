@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type ClaudeFailure, classifyClaude, classifyCodex } from "../src/transport.ts";
+import { type ClaudeFailure, classifyClaude, classifyCodex, rejectionOf } from "../src/transport.ts";
 
 const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
 
@@ -99,4 +99,31 @@ test("Codex: a network code classifies as a transport fault unless the text is p
   assert.equal(classifyCodex("x", "ECONNRESET"), true);
   assert.equal(classifyCodex("usage limit", "ECONNRESET"), false);
   assert.equal(classifyCodex("x", "ENOENT"), false);
+});
+
+// Issue #68: a usage-limit rejection with a stated reset is a third kind of failure, waited out; without one it stays permanent.
+const RESET_S = 1_791_400_000;
+const limitedAt = (resetsAt: number) => ({ kind: "withReset" as const, resetsAtMs: resetsAt * 1000, limitType: "five_hour" });
+
+test("rejectionOf: a rejection with a finite positive reset carries it in milliseconds; otherwise it has none; other statuses are none", () => {
+  assert.deepEqual(rejectionOf({ status: "rejected", resetsAt: RESET_S, rateLimitType: "five_hour" }), limitedAt(RESET_S));
+  assert.deepEqual(rejectionOf({ status: "rejected", rateLimitType: "seven_day" }), { kind: "withoutReset", limitType: "seven_day" });
+  for (const resetsAt of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) assert.deepEqual(rejectionOf({ status: "rejected", resetsAt }), { kind: "withoutReset", limitType: null }, String(resetsAt));
+  assert.equal(rejectionOf({ status: "allowed", resetsAt: RESET_S }), null);
+  assert.equal(rejectionOf({ status: "allowed_warning", resetsAt: RESET_S }), null);
+});
+
+test("Claude: a rejection with a reset beside the rate_limit error is limited, with the instant; without a reset it is permanent", () => {
+  const withReset = f({ assistantError: "rate_limit", terminalReason: "api_error", rejection: limitedAt(RESET_S) });
+  assert.deepEqual(classifyClaude(withReset), { kind: "limited", resetsAtMs: RESET_S * 1000, limitType: "five_hour" });
+  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit", rejection: { kind: "withoutReset", limitType: "five_hour" } })), { kind: "permanent" });
+  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit" })), { kind: "permanent" });
+  assert.deepEqual(classifyClaude(f({ apiStatus: 429, rejection: limitedAt(RESET_S) })).kind, "limited");
+});
+
+test("Claude: other permanent evidence wins over a rejection with a reset; a network fault or a 5xx beside it does not", () => {
+  for (const e of ["billing_error", "authentication_failed"]) assert.deepEqual(classifyClaude(f({ assistantError: e, rejection: limitedAt(RESET_S) })), { kind: "permanent" }, e);
+  assert.deepEqual(classifyClaude(f({ apiStatus: 401, rejection: limitedAt(RESET_S) })), { kind: "permanent" });
+  assert.equal(classifyClaude(f({ streamCode: "ECONNRESET", rejection: limitedAt(RESET_S) })).kind, "limited");
+  assert.equal(classifyClaude(f({ apiStatus: 503, rejection: limitedAt(RESET_S) })).kind, "limited");
 });

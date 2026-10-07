@@ -32,7 +32,12 @@ export type RateLimitInfo = Readonly<{ status: string; resetsAt?: number; rateLi
  * The rejection a rate-limit event states, or null when its status is not "rejected". `withReset` only for a finite
  * positive `resetsAt` (seconds), so a missing or unusable instant is `withoutReset` by construction.
  */
-export const rejectionOf = (_info: RateLimitInfo): Rejection | null => null;
+export const rejectionOf = (info: RateLimitInfo): Rejection | null => {
+  if (info.status !== "rejected") return null;
+  const limitType = info.rateLimitType ?? null;
+  const resetsAt = info.resetsAt;
+  return resetsAt !== undefined && Number.isFinite(resetsAt) && resetsAt > 0 ? { kind: "withReset", resetsAtMs: resetsAt * 1000, limitType } : { kind: "withoutReset", limitType };
+};
 
 /** What a failed Claude Code call is (issue #68): permanent, a transport fault, or a usage limit with a stated reset. */
 export type FailureKind =
@@ -92,25 +97,32 @@ const is5xx = (s: number | null): boolean => s !== null && s >= 500 && s <= 599;
 const PERMANENT: FailureKind = { kind: "permanent" };
 const TRANSPORT: FailureKind = { kind: "transport" };
 
-/**
- * What a failed Claude Code call is, by the facts kept of it: a transport fault that a retry could fix, or permanent.
- * Permanent evidence is checked first; `terminalReason` alone is never sufficient.
- */
-export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => (isTransport(failure) ? TRANSPORT : PERMANENT);
+/** A rate limit's evidence: a 429, or the rate_limit error. Permanent unless a rejection states its reset (issue #68). */
+const isRateLimit = (status: number | null, error: string | null): boolean => status === 429 || error === "rate_limit";
+const isOtherPermanentError = (e: string | null): boolean => e !== null && e !== "rate_limit" && PERMANENT_ASSISTANT_ERRORS.includes(e);
 
-const isTransport = (failure: ClaudeFailure | null): boolean => {
-  if (failure === null) return false;
-  const { streamCode, apiStatus, assistantError, retrySeen, subtype } = failure;
-  const permanent =
-    is4xx(apiStatus) ||
-    (assistantError !== null && PERMANENT_ASSISTANT_ERRORS.includes(assistantError)) ||
-    (retrySeen !== null && (is4xx(retrySeen.status) || PERMANENT_ASSISTANT_ERRORS.includes(retrySeen.error))) ||
+/**
+ * What a failed Claude Code call is, by the facts kept of it. Permanent evidence other than the rate limit is checked
+ * first; then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold;
+ * then the rate limit, or a rejection without a reset, is permanent; then the transport evidence. `terminalReason`
+ * alone is never sufficient.
+ */
+export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
+  if (failure === null) return PERMANENT;
+  const { streamCode, apiStatus, assistantError, retrySeen, subtype, rejection } = failure;
+  const otherPermanent =
+    (is4xx(apiStatus) && !isRateLimit(apiStatus, null)) ||
+    isOtherPermanentError(assistantError) ||
+    (retrySeen !== null && ((is4xx(retrySeen.status) && !isRateLimit(retrySeen.status, null)) || isOtherPermanentError(retrySeen.error))) ||
     (subtype !== null && STOPPING_SUBTYPES.includes(subtype));
-  if (permanent) return false;
-  return (
+  if (otherPermanent) return PERMANENT;
+  if (rejection !== null && rejection.kind === "withReset") return { kind: "limited", resetsAtMs: rejection.resetsAtMs, limitType: rejection.limitType };
+  const rateLimited = rejection !== null || isRateLimit(apiStatus, assistantError) || (retrySeen !== null && isRateLimit(retrySeen.status, retrySeen.error));
+  if (rateLimited) return PERMANENT;
+  const transport =
     (streamCode !== null && NETWORK_CODES.includes(streamCode)) ||
     is5xx(apiStatus) ||
     (assistantError !== null && RETRYABLE_ASSISTANT_ERRORS.includes(assistantError)) ||
-    (retrySeen !== null && (retrySeen.status === null || is5xx(retrySeen.status)))
-  );
+    (retrySeen !== null && (retrySeen.status === null || is5xx(retrySeen.status)));
+  return transport ? TRANSPORT : PERMANENT;
 };
