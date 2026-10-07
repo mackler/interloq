@@ -70,7 +70,6 @@ credentials, and publishes port 8090 for the web page.
 |---|---|
 | `bin/ilcli` or `bin/ilcli run [args]` | Starts the container if needed, then starts Claude Code in it |
 | `bin/ilcli shell` | Opens a Bash shell in the container |
-| `bin/ilcli review "task" [project]` | Runs Interloq in the terminal inside the container |
 | `bin/ilcli build` | Builds the image `claude-code-base` from `container/Dockerfile` |
 | `bin/ilcli down` | Stops and removes the container (the volumes are kept) |
 | `bin/ilcli release` | Pushes `main` to GitHub, where the checks run (see "Deploying an update") |
@@ -87,7 +86,8 @@ credentials, and publishes port 8090 for the web page.
    git clone git@github.com:mackler/interloq.git ~/work/interloq-dev
    ```
 
-2. On the host, in the installed copy, install the dependencies and build the page:
+2. On the host, in the installed copy, install the dependencies and build the page, which every run
+   needs, since the page is Interloq's only interface:
 
    ```sh
    cd ~/work/interloq
@@ -142,23 +142,6 @@ credentials, and publishes port 8090 for the web page.
 If the server reports that "the page has not been built", run `npm run build` on the host in
 `~/work/interloq`, then start the server again.
 
-## Run from the terminal instead
-
-Inside the container:
-
-```sh
-node /opt/interloq/src/main.ts "task description" [project directory]
-```
-
-Or from the host, in the development copy:
-
-```sh
-bin/ilcli review "task description" [project directory]
-```
-
-You answer the questions in the terminal. Ctrl+C interrupts the run (exit code 130); the records are
-kept and the usage summary is printed.
-
 ## Deploying an update (after making a change)
 
 **The installed copy can only ever install a commit whose tests passed.** It follows the branch
@@ -202,7 +185,6 @@ change reaches real runs by this route, and by no other:
    start it again with `node /opt/interloq/src/web.ts`.
 6. **Reload every open browser tab.** A tab reconnects by itself, but it keeps running the old page
    until you reload it.
-7. **Terminal runs** pick up the change the next time they start. No further step is needed.
 
 ### One-time setup on GitHub
 
