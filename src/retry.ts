@@ -80,9 +80,13 @@ export const withTransportRetry = <A, E, R>(
       const delay = delays[retried];
       if (delay !== undefined) {
         retried++;
-        yield* ui.notify({ _tag: "TransportRetrying", agent, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message });
+        // Issue #63: the wait is announced with its start and end, and kept to that end, so that the page can count it
+        // down and its countdown ends when the wait does.
+        const fromMs = yield* Clock.currentTimeMillis;
+        const untilMs = fromMs + delay * 1000;
+        yield* ui.notify({ _tag: "TransportRetrying", agent, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
         yield* say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message));
-        yield* Effect.sleep(Duration.seconds(delay));
+        yield* Effect.sleep(Duration.millis(Math.max(untilMs - (yield* Clock.currentTimeMillis), 0)));
       } else if (onExhausted === "fail") {
         return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: error.message }));
       } else {

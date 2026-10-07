@@ -8,7 +8,7 @@ import { conditionOf, railView } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
-import { bandKey, limitWaitView, type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { bandKey, countdownView, limitWaitView, type ShownPlan, shownPlan, waiting, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", current, incarnation: "a" });
@@ -1022,7 +1022,7 @@ test("the elapsed time's start: the nested call's while it runs, the outer call'
 describe("transport retries on the activity line", () => {
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected" };
+  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a retry shows the agent, the attempt of the retries and the fault, and the retried call keeps it", () => {
@@ -1047,7 +1047,7 @@ describe("transport retries on the activity line", () => {
 describe("the retry state after the retries are exhausted", () => {
   const codexCall: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
   const codexFailed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 1, delaySeconds: 5, fault: "stream disconnected" };
+  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 1, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 };
   const claudeCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
@@ -1068,7 +1068,7 @@ describe("the retry state after the retries are exhausted", () => {
 describe("waiting during a retry's backoff", () => {
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected" };
+  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 };
   const w = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)].map((s) => waiting(s.run!));
   test("waiting holds from TransportRetrying until the retried call starts, the call recovers or a call ends", () => {
     expect(w([started, notified(call), notified(failed), notified(retrying)])).toEqual([true, true]);
@@ -1585,5 +1585,43 @@ describe("the rail as a tree that collapses", () => {
       { numRuns: 200 },
     );
     expect(conditionOf(0, 0, 0)).toBe(null);
+  });
+});
+
+// Issue #63: the wait before a retry is known exactly, so the page counts it down; the retried call's start ends it.
+describe("the countdown of a retry's wait", () => {
+  const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
+  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
+  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 1000, untilMs: 6000 };
+  const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
+  test("a TransportRetrying sets the wait; the retried call's start and the recovery clear it", () => {
+    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(s.run?.retry?.wait).toEqual({ fromMs: 1000, untilMs: 6000 });
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call)])) {
+      expect(s.run?.retry?.wait).toBe(null);
+      expect(s.run?.activity).toBe("Codex — review — connection lost, retry 1 of 3 (stream disconnected)");
+    }
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(s.run?.retry).toBe(null);
+  });
+  test("countdownView: the fraction elapsed and the time remaining while the wait lasts, nothing at and after its end", () => {
+    expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 1000)).toEqual({ percent: 0, remainingMs: 5000 });
+    expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 3500)).toEqual({ percent: 50, remainingMs: 2500 });
+    expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 5999)).not.toBe(null);
+    expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 6000)).toBe(null);
+    expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 9000)).toBe(null);
+  });
+  test("countdownView never falls in percentage nor rises in time remaining as the instant advances", () => {
+    fc.assert(
+      fc.property(fc.nat({ max: 1e9 }), fc.integer({ min: 1, max: 1e7 }), fc.integer({ min: -1e7, max: 2e7 }), fc.nat({ max: 1e7 }), (fromMs, span, t, later) => {
+        const wait = { fromMs, untilMs: fromMs + span };
+        const a = countdownView(wait, fromMs + t);
+        const b = countdownView(wait, fromMs + t + later);
+        if (a === null) expect(b).toBe(null);
+        if (a !== null && b !== null) {
+          expect(b.percent).toBeGreaterThanOrEqual(a.percent);
+          expect(b.remainingMs).toBeLessThanOrEqual(a.remainingMs);
+        }
+      }),
+      { numRuns: 200 },
+    );
   });
 });

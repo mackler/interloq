@@ -126,7 +126,7 @@ export type RunView = Readonly<{
    * The program's retry of a transport fault while it lasts (issue #26): shown on the activity line with the retried call
    * of its agent; every call's end clears it (W1-R1-3).
    */
-  retry: Readonly<{ agent: "claude" | "codex"; text: string }> | null;
+  retry: Readonly<{ agent: "claude" | "codex"; text: string; wait: Countdown | null }> | null;
   /** A wait for a usage limit while it lasts (issue #68): from its start to its scheduled end, both known. */
   limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
@@ -509,7 +509,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
-      return { ...run, limitWait: null, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
+      // Issue #63: the retried call's start ends the wait before it; the retry's text stays with the call.
+      return { ...run, limitWait: null, retry: run.retry === null ? null : { ...run.retry, wait: null }, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
     }
     case "ToolUsed":
       return { ...run, activity: `${run.calls.at(-1)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, "") };
@@ -518,7 +519,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return { ...run, activity: `${run.calls.at(-1)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}` };
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
-      return { ...run, retry: { agent: event.agent, text }, activity: `${AGENT[event.agent]} — ${text}` };
+      return { ...run, retry: { agent: event.agent, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${AGENT[event.agent]} — ${text}` };
     }
     case "TransportRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
@@ -696,18 +697,23 @@ export const progressOf = (run: RunView): string => {
   return progressLine(stepOfPhase(entry.label, step.label), detail);
 };
 
+/** A wait whose start and end the program knows (issues #26 and #68): what a determinate indicator counts down. */
+export type Countdown = Readonly<{ fromMs: number; untilMs: number }>;
 /** A wait for a usage limit as the page holds it (issue #68). */
-export type LimitWait = Readonly<{ agent: "claude" | "codex"; limitType: string | null; fromMs: number; untilMs: number }>;
+export type LimitWait = Countdown & Readonly<{ agent: "claude" | "codex"; limitType: string | null }>;
 
 /**
  * A wait for a usage limit at an instant (issue #68): the percentage of it elapsed, 0 to 100 and never falling, and the
  * time remaining, none at or after its end. Pure: the component reads the clock.
  */
-export const limitWaitView = (wait: LimitWait, nowMs: number): Readonly<{ percent: number; remainingMs: number }> => {
+export const limitWaitView = (wait: Countdown, nowMs: number): Readonly<{ percent: number; remainingMs: number }> => {
   const span = wait.untilMs - wait.fromMs;
   const elapsed = Math.min(Math.max(nowMs - wait.fromMs, 0), span);
   return { percent: span <= 0 ? 100 : (elapsed / span) * 100, remainingMs: Math.max(wait.untilMs - nowMs, 0) };
 };
+
+/** A wait at an instant while it lasts, as `limitWaitView` gives it; null at and after its end, so nothing asserts a wait that is over. */
+export const countdownView = (wait: Countdown, nowMs: number): Readonly<{ percent: number; remainingMs: number }> | null => (nowMs >= wait.untilMs ? null : limitWaitView(wait, nowMs));
 
 /** Whether the program waits to retry a call (issue #26, W1-R1-4): a retry is pending and no call runs. */
 export const waiting = (run: RunView): boolean => run.retry !== null && run.calls.length === 0;

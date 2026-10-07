@@ -22,7 +22,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   ToolUsed: [{ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "src/run.ts" }, /Claude Code used Read src\/run\.ts/],
   AgentCallEnded: [{ _tag: "AgentCallEnded", agent: "claude", ok: false }, /Claude Code call ended: failed/],
   AgentReconnecting: [{ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503" }, /Claude Code: reconnecting 2 of 10 in 1\.5 s \(status 503\)/],
-  TransportRetrying: [{ _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected" }, /Codex: connection lost, retry 2 of 3 in 10 s \(stream disconnected\)/],
+  TransportRetrying: [{ _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 }, /Codex: connection lost, retry 2 of 3 in 10 s \(stream disconnected\)/],
   TransportRecovered: [{ _tag: "TransportRecovered", agent: "claude" }, /Claude Code: connection restored/],
   UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
   UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],

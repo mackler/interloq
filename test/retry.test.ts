@@ -9,11 +9,12 @@ import { DECIDE, parseTransportAnswer } from "../src/input.ts";
 import { transportOptions } from "../src/offer.ts";
 import { platformLayer } from "../src/platform.ts";
 import * as prompts from "../src/prompts.ts";
-import { USAGE_LIMIT_MARGIN_SECONDS, withTransportRetry } from "../src/retry.ts";
+import { retryDelays, USAGE_LIMIT_MARGIN_SECONDS, withTransportRetry } from "../src/retry.ts";
 import * as S from "../src/schema.ts";
 import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/services.ts";
 import { makeStore } from "../src/store.ts";
 import { promptOf } from "../src/userPrompts.ts";
+import { countdownView } from "../web/src/state.ts";
 import { finished, issue, noDecider, respond, ScriptedUi, steppingClock, tempRepo, testLayer } from "./helpers.ts";
 import { run } from "../src/run.ts";
 import { para } from "./helpers.ts";
@@ -63,7 +64,9 @@ test("a fault, then success: one retry, notified and said, then recovered", asyn
   const exit = await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void), layer);
   assert.deepEqual(exit, Exit.succeed("reply 2"));
   assert.deepEqual(calls, [1, 2]);
-  assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying" || e._tag === "TransportRecovered"), [
+  // The wait's start and end are read from the Clock; the seam test below checks them on a stepping clock.
+  const withoutWait = ui.notified.map((e) => (e._tag === "TransportRetrying" ? (({ fromMs: _f, untilMs: _u, ...rest }) => rest)(e) : e));
+  assert.deepEqual(withoutWait.filter((e) => e._tag === "TransportRetrying" || e._tag === "TransportRecovered"), [
     { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 2, delaySeconds: 0.01, fault: "stream disconnected before completion" },
     { _tag: "TransportRecovered", agent: "codex" },
   ]);
@@ -340,4 +343,26 @@ test("a read-only call's wait: an outside edit of conversation.md during it halt
   const error = errorOf(await exit);
   assert.equal(error._tag, "RecordsChanged");
   assert.equal(probe.planner.prompts.length, 2);
+});
+
+// Issue #63, the seam of the countdown: each retry announces the start and end of its wait, the end is retryDelays' wait
+// after the start, the next attempt starts at that end exactly, and the page's countdown ends at that instant.
+test("each retry announces its wait's start and end; the next attempt starts at the end, where the countdown ends", async () => {
+  const { layer, ui } = await setup([]);
+  const delays = retryDelays({ maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 });
+  const { clock, now } = steppingClock(START);
+  const { attempt: scriptedAttempt } = scripted(["fault", "fault", "ok"]);
+  const starts: number[] = [];
+  const attempt = (n: number) => Effect.sync(() => void starts.push(now())).pipe(Effect.andThen(scriptedAttempt(n)));
+  const exit = await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 3"));
+  const waits = ui.notified.flatMap((e) => (e._tag === "TransportRetrying" ? [e] : []));
+  assert.equal(waits.length, delays.length);
+  waits.forEach((w, k) => {
+    assert.equal(w.untilMs - w.fromMs, delays[k]! * 1000);
+    assert.equal(w.fromMs, starts[k]);
+    assert.equal(starts[k + 1], w.untilMs, "the next attempt starts at the announced end");
+    assert.notEqual(countdownView(w, w.untilMs - 1), null);
+    assert.equal(countdownView(w, w.untilMs), null);
+  });
 });

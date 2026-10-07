@@ -35,7 +35,7 @@ export type UiEvent =
    */
   | Readonly<{ _tag: "AgentReconnecting"; agent: Agent; by: "sdk"; attempt: number | null; of: number | null; delayMs: number | null; detail: string }>
   /** The program retries a call that failed from a transport fault (issue #26): retry `attempt` of `of`, after `delaySeconds`. */
-  | Readonly<{ _tag: "TransportRetrying"; agent: Agent; attempt: number; of: number; delaySeconds: number; fault: string }>
+  | Readonly<{ _tag: "TransportRetrying"; agent: Agent; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
   /** A call succeeded after a retry. */
   | Readonly<{ _tag: "TransportRecovered"; agent: Agent }>
   // Issue #68: a wait for a usage limit with a stated reset, from its start to its scheduled end, and its end.

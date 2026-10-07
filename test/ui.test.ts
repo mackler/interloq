@@ -226,7 +226,7 @@ test("notify prints the SDK's reconnection and the recovery, and nothing for the
   const io = streams();
   await withUi(io, (ui) =>
     ui.notify({ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: "Reconnecting... 2/5" }).pipe(
-      Effect.andThen(ui.notify({ _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 3, delaySeconds: 5, fault: "x" })),
+      Effect.andThen(ui.notify({ _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 3, delaySeconds: 5, fault: "x", fromMs: 0, untilMs: 5000 })),
       Effect.andThen(ui.notify({ _tag: "TransportRecovered", agent: "codex" })),
     ),
   );

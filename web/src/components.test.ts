@@ -1300,7 +1300,7 @@ test("the activity line shows retry 2 of 3", () => {
   const events: UiEvent[] = [
     { _tag: "AgentCallStarted", agent: "codex", purpose: "review" },
     { _tag: "AgentCallEnded", agent: "codex", ok: false },
-    { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected" },
+    { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 },
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
