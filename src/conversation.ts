@@ -110,7 +110,7 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
-    // The user reads "Clarification" (issue #21); conversation.md, a record, keeps its heading.
+    // The user reads "User Decisions" (issues #21, #113); conversation.md, a record, keeps its heading.
     const heading = prompts.clarificationHeading(stage);
     // Each interface renders its own help (finding 8 of docs/gui-review.md): the page its Shift+Enter.
     yield* ui.notify({ _tag: "InterviewOpened", heading, stage, total: clarificationCount(agreed, [], [], []).total });
