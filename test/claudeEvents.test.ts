@@ -50,19 +50,19 @@ test("reduceMessages folds init and a success result into a complete outcome", (
 test("reduceMessages reports a failed result as an error of a complete call, not as partial output", () => {
   assert.deepEqual(reduceMessages([init(), failure("error_max_turns", 0.1)]), {
     sessionId: "session-1", costUsd: 0.1, structured: null, resultText: "", error: "error_max_turns", partial: false,
-    failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: "error_max_turns" },
+    failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: "error_max_turns", rejection: null },
   });
 });
 
 test("reduceMessages marks a stream that ended before a result as partial, with the stream failure or the missing-result text", () => {
   assert.deepEqual(reduceMessages([init(), assistantText("half")]), {
-    sessionId: "session-1", costUsd: null, structured: null, resultText: "", error: "the call produced no result message", partial: true, failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null },
+    sessionId: "session-1", costUsd: null, structured: null, resultText: "", error: "the call produced no result message", partial: true, failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null },
   });
   assert.deepEqual(reduceMessages([init()], "socket hang up"), {
-    sessionId: "session-1", costUsd: null, structured: null, resultText: "", error: "socket hang up", partial: true, failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null },
+    sessionId: "session-1", costUsd: null, structured: null, resultText: "", error: "socket hang up", partial: true, failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null },
   });
   assert.deepEqual(reduceMessages([]), {
-    sessionId: null, costUsd: null, structured: null, resultText: "", error: "the call produced no result message", partial: true, failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null },
+    sessionId: null, costUsd: null, structured: null, resultText: "", error: "the call produced no result message", partial: true, failure: { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null },
   });
 });
 
@@ -105,7 +105,7 @@ test("a success result with is_error is a failure: its text is the error, its ou
   assert.equal(outcome.error, "API Error: 503 upstream");
   assert.equal(outcome.structured, null);
   assert.equal(outcome.partial, false);
-  assert.deepEqual(outcome.failure, { streamCode: null, apiStatus: 503, terminalReason: "api_error", assistantError: null, retrySeen: null, subtype: "success" });
+  assert.deepEqual(outcome.failure, { streamCode: null, apiStatus: 503, terminalReason: "api_error", assistantError: null, retrySeen: null, subtype: "success", rejection: null });
   assert.equal(reduceMessages([init(), apiError(500, "")]).error, "api error");
 });
 
@@ -126,7 +126,7 @@ test("an assistant error followed by a message without error is cleared; one rig
 // Issue #26 (S20, P1-R1-3): a valid status report delivered before a transport fault stands.
 test("interpretExecution: a valid report with a transport error stands; with another error it is aborted; a stop wins", () => {
   const report = { status: "finished", summary: "all done", question: "", remaining_work: "" };
-  const faulted = { ...complete(report), error: "read ECONNRESET", partial: true, failure: { streamCode: "ECONNRESET", apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null } };
+  const faulted = { ...complete(report), error: "read ECONNRESET", partial: true, failure: { streamCode: "ECONNRESET", apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null } };
   assert.equal(interpretExecution(faulted, null, true).status, "finished");
   assert.equal(interpretExecution(faulted, null, false).status, "aborted");
   assert.equal(interpretExecution(faulted, { question: "A?", input: "A? -> a" }, true).status, "needs_input");

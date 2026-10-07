@@ -411,5 +411,5 @@ test("a record is replaced atomically: a failure between the temporary file and 
   armed = false;
   assert.deepEqual(await Effect.runPromise(s.loadLog({ plan: 1 })), [a]);
   assert.ok(fs.readdirSync(s.dir).some((n) => n.includes(".tmp-")), "the temporary file of the failed write was expected to remain");
-  assert.equal((await Effect.runPromise(s.usageLines())).length, 0);
+  assert.equal((await Effect.runPromise(s.usageLines())).calls.length, 0);
 });

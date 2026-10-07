@@ -6,6 +6,15 @@ export type UsageLine =
   | Readonly<{ agent: "claude"; session: string | null; turns: number | null; totalCostUsd: number | null }>
   | Readonly<{ agent: "codex"; thread: string | null; inputTokens: number; outputTokens: number }>;
 
+/**
+ * One wait for a Claude Code usage limit (issue #68): when it began, the end scheduled (the reset plus the margin), when
+ * it actually ended and how. Only the actual span counts as waited.
+ */
+export type LimitWait = Readonly<{ agent: "claude"; limitType: string | null; fromMs: number; untilMs: number; endedMs: number; outcome: "lifted" | "interrupted" }>;
+
+/** The lines of usage.jsonl: the calls' usage and the waits. */
+export type UsageLines = Readonly<{ calls: readonly UsageLine[]; waits: readonly LimitWait[] }>;
+
 export type UsageSummary = Readonly<{
   claudeCalls: number;
   claudeSessions: number;
@@ -16,9 +25,14 @@ export type UsageSummary = Readonly<{
   codexTurns: number;
   inputTokens: number;
   outputTokens: number;
+  /** The waits for a usage limit, and the time they actually took (issue #68). */
+  limitWaits: number;
+  waitedMs: number;
+  /** Whether the last wait was interrupted. */
+  lastInterrupted: boolean;
 }>;
 
-export const summarizeUsage = (lines: readonly UsageLine[]): UsageSummary => {
+export const summarizeUsage = ({ calls: lines }: UsageLines): UsageSummary => {
   const claude = lines.flatMap((l) => (l.agent === "claude" ? [l] : []));
   const codex = lines.flatMap((l) => (l.agent === "codex" ? [l] : []));
   // The Agent SDK's total is the running total of a session, so a session counts its last value;
@@ -43,6 +57,9 @@ export const summarizeUsage = (lines: readonly UsageLine[]): UsageSummary => {
     codexTurns: codex.length,
     inputTokens: codex.reduce((sum, l) => sum + l.inputTokens, 0),
     outputTokens: codex.reduce((sum, l) => sum + l.outputTokens, 0),
+    limitWaits: 0,
+    waitedMs: 0,
+    lastInterrupted: false,
   };
 };
 

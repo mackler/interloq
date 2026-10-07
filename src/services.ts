@@ -3,7 +3,7 @@
 
 import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
-import type { AgentUnreachable, CodexCallFailed, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UserStopped } from "./errors.ts";
+import type { AgentUnreachable, CodexCallFailed, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
 import type { SubjectId } from "./artifacts.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
@@ -11,7 +11,7 @@ import type { Config, DecisionAnalysis, ExecOutcome, Explanation, LogEntry, Plan
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
-import type { UsageLine } from "./usage.ts";
+import type { LimitWait, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 
@@ -61,7 +61,7 @@ export interface PlannerShape {
    * A call in which Claude Code may write only under plan-review/ ("records", the default), or call no tool but the
    * structured output ("readOnly"). The output is returned as produced; the caller decodes it.
    */
-  planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability?: PlanningCapability): Effect.Effect<PlanningResult, PlannerError | TransportFault, Decider>;
+  planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability?: PlanningCapability): Effect.Effect<PlanningResult, PlannerError | TransportFault | UsageLimited, Decider>;
   /** A call in which Claude Code implements the plan. */
   /** An execution call; `reporter` answers its report_step calls (issue #6, Q2). */
   /** Declares no TransportFault (issue #26): the adapter retries a transport fault itself, and exhaustion is AgentUnreachable. */
@@ -126,7 +126,9 @@ export interface StoreShape {
   recordFeedback(subject: SubjectId, round: number, text: string): Effect.Effect<void, StoreError>;
   converse(markdown: string): Effect.Effect<void, StoreError>;
   recordUsage(line: UsageLine): Effect.Effect<void, StoreError>;
-  usageLines(): Effect.Effect<readonly UsageLine[], StoreError>;
+  usageLines(): Effect.Effect<UsageLines, StoreError>;
+  /** One wait for a usage limit, as actually spent (issue #68), appended to usage.jsonl when the wait ends. */
+  recordLimitWait(wait: LimitWait): Effect.Effect<void, StoreError>;
   /**
    * The hash of what a subject's rounds observe (behaviour 7): the reviewed file's content; for a work review the
    * diff recomputed from the baseline and the current tree (Q14). "" when it does not exist.

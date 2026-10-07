@@ -1868,6 +1868,24 @@ export function transportOptionDescriptions(): Readonly<{ retry: string; stop: s
 export function transportRetryLine(agent: "claude" | "codex", attempt: number, of: number, delaySeconds: number, fault: string): string {
   return `${agentName(agent)}: connection lost, retry ${attempt} of ${of} in ${delaySeconds} s (${fault})`;
 }
+/** The accessible name of the determinate indicator while the program waits for a usage limit to lift (issue #68). */
+export const USAGE_LIMIT_WAITING_LABEL = "Waiting for the usage limit to lift";
+/** The name of a usage limit by the Agent SDK's rateLimitType (issue #68); an unknown or missing type is "usage limit". */
+export function limitName(limitType: string | null): string {
+  return limitType === null ? "usage limit" : "usage limit";
+}
+/** The start of a wait for a usage limit, as the terminal and conversation.md show it (issue #68). */
+export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string | null, untilMs: number): string {
+  return `${agentName(agent)}: ${limitName(limitType)} ${untilMs}`;
+}
+/** The end of a wait for a usage limit (issue #68). */
+export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
+  return `${agentName(agent)}: ${waitedMs}`;
+}
+/** The page's activity line during a wait for a usage limit (issue #68). */
+export function usageLimitActivity(limitType: string | null, untilMs: number, remainingMs: number): string {
+  return `${limitName(limitType)} ${untilMs} ${remainingMs}`;
+}
 /** A call that succeeded after a retry. */
 export function transportRecoveredLine(agent: "claude" | "codex"): string {
   return `${agentName(agent)}: connection restored`;

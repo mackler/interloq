@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type ClaudeFailure, classifyClaude, classifyCodex } from "../src/transport.ts";
 
+const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
+
 // Issue #26: only positive transport evidence belonging to the failure is retried, and known permanent evidence wins.
 
 const issue26 = "Reconnecting... 2/5 (stream disconnected before completion: WebSocket protocol error: Connection reset without closing handshake)";
@@ -33,53 +35,53 @@ test("Codex: an exec exit is retried only when its stderr shows a transport faul
   assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; usage limit"), false);
 });
 
-const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null };
+const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null };
 const f = (over: Partial<ClaudeFailure>): ClaudeFailure => ({ ...none, ...over });
 
 test("Claude: no facts, or api_error without a status or other evidence, is not retried", () => {
-  assert.equal(classifyClaude(null), false);
-  assert.equal(classifyClaude(none), false);
-  assert.equal(classifyClaude(f({ terminalReason: "api_error" })), false);
+  assert.equal(isRetried(null), false);
+  assert.equal(isRetried(none), false);
+  assert.equal(isRetried(f({ terminalReason: "api_error" })), false);
 });
 
 test("Claude: api_error with 400 is not retried, with 503 it is", () => {
-  assert.equal(classifyClaude(f({ terminalReason: "api_error", apiStatus: 400 })), false);
-  assert.equal(classifyClaude(f({ terminalReason: "api_error", apiStatus: 503 })), true);
+  assert.equal(isRetried(f({ terminalReason: "api_error", apiStatus: 400 })), false);
+  assert.equal(isRetried(f({ terminalReason: "api_error", apiStatus: 503 })), true);
 });
 
 test("Claude: a stream error with a network code is retried", () => {
-  for (const code of ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "EAI_AGAIN"]) assert.equal(classifyClaude(f({ streamCode: code })), true, code);
-  assert.equal(classifyClaude(f({ streamCode: "ERR_SOMETHING" })), false);
+  for (const code of ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "EAI_AGAIN"]) assert.equal(isRetried(f({ streamCode: code })), true, code);
+  assert.equal(isRetried(f({ streamCode: "ERR_SOMETHING" })), false);
 });
 
 test("Claude: server_error with status 401 is not retried: permanent evidence wins", () => {
-  assert.equal(classifyClaude(f({ assistantError: "server_error", apiStatus: 401 })), false);
+  assert.equal(isRetried(f({ assistantError: "server_error", apiStatus: 401 })), false);
 });
 
 test("Claude: an assistant server_error or overloaded with no progress after it is retried", () => {
-  assert.equal(classifyClaude(f({ assistantError: "server_error" })), true);
-  assert.equal(classifyClaude(f({ assistantError: "overloaded" })), true);
+  assert.equal(isRetried(f({ assistantError: "server_error" })), true);
+  assert.equal(isRetried(f({ assistantError: "overloaded" })), true);
 });
 
 test("Claude: permanent assistant errors are not retried, even with a network code", () => {
   for (const e of ["rate_limit", "billing_error", "authentication_failed", "oauth_org_not_allowed", "account_on_hold", "verification_required", "invalid_request", "model_not_found", "max_output_tokens", "cloud_credential_error"]) {
-    assert.equal(classifyClaude(f({ assistantError: e, streamCode: "ECONNRESET" })), false, e);
+    assert.equal(isRetried(f({ assistantError: e, streamCode: "ECONNRESET" })), false, e);
   }
 });
 
 test("Claude: an api_retry with status null or 5xx, and no progress after it, is retried", () => {
-  assert.equal(classifyClaude(f({ retrySeen: { status: null, error: "unknown" } })), true);
-  assert.equal(classifyClaude(f({ retrySeen: { status: 503, error: "server_error" } })), true);
+  assert.equal(isRetried(f({ retrySeen: { status: null, error: "unknown" } })), true);
+  assert.equal(isRetried(f({ retrySeen: { status: 503, error: "server_error" } })), true);
 });
 
 test("Claude: an api_retry with a 4xx status or a permanent error wins over a network code (P1-R1-2)", () => {
-  assert.equal(classifyClaude(f({ retrySeen: { status: 429, error: "rate_limit" }, streamCode: "ECONNRESET" })), false);
-  assert.equal(classifyClaude(f({ retrySeen: { status: null, error: "rate_limit" }, streamCode: "ECONNRESET" })), false);
+  assert.equal(isRetried(f({ retrySeen: { status: 429, error: "rate_limit" }, streamCode: "ECONNRESET" })), false);
+  assert.equal(isRetried(f({ retrySeen: { status: null, error: "rate_limit" }, streamCode: "ECONNRESET" })), false);
 });
 
 test("Claude: the stopping subtypes are not retried", () => {
   for (const s of ["error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"]) {
-    assert.equal(classifyClaude(f({ subtype: s, streamCode: "ECONNRESET" })), false, s);
+    assert.equal(isRetried(f({ subtype: s, streamCode: "ECONNRESET" })), false, s);
   }
 });
 

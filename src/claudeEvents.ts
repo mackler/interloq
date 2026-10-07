@@ -61,7 +61,7 @@ export const decodeToolTarget = (toolInput: unknown): string | null => {
 };
 
 const noResult = "the call produced no result message";
-const noFacts: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null };
+const noFacts: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null };
 
 /** Whether a message shows that the call made progress: an assistant message without error, a stream event, a tool result. */
 const isProgress = (message: SDKMessage): boolean => {

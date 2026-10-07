@@ -33,6 +33,11 @@ export class CodexCallFailed extends Data.TaggedError("CodexCallFailed")<{ reado
  */
 /** The retries of a transport fault were exhausted and the user chose to stop (issue #26, Q2). */
 export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ readonly agent: "claude" | "codex"; readonly attempts: number; readonly lastFault: string }> {}
+/**
+ * A Claude Code call rejected for a usage limit that states when it lifts (issue #68): not a RunError, since its caller
+ * waits until the reset and calls again (src/retry.ts). A limit without a stated reset is not this error.
+ */
+export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly resetsAtMs: number; readonly limitType: string | null }> {}
 export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null }> {}
 export class AgentReplyInvalid extends Data.TaggedError("AgentReplyInvalid")<{ readonly agent: string; readonly issue: string; readonly files: string[] }> {}
 export class ConfigInvalid extends Data.TaggedError("ConfigInvalid")<{ readonly file: string; readonly path: string; readonly message: string }> {}

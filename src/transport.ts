@@ -13,7 +13,32 @@ export type ClaudeFailure = Readonly<{
   assistantError: string | null;
   retrySeen: Readonly<{ status: number | null; error: string }> | null;
   subtype: string | null;
+  /** The latest usage-limit rejection the stream reported after the last sign of progress (issue #68), or null. */
+  rejection: Rejection | null;
 }>;
+
+/**
+ * A usage-limit rejection of Claude Code (issue #68), in its two cases: one that states the instant the limit lifts
+ * (milliseconds since the epoch), which the program waits for, and one that does not, which stays permanent.
+ */
+export type Rejection =
+  | Readonly<{ kind: "withReset"; resetsAtMs: number; limitType: string | null }>
+  | Readonly<{ kind: "withoutReset"; limitType: string | null }>;
+
+/** The fields of the Agent SDK's SDKRateLimitInfo that the program reads. */
+export type RateLimitInfo = Readonly<{ status: string; resetsAt?: number; rateLimitType?: string }>;
+
+/**
+ * The rejection a rate-limit event states, or null when its status is not "rejected". `withReset` only for a finite
+ * positive `resetsAt` (seconds), so a missing or unusable instant is `withoutReset` by construction.
+ */
+export const rejectionOf = (_info: RateLimitInfo): Rejection | null => null;
+
+/** What a failed Claude Code call is (issue #68): permanent, a transport fault, or a usage limit with a stated reset. */
+export type FailureKind =
+  | Readonly<{ kind: "permanent" }>
+  | Readonly<{ kind: "transport" }>
+  | Readonly<{ kind: "limited"; resetsAtMs: number; limitType: string | null }>;
 
 /** The error codes of Node.js that name a dropped, refused or timed-out connection. */
 export const NETWORK_CODES: readonly string[] = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "EAI_AGAIN"];
@@ -64,11 +89,16 @@ const STOPPING_SUBTYPES: readonly string[] = ["error_max_turns", "error_max_budg
 const is4xx = (s: number | null): boolean => s !== null && s >= 400 && s <= 499;
 const is5xx = (s: number | null): boolean => s !== null && s >= 500 && s <= 599;
 
+const PERMANENT: FailureKind = { kind: "permanent" };
+const TRANSPORT: FailureKind = { kind: "transport" };
+
 /**
- * Whether a failed Claude Code call, by the facts kept of it, is a transport fault that a retry could fix. Permanent
- * evidence is checked first; `terminalReason` alone is never sufficient.
+ * What a failed Claude Code call is, by the facts kept of it: a transport fault that a retry could fix, or permanent.
+ * Permanent evidence is checked first; `terminalReason` alone is never sufficient.
  */
-export const classifyClaude = (failure: ClaudeFailure | null): boolean => {
+export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => (isTransport(failure) ? TRANSPORT : PERMANENT);
+
+const isTransport = (failure: ClaudeFailure | null): boolean => {
   if (failure === null) return false;
   const { streamCode, apiStatus, assistantError, retrySeen, subtype } = failure;
   const permanent =

@@ -512,6 +512,10 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "TransportRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
+    // Issue #68: a wait for a usage limit (S8 of its plan shows it).
+    case "UsageLimitWaiting":
+    case "UsageLimitLifted":
+      return run;
     case "AgentCallEnded": {
       // P1-R2-1: a nested call ends and the one it ran in is shown again.
       const ended = run.calls.at(-1);

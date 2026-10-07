@@ -349,7 +349,19 @@ export const CodexUsage = Schema.Struct({
   input_tokens: NonNegativeInt,
   output_tokens: NonNegativeInt,
 });
-export const UsageRecord = Schema.Union([ClaudeUsage, CodexUsage]);
+/** One wait for a Claude Code usage limit (issue #68): the scheduled end apart from the actual one, and how it ended. */
+export const LimitWaitUsage = Schema.Struct({
+  version: Schema.Literal(2),
+  kind: Schema.Literal("usage_limit_wait"),
+  agent: Schema.Literal("claude"),
+  time: Schema.String,
+  limit_type: Schema.NullOr(Schema.String),
+  from: Schema.String,
+  until: Schema.String,
+  ended: Schema.String,
+  outcome: Schema.Literals(["lifted", "interrupted"]),
+});
+export const UsageRecord = Schema.Union([LimitWaitUsage, ClaudeUsage, CodexUsage]);
 
 // The types, under the names the program used before the schemas existed.
 export type Severity = typeof Severity.Type;

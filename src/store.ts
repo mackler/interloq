@@ -15,6 +15,7 @@ import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
+import type { UsageLine } from "./usage.ts";
 
 /** The store of one project. `ignorePaths` are the paths the change detection ignores (config). */
 export const makeStore = (projectDir: string, ignorePaths: readonly string[]): Effect.Effect<StoreShape, never, Platform> =>
@@ -275,14 +276,18 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
       /** The usage lines of either version in their per-agent shape (src/usage.ts folds them); no file gives none. */
       usageLines: () =>
         Effect.gen(function* () {
-          if (!(yield* exists(usageFile))) return [];
+          if (!(yield* exists(usageFile))) return { calls: [], waits: [] };
           const records = yield* Effect.fromResult(readUsage(usageFile, yield* readText(usageFile)));
-          return records.map((r) =>
-            r.agent === "claude"
-              ? { agent: "claude" as const, session: r.session, turns: r.num_turns, totalCostUsd: r.total_cost_usd }
-              : { agent: "codex" as const, thread: r.thread, inputTokens: r.input_tokens, outputTokens: r.output_tokens },
+          const calls = records.flatMap((r): UsageLine[] =>
+            "kind" in r
+              ? []
+              : r.agent === "claude"
+                ? [{ agent: "claude", session: r.session, turns: r.num_turns, totalCostUsd: r.total_cost_usd }]
+                : [{ agent: "codex", thread: r.thread, inputTokens: r.input_tokens, outputTokens: r.output_tokens }],
           );
+          return { calls, waits: [] };
         }),
+      recordLimitWait: (_wait) => Effect.void,
       fileHash: (subject) =>
         typeof subject === "object" && "work" in subject
           ? diffText().pipe(Effect.map((text) => (text === null ? "" : createHash("sha256").update(text).digest("hex"))))

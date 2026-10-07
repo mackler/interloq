@@ -2,7 +2,7 @@
 // backoff; when the retries are exhausted the user decides.
 
 import { Duration, Effect, Result } from "effect";
-import { AgentUnreachable, type RunError, type TransportFault } from "./errors.ts";
+import { AgentUnreachable, type RunError, type TransportFault, type UsageLimited } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { askOffering, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
 import type { QuestionOrigin } from "./question.ts";
@@ -15,6 +15,13 @@ import { type Decider, RunConfig, Store, Ui } from "./services.ts";
 export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transportRetryDelaySeconds">): readonly number[] =>
   Array.from({ length: config.maxTransportRetries }, (_, k) => config.transportRetryDelaySeconds * 2 ** k);
 
+/**
+ * The margin added to a usage limit's stated reset (issue #68): the wait lasts until the reset plus this, and never less
+ * than this, so that a reset stated in the past or a clock behind the server's cannot make the program call again at
+ * once. Neither a threshold nor a setting.
+ */
+export const USAGE_LIMIT_MARGIN_SECONDS = 60;
+
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
 
 /**
@@ -26,14 +33,14 @@ const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e 
 export const withTransportRetry = <A, E, R>(
   agent: "claude" | "codex",
   what: string,
-  attempt: (n: number) => Effect.Effect<A, E | TransportFault, R>,
+  attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
   beforeRetry: Effect.Effect<void, RunError, R>,
   /**
    * "ask": the exhaustion pause; "fail": AgentUnreachable at once, for a call whose failure the caller handles (the
    * context call of a question, S10: it must not ask a question of its own before the question it explains).
    */
   onExhausted: "ask" | "fail" = "ask",
-): Effect.Effect<A, Exclude<E, TransportFault> | AgentUnreachable | RunError, R | Ui | Decider | Store | RunConfig> =>
+): Effect.Effect<A, Exclude<E, TransportFault | UsageLimited> | AgentUnreachable | RunError, R | Ui | Decider | Store | RunConfig> =>
   Effect.gen(function* () {
     const config = yield* RunConfig;
     const ui = yield* Ui;
@@ -48,7 +55,7 @@ export const withTransportRetry = <A, E, R>(
         return result.success;
       }
       const error = result.failure;
-      if (!isFault(error)) return yield* Effect.fail(error as Exclude<E, TransportFault>);
+      if (!isFault(error)) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
       const delay = delays[retried];
       if (delay !== undefined) {
         retried++;

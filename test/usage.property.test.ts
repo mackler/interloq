@@ -16,7 +16,7 @@ const close = (a: number, b: number): void => assert.ok(Math.abs(a - b) < 1e-9, 
 test("property: the cost is the sum of each identified session's last numeric total plus the unidentified totals; tokens add", () => {
   fc.assert(
     fc.property(arbLines, (lines) => {
-      const summary = summarizeUsage(lines);
+      const summary = summarizeUsage({ calls: lines, waits: [] });
       const claude = lines.flatMap((l) => (l.agent === "claude" ? [l] : []));
       const last = new Map<string, number>();
       let unidentified = 0;
@@ -40,7 +40,7 @@ test("property: earlier totals of a session do not change the result, and interl
   fc.assert(
     fc.property(arbLines, cost, (lines, earlier) => {
       const withEarlier = lines.flatMap((l) => (l.agent === "claude" && l.session !== null && l.totalCostUsd !== null ? [{ ...l, totalCostUsd: earlier }, l] : [l]));
-      close(summarizeUsage(withEarlier).costUsd, summarizeUsage(lines).costUsd);
+      close(summarizeUsage({ calls: withEarlier, waits: [] }).costUsd, summarizeUsage({ calls: lines, waits: [] }).costUsd);
     }),
     RUNS,
   );
@@ -56,7 +56,7 @@ test("property: earlier totals of a session do not change the result, and interl
         else if (i < a.length) merged.push(a[i++]);
       }
       merged.push(...a.slice(i), ...b.slice(j));
-      close(summarizeUsage(merged).costUsd, summarizeUsage([...a, ...b]).costUsd);
+      close(summarizeUsage({ calls: merged, waits: [] }).costUsd, summarizeUsage({ calls: [...a, ...b], waits: [] }).costUsd);
     }),
     RUNS,
   );

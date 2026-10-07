@@ -29,7 +29,7 @@ const EDIT_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 type CallbackError = RunError;
 /** A failed call: TransportFault when src/transport.ts identifies a transport fault, ClaudeCallFailed otherwise (issue #26). */
 const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | TransportFault =>
-  classifyClaude(failure) ? new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null }) : new ClaudeCallFailed({ message });
+  classifyClaude(failure).kind === "transport" ? new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null }) : new ClaudeCallFailed({ message });
 
 /** Runs an Effect inside a callback of the SDK; on failure the call is aborted and `fallback` is answered. */
 type InCallback = <A>(effect: Effect.Effect<A, CallbackError>, fallback: A) => Promise<A>;
@@ -419,7 +419,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
               }),
             );
             const recorded = yield* Ref.get(stop);
-            const transport = outcome.error !== null && classifyClaude(outcome.failure);
+            const transport = outcome.error !== null && classifyClaude(outcome.failure).kind === "transport";
             if (transport && recorded === null && execReport(outcome.structured) === null) {
               return yield* Effect.fail(new TransportFault({ agent: "claude", message: outcome.error ?? "", status: outcome.failure?.apiStatus ?? null }));
             }
