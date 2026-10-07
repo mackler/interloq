@@ -9,7 +9,7 @@ setup() { common_setup; }
   for form in help -h --help; do
     run "$ILCLI" $form
     [ "$status" -eq 0 ]
-    for command in run shell review build down release upgrade help; do
+    for command in run shell review web build down release upgrade help; do
       [[ "$output" == *"  $command "* ]] || { echo "'$form' does not list $command"; echo "$output"; return 1; }
     done
   done
@@ -31,6 +31,17 @@ setup() { common_setup; }
   [[ "$output" == *"/opt/interloq/src/main.ts"* ]]
 }
 
+@test "help web documents web, its port, and the recreate" {
+  run "$ILCLI" help web
+  [ "$status" -eq 0 ]
+  local text
+  text="$(printf '%s' "$output" | tr -s ' \n' '  ')"
+  for word in "ilcli web" /opt/interloq/src/web.ts 8090 compose.cc.yaml recreated; do
+    [[ "$text" == *"$word"* ]] || { echo "help web lacks $word"; echo "$output"; return 1; }
+  done
+  [ ! -s "$STUB_LOG" ]
+}
+
 @test "help shell prints shell's usage and makes no docker call" {
   run "$ILCLI" help shell
   [ "$status" -eq 0 ]
@@ -41,7 +52,7 @@ setup() { common_setup; }
 # The developer's decision of 7 Oct 2026 (issue #10), replacing the narrower one of 27 Sep 2026: --help and -h after
 # every subcommand show its usage, and -- passes the rest on to the program that run and review start.
 @test "every subcommand's usage offers --help, and run and review say that -- passes the rest on" {
-  for command in run shell review build down; do
+  for command in run shell review web build down; do
     run "$ILCLI" help "$command"
     [[ "$output" == *"ilcli $command --help | -h"* ]] || { echo "help $command"; echo "$output"; return 1; }
     [[ "$output" != *"are passed to claude"* && "$output" != *"are passed to main.ts"* ]] || { echo "help $command"; echo "$output"; return 1; }

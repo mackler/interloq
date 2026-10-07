@@ -2,7 +2,7 @@ name: ilcli
 help: |-
   Interloq's development container, and the route of a change to the installed copy.
 
-  The docker commands (run, shell, review, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
+  The docker commands (run, shell, review, web, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
 
   Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help, bin/ilcli review -- --help).
 
@@ -47,6 +47,18 @@ commands:
   - bin/ilcli review "task description" /path/to/project
   - bin/ilcli review -- --help    main.ts's own usage
 
+- name: web
+  help: |-
+    Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it
+
+    The port defaults to 8090, the one compose.cc.yaml publishes (8090:8090), at http://localhost:8090/. A server on another port is not reachable from the host until that ports line is changed and the container is recreated (bin/ilcli down, then any docker command), not restarted. The server refuses to start until the page is built: npm run build in the installed copy, which bin/ilcli upgrade does. --help and -h show this usage.
+  catch_all:
+    label: port
+    help: 'Passed to node /opt/interloq/src/web.ts unchanged: [port]'
+  examples:
+  - bin/ilcli web           port 8090
+  - bin/ilcli web 8091      port 8091, reachable from the host only after compose.cc.yaml is changed and the container recreated
+
 - name: build
   help: Build the image from ../claude-code-image
   catch_all:
@@ -76,4 +88,4 @@ commands:
   args:
   - name: command
     help: The command whose usage to show
-    allowed: [run, shell, review, build, down, release, upgrade, help]
+    allowed: [run, shell, review, web, build, down, release, upgrade, help]

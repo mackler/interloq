@@ -8,6 +8,7 @@ setup() { common_setup; }
 up() { argv docker compose -f "$COMPOSE" up -d; }
 claude() { argv docker compose -f "$COMPOSE" exec -it cc claude "$@"; }
 review_line() { argv docker compose -f "$COMPOSE" exec -it cc node /opt/interloq/src/main.ts "$@"; }
+web_line() { argv docker compose -f "$COMPOSE" exec -it cc node /opt/interloq/src/web.ts "$@"; }
 
 expect_log() {
   local expected
@@ -127,5 +128,35 @@ expect_log() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"stub: compose up failed"* ]]
   [[ "$output" == *"'docker compose up' failed"* ]]
+  expect_log "$(up)"
+}
+
+# Issue #11: web starts the web server in the container, in the foreground; web.ts parses the port.
+@test "web starts the container, then the web server on the default port" {
+  run "$ILCLI" web
+  [ "$status" -eq 0 ]
+  expect_log "$(up)" "$(web_line)"
+}
+
+@test "web passes a port, and any other argument, to web.ts" {
+  run "$ILCLI" web 9000
+  run "$ILCLI" web 9000 extra
+  expect_log "$(up)" "$(web_line 9000)" "$(up)" "$(web_line 9000 extra)"
+}
+
+@test "web --help and web -h show web's usage and make no docker call" {
+  for flag in --help -h; do
+    run "$ILCLI" web $flag
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ilcli web"* ]] || { echo "web $flag: no usage"; echo "$output"; return 1; }
+    [[ "$output" == *"Usage"* ]]
+  done
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "a failing 'up -d' before web runs no exec" {
+  export STUB_DOCKER_FAIL=up
+  run "$ILCLI" web
+  [ "$status" -eq 1 ]
   expect_log "$(up)"
 }

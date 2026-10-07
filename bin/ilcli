@@ -15,7 +15,7 @@ version_command() {
 ilcli_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli\n\n"
-    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, review, build, down) and release run on the\n  host in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help, bin/ilcli review -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
+    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, review, web, build, down) and release run on\n  the host in the development clone; upgrade runs on the host in the installed\n  copy (~/work/interloq). The script uses compose.cc.yaml in the root of the\n  clone that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help, bin/ilcli review -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
   else
     printf "ilcli - Interloq's development container, and the route of a change to the installed copy.\n\n"
   fi
@@ -30,6 +30,7 @@ ilcli_usage() {
   printf "  %s   Start the container if needed, then start Claude Code in it (default)\n" "run    "
   printf "  %s   Start the container if needed, then open a Bash shell in it\n" "shell  "
   printf "  %s   Start the container if needed, then run Interloq in the terminal inside it\n" "review "
+  printf "  %s   Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it\n" "web    "
   printf "  %s   Build the image from ../claude-code-image\n" "build  "
   printf "  %s   Stop and remove the container (the volumes are kept)\n" "down   "
   printf "  %s   Push main to GitHub, where CI runs npm test and advances release only if it passes\n" "release"
@@ -145,6 +146,41 @@ ilcli_review_usage() {
     printf "%s\n" "Examples:"
     printf "  bin/ilcli review \"task description\" /path/to/project\n"
     printf "  bin/ilcli review -- --help    main.ts's own usage\n"
+    echo
+
+  fi
+}
+
+ilcli_web_usage() {
+  if [[ -n $long_usage ]]; then
+    printf "ilcli web\n\n"
+    printf "  Start the container if needed, then start Interloq's web server in it, in the\n  foreground; Ctrl+C ends it\n  \n  The port defaults to 8090, the one compose.cc.yaml publishes (8090:8090), at\n  http://localhost:8090/. A server on another port is not reachable from the\n  host until that ports line is changed and the container is recreated\n  (bin/ilcli down, then any docker command), not restarted. The server refuses\n  to start until the page is built: npm run build in the installed copy, which\n  bin/ilcli upgrade does. --help and -h show this usage.\n\n"
+  else
+    printf "ilcli web - Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it\n\n"
+  fi
+
+  printf "%s\n" "Usage:"
+  printf "  ilcli web [--] [PORT...]\n"
+  printf "  ilcli web --help | -h\n"
+  echo
+
+  if [[ -n "$long_usage" ]]; then
+
+    printf "%s\n" "Options:"
+
+    printf "  %s\n" "--help, -h"
+    printf "    Show this help\n"
+    echo
+
+    printf "%s\n" "Arguments:"
+
+    echo "  PORT..."
+    printf "    Passed to node /opt/interloq/src/web.ts unchanged: [port]\n"
+    echo
+
+    printf "%s\n" "Examples:"
+    printf "  bin/ilcli web           port 8090\n"
+    printf "  bin/ilcli web 8091      port 8091, reachable from the host only after\n  compose.cc.yaml is changed and the container recreated\n"
     echo
 
   fi
@@ -268,7 +304,7 @@ ilcli_help_usage() {
 
     printf "  %s\n" "COMMAND"
     printf "    The command whose usage to show\n"
-    printf "    %s\n" "Allowed: run, shell, review, build, down, release, upgrade, help"
+    printf "    %s\n" "Allowed: run, shell, review, web, build, down, release, upgrade, help"
     echo
 
   fi
@@ -346,6 +382,14 @@ ilcli_review_command() {
   ensure_running
   forwarded_args review
   exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc node /opt/interloq/src/main.ts "${forwarded[@]}"
+
+}
+
+ilcli_web_command() {
+
+  ensure_running
+  forwarded_args web
+  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc node /opt/interloq/src/web.ts "${forwarded[@]}"
 
 }
 
@@ -523,6 +567,13 @@ parse_requirements() {
       action="review"
       shift
       ilcli_review_parse_requirements "$@"
+      shift $#
+      ;;
+
+    web)
+      action="web"
+      shift
+      ilcli_web_parse_requirements "$@"
       shift $#
       ;;
 
@@ -718,6 +769,54 @@ ilcli_review_parse_requirements() {
   done
 
   action="review"
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+
+      --)
+        shift
+        other_args+=("$@")
+        break
+        ;;
+
+      -?*)
+        other_args+=("$1")
+        shift
+        ;;
+
+      *)
+
+        other_args+=("$1")
+        shift
+
+        ;;
+
+    esac
+  done
+
+}
+
+ilcli_web_parse_requirements() {
+  local key
+
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      --help | -h)
+        long_usage=yes
+        ilcli_web_usage
+        exit
+        ;;
+
+      *)
+        break
+        ;;
+
+    esac
+  done
+
+  action="web"
 
   while [[ $# -gt 0 ]]; do
     key="$1"
@@ -1012,8 +1111,8 @@ ilcli_help_parse_requirements() {
     esac
   done
 
-  if [[ -n ${args['command']:-} ]] && [[ ! ${args['command']:-} =~ ^(run|shell|review|build|down|release|upgrade|help)$ ]]; then
-    printf "%s\n" "command must be one of: run, shell, review, build, down, release, upgrade, help" >&2
+  if [[ -n ${args['command']:-} ]] && [[ ! ${args['command']:-} =~ ^(run|shell|review|web|build|down|release|upgrade|help)$ ]]; then
+    printf "%s\n" "command must be one of: run, shell, review, web, build, down, release, upgrade, help" >&2
     exit 1
   fi
 
@@ -1046,6 +1145,7 @@ run() {
     "run") ilcli_run_command ;;
     "shell") ilcli_shell_command ;;
     "review") ilcli_review_command ;;
+    "web") ilcli_web_command ;;
     "build") ilcli_build_command ;;
     "down") ilcli_down_command ;;
     "release") ilcli_release_command ;;
