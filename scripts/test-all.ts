@@ -9,12 +9,25 @@ export type StageResult = Readonly<{ stage: Stage; code: number; output: string 
 /** The process boundary: runs one stage to its end. */
 export type StartStage = (stage: Stage) => Promise<StageResult>;
 export type Outcome = Readonly<{ results: readonly StageResult[]; code: 0 | 1 }>;
+export type NonEmpty<A> = readonly [A, ...A[]];
+/**
+ * What a runner runs: stages that share nothing, started at once, and optionally one stage after them. A run without a
+ * final stage has no final field, so nothing checks whether one is present (issue #105).
+ */
+export type Stages =
+  | Readonly<{ kind: "parallel"; parallel: NonEmpty<Stage> }>
+  | Readonly<{ kind: "thenFinal"; parallel: NonEmpty<Stage>; final: Stage }>;
 
 const stage = (script: string): Stage => ({ name: script, script });
-/** The stages that share nothing: run at once. */
-export const parallelStages: readonly Stage[] = ["check", "test:unit", "test:cli", "test:web", "build"].map(stage);
-/** The end-to-end tests, which need the build: run only when every parallel stage passed. */
-export const finalStage: Stage = stage("test:e2e");
+/**
+ * `npm test`'s stages: those that share nothing, run at once, then the end-to-end tests, which need the build and run
+ * only when every parallel stage passed.
+ */
+export const testStages: Stages = {
+  kind: "thenFinal",
+  parallel: [stage("check"), stage("test:unit"), stage("test:cli"), stage("test:web"), stage("build")],
+  final: stage("test:e2e"),
+};
 
 /** The pure part of the decision: whether every stage passed. */
 export const verdict = (results: readonly StageResult[]): Readonly<{ failed: readonly string[]; passed: boolean }> => {
@@ -22,14 +35,21 @@ export const verdict = (results: readonly StageResult[]): Readonly<{ failed: rea
   return { failed, passed: failed.length === 0 };
 };
 
-/** Runs the parallel stages at once, then the final stage if all of them passed. */
-export const runStages = async (start: StartStage, onEnd: (result: StageResult) => void = () => {}): Promise<Outcome> => {
+/** Runs the parallel stages at once, then the final stage, where there is one, if all of them passed. */
+export const runStages = async (stages: Stages, start: StartStage, onEnd: (result: StageResult) => void = () => {}): Promise<Outcome> => {
   const ended = (result: StageResult): StageResult => {
     onEnd(result);
     return result;
   };
-  const first = await Promise.all(parallelStages.map((s) => start(s).then(ended)));
-  const results = verdict(first).passed ? [...first, ended(await start(finalStage))] : first;
+  const first = await Promise.all(stages.parallel.map((s) => start(s).then(ended)));
+  const results = await (async (): Promise<readonly StageResult[]> => {
+    switch (stages.kind) {
+      case "parallel":
+        return first;
+      case "thenFinal":
+        return verdict(first).passed ? [...first, ended(await start(stages.final))] : first;
+    }
+  })();
   return { results, code: verdict(results).passed ? 0 : 1 };
 };
 
@@ -57,7 +77,8 @@ const report = (r: StageResult): void => {
 const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  void runStages(spawnStage(npm, (s) => ["run", "--silent", s.script], (s) => s === finalStage), report).then((outcome) => {
+  const streamed = (s: Stage): boolean => testStages.kind === "thenFinal" && s === testStages.final;
+  void runStages(testStages, spawnStage(npm, (s) => ["run", "--silent", s.script], streamed), report).then((outcome) => {
     const { failed } = verdict(outcome.results);
     process.stdout.write(failed.length === 0 ? "\nnpm test: every stage passed.\n" : `\nnpm test: failed: ${failed.join(", ")}.\n`);
     process.exitCode = outcome.code;
