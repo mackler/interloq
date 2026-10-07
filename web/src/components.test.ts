@@ -396,7 +396,7 @@ const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, 
  */
 const allOpen = (timeline: readonly TimelineEntry[], executing: boolean, busy: boolean): RailView => {
   const run = { ...emptyRun(1), timeline, busy };
-  const scopes = railView(run, executing, busy).phases.flatMap((p) => [p.node.scope, ...[...p.branches.values()].map((b) => b.scope)]);
+  const scopes = railView(run, executing, busy).phases.flatMap((p) => [p.node, ...p.branches.values()].flatMap((n) => (n._tag === "Disclosure" ? [n.scope] : [])));
   return railView({ ...run, ui: scopes.reduce((st, scope) => withFlag(st, { scope, open: true }), emptyUiState) }, executing, busy);
 };
 type RailProps = { timeline: readonly TimelineEntry[]; busy: boolean; executing?: boolean; callStartedAt?: string | null };
@@ -421,7 +421,7 @@ describe("TimelineRail", () => {
     expect(root.textContent).not.toMatch(/Planning phase 1/);
     expect(root.textContent).not.toMatch(/Question review/);
     // Issue #63: the active phase's mark is the circular indicator; no linear bar remains.
-    expect(root.querySelector("[data-state=active] > .mark .circular-indeterminate")).not.toBe(null);
+    expect(root.querySelector("[data-state=active] > button > .mark .circular-indeterminate")).not.toBe(null);
     expect(root.querySelector("[data-busy]")).toBe(null);
   });
 
@@ -645,8 +645,12 @@ describe("App and the draft", () => {
     const toggle = (label: string) => [...root.querySelectorAll<HTMLButtonElement>("button.rail-toggle")].find((b) => b.querySelector("[data-label]")?.textContent?.trim() === label)!;
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, foreseen]) }] });
     ws.onopen?.({});
-    expect([...root.querySelectorAll("button.rail-toggle")].map((b) => b.getAttribute("aria-expanded"))).toEqual(["false", "false", "false"]);
+    // Issue #110: a phase foreseen holds nothing yet, so it is a plain row with no control.
+    expect(root.querySelectorAll("button.rail-toggle").length).toBe(0);
     event(2, began);
+    expect(toggle("Planning")).toBe(undefined);
+    // Its first cycle is its first child: the row becomes a disclosure at that moment, opened by the run.
+    event(3, { _tag: "Notified", event: { _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 } });
     expect(toggle("Planning").getAttribute("aria-expanded")).toBe("true");
     ws.sent = [];
     toggle("Planning").click();
@@ -654,7 +658,7 @@ describe("App and the draft", () => {
     expect(ws.sent.map((m) => JSON.parse(m))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "RailPhase", phase: "planning-1" }, open: false } }]);
     ws.receive({ type: "ui", run: 1, state: { version: 1, choices: [{ scope: { _tag: "RailPhase", phase: "planning-1" }, open: false }] } });
     expect(toggle("Planning").getAttribute("aria-expanded")).toBe("false");
-    event(3, asked(1));
+    event(4, asked(1));
     expect(toggle("Planning").getAttribute("aria-expanded")).toBe("true");
   });
 
@@ -1393,7 +1397,7 @@ describe("TimelineRail: where the indicator is", () => {
   });
   const CALL = "2026-09-29T10:00:00.000Z";
   // Issue #63: the phase's indicator is its mark's circular indicator, with the call's time beside it.
-  const entryBar = (root: HTMLElement) => root.querySelector(".entry > .mark [role=progressbar]");
+  const entryBar = (root: HTMLElement) => root.querySelector(".entry > .mark [role=progressbar], .entry > button > .mark [role=progressbar]");
 
   test("Gather Requirements: the indicator and the call's time are inside the active step, not in the step ahead or under the phase", () => {
     const root = showRail({ busy: true, timeline: [gather([gatherStep("formulate", "active"), gatherStep("clarification", "ahead")])], callStartedAt: CALL });
@@ -1914,7 +1918,8 @@ describe("TimelineRail: the tree that collapses", () => {
     const running = one(li, "[data-collapsed] [data-running]");
     expect(running.textContent).toContain(`${prompts.stageHeading(1, "first")} — ${prompts.planStepLabel(2, "step S2")}`);
     expect(running.querySelector(".circular-indeterminate")).not.toBe(null);
-    expect(one(li, "[data-collapsed] [data-condition]").textContent?.trim()).toBe(prompts.RAIL_CONDITION_LABEL.partial);
+    // Issue #110: the condition is no longer a line of its own; it is in the row's name.
+    expect(li.querySelector("[data-condition]")).toBe(null);
     const bar = one(li, "[data-collapsed] [data-tally] [role=progressbar]");
     expect(bar.getAttribute("aria-valuenow")).toBe("25");
     expect(bar.getAttribute("aria-valuetext")).toBe(prompts.stepsCompleteLabel(1, 4));
@@ -1922,22 +1927,62 @@ describe("TimelineRail: the tree that collapses", () => {
     expect(bar.getAttribute("aria-label")).not.toMatch(/time|remaining|left/);
     const toggle = toggleOf(li);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle.getAttribute("aria-label")).toBe(prompts.railToggleName("Implementation", false, prompts.RAIL_CONDITION_LABEL.partial, `${prompts.stageHeading(1, "first")} — ${prompts.planStepLabel(2, "step S2")}`));
+    expect(toggle.getAttribute("aria-label")).toBe(prompts.railToggleName("Implementation", prompts.TIMELINE_STATE_LABEL.active, prompts.RAIL_CONDITION_LABEL.partial, `${prompts.stageHeading(1, "first")} — ${prompts.planStepLabel(2, "step S2")}`));
   });
 
-  test("the condition of a collapsed stage in each of its three cases, and its bar's filled fraction", () => {
-    const cases: [Statuses, keyof typeof prompts.RAIL_CONDITION_LABEL, string][] = [
-      [{}, "notStarted", "0"],
-      [{ S3: "unfinished" }, "partial", "0"],
-      [{ S3: "done", S4: "done" }, "completed", "100"],
+  // Issue #114: a stage's glyph gives its condition, in its steps' vocabulary; the condition is shown in one place, and
+  // the bar of steps complete appears once a step is complete (at zero it would repeat the glyph).
+  test("a collapsed stage's glyph gives its condition in each of its three cases; its bar only once a step is complete", () => {
+    const cases: [Statuses, keyof typeof prompts.RAIL_CONDITION_LABEL, string, string | null][] = [
+      [{}, "notStarted", "○", null],
+      [{ S3: "unfinished" }, "partial", "◐", null],
+      [{ S3: "done" }, "partial", "◐", "50"],
+      [{ S3: "done", S4: "done" }, "completed", "✓", "100"],
     ];
-    for (const [statuses, condition, percent] of cases) {
+    for (const [statuses, condition, glyph, percent] of cases) {
       const root = render({ timeline: [implementation(null, statuses)], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] });
       const stage = row(root, prompts.stageHeading(2, "second"));
       expect(stage.querySelector("[data-plan-step]")).toBe(null);
-      expect(one(stage, "[data-condition]").textContent?.trim()).toBe(prompts.RAIL_CONDITION_LABEL[condition]);
-      expect(one(stage, "[data-tally] [role=progressbar]").getAttribute("aria-valuenow")).toBe(percent);
+      const toggle = toggleOf(stage);
+      expect(one(toggle, ".mark").textContent?.trim()).toBe(glyph);
+      expect(stage.querySelector("[data-condition]")).toBe(null);
+      expect(stage.textContent).not.toContain(prompts.RAIL_CONDITION_LABEL[condition]);
+      expect(toggle.getAttribute("aria-label")).toBe(prompts.railToggleName(prompts.stageHeading(2, "second"), prompts.RAIL_CONDITION_LABEL[condition], null, null));
+      expect(stage.querySelector("[data-tally] [role=progressbar]")?.getAttribute("aria-valuenow") ?? null).toBe(percent);
     }
+  });
+
+  // Issue #110: the leading position holds one glyph. A row with nothing beneath it is plain; a row with children has its
+  // mark as its control.
+  test("no row renders both a mark and a chevron; a row with no children renders neither a button nor aria-expanded", () => {
+    const ahead: TimelineEntry = { ...fresh, phase: { kind: "work", n: 1 }, label: "Code review", state: "ahead", groups: [], steps: [], plan: null };
+    const root = render({ timeline: [planning("done"), implementation(null, {}, ["S1"]), ahead] });
+    expect(root.querySelector(".chevron")).toBe(null);
+    const plain = row(root, "Code review");
+    expect(plain.querySelector("button")).toBe(null);
+    expect(plain.querySelector("[aria-expanded]")).toBe(null);
+    expect(one(plain, ":scope > .mark").getAttribute("aria-label")).toBe(prompts.TIMELINE_STATE_LABEL.ahead);
+    for (const label of ["Planning", "Implementation", prompts.stageHeading(1, "first"), prompts.stageHeading(2, "second")]) {
+      const li = row(root, label);
+      const toggle = toggleOf(li);
+      expect(toggle.hasAttribute("aria-expanded")).toBe(true);
+      expect(toggle.hasAttribute("aria-controls")).toBe(true);
+      expect(li.querySelectorAll(":scope > .mark, :scope > button > .mark").length).toBe(1);
+      expect(toggle.querySelector(".mark")).not.toBe(null);
+    }
+  });
+
+  // Issue #110: whichever glyph remains, the name says the row's state in words.
+  test("the accessible name states the row's state in words, whichever glyph the row shows", () => {
+    const done = render({ timeline: [planning("done")] });
+    expect(toggleOf(row(done, "Planning")).getAttribute("aria-label")).toBe(prompts.railToggleName("Planning", prompts.TIMELINE_STATE_LABEL.done, null, null));
+    const busy = render({ timeline: [planning("active")], busy: true });
+    expect(toggleOf(row(busy, "Planning")).getAttribute("aria-label")).toBe(prompts.railToggleName("Planning", prompts.stepWorkingLabel("phaseStep"), null, null));
+    const group = { subject: "questions" as const, heading: "Question review", rounds: [{ round: 1, raised: 0, counted: 0, reviewIds: [] }], corrections: 0, result: "converged" as const, done: true };
+    const step: TimelineStep = { kind: "formulate", label: prompts.stepLabel("formulate"), state: "done", count: null, base: { answered: 0, total: 0 }, groups: [group] };
+    const gather: TimelineEntry = { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "active", began: "2026-09-29T09:00:00.000Z", groups: [], steps: [step], plan: null };
+    const g = render({ timeline: [gather] });
+    expect(toggleOf(row(g, prompts.stepLabel("formulate"))).getAttribute("aria-label")).toBe(prompts.railToggleName(prompts.stepLabel("formulate"), prompts.TIMELINE_STATE_LABEL.done, null, null));
   });
 
   test("a collapsed phase hides its cycle lines and keeps its own time", () => {
@@ -1975,14 +2020,16 @@ describe("TimelineRail: the tree that collapses", () => {
     const phaseBody = controlled(closed, toggleOf(row(closed, "Implementation")));
     expect(phaseBody.querySelector("[data-collapsed]")).not.toBe(null);
     expect(phaseBody.querySelector("[data-stage], [data-plan-step]")).toBe(null);
-    const stageClosed = render({ timeline: [implementation(null, {})], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] });
+    // A collapsed stage shows a summary once one of its steps is complete (issue #110: no bar at zero).
+    const stageClosed = render({ timeline: [implementation(null, { S3: "done" })], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] });
     const stageBody = controlled(stageClosed, toggleOf(row(stageClosed, prompts.stageHeading(2, "second"))));
     expect(stageBody.querySelector("[data-collapsed]")).not.toBe(null);
     expect(stageBody.querySelector("[data-plan-step]")).toBe(null);
     const open = render({ timeline: [implementation(null, {})], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: true }] });
     expect(controlled(open, toggleOf(row(open, "Implementation"))).querySelector("[data-stage]")).not.toBe(null);
     expect(controlled(open, toggleOf(row(open, prompts.stageHeading(2, "second")))).querySelector("[data-plan-step]")).not.toBe(null);
-    const gatherStep: TimelineStep = { kind: "formulate", label: prompts.stepLabel("formulate"), state: "done", count: null, base: { answered: 0, total: 0 }, groups: [] };
+    const formulateReview = { subject: "questions" as const, heading: "Question review", rounds: [{ round: 1, raised: 0, counted: 0, reviewIds: [] }], corrections: 0, result: "converged" as const, done: true };
+    const gatherStep: TimelineStep = { kind: "formulate", label: prompts.stepLabel("formulate"), state: "done", count: null, base: { answered: 0, total: 0 }, groups: [formulateReview] };
     const gather: TimelineEntry = { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "active", began: "2026-09-29T09:00:00.000Z", groups: [], steps: [gatherStep], plan: null };
     const stepClosed = render({ timeline: [gather], flags: [{ scope: phaseScope("questions"), open: true }, { scope: { _tag: "RailBranch", phase: "questions", branch: "step:formulate" }, open: false }] });
     controlled(stepClosed, toggleOf(row(stepClosed, prompts.stepLabel("formulate"))));
@@ -2002,7 +2049,7 @@ describe("TimelineRail: the tree that collapses", () => {
   test("an active phase with no running step carries the circular indicator on its mark, and no linear bar", () => {
     for (const open of [true, false]) {
       const root = render({ timeline: [planning("active")], busy: true, flags: [{ scope: phaseScope("planning-1"), open }] });
-      expect(one(root, ".entry > .mark [role=progressbar]").classList.contains("circular-indeterminate")).toBe(true);
+      expect(one(root, ".entry > button > .mark [role=progressbar]").classList.contains("circular-indeterminate")).toBe(true);
       expect(root.querySelector("[data-busy], .indeterminate")).toBe(null);
     }
   });

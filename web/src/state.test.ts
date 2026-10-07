@@ -4,11 +4,11 @@ import * as prompts from "../../src/prompts.ts";
 import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
 import { foreseenPhases, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
-import { conditionOf, railView } from "./rail.ts";
+import { conditionOf, type Disclosure, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
-import { bandKey, countdownView, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", current, incarnation: "a" });
@@ -1460,25 +1460,35 @@ describe("the rail as a tree that collapses", () => {
   const phaseScope = (phase: Phase): UiScope => ({ _tag: "RailPhase", phase: bandKey(phase) });
   const stageScope = (n: number): UiScope => ({ _tag: "RailBranch", phase: bandKey(implementation), branch: `stage:current-${n}` });
   const viewOf = (s: ViewState) => railView(s.run!, executing(s.run!), s.run!.busy);
-  const phaseNode = (s: ViewState, phase: Phase) => viewOf(s).phases.find((p) => samePhaseKey(p.entry.phase, phase))!.node;
+  /** Issue #110: a row with children is a disclosure; the tests of its open state read it through this, which fails on a plain row. */
+  const disclosure = (node: NodeView | undefined): Disclosure => {
+    expect(node?._tag).toBe("Disclosure");
+    return node as Disclosure;
+  };
+  const rawPhase = (s: ViewState, phase: Phase) => viewOf(s).phases.find((p) => samePhaseKey(p.entry.phase, phase))!.node;
+  const phaseNode = (s: ViewState, phase: Phase) => disclosure(rawPhase(s, phase));
   const samePhaseKey = (a: Phase, b: Phase) => bandKey(a) === bandKey(b);
-  const branch = (s: ViewState, phase: Phase, key: string) => viewOf(s).phases.find((p) => samePhaseKey(p.entry.phase, phase))!.branches.get(key);
+  const rawBranch = (s: ViewState, phase: Phase, key: string) => viewOf(s).phases.find((p) => samePhaseKey(p.entry.phase, phase))!.branches.get(key);
+  const branch = (s: ViewState, phase: Phase, key: string) => disclosure(rawBranch(s, phase, key));
+  /** A row's open state, or "plain" for a row with nothing to disclose. */
+  const openOf = (node: NodeView | undefined) => (node?._tag === "Disclosure" ? node.open : "plain");
   const planned = notified({ _tag: "PlanChanged", phase: 1, plan: planWith({}), step: null });
-  const executingS1: RunEvent[] = [started, foreseen(false, 1), began(planning), planned, ended(planning), began(implementation), call(), ...reports([["S1", "started"]])];
+  /** The first cycle of planning phase 1: Planning's first child, which makes its row a disclosure (issue #110). */
+  const planRound = notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 });
+  const executingS1: RunEvent[] = [started, foreseen(false, 1), began(planning), planRound, planned, ended(planning), began(implementation), call(), ...reports([["S1", "started"]])];
 
   test("everything is collapsed at the start", () => {
     const s = fold(live([started, foreseen(true, 1), planned]));
-    for (const p of viewOf(s).phases) {
-      expect(p.node.open).toBe(false);
-      for (const b of p.branches.values()) expect(b.open).toBe(false);
-    }
+    // Gather Requirements holds its foreseen steps and Implementation its plan; Planning and the code review hold nothing yet.
+    expect(viewOf(s).phases.map((p) => [p.entry.phase.kind, openOf(p.node)])).toEqual([["questions", false], ["planning", "plain"], ["execution", false], ["work", "plain"]]);
+    for (const p of viewOf(s).phases) for (const b of p.branches.values()) expect(openOf(b)).toBe(p.entry.phase.kind === "questions" ? "plain" : false);
     expect([...(viewOf(s).phases.find((p) => p.entry.phase.kind === "execution")?.branches.keys() ?? [])]).toEqual(["stage:current-1", "stage:current-2"]);
   });
 
   test("a phase opens when it begins and stays open when it ends; a stage opens when one of its steps begins", () => {
-    const s = fold(live([started, foreseen(false, 1), began(planning)]));
+    const s = fold(live([started, foreseen(false, 1), began(planning), planRound]));
     expect(phaseNode(s, planning).open).toBe(true);
-    expect(phaseNode(s, implementation).open).toBe(false);
+    expect(rawPhase(s, implementation)).toEqual(PLAIN);
     const after = fold(live(executingS1));
     expect(phaseNode(after, planning).open).toBe(true);
     expect(phaseNode(after, implementation).open).toBe(true);
@@ -1487,37 +1497,37 @@ describe("the rail as a tree that collapses", () => {
   });
 
   test("a step of Gather Requirements opens when it begins", () => {
-    const s = fold(live([started, foreseen(true, 1), began({ kind: "questions" })]));
+    const s = fold(live([started, foreseen(true, 1), began({ kind: "questions" }), notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 })]));
     expect(branch(s, { kind: "questions" }, "step:formulate")?.open).toBe(true);
-    expect(branch(s, { kind: "questions" }, "step:clarification")?.open).toBe(false);
+    expect(rawBranch(s, { kind: "questions" }, "step:clarification")).toEqual(PLAIN);
   });
 
   test("a phase the user closed stays closed when it begins; one he opened stays open; one he never touched follows the run", () => {
-    const closed = fold([...live([started, foreseen(false, 1)]), flags({ scope: phaseScope(planning), open: false }), ...live([began(planning)]).slice(2).map((m) => (m.type === "event" ? { ...m, seq: 2 } : m))]);
+    const closed = fold([...live([started, foreseen(false, 1)]), flags({ scope: phaseScope(planning), open: false }), ...live([began(planning), planRound]).slice(2).map((m, i) => (m.type === "event" ? { ...m, seq: 2 + i } : m))]);
     expect(phaseNode(closed, planning).open).toBe(false);
-    const opened = fold([...live([started, foreseen(false, 1)]), flags({ scope: phaseScope(implementation), open: true })]);
+    const opened = fold([...live([started, foreseen(false, 1), planned]), flags({ scope: phaseScope(implementation), open: true })]);
     expect(phaseNode(opened, implementation).open).toBe(true);
-    expect(phaseNode(opened, planning).open).toBe(false);
-    const untouched = fold([...live([started, foreseen(false, 1), began(planning)]), flags({ scope: phaseScope(implementation), open: true })]);
+    expect(rawPhase(opened, planning)).toEqual(PLAIN);
+    const untouched = fold([...live([started, foreseen(false, 1), began(planning), planRound]), flags({ scope: phaseScope(implementation), open: true })]);
     expect(phaseNode(untouched, planning).open).toBe(true);
   });
 
   test("a closed phase is held open by a prompt inside it, and returns to the user's choice once the prompt is answered", () => {
     const close = flags({ scope: phaseScope(planning), open: false });
-    const waiting = fold([...live([started, foreseen(false, 1), began(planning), asked(1, prompts.decisionPrompt)]), close]);
+    const waiting = fold([...live([started, foreseen(false, 1), began(planning), planRound, asked(1, prompts.decisionPrompt)]), close]);
     expect(phaseNode(waiting, planning)).toMatchObject({ open: true, held: true });
-    const answered = fold([...live([started, foreseen(false, 1), began(planning), asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }]), close]);
+    const answered = fold([...live([started, foreseen(false, 1), began(planning), planRound, asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }]), close]);
     expect(phaseNode(answered, planning)).toMatchObject({ open: false, held: false });
   });
 
   test("a halt holds the stopped phase open", () => {
-    const s = fold([...live([started, foreseen(false, 1), began(planning), { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
+    const s = fold([...live([started, foreseen(false, 1), began(planning), planRound, { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
     expect(phaseNode(s, planning)).toMatchObject({ open: true, held: true });
   });
 
   // P1-R1-1: after a halt, the stage of the step the halted execution call was working on.
   test("a halt after the execution call ended holds the phase and the stage of the step last reported running", () => {
-    const events: RunEvent[] = [started, foreseen(false, 1), began(planning), planned, ended(planning), began(implementation), call(), ...reports([["S4", "started"], ["S4", "done"], ["S1", "started"]]), callEnded, { _tag: "Ended", code: 1 }];
+    const events: RunEvent[] = [started, foreseen(false, 1), began(planning), planRound, planned, ended(planning), began(implementation), call(), ...reports([["S4", "started"], ["S4", "done"], ["S1", "started"]]), callEnded, { _tag: "Ended", code: 1 }];
     const s = fold([...live(events), flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false }, { scope: stageScope(2), open: false })]);
     const entry = s.run!.timeline.find((e) => e.phase.kind === "execution")!;
     expect(entry.currentStep).toBe(null);
@@ -1550,8 +1560,9 @@ describe("the rail as a tree that collapses", () => {
     expect(phaseNode(s, implementation)).toMatchObject({ open: true, held: true });
     expect(branch(s, implementation, "stage:current-1")).toMatchObject({ open: true, held: true });
     // An ended Implementation shows only the steps it acted on, so stage 2 is not shown at all; it is not held.
-    expect(branch(s, implementation, "stage:current-2")?.held ?? false).toBe(false);
-    const planningHalt = fold([...live([started, foreseen(false, 1), began(planning), ended(planning), { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
+    const shown2 = rawBranch(s, implementation, "stage:current-2");
+    expect(shown2?._tag === "Disclosure" && shown2.held).toBe(false);
+    const planningHalt = fold([...live([started, foreseen(false, 1), began(planning), planRound, ended(planning), { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
     expect(phaseNode(planningHalt, planning)).toMatchObject({ open: true, held: true });
   });
 
@@ -1573,13 +1584,57 @@ describe("the rail as a tree that collapses", () => {
     expect(phaseNode(partial, implementation).collapsed.condition).toBe("partial");
     const complete = fold(live([...executingS1, ...reports([["S4", "started"], ["S4", "done"]], { S1: "started" })]));
     expect(branch(complete, implementation, "stage:current-2")?.collapsed.condition).toBe("completed");
-    expect(phaseNode(fold(live([started, foreseen(false, 1)])), planning).collapsed).toEqual({ running: null, condition: null, tally: null });
+    expect(rawPhase(fold(live([started, foreseen(false, 1)])), planning)).toEqual(PLAIN);
   });
 
   test("the tally counts the steps complete of the steps hidden", () => {
     const s = fold(live([...executingS1, ...reports([["S1", "done"]], { S1: "started" })]));
     expect(branch(s, implementation, "stage:current-1")?.collapsed.tally).toEqual({ done: 1, total: 3 });
     expect(phaseNode(s, implementation).collapsed.tally).toEqual({ done: 1, total: 4 });
+  });
+
+  // Issue #110: a row is a disclosure exactly when it has something beneath it.
+  test("a row is plain exactly when it has nothing to disclose, and gains its disclosure with its first child", () => {
+    const bare = fold(live([started, foreseen(true, 1), began({ kind: "questions" })]));
+    expect(rawBranch(bare, { kind: "questions" }, "step:formulate")).toEqual(PLAIN);
+    expect(rawPhase(bare, planning)).toEqual(PLAIN);
+    const withRound = fold(live([started, foreseen(true, 1), began({ kind: "questions" }), notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 })]));
+    expect(branch(withRound, { kind: "questions" }, "step:formulate").open).toBe(true);
+    const planningBare = fold(live([started, foreseen(false, 1), began(planning)]));
+    expect(rawPhase(planningBare, planning)).toEqual(PLAIN);
+    expect(phaseNode(fold(live([started, foreseen(false, 1), began(planning), planRound])), planning).open).toBe(true);
+  });
+
+  test("railView's rows follow the table of what has children, for any timeline entry", () => {
+    const group = { subject: { plan: 1 }, heading: "h", rounds: [], corrections: 0, result: null, done: false } as const;
+    const recorded = (id: string) => ({ id, number: 1, label: id, text: id, status: "pending" as const });
+    const arbEntry = fc.record({
+      groups: fc.integer({ min: 0, max: 2 }),
+      steps: fc.array(fc.integer({ min: 0, max: 2 }), { maxLength: 2 }),
+      plan: fc.option(fc.array(fc.integer({ min: 0, max: 2 }), { maxLength: 3 }), { nil: null }),
+    });
+    fc.assert(
+      fc.property(arbEntry, ({ groups, steps, plan }) => {
+        const base = emptyRun(1);
+        const kinds = ["formulate", "terms", "clarification"] as const;
+        const entry: TimelineEntry = {
+          phase: { kind: "execution", n: 1 }, label: "Implementation", state: "active" as const, began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null,
+          groups: Array.from({ length: groups }, () => group),
+          steps: steps.map((g, i) => ({ kind: kinds[i], label: kinds[i], state: "done" as const, count: null, base: { answered: 0, total: 0 }, groups: Array.from({ length: g }, () => group) })),
+          plan: plan === null ? null : { stages: plan.map((n, k) => ({ key: `current-${k + 1}`, number: k + 1, title: `t${k}`, steps: Array.from({ length: n }, (_, j) => recorded(`S${k}-${j}`)) })) },
+        };
+        const view = railView({ ...base, timeline: [entry] }, false, false).phases[0];
+        expect(view.node._tag).toBe(groups > 0 || steps.length > 0 || plan !== null ? "Disclosure" : "Plain");
+        steps.forEach((g, i) => expect(view.branches.get(`step:${kinds[i]}`)?._tag).toBe(g > 0 ? "Disclosure" : "Plain"));
+        (plan ?? []).forEach((n, k) => expect(view.branches.get(`stage:current-${k + 1}`)?._tag).toBe(n > 0 ? "Disclosure" : "Plain"));
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  // Issue #114: a stage's glyph in the vocabulary of its steps' marks.
+  test("stageGlyph: not begun, begun and not finished, done", () => {
+    expect([stageGlyph("notStarted"), stageGlyph("partial"), stageGlyph("completed")]).toEqual(["○", "◐", "✓"]);
   });
 
   test("conditionOf: not started when none started, completed when all finished, partially completed otherwise", () => {

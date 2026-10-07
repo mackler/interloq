@@ -2,7 +2,7 @@ import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { type RunScenario, runUrl } from "./ports.ts";
-import { clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, stageHeading, stepLabel, stepsCompleteLabel } from "../src/prompts.ts";
+import { clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -505,10 +505,10 @@ test.describe("the tests of the planSteps server, in order", () => {
     await expect(step(planStepLabel(2, "The store"))).toHaveAttribute("data-plan-step", "current");
     // Issue #50: the indicator is on the step that runs, not under the phase.
     await expect(step(planStepLabel(2, "The store")).getByRole("progressbar")).toBeVisible();
-    await expect(implementation2.locator(".entry > .mark [role=progressbar]")).toHaveCount(0);
+    await expect(implementation2.locator(".entry > .mark [role=progressbar], .entry > button > .mark [role=progressbar]")).toHaveCount(0);
     await expect(rail(page).locator("[data-plan-step] [role=progressbar]")).toHaveCount(1);
     // Issue #63: the stage no step of this phase has reached is collapsed; it is opened here.
-    await implementation2.getByRole("button", { name: /^Stage 2: the page, collapsed/ }).click();
+    await implementation2.getByRole("button", { name: railToggleName(stageHeading(2, "the page"), RAIL_CONDITION_LABEL.notStarted, null, null), exact: true }).click();
     for (const phase of ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]) await expect(rail(page).getByText(phase, { exact: true })).toBeVisible();
     // The revised plan hangs under Implementation 2 (Q5, Q9), with its new stage and step, without the step done before it.
     await expect(implementation2.getByText(stageHeading(2, "the page"), { exact: true })).toBeVisible();
@@ -549,8 +549,10 @@ test.describe("the tests of the planSteps server, in order", () => {
     await phase(page).click();
     await expect(phase(other)).toHaveAttribute("aria-expanded", "false");
     await expect(stage(other)).toHaveCount(0);
-    await expect(implementation2(other).locator("[data-collapsed] [data-condition]")).toHaveText(RAIL_CONDITION_LABEL.partial);
-    await expect(implementation2(other).locator("[data-collapsed] [data-tally] [role=progressbar]")).toHaveAttribute("aria-valuetext", stepsCompleteLabel(0, 2));
+    // Issue #110: the collapsed phase's condition is in its name; its bar appears only once a step is complete (0 of 2 here).
+    await expect(phase(other)).toHaveAccessibleName(new RegExp(`, ${RAIL_CONDITION_LABEL.partial}(,|$)`));
+    await expect(implementation2(other).locator("[data-condition]")).toHaveCount(0);
+    await expect(implementation2(other).locator("[data-collapsed] [data-tally]")).toHaveCount(0);
     await phase(other).click();
     await expect(phase(page)).toHaveAttribute("aria-expanded", "true");
     await expect(stage(other)).toHaveAttribute("aria-expanded", "true");

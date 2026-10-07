@@ -1250,12 +1250,12 @@ export function stepsCompleteLabel(done: number, total: number): string {
   return `${done} of ${total} ${total === 1 ? "step" : "steps"} complete`;
 }
 /**
- * The accessible name of a row of the progress rail that opens and closes (issue #63): its label, whether it is expanded,
- * and, collapsed, what it carries of what it hides: its condition and the step that runs inside it.
+ * The accessible name of a row of the progress rail that opens and closes (issue #63; issue #110): its label, the state its
+ * mark shows in words, the condition of what it holds and the step that runs inside it. Whether it is open is not in the
+ * name: aria-expanded carries it, so the name is the same open or closed.
  */
-export function railToggleName(label: string, expanded: boolean, condition: string | null, running: string | null): string {
-  if (expanded) return `${label}, expanded`;
-  return [label, "collapsed", ...(condition === null ? [] : [condition]), ...(running === null ? [] : [`working on ${running}`])].join(", ");
+export function railToggleName(label: string, state: string, condition: string | null, running: string | null): string {
+  return [label, state, ...(condition === null ? [] : [condition]), ...(running === null ? [] : [`working on ${running}`])].join(", ");
 }
 /** The description of a row the run holds open (issue #63): something inside it needs the user, so it does not close. */
 export const RAIL_HELD_OPEN_LABEL = "Kept open: something inside needs your answer";

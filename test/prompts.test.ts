@@ -199,6 +199,15 @@ test("the steps of Gather Requirements", () => {
   assert.equal(prompts.stepLabel("terms"), "Define terms");
 });
 
+// Issue #110: the name of a row that opens and closes says its state in words, and not whether it is open: aria-expanded
+// carries that, so the name is the same open or closed.
+test("a rail row's name states its state, its condition and its running step, and not whether it is open", () => {
+  const name = prompts.railToggleName("Stage 1: t", prompts.RAIL_CONDITION_LABEL.partial, null, "Step 2: x");
+  assert.equal(name, `Stage 1: t, ${prompts.RAIL_CONDITION_LABEL.partial}, working on Step 2: x`);
+  assert.doesNotMatch(name, /expanded|collapsed/);
+  assert.equal(prompts.railToggleName("Planning", prompts.TIMELINE_STATE_LABEL.done, prompts.RAIL_CONDITION_LABEL.completed, null), `Planning, ${prompts.TIMELINE_STATE_LABEL.done}, ${prompts.RAIL_CONDITION_LABEL.completed}`);
+});
+
 // Issue #113: "more" names questions an intervening phase separates from the first ones; a further question asked inside
 // the conversation is not one of them, so its origin line keeps its own words.
 test("a further question's origin line does not borrow \"more\"", () => {

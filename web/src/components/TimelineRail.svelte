@@ -17,7 +17,7 @@
   import { bandKey, currentPlanStep, planStepState, type RoundGroup, type StepState, type TimelineEntry } from "../state.ts";
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
   import StepTooltip from "./StepTooltip.svelte";
-  import type { Collapsed, NodeView, RailView } from "../rail.ts";
+  import { PLAIN, stageCondition, stageGlyph, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
   import type { UiScope } from "../../../src/uiState.ts";
 
   /**
@@ -27,13 +27,12 @@
   /** `rail`: which nodes are open and what a collapsed one carries; `onToggle`: the user opens or closes a node. */
   type Props = { timeline: readonly TimelineEntry[]; busy: boolean; executing?: boolean; callStartedAt?: string | null; rail: RailView; onToggle: (scope: UiScope, open: boolean) => void };
   let { timeline, busy, executing = false, callStartedAt = null, rail, onToggle }: Props = $props();
-  const CLOSED: NodeView = { scope: { _tag: "RailPhase", phase: "" }, open: false, held: false, collapsed: { running: null, condition: null, tally: null } };
-  const phaseNode = (i: number): NodeView => rail.phases[i]?.node ?? CLOSED;
-  const branchNode = (i: number, key: string): NodeView => rail.phases[i]?.branches.get(key) ?? CLOSED;
+  const phaseNode = (i: number): NodeView => rail.phases[i]?.node ?? PLAIN;
+  const branchNode = (i: number, key: string): NodeView => rail.phases[i]?.branches.get(key) ?? PLAIN;
   /** A unique id per node of this rail: aria-controls and aria-describedby name the node's body and its note. */
   const uid = $props.id();
-  const idOf = (node: NodeView, part: string) => `${uid}-${part}-${JSON.stringify(node.scope).replace(/[^A-Za-z0-9]+/g, "-")}`;
-  const toggle = (node: NodeView) => {
+  const idOf = (node: Disclosure, part: string) => `${uid}-${part}-${JSON.stringify(node.scope).replace(/[^A-Za-z0-9]+/g, "-")}`;
+  const toggle = (node: Disclosure) => {
     if (!node.held) onToggle(node.scope, !node.open);
   };
   // The clock of the elapsed times: the edge of the component, ticking once per second while a phase is active (its
@@ -58,33 +57,49 @@
   const stepRuns = (entry: TimelineEntry): boolean => entry.steps.some((st) => st.state === "active") || currentPlanStep(entry, executing) !== null;
 </script>
 
-{#snippet toggleButton(node: NodeView, label: string, labelClass: string, attr: string)}
-  <!-- A native button, so that Enter and Space open and close it [flexibility and efficiency of use]; held open, it is
-       reachable and says why it does not close [error prevention]. -->
-  <button
-    type="button"
-    class="rail-toggle"
-    aria-expanded={node.open}
-    aria-controls={idOf(node, "body")}
-    aria-disabled={node.held ? "true" : undefined}
-    aria-describedby={node.held ? idOf(node, "held") : undefined}
-    aria-label={railToggleName(label, node.open, node.collapsed.condition === null ? null : RAIL_CONDITION_LABEL[node.collapsed.condition], node.collapsed.running)}
-    onclick={() => toggle(node)}
-  >
-    <span class="chevron" class:expanded={node.open} aria-hidden="true"></span>
+<!--
+  Issue #110: the leading position holds exactly one glyph. A row with nothing beneath it is plain: its mark, named by its
+  state, and its label, with no control. A row with something beneath it carries its mark as its disclosure control: a
+  native button holding the mark and the label, so that Enter and Space open and close it [flexibility and efficiency of
+  use]; the mark's words move to the button's name, and aria-expanded says whether it is open. Held open, it is reachable
+  and says why it does not close [error prevention]. `state`: the words of the mark; `working`: the busy indicator's name
+  while the mark is the indicator; `condition`: the condition of what the row holds, where the mark does not give it.
+-->
+{#snippet head(node: NodeView, label: string, labelClass: string, attr: string, glyph: string, state: string, working: string | null, condition: string | null)}
+  {#if node._tag === "Disclosure"}
+    <button
+      type="button"
+      class="rail-toggle"
+      aria-expanded={node.open}
+      aria-controls={idOf(node, "body")}
+      aria-disabled={node.held ? "true" : undefined}
+      aria-describedby={node.held ? idOf(node, "held") : undefined}
+      aria-label={railToggleName(label, working ?? state, condition, node.collapsed.running)}
+      onclick={() => toggle(node)}
+    >
+      <span class="mark" aria-hidden="true">{#if working !== null}<CircularIndeterminate label={working} {glyph} />{:else}{glyph}{/if}</span>
+      <span class={labelClass} {...{ [attr]: "" }}>{label}</span>
+    </button>
+    {#if node.held}<span class="visually-hidden" id={idOf(node, "held")}>{RAIL_HELD_OPEN_LABEL}</span>{/if}
+  {:else}
+    {#if working !== null}
+      <span class="mark"><CircularIndeterminate label={working} {glyph} /></span>
+    {:else}
+      <span class="mark" aria-label={state}>{glyph}</span>
+    {/if}
     <span class={labelClass} {...{ [attr]: "" }}>{label}</span>
-  </button>
-  {#if node.held}<span class="visually-hidden" id={idOf(node, "held")}>{RAIL_HELD_OPEN_LABEL}</span>{/if}
+  {/if}
 {/snippet}
 
+<!-- Issue #110: a collapsed row carries the step that runs inside it and, once a step is complete, its bar of steps
+     complete; its condition is in the row's name, not a line of its own. -->
 {#snippet collapsedRow(c: Collapsed)}
-  {#if c.running !== null || c.condition !== null || c.tally !== null}
+  {#if c.running !== null || (c.tally !== null && c.tally.done > 0)}
     <div class="collapsed" data-collapsed>
       {#if c.running !== null}
         <span class="m3-font-body-small running" data-running><span class="inline-mark"><CircularIndeterminate label={`${AGENT_WORKING_LABEL}: ${c.running}`} glyph="●" /></span><span>{c.running}</span>{@render elapsed()}</span>
       {/if}
-      {#if c.condition !== null}<span class="m3-font-body-small condition" data-condition>{RAIL_CONDITION_LABEL[c.condition]}</span>{/if}
-      {#if c.tally !== null}
+      {#if c.tally !== null && c.tally.done > 0}
         <div class="tally" data-tally><LinearProgress percent={(c.tally.done / c.tally.total) * 100} aria-label={stepsCompleteLabel(c.tally.done, c.tally.total)} {...{ "aria-valuenow": Math.round((c.tally.done / c.tally.total) * 100), "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuetext": stepsCompleteLabel(c.tally.done, c.tally.total) }} /></div>
       {/if}
     </div>
@@ -120,16 +135,12 @@
       {@const node = phaseNode(i)}
       {@const phaseBusy = entry.state === "active" && busy && !stepRuns(entry)}
       <li class="entry {entry.state}" data-state={entry.state} aria-current={entry.state === "active" ? "step" : undefined}>
-        {#if phaseBusy}
-          <span class="mark"><CircularIndeterminate label={stepWorkingLabel("phaseStep")} glyph={MARK[entry.state]} /></span>
-        {:else}
-          <span class="mark" aria-label={LABEL[entry.state]}>{MARK[entry.state]}</span>
-        {/if}
-        {@render toggleButton(node, entry.label, "m3-font-label-large", "data-label")}
+        {@render head(node, entry.label, "m3-font-label-large", "data-label", MARK[entry.state], LABEL[entry.state], phaseBusy ? stepWorkingLabel("phaseStep") : null, node._tag === "Disclosure" && node.collapsed.condition !== null ? RAIL_CONDITION_LABEL[node.collapsed.condition] : null)}
         {#if phaseTime(entry, now) !== null}<span class="m3-font-body-small phase-time" data-phase-time>{phaseTime(entry, now)}</span>{/if}
         {#if phaseBusy}{@render elapsed()}{/if}
         <!-- W1-R1-2: one container per row, named by its button whether the row is open or closed: the children when
              open, the collapsed summary when closed. -->
+        {#if node._tag === "Disclosure"}
         <div class="body" id={idOf(node, "body")}>
         {#if !node.open}
           {@render collapsedRow(node.collapsed)}
@@ -140,15 +151,10 @@
             {#each entry.steps as step, s (s)}
               {@const stepNode = branchNode(i, `step:${step.kind}`)}
               <li class="step {step.state}" data-step={step.state} aria-current={step.state === "active" ? "step" : undefined}>
-                {#if step.state === "active" && busy}
-                  <span class="mark"><CircularIndeterminate label={stepWorkingLabel("phaseStep")} glyph={MARK[step.state]} /></span>
-                {:else}
-                  <span class="mark" aria-label={LABEL[step.state]}>{MARK[step.state]}</span>
-                {/if}
-                {@render toggleButton(stepNode, step.label, "m3-font-label-medium", "data-step-label")}
+                {@render head(stepNode, step.label, "m3-font-label-medium", "data-step-label", MARK[step.state], LABEL[step.state], step.state === "active" && busy ? stepWorkingLabel("phaseStep") : null, null)}
                 {#if step.state === "active" && busy}{@render elapsed()}{/if}
                 {#if step.count !== null}<span class="m3-font-body-small count" data-count>{clarificationProgress(step.count.answered, step.count.total)}</span>{/if}
-                <div class="body" id={idOf(stepNode, "body")}>{#if stepNode.open}{@render loops(step.groups)}{/if}</div>
+                {#if stepNode._tag === "Disclosure"}<div class="body" id={idOf(stepNode, "body")}>{#if stepNode.open}{@render loops(step.groups)}{/if}</div>{/if}
               </li>
             {/each}
           </ol>
@@ -157,8 +163,10 @@
           <ol class="plan" aria-label={PLAN_LIST_LABEL}>
             {#each entry.plan.stages as stage (stage.key)}
               {@const stageNode = branchNode(i, `stage:${stage.key}`)}
+              {@const condition = stageCondition(stage) ?? "notStarted"}
               <li class="stage">
-                {@render toggleButton(stageNode, stageHeading(stage.number, stage.title), "m3-font-label-medium", "data-stage")}
+                {@render head(stageNode, stageHeading(stage.number, stage.title), "m3-font-label-medium", "data-stage", stageGlyph(condition), RAIL_CONDITION_LABEL[condition], null, null)}
+                {#if stageNode._tag === "Disclosure"}
                 <div id={idOf(stageNode, "body")}>
                 {#if !stageNode.open}
                   {@render collapsedRow(stageNode.collapsed)}
@@ -179,12 +187,14 @@
                 </ol>
                 {/if}
                 </div>
+                {/if}
               </li>
             {/each}
           </ol>
         {/if}
         {/if}
         </div>
+        {/if}
       </li>
     {/each}
   </ol>
@@ -204,7 +214,10 @@
      reached takes that color made translucent: the text and the mark are dimmed, not the row. */
   .entry.notReached { color: color-mix(in srgb, var(--m3c-on-surface-variant) 60%, transparent); }
   .plan { margin: 0.25rem 0 0; }
-  .stage { margin-top: 0.25rem; }
+  .stage { position: relative; margin-top: 0.25rem; padding-left: 1.5rem; }
+  .stage .mark { left: 0.25rem; }
+  /* The plan's steps keep their place under the stage: the stage's own indent is for its mark. */
+  .stage > div > ol { margin-left: -1.5rem; }
   .plan-step { position: relative; padding: 0.125rem 0 0.125rem 1.5rem; }
   .plan-step .mark { left: 0.25rem; }
   .plan-step.done { color: var(--m3c-on-surface-variant); }
@@ -221,23 +234,27 @@
   .group.done { color: var(--m3c-on-surface-variant); }
   .muted { color: var(--m3c-on-surface-variant); }
   .entry > .elapsed { display: block; }
-  /* Issue #63: the disclosure of a row, after the one of a decision's entry (issue #87): a native button with a chevron,
-     a state layer of the on-surface color on hover (8 %), focus and press (10 %), a focus ring, the standard easing. */
-  .rail-toggle { position: relative; display: inline-flex; align-items: baseline; gap: 0.375rem; max-width: 100%; margin: 0 0 0 -0.25rem; padding: 0.125rem 0.25rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
+  /* Issue #63: the disclosure of a row, after the one of a decision's entry (issue #87): a native button, a state layer of
+     the on-surface color on hover (8 %), focus and press (10 %), a focus ring, the standard easing. Issue #110: the row's
+     mark is the control, in place of a chevron. The button reaches back into the row's indent so that its mark stands in
+     the mark's column (the indent less the mark's offset, plus the button's padding), and its label where a plain row's
+     label stands. The mark shows that the row is open on its own box: a circle behind the glyph while open, none while
+     closed, since a state glyph that turned would no longer say its state. */
+  .rail-toggle { position: relative; display: inline-flex; align-items: baseline; gap: 0.25rem; max-width: calc(100% + 1.5rem); margin: 0 0 0 -1.5rem; padding: 0.125rem 0.25rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
+  .entry > .rail-toggle { margin-left: -1.5rem; }
   .rail-toggle::before { content: ""; position: absolute; inset: 0; background: var(--m3c-on-surface); opacity: 0; transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); pointer-events: none; }
   .rail-toggle:hover::before { opacity: 0.08; }
   .rail-toggle:focus-visible::before, .rail-toggle:active::before { opacity: 0.1; }
   .rail-toggle:focus-visible { outline: 3px solid var(--m3c-secondary); outline-offset: 2px; }
   .rail-toggle[aria-disabled="true"] { cursor: default; }
-  .chevron { flex: none; width: 0.4rem; height: 0.4rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg) translateY(-0.1rem); transition: transform 200ms cubic-bezier(0.2, 0, 0, 1); }
-  .chevron.expanded { transform: rotate(45deg) translateY(-0.1rem); }
+  .rail-toggle > .mark { position: static; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1rem; height: 1rem; border-radius: 50%; transition: background-color 200ms cubic-bezier(0.2, 0, 0, 1); }
+  .rail-toggle[aria-expanded="true"] > .mark { background: color-mix(in srgb, var(--m3c-on-surface) 12%, transparent); }
   @media (prefers-reduced-motion: reduce) {
-    .rail-toggle::before, .chevron { transition: none; }
+    .rail-toggle::before, .rail-toggle > .mark { transition: none; }
   }
   .collapsed { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.25rem 0 0 0.75rem; }
   .running { display: flex; align-items: baseline; gap: 0.375rem; flex-wrap: wrap; }
   .inline-mark { display: inline-block; width: 1em; }
-  .condition { color: var(--m3c-on-surface-variant); }
   .tally { max-width: 10rem; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .elapsed { color: var(--m3c-on-surface-variant); font-variant-numeric: tabular-nums; }
