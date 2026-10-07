@@ -3,9 +3,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Effect, Exit, Fiber } from "effect";
+import { Clock, Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
-import { finished, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
+import { finished, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const runProgram = (args: readonly string[], wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(args, wiring)));
@@ -168,4 +168,28 @@ test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; decline
   const declined = limited(["0", "n", "0", "y"]);
   assert.equal(await runProgram(["task"], declined.wiring), 1);
   assert.equal(declined.probe.ui.asked.filter((a) => a === prompts.confirmEndPrompt("limitStop")).length, 2);
+});
+
+// Issue #68 (P1-R1-1): an interrupted wait for a usage limit is recorded as actually spent before the summary is printed.
+test("interrupt one minute into a weekly usage-limit wait: the summary printed reports one minute waited, not a week", async () => {
+  const START = Date.UTC(2026, 8, 30, 5, 32);
+  const WEEK = 7 * 24 * 3_600_000;
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ limit: { resetsAtMs: START + WEEK, limitType: "seven_day" } }] });
+  let reached: () => void = () => undefined;
+  const waiting = new Promise<void>((r) => (reached = r));
+  let time = START;
+  const clock: Clock.Clock = {
+    ...steppingClock(START).clock,
+    currentTimeMillis: Effect.sync(() => time),
+    currentTimeMillisUnsafe: () => time,
+    sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
+  };
+  const fiber = Effect.runFork(Effect.scoped(program(["task"], wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  await Promise.race([waiting, sleep(30_000).then(() => assert.fail("the wait did not begin within 30 s"))]);
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assertInterrupted(probe, exit);
+  const text = said(probe);
+  assert.ok(text.indexOf("INTERRUPTED by the user.") < text.indexOf("Waited for Claude Code's usage limits"), "the summary is not after the interruption");
+  assert.match(text, /Waited for Claude Code's usage limits: 1 time, 1:00 in all \(the last interrupted\)\./);
 });

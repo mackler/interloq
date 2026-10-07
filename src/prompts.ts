@@ -1870,21 +1870,34 @@ export function transportRetryLine(agent: "claude" | "codex", attempt: number, o
 }
 /** The accessible name of the determinate indicator while the program waits for a usage limit to lift (issue #68). */
 export const USAGE_LIMIT_WAITING_LABEL = "Waiting for the usage limit to lift";
+/** The names of the Agent SDK's rateLimitType values (issue #68). */
+const LIMIT_NAMES: Readonly<Record<string, string>> = {
+  five_hour: "five-hour session limit",
+  seven_day: "weekly limit",
+  seven_day_opus: "weekly Opus limit",
+  seven_day_sonnet: "weekly Sonnet limit",
+  seven_day_overage_included: "weekly limit (overage included)",
+  overage: "overage limit",
+};
 /** The name of a usage limit by the Agent SDK's rateLimitType (issue #68); an unknown or missing type is "usage limit". */
 export function limitName(limitType: string | null): string {
-  return limitType === null ? "usage limit" : "usage limit";
+  return (limitType !== null && Object.hasOwn(LIMIT_NAMES, limitType) ? LIMIT_NAMES[limitType] : undefined) ?? "usage limit";
+}
+/** An instant in UTC to the minute, as the wait lines name it: 2026-09-30 08:11 UTC. */
+export function utcMinute(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 /** The start of a wait for a usage limit, as the terminal and conversation.md show it (issue #68). */
 export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string | null, untilMs: number): string {
-  return `${agentName(agent)}: ${limitName(limitType)} ${untilMs}`;
+  return `${agentName(agent)}: ${limitName(limitType)} reached; Interloq waits until ${utcMinute(untilMs)}, then continues`;
 }
 /** The end of a wait for a usage limit (issue #68). */
 export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
-  return `${agentName(agent)}: ${waitedMs}`;
+  return `${agentName(agent)}: the usage limit has lifted after ${durationText(waitedMs)}; continuing`;
 }
-/** The page's activity line during a wait for a usage limit (issue #68). */
+/** The page's activity line during a wait for a usage limit (issue #68): what is waited for, until when, and how long remains. */
 export function usageLimitActivity(limitType: string | null, untilMs: number, remainingMs: number): string {
-  return `${limitName(limitType)} ${untilMs} ${remainingMs}`;
+  return `${limitName(limitType)} reached — waiting until ${utcMinute(untilMs)}, ${durationText(remainingMs)} left`;
 }
 /** A call that succeeded after a retry. */
 export function transportRecoveredLine(agent: "claude" | "codex"): string {

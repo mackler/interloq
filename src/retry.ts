@@ -1,7 +1,7 @@
 // The transport retry of issue #26: a call that produced no reply, because of a transport fault, is made again with
 // backoff; when the retries are exhausted the user decides.
 
-import { Duration, Effect, Result } from "effect";
+import { Clock, Duration, Effect, Exit, Result } from "effect";
 import { AgentUnreachable, type RunError, type TransportFault, type UsageLimited } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { askOffering, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
@@ -23,6 +23,7 @@ export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transp
 export const USAGE_LIMIT_MARGIN_SECONDS = 60;
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
+const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "UsageLimited";
 
 /**
  * Runs `attempt(1)`, and on a TransportFault runs it again with backoff (`retryDelays`): each retry is notified, said and
@@ -48,14 +49,34 @@ export const withTransportRetry = <A, E, R>(
     const delays = retryDelays(config);
     const say = (text: string) => ui.say(text).pipe(Effect.andThen(store.converse(`${text}\n\n`)));
     let retried = 0;
+    /** Whether the last failure was a transport fault, so that a success is a recovered connection. */
+    let faulted = false;
     for (let n = 1; ; n++) {
       const result = yield* Effect.result(attempt(n));
       if (Result.isSuccess(result)) {
-        if (n > 1) yield* ui.notify({ _tag: "TransportRecovered", agent });
+        if (faulted) yield* ui.notify({ _tag: "TransportRecovered", agent });
         return result.success;
       }
       const error = result.failure;
+      if (isLimited(error)) {
+        // Issue #68: a usage limit with a stated reset is waited out on the Clock, never asked; the wait is recorded
+        // as actually spent when it ends, an interrupted one included (P1-R1-1), before the program prints the summary.
+        faulted = false;
+        const fromMs = yield* Clock.currentTimeMillis;
+        const untilMs = Math.max(error.resetsAtMs, fromMs) + USAGE_LIMIT_MARGIN_SECONDS * 1000;
+        yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, limitType: error.limitType, fromMs, untilMs });
+        yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, untilMs));
+        const record = (outcome: "lifted" | "interrupted") =>
+          Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ agent: error.agent, limitType: error.limitType, fromMs, untilMs, endedMs, outcome })));
+        yield* Effect.sleep(Duration.millis(untilMs - fromMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? "lifted" : "interrupted")));
+        const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
+        yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
+        yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
+        yield* beforeRetry;
+        continue;
+      }
       if (!isFault(error)) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
+      faulted = true;
       const delay = delays[retried];
       if (delay !== undefined) {
         retried++;

@@ -3,18 +3,19 @@ import { programWritten } from "../src/questionContext.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Cause, Effect, Exit, Fiber, Layer, Option } from "effect";
-import { CodexCallFailed, describe, haltMessage, ProjectChanged, TransportFault } from "../src/errors.ts";
+import { Cause, Clock, Effect, Exit, Fiber, Layer, Option } from "effect";
+import { CodexCallFailed, describe, haltMessage, ProjectChanged, TransportFault, UsageLimited } from "../src/errors.ts";
 import { DECIDE, parseTransportAnswer } from "../src/input.ts";
 import { transportOptions } from "../src/offer.ts";
 import { platformLayer } from "../src/platform.ts";
 import * as prompts from "../src/prompts.ts";
-import { withTransportRetry } from "../src/retry.ts";
+import { USAGE_LIMIT_MARGIN_SECONDS, withTransportRetry } from "../src/retry.ts";
 import * as S from "../src/schema.ts";
 import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/services.ts";
 import { makeStore } from "../src/store.ts";
 import { promptOf } from "../src/userPrompts.ts";
-import { noDecider, ScriptedUi, tempRepo } from "./helpers.ts";
+import { finished, issue, noDecider, respond, ScriptedUi, steppingClock, tempRepo, testLayer } from "./helpers.ts";
+import { run } from "../src/run.ts";
 import { para } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
@@ -44,7 +45,8 @@ const setup = async (answers: string[], decider: DeciderShape = noDecider) => {
   const config = { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 };
   const layer = Layer.mergeAll(Layer.succeed(Store, { ...store, saveChoice: () => Effect.void }), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(Decider, decider));
   const conversation = () => fs.readFileSync(path.join(store.dir, "conversation.md"), "utf8");
-  return { layer, ui, conversation };
+  const usage = () => (fs.existsSync(path.join(store.dir, "usage.jsonl")) ? fs.readFileSync(path.join(store.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>) : []);
+  return { layer, ui, conversation, usage, repo };
 };
 const exitOf = <A, E>(effect: Effect.Effect<A, E, Store | Ui | RunConfig | Decider>, layer: Layer.Layer<Store | Ui | RunConfig | Decider>) =>
   Effect.runPromiseExit(effect.pipe(Effect.provide(layer)));
@@ -187,4 +189,155 @@ test("at the exhaustion pause, the details hold the attempts and the whole fault
   const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
   assert.ok(!piecesText(q.question).includes(long.slice(0, 40)), piecesText(q.question));
   assert.deepEqual(q.details, prompts.transportDetails(3, long));
+});
+
+// Issue #68: a usage limit with a stated reset is waited out on the Clock, and the call is made again; nothing is asked.
+const START = Date.UTC(2026, 8, 30, 5, 32);
+const MARGIN_MS = USAGE_LIMIT_MARGIN_SECONDS * 1000;
+const limited = (resetsAtMs: number, limitType: string | null = "five_hour") => new UsageLimited({ agent: "claude", message: "You've hit your session limit", resetsAtMs, limitType });
+type LimitScript = ReadonlyArray<UsageLimited | "fault" | "ok">;
+const limitScripted = (script: LimitScript) => {
+  const calls: number[] = [];
+  const attempt = (n: number): Effect.Effect<string, TransportFault | UsageLimited> =>
+    Effect.suspend((): Effect.Effect<string, TransportFault | UsageLimited> => {
+      calls.push(n);
+      const step = script[calls.length - 1] ?? "ok";
+      return step === "ok" ? Effect.succeed(`reply ${n}`) : step === "fault" ? Effect.fail(fault()) : Effect.fail(step);
+    });
+  return { calls, attempt };
+};
+const withClock = (clock: Clock.Clock) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.provideService(effect, Clock.Clock, clock);
+
+test("a usage limit with a reset: one wait until the reset plus the margin, notified, said and recorded; then the call again, nothing asked", async () => {
+  const { layer, ui, conversation, usage } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const reset = START + 9_000_000;
+  const { calls, attempt } = limitScripted([limited(reset), "ok"]);
+  let guards = 0;
+  const guard = Effect.sync(() => void guards++);
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, guard).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 2"));
+  assert.deepEqual(calls, [1, 2]);
+  assert.deepEqual(sleeps, [9_000_000 + MARGIN_MS]);
+  assert.equal(guards, 1);
+  const until = reset + MARGIN_MS;
+  assert.deepEqual(ui.notified.filter((e) => e._tag === "UsageLimitWaiting" || e._tag === "UsageLimitLifted" || e._tag === "TransportRecovered"), [
+    { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: START, untilMs: until },
+    { _tag: "UsageLimitLifted", agent: "claude", waitedMs: until - START },
+  ]);
+  const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", until);
+  const liftedLine = prompts.usageLimitLiftedLine("claude", until - START);
+  assert.ok(ui.said.includes(waitLine), "the wait line was not said");
+  assert.ok(conversation().includes(waitLine) && conversation().includes(liftedLine), "the wait is not in conversation.md");
+  assert.deepEqual(ui.asked, []);
+  const waits = usage().filter((l) => l.kind === "usage_limit_wait");
+  assert.equal(waits.length, 1);
+  assert.equal(waits[0]?.outcome, "lifted");
+  assert.equal(waits[0]?.ended, waits[0]?.until);
+  assert.equal(waits[0]?.until, new Date(until).toISOString());
+});
+
+test("the wait lines name the limit and the instant it lifts in UTC, and the time waited", () => {
+  const until = Date.UTC(2026, 8, 30, 8, 11);
+  assert.equal(prompts.usageLimitWaitLine("claude", "five_hour", until), "Claude Code: five-hour session limit reached; Interloq waits until 2026-09-30 08:11 UTC, then continues");
+  assert.equal(prompts.usageLimitLiftedLine("claude", 9_060_000), "Claude Code: the usage limit has lifted after 2:31:00; continuing");
+  assert.equal(prompts.limitName("seven_day"), "weekly limit");
+  assert.equal(prompts.limitName(null), "usage limit");
+  assert.equal(prompts.limitName("something_new"), "usage limit");
+});
+
+test("a usage limit leaves the transport retries untouched: a later fault still gets its full set", async () => {
+  const { layer, ui } = await setup([]);
+  const { clock } = steppingClock(START);
+  const { calls, attempt } = limitScripted([limited(START + 1000), "fault", "fault", "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 4"));
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => e._tag === "TransportRetrying" && e.attempt), [1, 2]);
+});
+
+test("a reset already past: one wait of the margin alone", async () => {
+  const { layer } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const { attempt } = limitScripted([limited(START - 3_600_000), "ok"]);
+  await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(sleeps, [MARGIN_MS]);
+});
+
+test("two limits in a row: two waits, then success", async () => {
+  const { layer, usage } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const { calls, attempt } = limitScripted([limited(START + 1000), limited(START + 1000 + MARGIN_MS + 5000), "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 3"));
+  assert.deepEqual(calls, [1, 2, 3]);
+  assert.deepEqual(sleeps, [1000 + MARGIN_MS, 5000 + MARGIN_MS]);
+  assert.equal(usage().filter((l) => l.kind === "usage_limit_wait").length, 2);
+});
+
+test("a project changed during the wait halts with the guard's ProjectChanged; no further attempt", async () => {
+  const { layer, repo } = await setup([]);
+  const { clock } = steppingClock(START, () => Effect.sync(() => fs.writeFileSync(path.join(repo, "outside.txt"), "x")));
+  const { calls, attempt } = limitScripted([limited(START + 1000), "ok"]);
+  const guard = Effect.suspend(() => (fs.existsSync(path.join(repo, "outside.txt")) ? Effect.fail(new ProjectChanged({ during: "planning", fileLabel: null, changes: [{ kind: "added", path: "outside.txt" }] })) : Effect.void));
+  const error = errorOf(await exitOf(withTransportRetry("claude", "the plan", attempt, guard).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "ProjectChanged");
+  assert.deepEqual(calls, [1]);
+});
+
+test("an interruption one minute into a weekly wait: no further attempt, no lift, and the wait recorded as one minute", async () => {
+  const { layer, ui, usage } = await setup([]);
+  const WEEK = 7 * 24 * 3_600_000;
+  let reached: () => void = () => undefined;
+  const waiting = new Promise<void>((r) => (reached = r));
+  // The sleep advances the clock by one minute only, then holds the wait open until the interruption.
+  let time = START;
+  const clock: Clock.Clock = {
+    ...steppingClock(START).clock,
+    currentTimeMillis: Effect.sync(() => time),
+    currentTimeMillisUnsafe: () => time,
+    sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
+  };
+  const { calls, attempt } = limitScripted([limited(START + WEEK, "seven_day"), "ok"]);
+  const fiber = Effect.runFork(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
+  const ended = Effect.runPromise(Fiber.await(fiber)).then(() => assert.fail("the call ended before the wait began"));
+  await Promise.race([waiting, ended]);
+  const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+  assert.deepEqual(calls, [1]);
+  assert.ok(!ui.notified.some((e) => e._tag === "UsageLimitLifted"));
+  const waits = usage().filter((l) => l.kind === "usage_limit_wait");
+  assert.equal(waits.length, 1);
+  assert.equal(waits[0]?.outcome, "interrupted");
+  assert.equal(waits[0]?.from, new Date(START).toISOString());
+  assert.equal(waits[0]?.ended, new Date(START + 60_000).toISOString());
+  assert.equal(waits[0]?.until, new Date(START + WEEK + MARGIN_MS).toISOString());
+});
+
+// The records guard of a read-only call (Claude Code's response to a work review) holds across the wait as across a
+// backoff: the program's own writes pass, an outside write to a guarded record halts.
+const workRunWithLimit = (onSleep: (repo: string) => void) => {
+  const repo = tempRepo();
+  const response = respond([["W1-R1-1", "rejected"]]);
+  const { layer, probe } = testLayer(repo, {
+    steps: [{ output: { questions_for_user: [] }, plan: "v1" }, { output: response, limit: { resetsAtMs: START + 1000, limitType: "five_hour" } }, { output: response }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }],
+    execs: [finished],
+  });
+  const { clock } = steppingClock(START, () => Effect.sync(() => onSleep(repo)));
+  return { exit: Effect.runPromiseExit(run("task").pipe(Effect.provide(layer), withClock(clock))), probe };
+};
+
+test("a read-only call's wait: the program's own writes pass the records guard, and the call is made again", async () => {
+  const { exit, probe } = workRunWithLimit(() => undefined);
+  assert.ok(Exit.isSuccess(await exit));
+  assert.equal(probe.planner.capabilities[2], "readOnly");
+  assert.equal(probe.planner.prompts.length, 3);
+});
+
+test("a read-only call's wait: an outside edit of conversation.md during it halts with RecordsChanged", async () => {
+  const { exit, probe } = workRunWithLimit((repo) => fs.appendFileSync(path.join(repo, "plan-review", "conversation.md"), "an outside edit\n"));
+  const error = errorOf(await exit);
+  assert.equal(error._tag, "RecordsChanged");
+  assert.equal(probe.planner.prompts.length, 2);
 });
