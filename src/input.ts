@@ -1,4 +1,4 @@
-// Pure interpretation of what the user types. No I/O; used by the terminal Ui and the agent adapters.
+// Pure interpretation of what the user types. No I/O; used by the page's Ui, the scripted Ui and the agent adapters.
 
 import { LIMIT_ANSWERS, TRANSPORT_ANSWERS, UNCHANGED_ANSWERS } from "./prompts.ts";
 import type { PromptKind } from "./userPrompts.ts";
@@ -60,18 +60,9 @@ export const parseInterviewMessage = (message: string): { kind: "empty" } | { ki
   return { kind: "text", text };
 };
 
-/** The fold of the interview's line protocol: one line is a message; `"""` on its own opens and closes a block. */
-export type LineFold = Readonly<{ block: boolean; lines: readonly string[]; complete: boolean }>;
-export const emptyFold: LineFold = { block: false, lines: [], complete: false };
-export const foldLine = (fold: LineFold, line: string): LineFold => {
-  if (fold.complete) return fold;
-  if (line.trim() === '"""') return fold.block ? { ...fold, complete: true } : { ...fold, block: true };
-  return { ...fold, lines: [...fold.lines, line], complete: !fold.block };
-};
-
 // ---- decision support ---------------------------------------------------------------------------
 
-/** The offer's command (D1 of the decision-support plan): "Help me decide" sends it, and the terminal user types it. */
+/** The offer's command (D1 of the decision-support plan): "Help me decide" sends it, and a user may type it. */
 export const DECIDE = "/decide";
 export const isDecide = (text: string): boolean => text.trim() === DECIDE;
 
@@ -99,7 +90,7 @@ export const endingOf = (kind: PromptKind, mode: "ask" | "message", text: string
   if ((kind === "limit" || kind === "limitNoProceed") && !isDecide(t) && limitStops(t, kind === "limit")) return "limitStop";
   return null;
 };
-/** Whether an answer ends the run, and so is confirmed first, in the terminal and in the page alike. */
+/** Whether an answer ends the run, and so is confirmed first, in the page (ConfirmEndDialog). */
 export const endsRun = (kind: PromptKind, mode: "ask" | "message", text: string): boolean => endingOf(kind, mode, text) !== null;
 /** The reply to a confirmation: y confirms; anything else returns to the question. */
 export const parseConfirmEnd = (reply: string): boolean => reply.trim().toLowerCase() === "y";
