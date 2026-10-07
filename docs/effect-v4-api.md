@@ -138,6 +138,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Clock.currentTimeMillis` | 260 | `Effect<number>`; the store's `now` (init's archive name, usage times, the checkpoint), and the run manager's publication time of every event (`append` and `end`, issue #1; test/runManager.test.ts provides a stepping clock around `start`, which the run's fiber and its `end` inherit) |
 | `Clock` interface | 49 | `currentTimeMillisUnsafe()`, `currentTimeMillis`, `currentTimeNanosUnsafe()`, `currentTimeNanos`, `monotonicTimeNanosUnsafe()`, `monotonicTimeNanos`, `sleep(duration)`; a fixed clock in test/state.test.ts implements all seven |
 | `TestClock` | effect/dist/testing/TestClock.d.ts:241 (`layer`), 340 (`setTime`) | present in rc.117 and in 4.0.1; not used (a fixed `Clock` value is enough) |
+| `Clock` interface, `sleep` | 146 | `sleep(duration: Duration) => Effect<void>`; `Effect.sleep` is `clockWith((clock) => clock.sleep(…))` (effect/dist/internal/effect.js:2919), so a Clock provided with `Effect.provideService(Clock.Clock, …)` replaces every sleep: `steppingClock` of test/helpers.ts records each and advances its time instead of waiting (issue #68). `withTransportRetry` reads `Clock.currentTimeMillis` before and after a usage-limit wait |
 | `FileSystem.OpenFlag` | FileSystem.d.ts:321 | includes `"wx"` (create exclusively); `PlatformError.reason._tag === "AlreadyExists"` (PlatformError.d.ts:73) when the file exists |
 | `PlatformError` / `PlatformError.SystemError` | PlatformError.d.ts:141 / 95 | `new PlatformError(reason)`, `new SystemError({ _tag, module, method, description })`: the injected failures of test/helpers.ts `faultyPlatform` |
 | `FileSystem.make` | FileSystem.d.ts:385 | builds a `FileSystem` from an implementation (`exists`, `readFileString`, `writeFileString`, `stream`, `sink` derived); `rename(oldPath, newPath)` at 221 |
@@ -146,6 +147,8 @@ new name. Material online describes v3 in most cases and is not a source.
 
 | Name | Line | Signature (abridged) |
 |---|---|---|
+| `Duration.millis` | 392 | `(millis: number) => Duration`: a usage-limit wait in `src/retry.ts` (issue #68) |
+| `Duration.toMillis` | 483 | `(self: Duration.Input) => number`: the stepping Clock of test/helpers.ts reads a sleep's length |
 | `Duration.seconds` | 407 | `(seconds: number) => Duration`: the backoff of `withTransportRetry` in `src/retry.ts`, passed to `Effect.sleep` (a bare number as `Duration.Input` is milliseconds, so the constructor makes the unit explicit). `Effect.sleep` sleeps on the Clock and is interruptible: Ctrl+C during a backoff ends the run at once |
 
 ## Semaphore (`effect/dist/Semaphore.d.ts`; verified 25 Sep, review stage 4.3)
