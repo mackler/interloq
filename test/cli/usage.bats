@@ -9,7 +9,7 @@ setup() { common_setup; }
   for form in help -h --help; do
     run "$ILCLI" $form
     [ "$status" -eq 0 ]
-    for command in run shell review web build down release upgrade help; do
+    for command in run shell web build down release upgrade help; do
       [[ "$output" == *"  $command "* ]] || { echo "'$form' does not list $command"; echo "$output"; return 1; }
     done
   done
@@ -24,11 +24,15 @@ setup() { common_setup; }
   [ ! -s "$STUB_LOG" ]
 }
 
-@test "help review documents review" {
-  run "$ILCLI" help review
+# Issue #88: the terminal interface is gone, and with it the review command (the developer's decision of 7 Oct 2026).
+@test "help lists no review command, and help review is refused as an unknown command" {
+  run "$ILCLI" help
   [ "$status" -eq 0 ]
-  [[ "$output" == *"ilcli review"* ]]
-  [[ "$output" == *"/opt/interloq/src/main.ts"* ]]
+  [[ "$output" != *"  review "* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"main.ts"* ]] || { echo "$output"; return 1; }
+  run "$ILCLI" help review
+  [ "$status" -ne 0 ]
+  [ ! -s "$STUB_LOG" ]
 }
 
 @test "help web documents web, its port, and the recreate" {
@@ -50,9 +54,9 @@ setup() { common_setup; }
 }
 
 # The developer's decision of 7 Oct 2026 (issue #10), replacing the narrower one of 27 Sep 2026: --help and -h after
-# every subcommand show its usage, and -- passes the rest on to the program that run and review start.
-@test "every subcommand's usage offers --help, and run and review say that -- passes the rest on" {
-  for command in run shell review web build down; do
+# every subcommand show its usage, and -- passes the rest on to the program that run starts.
+@test "every subcommand's usage offers --help, and run says that -- passes the rest on" {
+  for command in run shell web build down; do
     run "$ILCLI" help "$command"
     [[ "$output" == *"ilcli $command --help | -h"* ]] || { echo "help $command"; echo "$output"; return 1; }
     [[ "$output" != *"are passed to claude"* && "$output" != *"are passed to main.ts"* ]] || { echo "help $command"; echo "$output"; return 1; }
@@ -60,8 +64,6 @@ setup() { common_setup; }
   run "$ILCLI" help run
   [[ "$output" == *"-- passes the rest on to claude"* ]] || { echo "$output"; return 1; }
   [[ "$output" == *"-c, --continue"*"most recent session"* ]] || { echo "$output"; return 1; }
-  run "$ILCLI" help review
-  [[ "$output" == *"-- passes the rest on to main.ts"* ]] || { echo "$output"; return 1; }
   run "$ILCLI" --help
   # bashly wraps the text at 80 columns, so it is compared with its line breaks and indentation collapsed.
   local text

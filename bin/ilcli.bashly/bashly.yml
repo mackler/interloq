@@ -2,9 +2,9 @@ name: ilcli
 help: |-
   Interloq's development container, and the route of a change to the installed copy.
 
-  The docker commands (run, shell, review, web, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
+  The docker commands (run, shell, web, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
 
-  Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help, bin/ilcli review -- --help).
+  Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
 
   The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test on GitHub and advances the release branch only if it passes, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
 version: "1"
@@ -34,18 +34,6 @@ commands:
   catch_all:
     label: ignored
     help: Accepted and ignored; --help and -h show this usage
-
-- name: review
-  help: |-
-    Start the container if needed, then run Interloq in the terminal inside it
-
-    --help and -h show this usage; -- passes the rest on to main.ts unchanged, so bin/ilcli review -- --help is main.ts's own usage.
-  catch_all:
-    label: arguments
-    help: 'Passed to node /opt/interloq/src/main.ts unchanged: "task description" [project directory]'
-  examples:
-  - bin/ilcli review "task description" /path/to/project
-  - bin/ilcli review -- --help    main.ts's own usage
 
 - name: web
   help: |-
@@ -88,4 +76,4 @@ commands:
   args:
   - name: command
     help: The command whose usage to show
-    allowed: [run, shell, review, web, build, down, release, upgrade, help]
+    allowed: [run, shell, web, build, down, release, upgrade, help]

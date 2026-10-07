@@ -15,7 +15,7 @@ version_command() {
 ilcli_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli\n\n"
-    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, review, web, build, down) and release run on\n  the host in the development clone; upgrade runs on the host in the installed\n  copy (~/work/interloq). The script uses compose.cc.yaml in the root of the\n  clone that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help, bin/ilcli review -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
+    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
   else
     printf "ilcli - Interloq's development container, and the route of a change to the installed copy.\n\n"
   fi
@@ -29,7 +29,6 @@ ilcli_usage() {
   printf "%s\n" "Commands:"
   printf "  %s   Start the container if needed, then start Claude Code in it (default)\n" "run    "
   printf "  %s   Start the container if needed, then open a Bash shell in it\n" "shell  "
-  printf "  %s   Start the container if needed, then run Interloq in the terminal inside it\n" "review "
   printf "  %s   Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it\n" "web    "
   printf "  %s   Build the image from ../claude-code-image\n" "build  "
   printf "  %s   Stop and remove the container (the volumes are kept)\n" "down   "
@@ -111,41 +110,6 @@ ilcli_shell_usage() {
 
     echo "  IGNORED..."
     printf "    Accepted and ignored; --help and -h show this usage\n"
-    echo
-
-  fi
-}
-
-ilcli_review_usage() {
-  if [[ -n $long_usage ]]; then
-    printf "ilcli review\n\n"
-    printf "  Start the container if needed, then run Interloq in the terminal inside it\n  \n  --help and -h show this usage; -- passes the rest on to main.ts unchanged, so\n  bin/ilcli review -- --help is main.ts's own usage.\n\n"
-  else
-    printf "ilcli review - Start the container if needed, then run Interloq in the terminal inside it\n\n"
-  fi
-
-  printf "%s\n" "Usage:"
-  printf "  ilcli review [--] [ARGUMENTS...]\n"
-  printf "  ilcli review --help | -h\n"
-  echo
-
-  if [[ -n "$long_usage" ]]; then
-
-    printf "%s\n" "Options:"
-
-    printf "  %s\n" "--help, -h"
-    printf "    Show this help\n"
-    echo
-
-    printf "%s\n" "Arguments:"
-
-    echo "  ARGUMENTS..."
-    printf "    Passed to node /opt/interloq/src/main.ts unchanged: \"task description\"\n    [project directory]\n"
-    echo
-
-    printf "%s\n" "Examples:"
-    printf "  bin/ilcli review \"task description\" /path/to/project\n"
-    printf "  bin/ilcli review -- --help    main.ts's own usage\n"
     echo
 
   fi
@@ -304,7 +268,7 @@ ilcli_help_usage() {
 
     printf "  %s\n" "COMMAND"
     printf "    The command whose usage to show\n"
-    printf "    %s\n" "Allowed: run, shell, review, web, build, down, release, upgrade, help"
+    printf "    %s\n" "Allowed: run, shell, web, build, down, release, upgrade, help"
     echo
 
   fi
@@ -374,14 +338,6 @@ ilcli_shell_command() {
 
   ensure_running
   exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc bash
-
-}
-
-ilcli_review_command() {
-
-  ensure_running
-  forwarded_args review
-  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc node /opt/interloq/src/main.ts "${forwarded[@]}"
 
 }
 
@@ -563,13 +519,6 @@ parse_requirements() {
       shift $#
       ;;
 
-    review)
-      action="review"
-      shift
-      ilcli_review_parse_requirements "$@"
-      shift $#
-      ;;
-
     web)
       action="web"
       shift
@@ -721,54 +670,6 @@ ilcli_shell_parse_requirements() {
   done
 
   action="shell"
-
-  while [[ $# -gt 0 ]]; do
-    key="$1"
-    case "$key" in
-
-      --)
-        shift
-        other_args+=("$@")
-        break
-        ;;
-
-      -?*)
-        other_args+=("$1")
-        shift
-        ;;
-
-      *)
-
-        other_args+=("$1")
-        shift
-
-        ;;
-
-    esac
-  done
-
-}
-
-ilcli_review_parse_requirements() {
-  local key
-
-  while [[ $# -gt 0 ]]; do
-    key="$1"
-    case "$key" in
-      --help | -h)
-        long_usage=yes
-        ilcli_review_usage
-        exit
-        ;;
-
-      *)
-        break
-        ;;
-
-    esac
-  done
-
-  action="review"
 
   while [[ $# -gt 0 ]]; do
     key="$1"
@@ -1111,8 +1012,8 @@ ilcli_help_parse_requirements() {
     esac
   done
 
-  if [[ -n ${args['command']:-} ]] && [[ ! ${args['command']:-} =~ ^(run|shell|review|web|build|down|release|upgrade|help)$ ]]; then
-    printf "%s\n" "command must be one of: run, shell, review, web, build, down, release, upgrade, help" >&2
+  if [[ -n ${args['command']:-} ]] && [[ ! ${args['command']:-} =~ ^(run|shell|web|build|down|release|upgrade|help)$ ]]; then
+    printf "%s\n" "command must be one of: run, shell, web, build, down, release, upgrade, help" >&2
     exit 1
   fi
 
@@ -1144,7 +1045,6 @@ run() {
   case "$action" in
     "run") ilcli_run_command ;;
     "shell") ilcli_shell_command ;;
-    "review") ilcli_review_command ;;
     "web") ilcli_web_command ;;
     "build") ilcli_build_command ;;
     "down") ilcli_down_command ;;

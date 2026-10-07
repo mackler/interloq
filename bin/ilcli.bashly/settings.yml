@@ -4,6 +4,6 @@ target_dir: bin
 lib_dir: lib
 env: production
 strict: true
-# Arguments for claude and main.ts pass through unsplit: -abc stays -abc, --model=x stays --model=x.
+# Arguments for claude pass through unsplit: -abc stays -abc, --model=x stays --model=x.
 compact_short_flags: false
 conjoined_flag_args: false

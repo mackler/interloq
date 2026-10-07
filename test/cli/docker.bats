@@ -7,7 +7,6 @@ setup() { common_setup; }
 
 up() { argv docker compose -f "$COMPOSE" up -d; }
 claude() { argv docker compose -f "$COMPOSE" exec -it cc claude "$@"; }
-review_line() { argv docker compose -f "$COMPOSE" exec -it cc node /opt/interloq/src/main.ts "$@"; }
 web_line() { argv docker compose -f "$COMPOSE" exec -it cc node /opt/interloq/src/web.ts "$@"; }
 
 expect_log() {
@@ -28,7 +27,7 @@ expect_log() {
 }
 
 # The developer's decision of 7 Oct 2026 (issue #10), which replaced the narrower one of 27 Sep 2026: --help and -h
-# after every subcommand, run and review included, show its usage; -- passes the rest on.
+# after every subcommand, run included, show its usage; -- passes the rest on.
 @test "run --help and run -h show run's usage and make no docker call" {
   for flag in --help -h; do
     run "$ILCLI" run $flag
@@ -101,25 +100,11 @@ expect_log() {
   [ ! -s "$STUB_LOG" ]
 }
 
-@test "review passes its arguments to main.ts, one with a space kept whole" {
+# The developer's decision of 7 Oct 2026 (issue #88): the review command no longer exists, so a first word "review"
+# reaches Claude Code like any word that is not a command.
+@test "review is no command: it reaches claude with its arguments" {
   run "$ILCLI" review "a task" /p
-  expect_log "$(up)" "$(review_line "a task" /p)"
-}
-
-@test "review --help and review -h show review's usage and make no docker call" {
-  for flag in --help -h; do
-    run "$ILCLI" review $flag
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"ilcli review"* ]] || { echo "review $flag: no usage"; echo "$output"; return 1; }
-    [[ "$output" == *"Usage"* ]]
-  done
-  [ ! -s "$STUB_LOG" ]
-}
-
-@test "review -- --help reaches main.ts, and review -- keeps the --" {
-  run "$ILCLI" review -- --help
-  run "$ILCLI" review -- /p
-  expect_log "$(up)" "$(review_line -- --help)" "$(up)" "$(review_line -- /p)"
+  expect_log "$(up)" "$(claude review "a task" /p)"
 }
 
 @test "a failing 'up -d' shows its output, says so, exits 1 and runs no exec" {
