@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { Result } from "effect";
 import { decodeQuestions, decodeToolTarget, interpretExecution, reduceMessages } from "../src/claudeEvents.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { assistantText, failure, init, success } from "./fakeSdk.ts";
+import { assistantText, failure, init, limitError, limitResult, rateLimit, success } from "./fakeSdk.ts";
 
 // Finding 17: the AskUserQuestion input is decoded, not asserted.
 test("decodeQuestions accepts the SDK's question list and ignores the fields the program does not read", () => {
@@ -130,4 +130,21 @@ test("interpretExecution: a valid report with a transport error stands; with ano
   assert.equal(interpretExecution(faulted, null, true).status, "finished");
   assert.equal(interpretExecution(faulted, null, false).status, "aborted");
   assert.equal(interpretExecution(faulted, { question: "A?", input: "A? -> a" }, true).status, "needs_input");
+});
+
+// Issue #68: the latest usage-limit rejection of the stream is among the facts of the failure.
+const RESET_S = 1_791_400_000;
+const rejected = rateLimit({ status: "rejected", resetsAt: RESET_S, rateLimitType: "five_hour" });
+
+test("reduceMessages keeps a rejection with its reset in milliseconds and its type", () => {
+  const outcome = reduceMessages([init(), assistantText("working"), rejected, limitError(), limitResult()]);
+  assert.deepEqual(outcome.failure?.rejection, { kind: "withReset", resetsAtMs: RESET_S * 1000, limitType: "five_hour" });
+  assert.equal(outcome.failure?.assistantError, "rate_limit");
+});
+
+test("a later allowed rate-limit event, or progress after the rejection, clears it; a success has no failure", () => {
+  const allowed = rateLimit({ status: "allowed", resetsAt: RESET_S });
+  assert.equal(reduceMessages([init(), rejected, allowed, limitResult()]).failure?.rejection, null);
+  assert.equal(reduceMessages([init(), rejected, assistantText("working again"), limitResult()]).failure?.rejection, null);
+  assert.equal(reduceMessages([init(), rejected, success({ a: 1 })]).failure, null);
 });

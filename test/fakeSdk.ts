@@ -1,7 +1,7 @@
 // A fake for the two SDKs, so that the logic of src/claude.ts and src/codex.ts is tested without
 // credentials. The message and turn objects carry only the fields the adapters read.
 
-import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, SDKMessage, SDKRateLimitEvent, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentSdk, SdkThread, StepHandler } from "../src/sdk.ts";
@@ -25,6 +25,17 @@ export const assistantText = (text: string): SDKMessage =>
 
 export const assistantTool = (name: string, input: Record<string, unknown>): SDKMessage =>
   ({ type: "assistant", message: { content: [{ type: "tool_use", name, input }] } }) as unknown as SDKMessage;
+
+/** A rate-limit event (issue #68), built with the SDK's own types so that a wrong field name is a type error. */
+export const rateLimit = (info: SDKRateLimitInfo, sessionId = "session-1"): SDKMessage => {
+  const event: SDKRateLimitEvent = { type: "rate_limit_event", rate_limit_info: info, uuid: "00000000-0000-4000-8000-000000000000", session_id: sessionId };
+  return event;
+};
+/** The assistant's rate_limit error and the failed result that end a call rejected for a usage limit. */
+export const limitError = (): SDKMessage =>
+  ({ type: "assistant", error: "rate_limit", message: { content: [{ type: "text", text: "You've hit your session limit" }] } }) as unknown as SDKMessage;
+export const limitResult = (): SDKMessage =>
+  ({ type: "result", subtype: "success", is_error: true, api_error_status: 429, terminal_reason: "api_error", result: "You've hit your session limit", total_cost_usd: 0.1, num_turns: 1 }) as unknown as SDKMessage;
 
 /** The messages of one call, with no callback to the adapter. */
 export const messages = (...list: SDKMessage[]): Script =>

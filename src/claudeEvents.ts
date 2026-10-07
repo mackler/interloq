@@ -7,7 +7,7 @@ import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
 import type { ExecOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
-import type { ClaudeFailure } from "./transport.ts";
+import { type ClaudeFailure, rejectionOf } from "./transport.ts";
 
 export type Question = Readonly<{ question: string; options: readonly Readonly<{ label: string; description: string }>[] }>;
 /** A recorded AskUserQuestion stop of an execution call. */
@@ -80,7 +80,7 @@ type Fold = Readonly<{ out: CallOutcome; facts: ClaudeFailure }>;
  * The outcome of a call from its messages in order; `streamError` is the text of a failure of the stream, which wins over
  * any result, and `streamCode` its error code. A success result with is_error is a failure (the turn ended on an API
  * error). The facts of a failure keep the result's status, reason and subtype, and the assistant error and the api_retry
- * seen after the last sign of progress (issue #26).
+ * seen after the last sign of progress (issue #26), and the latest usage-limit rejection after it (issue #68).
  */
 export const reduceMessages = (messages: readonly SDKMessage[], streamError: string | null = null, streamCode: string | null = null): CallOutcome => {
   const start: Fold = { out: { sessionId: null, costUsd: null, structured: null, resultText: "", error: noResult, partial: true, failure: null }, facts: noFacts };
@@ -88,7 +88,9 @@ export const reduceMessages = (messages: readonly SDKMessage[], streamError: str
     if (message.type === "system" && message.subtype === "init") return { out: { ...out, sessionId: message.session_id }, facts };
     if (message.type === "system" && message.subtype === "api_retry") return { out, facts: { ...facts, retrySeen: { status: message.error_status, error: message.error } } };
     if (message.type === "assistant" && message.error !== undefined) return { out, facts: { ...facts, assistantError: message.error } };
-    if (isProgress(message)) return { out, facts: { ...facts, assistantError: null, retrySeen: null } };
+    // Issue #68: the latest usage-limit rejection; an allowed event clears it. It is not progress.
+    if (message.type === "rate_limit_event") return { out, facts: { ...facts, rejection: rejectionOf(message.rate_limit_info) } };
+    if (isProgress(message)) return { out, facts: { ...facts, assistantError: null, retrySeen: null, rejection: null } };
     if (message.type !== "result") return { out, facts };
     const terminal = { ...facts, terminalReason: message.terminal_reason ?? null, subtype: message.subtype };
     if (message.subtype !== "success") return { out: { ...out, costUsd: message.total_cost_usd, error: message.subtype, partial: false }, facts: terminal };
