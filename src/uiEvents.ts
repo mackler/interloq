@@ -1,5 +1,4 @@
-// The structured events of a run for a user interface (decision Q5): the terminal ignores them but InterviewOpened and ClaudeSaid, the scripted Ui
-// records them, the web Ui turns them into the page's panels, activity line and progress. Pure; types only from src/.
+// The structured events of a run for a user interface (decision Q5): the scripted Ui records them, the web Ui turns them into the page's panels, activity line and progress. Pure; types only from src/.
 
 import { type SubjectId, subjectDir } from "./artifacts.ts";
 import { agentReconnectingLine, cycleHeading, phaseLabel, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
@@ -45,11 +44,11 @@ export type UiEvent =
   | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
   /** The interview begins; each interface renders its own help (finding 8 of docs/gui-review.md). */
   | Readonly<{ _tag: "InterviewOpened"; heading: string; stage: InterviewStage; total: number }>
-  /** Claude Code's prose during an execution call, attributed as data (issue #5); the terminal prefixes it with "[claude] ". */
+  /** Claude Code's prose during an execution call, attributed as data (issue #5); the page shows it as Claude's message. */
   | Readonly<{ _tag: "ClaudeSaid"; text: string }>
   /**
-   * A question the user is to answer, presented the same way whatever produced it (S5): the terminal prints it
-   * (`questionLines` in src/render.ts) and the page shows it with its options. The prompt that asks it follows.
+   * A question the user is to answer, presented the same way whatever produced it (S5): the page shows it with its
+   * options, and conversation.md records it (`renderQuestionRecord` in src/render.ts). The prompt that asks it follows.
    */
   | Readonly<{ _tag: "QuestionPresented"; question: PresentedQuestion }>
   /**
@@ -73,7 +72,7 @@ export type StepReport = Readonly<{ id: string; status: "started" | "done" }>;
 const AGENT_LABEL: Record<Agent, string> = { claude: "Claude Code", codex: "Codex" };
 /** The name of a phase as the progress display shows it; `count` is how many phases of its kind the run holds (issue #6). */
 export const phaseName = (phase: Phase, count: number): string => (phase.kind === "questions" ? phaseLabel("questions", 0, count) : phaseLabel(phase.kind, phase.n, count));
-/** How many of the phases are of the kind: the count the terminal, the progress rail and the bands number by (issue #6). */
+/** How many of the phases are of the kind: the count the phase lines, the progress rail and the bands number by (issue #6). */
 export const countOfKind = (phases: readonly Phase[], kind: Phase["kind"]): number => phases.filter((p) => p.kind === kind).length;
 /** The name of a phase in test output: always numbered. */
 const numberedName = (phase: Phase): string => phaseName(phase, 2);

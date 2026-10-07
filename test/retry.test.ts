@@ -140,7 +140,7 @@ test("Help me decide at the exhaustion pause runs a decision and asks again", as
   assert.equal(ui.asked.length, 2);
 });
 
-// The seams of the pause: the page's buttons, the terminal's parser and decision support's options, from one source.
+// The seams of the pause: the page's buttons, the parser of src/input.ts and decision support's options, from one source.
 // S8: the pause's options are its cards, each sending the answer it shows; the widget adds only the offer and the quit.
 test("every option of the exhaustion pause sends the answer its label names, and exactly one option matches it", () => {
   const intended = { [prompts.TRANSPORT_RETRY_AGAIN]: "retry", [prompts.TRANSPORT_STOP]: "stop" } as const;

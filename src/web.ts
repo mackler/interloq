@@ -33,7 +33,7 @@ if (!fs.existsSync(indexFile)) {
 }
 
 const sdk = liveSdk();
-/** The wiring of main.ts, with the run's web Ui in place of the terminal. */
+/** The live wiring of a run, with the run's web Ui. */
 const wiringOf = (ui: WebUi): Wiring => ({
   ui: Effect.succeed(ui),
   platform: platformLayer,

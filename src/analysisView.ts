@@ -1,9 +1,9 @@
-// The representation of a decision as the page and the terminal show it (D8 of the decision-support plan). Pure, and
+// The representation of a decision as the page shows it (D8 of the decision-support plan). Pure, and
 // free of Node imports, so that the browser imports it as it imports src/protocol.ts. The agent owns the sentences; this
 // module owns the layout that docs/decision-making.md assigns to the renderer: the headings "Advantages:" and
 // "Disadvantages:", the numbered labels of the entries (issue #35), the nesting of counterarguments under the element
 // they dispute, the equivalence symbols, and which texts oppose the column's option (decision Q7 of issue #35: the page
-// colors them, the terminal marks them), and which entries hide a contradicting position (`disputed`, issue #87: the page
+// colors them), and which entries hide a contradicting position (`disputed`, issue #87: the page
 // marks them beside the collapsed entry).
 
 import { ADVANTAGES_HEADING, advantageLabel, DISADVANTAGES_HEADING, disadvantageLabel } from "./prompts.ts";

@@ -260,8 +260,8 @@ describe("empty containers in a tool's input", () => {
 });
 
 // W2-R1-1 and P3-R1-1 (S26): a multi-line value (a code block) and its escapes note (a paragraph) sit inside the item of
-// their setting, and every setting is shown at its depth in the input: in the page's DOM, and in the Markdown of the
-// terminal and conversation.md as a Markdown renderer nests it.
+// their setting, and every setting is shown at its depth in the input: in the page's DOM, and in the Markdown of
+// conversation.md as a Markdown renderer nests it.
 describe("the nesting of a tool's input around a multi-line value", () => {
   /** The number of lists around an element, inside the rendered root. */
   const depthIn = (root: HTMLElement, el: Element): number => {

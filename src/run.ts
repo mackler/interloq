@@ -24,7 +24,7 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
     const planner = yield* Planner;
     const decider = yield* Decider;
     /** A phase's body, with the Decider of that phase: a decision taken in it is recorded in it (D3). */
-    // W1-R1-2: the Decider names the phase as the terminal line does, by the phases known when the phase begins.
+    // W1-R1-2: the Decider names the phase as its phase line does, by the phases known when the phase begins.
     const inPhase = (phase: Phase) => <A, E, R>(body: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => Effect.provideService(body, Decider, decider.at(phase, phase.kind === "questions" ? phaseName(phase, 1) : label(phase.kind, phase.n))));
     yield* store.init(task);

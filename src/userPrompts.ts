@@ -1,6 +1,6 @@
 // The widget catalog of the prompts to the user (plan step 1.3): for each text of src/prompts.ts, its fixed
 // choices with the exact text each sends, whether free text is meaningful, and the quit of its input mode.
-// The web page renders a prompt from this entry; the terminal is unaffected. Pure.
+// The web page renders a prompt from this entry. Pure.
 
 import { DECIDE } from "./input.ts";
 import * as prompts from "./prompts.ts";
@@ -32,7 +32,7 @@ const entry = (kind: PromptKind, text: string, mode: UserPrompt["mode"], choices
   free,
 });
 
-/** Each kind's hint, a fixed text of src/prompts.ts (S8): the one source of what the terminal shows and the page recognizes. */
+/** Each kind's hint, a fixed text of src/prompts.ts (S8): the one source of the text a prompt carries and the page recognizes. */
 export const HINTS: Readonly<Record<Exclude<PromptKind, "unknown">, string>> = {
   decision: prompts.decisionPrompt,
   limit: prompts.limitPrompt,

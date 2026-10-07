@@ -265,7 +265,7 @@ export const decodeRunError = (error: unknown): RunErrorFields | null => {
 
 /**
  * What the entry point prints for an error, or null if the error is none of ours, in which case the
- * entry point rethrows it. Keeps that decision out of the untested main.ts.
+ * entry point rethrows it.
  */
 export const haltMessage = (error: unknown): string | null => {
   const decoded = decodeRunError(error);

@@ -1,5 +1,5 @@
 // The program: arguments, configuration, the live services, the run, and what is printed at the
-// end. main.ts applies the platform runner to it; the tests run it with scripted services.
+// end. The run manager runs it for the page (src/runManager.ts); the tests run it with scripted services.
 
 import { Cause, Context, Effect, Exit, FileSystem, Layer, Option, type Scope } from "effect";
 import * as path from "node:path";
@@ -15,9 +15,9 @@ import { makeStore } from "./store.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
 
-/** What the program is wired to: the terminal, the platform, the SDKs and the agents. */
+/** What the program is wired to: the Ui, the platform, the SDKs and the agents. */
 export type Wiring = Readonly<{
-  /** The Ui of the run; a scoped resource (live: the terminal on the process streams). */
+  /** The Ui of the run; a scoped resource (live: the run's web Ui). */
   ui: Effect.Effect<UiShape, never, Scope.Scope>;
   /** The platform services (live: platformLayer). */
   platform: Layer.Layer<Platform>;

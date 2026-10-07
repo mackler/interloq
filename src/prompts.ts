@@ -34,7 +34,7 @@ function laterRound(file: string, logFile: string, idPrefix: string, round: numb
 Read both files again and review plan-review/${file} again under the same rules as before. New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
 }
 
-/** The heading of the explanations of terms: in the terminal (decision Q6) and in a relayed question's text (S13). */
+/** The heading of the explanations of terms: in conversation.md (decision Q6) and in a relayed question's text (S13). */
 export const TERMS_HEADING = "Terms:";
 /**
  * The words an option's description must follow correctly (issue #59, S16 of the task of issue #36); never displayed.
@@ -819,9 +819,9 @@ Return the complete output again, corrected. Do not modify any file.`;
 // The texts the program shows when it waits for the user. src/userPrompts.ts maps each to its widget.
 
 /**
- * The input hints (S8): the line under a question that says how to answer it in the terminal, one fixed text per kind
+ * The input hints (S8): the text of a prompt that says how to answer it, one fixed text per kind
  * of prompt, without parameters, so that src/userPrompts.ts recognizes the kind by it. The question itself, its context
- * and its options are presented before it (`questionLines` in src/render.ts); the page shows its own controls instead.
+ * and its options are presented before it; the page shows its own controls and words instead (`pagePromptText`).
  */
 /** A decision at a pause (behaviour 7) or on a question from Claude Code. */
 export const decisionPrompt = "Answer with the number or label of an option, or in your own words; Enter = continue without deciding; q = end the run > ";
@@ -875,7 +875,7 @@ export const PROCEED_TO_PLANNING = "proceed to planning with the requirements as
 export const PROCEED_TO_IMPLEMENTATION = "proceed to implementation with the plan as it is";
 /** The "p" choice at the cycle limit of the terms review (S17). */
 export const PROCEED_TO_CLARIFICATION_WITH_TERMS = "proceed to the clarification with the explanations as they are";
-/** The start of the terms' writing (S17), as the terminal says it. */
+/** The start of the terms' writing (S17), as the run says it. */
 export const termsLine = "\nGather Requirements: Claude Code explains the terms of the agreed questions ...";
 /** The "p" choice at the cycle limit of a decision loop (D10 of the decision-support plan). */
 export const PROCEED_TO_CHOICE = "proceed to your choice with the analysis as it is";
@@ -1003,7 +1003,7 @@ ${QUESTION_OPTIONS_RULE}`;
 }
 
 /**
- * A prompt to the user in the web page's words: the same question without the terminal's key conventions, which
+ * A prompt to the user in the web page's words: the same question without the key conventions of its hint, which
  * the page's buttons replace (plan step 4.7). `kind` is the prompt's kind in src/userPrompts.ts.
  */
 export function pagePromptText(kind: string, offeredText: string): string {
@@ -1064,11 +1064,11 @@ export function planWrittenHeading(label: string): string {
 export const SUMMARY_PROPOSED_HEADING = "Summary proposed by Claude:";
 /** The start form's description, in parts: plain text, a path, and the name of a button. */
 export const START_FORM_DESCRIPTION: readonly Readonly<{ text: string; style: "plain" | "code" | "strong" }>[] = [
-  { text: "Claude writes a plan, Codex reviews it until no issue remains, Claude implements it, and Codex reviews the work; the page asks you only where a decision is needed. The records are kept in the project's ", style: "plain" },
-  { text: "plan-review/", style: "code" },
-  { text: " directory. ", style: "plain" },
+  { text: "Claude writes a plan, Codex reviews it until no issue remains, Claude implements it, and Codex reviews the work; the page asks you only where a decision is needed. ", style: "plain" },
   { text: "Stop task", style: "strong" },
-  { text: " ends a task like Ctrl+C in the terminal.", style: "plain" },
+  { text: " ends the task; its records stay in ", style: "plain" },
+  { text: "plan-review/", style: "code" },
+  { text: " in the project, as they do when a task ends by itself.", style: "plain" },
 ];
 
 /**
@@ -1432,7 +1432,7 @@ export function analysisProgressLine(decision: number, question: number | null, 
 }
 /** The offer's label (docs/decision-support-design.md, section 1): one per question, never one per option. */
 export const HELP_ME_DECIDE = "Help me decide";
-/** The line that carries the offer in a prompt text (D1): the terminal shows it, and the page turns it into a button. */
+/** The line that carries the offer in a prompt text (D1): the page turns it into a button. */
 export const OFFER_LINE = `/decide = ${HELP_ME_DECIDE}: work out the arguments for and against each option before you choose`;
 /** A prompt with the offer: the offer line, then the prompt. */
 export const withOffer = (prompt: string): string => `${OFFER_LINE}\n${prompt}`;
@@ -1565,7 +1565,7 @@ export function spacesPhrase(n: number): string {
 }
 /**
  * The note beside a value shown with escapes (S48): what each escape stands for. Its escapes are code spans, so that the
- * page, the terminal and conversation.md read them alike.
+ * page and conversation.md read them alike.
  */
 export const ESCAPED_VALUE_NOTE =
   "(Characters that cannot be shown are written as escapes: `\\n` is a line break (in a value, one at its start or end), `\\r` a carriage return, `\\uXXXX` the character with that hexadecimal code (`\\u0020` a space), and `\\\\` a backslash of the value or name.)";
@@ -1773,8 +1773,8 @@ const proseValue = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : typeof v === "boolean" ? (v ? YES_PHRASE : NO_PHRASE) : Array.isArray(v) && v.length === 0 ? EMPTY_LIST_PHRASE : isEmptyObject(v) ? EMPTY_OBJECT_PHRASE : Array.isArray(v) ? v.map(proseValue).join(", ") : v === null || v === undefined ? NONE_PHRASE : Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k} ${proseValue(x)}`).join("; ");
 /**
  * The question of a permission request (S12, S49): the tool and the kind of action, pointing at the input shown above it
- * under TOOL_INPUT_HEADING (the terminal prints the details before the question; the page shows them in the region above
- * it). The input itself is never in the question, so that a long command cannot push the answers out of view.
+ * under TOOL_INPUT_HEADING (the page shows them in the region above it, and conversation.md records them before the
+ * question). The input itself is never in the question, so that a long command cannot push the answers out of view.
  */
 export function permissionQuestion(tool: string, input: unknown): string {
   const fields = input !== null && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
@@ -1808,7 +1808,7 @@ export function unchangedFacts(heading: string, fileLabel: string, accepted: rea
 export const REVIEWER_POSITION = "Follow Codex (the reviewer)";
 export const PLANNER_POSITION = "Follow Claude Code (the planner)";
 
-// ---- decision support: the representation as the page and the terminal show it ---------------------
+// ---- decision support: the representation as the page shows it ---------------------------------------
 
 /** The heading above a column's disadvantages (docs/decision-making.md, "Layout and wording"); the renderer places it. */
 export const DISADVANTAGES_HEADING = "Disadvantages:";
@@ -1821,7 +1821,7 @@ export function advantageLabel(n: number): string {
 export function disadvantageLabel(n: number): string {
   return `Disadvantage ${n}:`;
 }
-/** The heading of a decision's analysis in the page and the terminal (S22): the decision and the number of its question. */
+/** The heading of a decision's analysis in the page (S22): the decision and the number of its question. */
 export function decisionViewHeading(k: number, question: number): string {
   return `Decision ${k}: the analysis of ${questionTitle(question)}`;
 }
@@ -1875,7 +1875,7 @@ export function transportOptionDescriptions(): Readonly<{ retry: string; stop: s
     stop: "the run ends here, and no further attempt is made.",
   };
 }
-/** A retry of the program after a transport fault, as the terminal and conversation.md show it. */
+/** A retry of the program after a transport fault, as the page and conversation.md show it. */
 export function transportRetryLine(agent: "claude" | "codex", attempt: number, of: number, delaySeconds: number, fault: string): string {
   return `${agentName(agent)}: connection lost, retry ${attempt} of ${of} in ${delaySeconds} s (${fault})`;
 }
@@ -1898,7 +1898,7 @@ export function limitName(limitType: string | null): string {
 export function utcMinute(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
-/** The start of a wait for a usage limit, as the terminal and conversation.md show it (issue #68). */
+/** The start of a wait for a usage limit, as the page and conversation.md show it (issue #68). */
 export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string | null, untilMs: number): string {
   return `${agentName(agent)}: ${limitName(limitType)} reached; Interloq waits until ${utcMinute(untilMs)}, then continues`;
 }

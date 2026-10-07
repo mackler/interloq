@@ -262,7 +262,7 @@ test("an invalid execution report without a stop yields aborted, and no repair p
   assert.equal(fake.sdk.calls.length, 1);
 });
 
-// Issue #5: Claude Code's prose is attributed as data; the "[claude] " prefix is the terminal's rendering, not the text.
+// Issue #5: Claude Code's prose is attributed as data; the page attributes it; the text carries no prefix.
 test("Claude Code's prose in an execution call is a ClaudeSaid event, trimmed, and no line is said with the [claude] prefix", async () => {
   const fake = await planner([messages(init(), assistantText("  working  "), success(null, "text only"))]);
   await run(fake.planner.executing("implement the plan", noReporter));
@@ -444,7 +444,7 @@ test("two questions with identical text are answered separately; the later answe
   assert.deepEqual(toSdkAnswers([{ question: "X?" }, { question: "Y?" }], new Map([[0, "a"], [1, "b"]])), { answers: { "X?": "a", "Y?": "b" }, duplicates: [] });
 });
 
-// Plan step 1.7 (decision Q5): the adapter reports its activity; the terminal keeps its lines for the interview only.
+// Plan step 1.7 (decision Q5): the adapter reports its activity; the run says its lines for the interview only.
 const activity = (ui: ScriptedUi) => ui.notified.filter((e) => e._tag === "AgentCallStarted" || e._tag === "ToolUsed" || e._tag === "AgentCallEnded" || e._tag === "QuestionPresented");
 
 test("a planning call notifies its start, every tool use other than StructuredOutput, and its end", async () => {
@@ -459,7 +459,7 @@ test("a planning call notifies its start, every tool use other than StructuredOu
   assert.ok(!fake.ui.said.some((l) => l.includes("[claude: Read")), "a planning call printed its tool use");
 });
 
-test("an interview call keeps its terminal lines for the tool use", async () => {
+test("an interview call says its lines for the tool use", async () => {
   const fake = await planner([messages(init(), assistantTool("Read", { file_path: "/x" }), success({}))]);
   await run(fake.planner.planning("interview", schema, "interview"));
   assert.ok(fake.ui.said.includes("  [claude: Read /x]"));
@@ -514,7 +514,7 @@ test("a relayed question is notified with its options before the user is asked",
   assert.deepEqual(q?.options, [{ label: plain("A"), description: plain("a"), answer: { token: "1" } }, { label: plain("B"), description: plain("b"), answer: { token: "2" } }]);
 });
 
-// S8: the terminal prints a relayed question from its QuestionPresented event, so the adapter says none of its lines.
+// S8: a relayed question reaches the user as its QuestionPresented event, so the adapter says none of its lines.
 test("a relayed question says no line of its own: it is presented as an event", async () => {
   const questions = [{ question: "A or B?", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }];
   const script: Script = (call) => (async function* () {

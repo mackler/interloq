@@ -1,5 +1,5 @@
 // The services of the procedure. Every method returns an Effect with its errors in the error channel.
-// Tests provide scripted layers; main.ts provides the live ones. API names: docs/effect-v4-api.md.
+// Tests provide scripted layers; src/web.ts provides the live ones. API names: docs/effect-v4-api.md.
 
 import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
@@ -37,16 +37,16 @@ export interface UiShape {
   readonly say: (text: string) => Effect.Effect<void>;
   /** Reads one line. The answer "q" fails with UserStopped. */
   readonly ask: (prompt: string) => Effect.Effect<string, UserStopped>;
-  /** Reads one message of the interview (see TerminalUi). The message "/quit" fails with UserStopped. */
+  /** Reads one message of the interview (the page's reply field). The message "/quit" fails with UserStopped. */
   readonly askMessage: (prompt: string) => Effect.Effect<string, UserStopped>;
-  /** A structured event of the run (decision Q5). The terminal prints nothing for it; the records do not depend on it. */
+  /** A structured event of the run (decision Q5). The page shows it; the records do not depend on it. */
   readonly notify: (event: UiEvent) => Effect.Effect<void>;
   /** The number of the next question the user is asked (S6): one sequence for the run, from 1, whatever produced the question. */
   readonly nextQuestion: Effect.Effect<number>;
 }
 export class Ui extends Context.Service<Ui, UiShape>()("plan-review/Ui") {}
 
-/** What a planning call is for, as the activity line names it; the interview also prints its tool use in the terminal. */
+/** What a planning call is for, as the activity line names it; the interview also says its tool use. */
 /** "context": the call that writes a question's context paragraph and terms (S9), in a fresh session, with the capability "readProject". */
 export type PlanningPurpose = "planning" | "interview" | "context";
 export type PlanningResult = Readonly<{ output: unknown; resultText: string; costUsd: number | null }>;
@@ -197,7 +197,7 @@ export class Decider extends Context.Service<Decider, DeciderShape>()("plan-revi
 /** The configuration of the run (schema Config). */
 export class RunConfig extends Context.Service<RunConfig, Config>()("plan-review/RunConfig") {}
 
-/** The two SDKs (src/sdk.ts): the live binding in main.ts, a fake in the tests. */
+/** The two SDKs (src/sdk.ts): the live binding in src/sdkLive.ts, a fake in the tests. */
 export class Sdk extends Context.Service<Sdk, AgentSdk>()("plan-review/Sdk") {}
 
 /** Everything the procedure needs. */

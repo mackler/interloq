@@ -1,4 +1,4 @@
-// The interview: a conversation between the user and Claude Code in the program's terminal. Separate from
+// The interview: a conversation between the user and Claude Code in the page. Separate from
 // src/interview.ts (the question phase) so that src/subjects.ts can use it without an import cycle (finding 28).
 
 import { Effect, Result } from "effect";
@@ -103,7 +103,7 @@ export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDr
 };
 
 /**
- * A conversation between the user and Claude Code in the program's terminal. It ends when Claude Code
+ * A conversation between the user and Claude Code. It ends when Claude Code
  * reports completion and the user confirms the summary, which the program writes to requirements.md.
  */
 export const interview = (opening: string, stage: InterviewStage, agreed: readonly string[]): Effect.Effect<void, RunError, Services> =>
@@ -112,7 +112,7 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
     const ui = yield* Ui;
     // The user reads "Clarification" (issue #21); conversation.md, a record, keeps its heading.
     const heading = prompts.clarificationHeading(stage);
-    // Each interface renders its own help (finding 8 of docs/gui-review.md): the terminal its """ convention, the page Shift+Enter.
+    // Each interface renders its own help (finding 8 of docs/gui-review.md): the page its Shift+Enter.
     yield* ui.notify({ _tag: "InterviewOpened", heading, stage, total: clarificationCount(agreed, [], [], []).total });
     yield* store.converse(`## ${recordHeading(stage)}\n\n`);
     // S16, S18: the questions of questions.json were reviewed, and are presented from the records with their terms; any

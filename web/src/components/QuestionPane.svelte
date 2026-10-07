@@ -33,7 +33,7 @@
     if (!offline) text = "";
     onAnswer(widget.asked.prompt, value);
   };
-  // S25: a submission that ends the run, clicked or typed, is confirmed first by the one predicate the terminal uses.
+  // S25: a submission that ends the run, clicked or typed, is confirmed first by the one predicate of src/input.ts.
   // S38 (W2-R1-1): the confirmation holds the identity of the prompt it was opened for, delivers only to that prompt,
   // and closes without acting as soon as the pending prompt is another one or none [error prevention].
   const identityOf = (): string | null => (widget === null ? null : JSON.stringify([identity?.incarnation ?? null, identity?.run ?? null, widget.asked.prompt]));

@@ -69,7 +69,7 @@ const ENDED: Refusal = { refused: "that run has ended" };
 const EARLIER: Refusal = { refused: "that run belongs to an earlier start of the server" };
 
 /**
- * The manager over a wiring per run (the live one of main.ts with the run's web Ui). The state is one Ref: the
+ * The manager over a wiring per run (the live one of src/web.ts with the run's web Ui). The state is one Ref: the
  * next id (never reused while the process lives), the current run and the last finished one. An event is
  * appended in one step with its seq and then broadcast, so a listener registered before a snapshot sees every
  * event that the snapshot does not hold (P1-R1-2). The time of an event (issue #1) is read from the Clock before

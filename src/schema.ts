@@ -48,7 +48,7 @@ export const SelfCorrection = Schema.Struct({
 export const Piece = Schema.Struct({ text: Schema.String, ref: Schema.String, code: Schema.Boolean });
 /**
  * An explanation of a word or phrase of a question that a reader who has never seen the codebase may not know: its id, the
- * canonical name of the term (the label of its line in the terminal's "Terms:" block) and the explanation itself.
+ * canonical name of the term (the label of its line in the "Terms:" block of conversation.md) and the explanation itself.
  */
 export const Explanation = Schema.Struct({ id: Schema.String, term: Schema.String, explanation: Schema.String });
 /** An item of a bulleted list: its nesting depth (0 at the top) and its pieces. */

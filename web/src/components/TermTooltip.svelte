@@ -3,7 +3,7 @@
   // none. It asserts only the explanation the agents wrote and Codex reviewed. The text is plain text, never HTML. It is
   // placed inside the viewport, below or above its anchor, with a size limit and its own scrolling.
   // `entries`: the explanation a word refers to (issue #36: a word is a piece with one ref). The term's canonical name
-  // is not shown: in the page the words themselves are the anchor; it labels the terminal's "Terms:" lines.
+  // is not shown: in the page the words themselves are the anchor; it labels the "Terms:" lines of conversation.md.
   type Entry = Readonly<{ explanation: string }>;
   // S42: the keyboard inside the tooltip. Tab leaves past its anchor (`onPast`), Shift+Tab and Escape return to the anchor
   // (`onReturn`), and focus leaving for anything but the anchor closes it (`onFocusOut`).

@@ -176,9 +176,9 @@ describe("Markdown in the left panel", () => {
   });
 });
 
-// Plan step 4.7 (the review against the heuristics): the page states a prompt without the terminal's key
+// Plan step 4.7 (the review against the heuristics): the page states a prompt without the hint's key
 // conventions, which the buttons replace [match between the system and the real world].
-test("every prompt is shown in the page's words, without the terminal's key conventions", () => {
+test("every prompt is shown in the page's words, without the hint's key conventions", () => {
   const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.execInputPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt];
   for (const text of texts) {
     const body = fold(live([started, asked(1, text)])).run?.pending?.hint ?? "";
@@ -503,7 +503,7 @@ describe("answered prompts", () => {
   });
 });
 
-// Finding 8 of docs/gui-review.md: the page renders the interview's help without the terminal's """ convention.
+// Finding 8 of docs/gui-review.md: the page renders the interview's help without a """ convention.
 describe("the interview's opening help", () => {
   test("the page message names /done, /quit and Shift+Enter, and has no triple quotes", () => {
     const s = fold(live([started, notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 })]));

@@ -1,5 +1,5 @@
 // The Ui of a run in the web page (plan step 3.2): every call becomes a RunEvent for the page, and a prompt waits
-// for the first answer any tab sends for it. The answers are interpreted as in the terminal (src/input.ts).
+// for the first answer any tab sends for it. The answers are interpreted by src/input.ts.
 
 import { Deferred, Effect, Ref, Semaphore } from "effect";
 import { UserStopped } from "./errors.ts";
@@ -23,7 +23,7 @@ type Prompts = Readonly<{ next: number; waiting: Waiting | null }>;
 /** `sink` must not block: it records and offers the event (src/runManager.ts, makePublisher), so the answer's protected step stays short. */
 export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>): Effect.Effect<WebUi> =>
   Effect.gen(function* () {
-    // The dialogue is serialized as in the terminal: a second concurrent prompt waits for the first answer.
+    // The dialogue is serialized: a second concurrent prompt waits for the first answer.
     const dialogue = yield* Semaphore.make(1);
     const prompts = yield* Ref.make<Prompts>({ next: 1, waiting: null });
     const questions = yield* Ref.make(0);

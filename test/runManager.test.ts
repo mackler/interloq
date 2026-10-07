@@ -57,10 +57,10 @@ const pendingAsk = async (h: Harness, id: number) => {
 };
 const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 
-test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identical to a terminal run of the same script", async () => {
-  const terminal = tempRepo();
-  const { wiring } = testWiring(terminal, converging);
-  assert.equal(await run(Effect.scoped(program(["task", terminal], wiring))), 0);
+test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identical to a direct run of the program over the same script", async () => {
+  const direct = tempRepo();
+  const { wiring } = testWiring(direct, converging);
+  assert.equal(await run(Effect.scoped(program(["task", direct], wiring))), 0);
 
   const repo = tempRepo();
   const h = await harness(repo, [converging]);
@@ -73,11 +73,11 @@ test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identica
   assert.ok(events.some((e) => e._tag === "Said" && /finished after 1 implementation phase/.test(e.text)));
   assert.ok(events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan"));
   const read = (r: string) => fs.readFileSync(path.join(r, "plan-review", "conversation.md"), "utf8");
-  assert.equal(read(repo), read(terminal));
+  assert.equal(read(repo), read(direct));
   assert.equal(await run(h.manager.current), null);
 });
 
-test("a question is answered through the manager, with the same text the terminal would send", async () => {
+test("a question is answered through the manager, with the same text the scripted Ui would send", async () => {
   const repo = tempRepo();
   const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] }]);
   const id = await started(h, repo);
@@ -142,7 +142,7 @@ test("the replay during a run holds the last run and the current one", async () 
   await ended(h, second);
 });
 
-test("an interview's numbered answer sent through the manager reaches Claude Code as the terminal's text", async () => {
+test("an interview's numbered answer sent through the manager reaches Claude Code as the scripted Ui's text", async () => {
   const repo = tempRepo();
   const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete, summary });
   const database = currentOf({ id: "F1", context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", text: "Which database should the service use?", terms: [], options: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }] });

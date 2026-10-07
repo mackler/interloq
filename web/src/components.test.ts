@@ -129,6 +129,14 @@ describe("StartForm", () => {
     expect(text).toBe(prompts.START_FORM_DESCRIPTION.map((part) => part.text).join("").replace(/\s+/g, " ").trim());
   });
 
+  // Issue #88: the page is the only interface, so its help names no terminal; Stop task ends the task and keeps its records.
+  test("the description says what Stop task does without naming a terminal", () => {
+    const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: () => undefined, onBrowse: () => undefined });
+    const text = (one(root, ".help").textContent ?? "").replace(/\s+/g, " ").trim();
+    expect(text).not.toMatch(/terminal/i);
+    expect(text).toMatch(/Stop task ends the task; its records stay in plan-review\//);
+  });
+
   test("Start is disabled while a field is empty or a run is active, and sends the project and the task", () => {
     const started: string[][] = [];
     const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: (p: string, t: string) => void started.push([p, t]), onBrowse: () => undefined });

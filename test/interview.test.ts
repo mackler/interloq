@@ -63,7 +63,7 @@ test("a default answer that names no proposed answer is recorded as null, with a
 });
 
 // Plan step 1.5: the question phase is a phase of the progress display, and each interview turn is an event
-// emitted before the terminal's lines of that turn, which stay unchanged.
+// emitted before the lines said for that turn, which stay unchanged.
 test("the question phase notifies its beginning and end and every interview turn before its lines", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["more", ""],
@@ -91,7 +91,7 @@ test("the question phase notifies its beginning and end and every interview turn
   assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 1 });
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
   assert.ok(tags.indexOf("PhaseEnded") < tags.lastIndexOf("PhaseBegan"), "the question phase ends before planning begins");
-  // The terminal line of a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
+  // The line said for a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
   assert.ok(probe.ui.said.includes("\nAnything to add?\n"));
   const confirm = presentedQuestions(probe.ui).find((q) => q.origin.kind === "confirmSummary");
   assert.deepEqual(confirm?.details, [{ kind: "document", markdown: "# Requirements\n\nNone." }]);
@@ -99,7 +99,7 @@ test("the question phase notifies its beginning and end and every interview turn
 });
 
 // Finding 8 of docs/gui-review.md: the interview's opening help is a structured event, rendered per interface.
-test("the interview's opening is an InterviewOpened event, not a terminal-only say", async () => {
+test("the interview's opening is an InterviewOpened event, not a say", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: [""],
     steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Done.", true, "# Requirements\n\nNone.") }, { output: noQuestions, plan: "v1" }],
@@ -109,7 +109,7 @@ test("the interview's opening is an InterviewOpened event, not a terminal-only s
   });
   await runTask(layer);
   assert.ok(probe.ui.notified.some((e) => e._tag === "InterviewOpened"), "no InterviewOpened event");
-  assert.ok(!probe.ui.said.some((line) => line.includes('"""')), "the terminal's multiline convention was said to every interface");
+  assert.ok(!probe.ui.said.some((line) => line.includes('"""')), "a multiline convention was said");
 });
 
 // Decision support, plan step 3.5, and S18: an agreed question is presented from questions.json, its proposed answers its

@@ -131,7 +131,7 @@ export type RunView = Readonly<{
   limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
   ended: number | null;
-  /** Internal to the fold: the terminal lines of the last interview turn still to absorb, and the options of the last question presented (S5). */
+  /** Internal to the fold: the lines said for the last interview turn still to absorb, and the options of the last question presented (S5). */
   absorb: readonly string[];
   questionOptions: readonly Choice[];
   /** The question presented last and not yet asked (S26), with the time it was presented. */
@@ -504,7 +504,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
         return ahead < 0 ? [...ended, step] : ended.map((st, i) => (i === ahead ? step : st));
       };
       const timeline = inQuestionPhase(run.timeline, opened);
-      // The page's own help (finding 8): no terminal """ convention, which the page does not implement.
+      // The page's own help (finding 8).
       return withLeft({ ...run, timeline }, message(run, time, "program", interviewHelp(event.heading), "text"));
     }
     case "AgentCallStarted": {
@@ -554,7 +554,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
         }),
       };
     case "AnalysisProgress": {
-      // S21 (Q4): one plain status while the analysis is prepared, updated in place; the terminal's line of it that
+      // S21 (Q4): one plain status while the analysis is prepared, updated in place; the line said for it that
       // follows is absorbed.
       const text = analysisProgressLine(event.decision, event.question, event.check);
       const key = `${run.id}-analysis-${event.decision}`;
@@ -589,7 +589,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
 
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
-  // The terminal lines of an interview turn or a relayed question are absorbed only while they follow it directly.
+  // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
   if (event._tag === "Said" && run.absorb.length > 0 && run.absorb[0] === event.text) return { ...run, absorb: run.absorb.slice(1), nextSeq: run.nextSeq + 1 };
   const r: RunView = { ...run, absorb: [] };
   const next = ((): RunView => {

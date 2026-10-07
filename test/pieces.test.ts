@@ -31,7 +31,7 @@ test("the words of pieces and blocks, and the pieces and refs of blocks", () => 
   assert.deepEqual(literalsOf(blocks), ["npm i", "a\nb"]);
 });
 
-test("Markdown for the records and the terminal: paragraphs, nested lists, a code span and a fenced block, exactly", () => {
+test("Markdown for the records: paragraphs, nested lists, a code span and a fenced block, exactly", () => {
   const blocks: readonly ShownBlock[] = [
     { kind: "paragraph", pieces: [plain("Use "), ref("zod", "z"), plain(" with "), codePiece("a`b")] },
     { kind: "list", items: [{ level: 0, pieces: [plain("one")] }, { level: 1, pieces: [plain("two")] }] },

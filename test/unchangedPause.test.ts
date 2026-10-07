@@ -6,7 +6,7 @@ import * as prompts from "../src/prompts.ts";
 import { promptOf } from "../src/userPrompts.ts";
 
 // Issue #30 (plan step S12): the pause after a corrective turn that left the file unchanged. The page's buttons, the
-// terminal's parser and decision support's options must agree; each seam is asserted from one source.
+// parser of src/input.ts and decision support's options must agree; each seam is asserted from one source.
 const intended = { [prompts.UNCHANGED_RETRY]: "retry", [prompts.UNCHANGED_PROCEED]: "proceed", [prompts.UNCHANGED_STOP]: "stop" } as const;
 
 for (const interview of [false, true]) {

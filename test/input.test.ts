@@ -31,7 +31,7 @@ test("answerOf: a number chooses an option and yields its label and description;
   assert.equal(answerOf("", options), "");
 });
 
-// S24 (issue #25, Q11, P2-R1-1): the answers that end the run, which the terminal and the page confirm.
+// S24 (issue #25, Q11, P2-R1-1): the answers that end the run, which the page confirms.
 test("endingOf: q at an ask and /quit at a message end the run; at the cycle limit every answer but p or a count stops it", async () => {
   const { endingOf, endsRun, limitStops, parseConfirmEnd } = await import("../src/input.ts");
   assert.equal(endingOf("decision", "ask", "q"), "endRun");

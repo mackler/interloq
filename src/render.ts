@@ -60,7 +60,7 @@ export function renderQuestions(list: RenderableQuestions): string {
 export const renderTerms = (entries: readonly TermsEntry[]): string =>
   entries.map((e) => `- **[${e.id}]** ${e.explanations.length === 0 ? "no term" : e.explanations.map((t) => `${t.term}: ${t.explanation}`).join("; ")}`).join("\n") + "\n";
 
-/** The terminal lines of an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
+/** The lines said for an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
 export const interviewSays = (turn: TurnText): readonly string[] =>
   turn.kind === "summary_proposed" ? [`\n${turn.message}\n`, `Summary proposed by Claude Code:\n\n${turn.summary}\n`] : [`\n${turn.message}\n`];
 

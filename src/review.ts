@@ -42,7 +42,7 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   id: SubjectId;
   /** The phase its loop records in log entries, round records and checkpoints: a decision's is the phase in which it took place. */
   phase: number;
-  /** Heading in conversation.md and in terminal output, for example "Planning phase 2". */
+  /** Heading in conversation.md and in the page, for example "Planning phase 2". */
   heading: string;
   /** Name of the reviewed file as used in messages, for example "plan.md". */
   fileLabel: string;
@@ -273,7 +273,7 @@ export const applyDecisions = <R extends PlannerResponse, D>(subject: Subject<R,
     if (subject.applyDecisions.after !== null) yield* subject.applyDecisions.after(call.output);
   });
 
-/** The one status of an analysis being prepared (S21, Q4): notified for the page, said for the terminal. */
+/** The one status of an analysis being prepared (S21, Q4): notified for the page, and said as a line the page absorbs. */
 export const analysisProgress = (decision: number, question: number | null, check: number): Effect.Effect<void, never, Ui> =>
   Effect.gen(function* () {
     const ui = yield* Ui;

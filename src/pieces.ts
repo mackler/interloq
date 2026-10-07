@@ -143,7 +143,7 @@ export const valueTokensOf = (blocks: readonly ShownBlock[]): readonly ValueToke
 /** Every ref of the pieces, in order, with repetitions. */
 export const refsOf = (pieces: readonly Piece[]): readonly string[] => pieces.filter((p) => p.ref !== "").map((p) => p.ref);
 
-// ---- Markdown for the records and the terminal -------------------------------------------------------------------
+// ---- Markdown for the records -------------------------------------------------------------------------------------
 
 /**
  * Where a run of plain pieces stands on its line (issue #94): whether it begins a line, whether it ends one, and the
@@ -214,8 +214,7 @@ const inertLine = (line: string, continuation: string, starts: boolean, ends: bo
  * whitespace is written as numeric character references, which conversation.md, read as Markdown, shows as the
  * characters. Inside a list item the indentation blocksMarkdown adds is literal spaces before the references, so it is
  * neither counted as the piece's whitespace nor defeats the escape. A link reference definition's label may span lines
- * and reach into what follows the run, which is why `at.after` holds the Markdown written after it (W1-R1-1). The terminal
- * prints the same text (the developer's decision of 5 Oct 2026).
+ * and reach into what follows the run, which is why `at.after` holds the Markdown written after it (W1-R1-1).
  */
 export const plainMarkdown = (texts: readonly string[], at: LineEdges): string => {
   const joined = texts.map(escapedPiece).join("");

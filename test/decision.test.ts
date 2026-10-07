@@ -426,7 +426,7 @@ test("a repair of a duplicate id permits no recommendation, and the repaired ana
   assert.equal(json(probe.dir, "decision-1/analysis.json").analysis.recommendation.option, "");
 });
 
-// W1-R1-2: a decision's prompt names its phase as the terminal and the rail do, by the count of its kind in the run.
+// W1-R1-2: a decision's prompt names its phase as the phase lines and the rail do, by the count of its kind in the run.
 test("a decision names its phase by the run's count: Planning in a run of one iteration, Planning 2 once a second is foreseen", async () => {
   const { run } = await import("../src/run.ts");
   const { countOfKind, foreseenPhases, phaseName } = await import("../src/uiEvents.ts");

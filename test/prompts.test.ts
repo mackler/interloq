@@ -5,7 +5,7 @@ import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
 import { para, plain } from "./helpers.ts";
-/** A tool's input as the terminal and conversation.md print it (S34): its blocks as Markdown, without the heading. */
+/** A tool's input as conversation.md records it (S34): its blocks as Markdown, without the heading. */
 const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input).slice(1));
 import { appendRound } from "../src/issueLog.ts";
 import type { IssueId } from "../src/round.ts";
@@ -139,7 +139,7 @@ test("an action not sent because the page is no longer connected, with the answe
 
 // Issue #14: the user reads "cycle", never "round", at the limit; the agents' prompts and the records keep "round".
 // S8: the counts are in the question (limitQuestion), the hint says only how to answer.
-test("the cycle limit's question and hints, in the terminal and in the page, speak of cycles", () => {
+test("the cycle limit's question and hints, in the hints and in the page, speak of cycles", () => {
   assert.equal(prompts.limitQuestion("Planning phase 1", 5), "Planning phase 1 has completed 5 cycles without convergence. How do you want the run to continue?");
   assert.match(prompts.limitPrompt, /more cycles/);
   assert.match(prompts.limitNoProceedPrompt, /more cycles/);
@@ -273,9 +273,9 @@ test("the decision respond and apply-decisions prompts ask for the complete anal
   assert.match(apply, /complete analysis/);
 });
 
-// Issue #25, one line: only the first word of a button label is capitalized, and the terminal's offer line names the
+// Issue #25, one line: only the first word of a button label is capitalized, and the offer line names the
 // button's label, built from the same constant.
-test("the offer's label reads Help me decide, and the terminal's offer line carries that label", () => {
+test("the offer's label reads Help me decide, and the offer line carries that label", () => {
   assert.equal(prompts.HELP_ME_DECIDE, "Help me decide");
   assert.ok(prompts.OFFER_LINE.includes(`/decide = ${prompts.HELP_ME_DECIDE}:`), prompts.OFFER_LINE);
 });
@@ -482,7 +482,7 @@ test("codeSpan escapes carriage returns, controls, invisible characters and spec
   assert.equal(prompts.codeSpan("a\u00a0b"), "`a\u00a0b`");
 });
 
-test("an escaped field carries ESCAPED_VALUE_NOTE once, in the lines the terminal and conversation.md print; a literal one none", () => {
+test("an escaped field carries ESCAPED_VALUE_NOTE once, in the lines conversation.md records; a literal one none", () => {
   const escaped = inputLines({ old_string: "a\rb", new_string: "c\u200b" });
   assert.equal(escaped.split(prompts.ESCAPED_VALUE_NOTE).length - 1, 2);
   assert.ok(!escaped.includes("\r") && !escaped.includes("\u200b"));
@@ -559,8 +559,8 @@ test("an execution stop's details hold Claude Code's description under their hea
   assert.ok(shown("  ").includes(prompts.EXEC_STOP_NO_DESCRIPTION));
 });
 
-// S54: the terminal's lines and conversation.md carry the edge line breaks as escapes, as the page does.
-test("a multi-line value's edge line breaks are escaped in the terminal's lines and the record", async () => {
+// S54: conversation.md carries the edge line breaks as escapes, as the page does.
+test("a multi-line value's edge line breaks are escaped in the record", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const lines = inputLines({ content: "a\nb\n" });
   assert.ok(lines.includes("a\nb\\n"), lines);
@@ -572,7 +572,7 @@ test("a multi-line value's edge line breaks are escaped in the terminal's lines 
 });
 
 // S55 (W6-R1-1, P7-R1-1): the label table is looked up by own properties; an unknown name is shown as code, its line
-// breaks escaped, in the terminal's lines and conversation.md alike.
+// breaks escaped, in conversation.md.
 test("an unknown field's name is shown literally and looked up by own properties only", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const own = (key: string) => Object.defineProperty({}, key, { value: 1, enumerable: true });

@@ -53,7 +53,7 @@ test("the first answer wins; a later one is ignored", async () => {
   assert.equal(events.filter((e) => e._tag === "Answered").length, 1);
 });
 
-test("q at an ask prompt and /quit at a message prompt stop the run, as in the terminal", async () => {
+test("q at an ask prompt and /quit at a message prompt stop the run, as src/input.ts reads them", async () => {
   const { ui } = await withUi();
   const stopped = async (effect: Effect.Effect<string, RunError>, answer: string) => {
     const fiber = Effect.runFork(effect);

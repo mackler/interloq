@@ -190,7 +190,7 @@
   <div class="question">
     <!-- S28: the question's terms carry their explanations here too; the analysis text does not. -->
     <!-- S46 (W3-R1-3): the details the question is about (a permission's input, a pause's facts, an agreed question's
-         reason) follow the context in the same scrolling region, as the terminal prints them. -->
+         reason) follow the context in the same scrolling region. -->
     <!-- Issue #79: the context takes the room that is free (decision Q1), its height set by allot; it scrolls only when
          there is none. -->
     <!-- The task of L21: where the window is shorter than the analysis's floor, the context yields last, below its own

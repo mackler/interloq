@@ -40,8 +40,8 @@ test("renderFeedback and renderQuestions", () => {
   assert.match(renderQuestions({ questions: [{ ...list.questions[0], default_answer: null }] }), /- B: b\n$/);
 });
 
-// Plan step 1.5: the terminal lines of an interview turn, shared with the page's reducer (4.2).
-test("interviewSays gives the terminal lines of a continuing turn and of a proposed summary", () => {
+// Plan step 1.5: the lines said for an interview turn, shared with the page's reducer (4.2).
+test("interviewSays gives the lines of a continuing turn and of a proposed summary", () => {
   assert.deepEqual(interviewSays({ kind: "continuing", message: "Hello" }), ["\nHello\n"]);
   assert.deepEqual(interviewSays({ kind: "summary_proposed", message: "Done.", summary: "# R" }), ["\nDone.\n", "Summary proposed by Claude Code:\n\n# R\n"]);
 });

@@ -149,7 +149,7 @@ const explain = (draft: QuestionDraft, facts: string) =>
 
 /**
  * Asks a question (S7), the one way a question reaches the user: it takes the question's number in the run, presents
- * the question (the page's event, which the terminal prints) and records it in conversation.md, then asks with the
+ * the question (the page's event) and records it in conversation.md, then asks with the
  * kind's input hint. With two or more options the hint carries the offer of decision support (D2): "/decide" runs a
  * decision loop, shows its analysis, presents the question again and asks again. Any other answer is returned as
  * typed; after an analysis it is recorded as the choice of every decision made for this question (decision Q4), with

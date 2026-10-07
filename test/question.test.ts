@@ -177,7 +177,7 @@ test("S4: the prose clauses reach the writers and the reviewers from the one con
 });
 
 // S37 (the developer's decision of 4 Oct 2026): the clause that tells the writers a plain piece carries no code, the
-// criterion the reviewers apply, and the terminal's writing of a plain piece agree.
+// criterion the reviewers apply, and the writing of a plain piece in conversation.md agree.
 test("S37: a plain piece carries emphasis and links only: the writers, the reviewers and piecesMarkdown agree", () => {
   const inline = prompts.QUESTION_FORMAT.find((c) => c.id === "inline");
   assert.ok(inline !== undefined);

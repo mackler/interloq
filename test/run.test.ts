@@ -590,7 +590,7 @@ test("with the question phase configured, Gather Requirements is foreseen first"
   assert.equal(foreseen(probe.ui.notified)[0], "foreseen Q,p1,e1,w1");
 });
 
-test("the terminal's phase lines carry numbers only once a second iteration is foreseen", async () => {
+test("the phase lines carry numbers only once a second iteration is foreseen", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
@@ -601,10 +601,10 @@ test("the terminal's phase lines carry numbers only once a second iteration is f
   assert.deepEqual(lines, ["Planning", "Implementation", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]);
 });
 
-// Issue #60: the seam of the terminal's phase lines. Each line's label is phaseName's, with the count of the phases known
+// Issue #60: the seam of the phase lines. Each line's label is phaseName's, with the count of the phases known
 // when it is printed: one iteration for the first Planning and Implementation, two from the first Code review on, since
 // the stop has made the second iteration known. A line that writes a phase's name by hand fails whatever the name is.
-test("the seam of the phase names: the terminal's phase lines open with phaseName's names", async () => {
+test("the seam of the phase names: the phase lines open with phaseName's names", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],

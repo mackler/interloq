@@ -6,13 +6,13 @@ import { ScriptedUi } from "./helpers.ts";
 
 // Finding 31 of docs/functional-design-review.md: the scripted Ui treated "q" as quit in askMessage, while the
 // live interface ends the run on "/quit" only; the doubles must share the command parsing of src/input.ts.
-test("ScriptedUi.askMessage returns q as a message and fails with UserStopped on /quit, like the terminal", async () => {
+test("ScriptedUi.askMessage returns q as a message and fails with UserStopped on /quit, as src/input.ts reads them", async () => {
   const ui = new ScriptedUi(["q", "/quit"]);
   assert.equal(await Effect.runPromise(ui.askMessage("You > ")), "q");
   await assert.rejects(Effect.runPromise(ui.askMessage("You > ")), (e: unknown) => (e as RunError)._tag === "UserStopped");
 });
 
-test("ScriptedUi.ask fails with UserStopped on q and returns /quit as an answer, like the terminal", async () => {
+test("ScriptedUi.ask fails with UserStopped on q and returns /quit as an answer, as src/input.ts reads them", async () => {
   const ui = new ScriptedUi(["/quit", "q"]);
   assert.equal(await Effect.runPromise(ui.ask("Decision > ")), "/quit");
   await assert.rejects(Effect.runPromise(ui.ask("Decision > ")), (e: unknown) => (e as RunError)._tag === "UserStopped");
