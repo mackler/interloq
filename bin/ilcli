@@ -463,7 +463,7 @@ ilcli_upgrade_command() {
   fi
   say upgrade "npm run build: done."
   say upgrade "now at $(commit_line HEAD)."
-  say upgrade "next: restart the web server (Ctrl+C, then node /opt/interloq/src/web.ts) and reload every open tab; terminal runs need nothing further."
+  say upgrade "next: restart the web server (Ctrl+C, then node /opt/interloq/src/web.ts) and reload every open tab."
 
 }
 

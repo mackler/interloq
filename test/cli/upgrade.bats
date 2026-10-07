@@ -30,6 +30,9 @@ expect_npm() {
   [[ "$output" == *"$(git -C "$T/installed" rev-parse --short HEAD)"* ]]
   [[ "$output" == *"Tested change"* ]]
   [[ "$output" == *"web server"* ]]
+  [[ "$output" == *"reload every open tab"* ]]
+  # Issue #88 (W1-R1-1): the page is the only interface, so no terminal runs are mentioned.
+  [[ "$output" != *"terminal"* ]] || { echo "$output"; return 1; }
 }
 
 @test "already up to date still runs npm ci and npm run build" {
