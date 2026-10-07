@@ -1534,6 +1534,19 @@ describe("the rail as a tree that collapses", () => {
     expect(branch(later, implementation, "stage:current-1")?.held).toBe(false);
   });
 
+  // W1-R1-1: a halt while the question after the execution call waits, when no phase is active any more.
+  test("a halt after the phase has ended holds the phase and the stage of the step last reported running", () => {
+    const close = flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false }, { scope: stageScope(2), open: false });
+    const events: RunEvent[] = [...executingS1, callEnded, notified({ _tag: "ExecutionEnded", phase: 1, outcome: { status: "needs_input", question: "Which?", summary: "" } } as UiEvent), ended(implementation, "needs_input"), asked(1, prompts.decisionPrompt), { _tag: "Ended", code: 1 }];
+    const s = fold([...live(events), close]);
+    expect(phaseNode(s, implementation)).toMatchObject({ open: true, held: true });
+    expect(branch(s, implementation, "stage:current-1")).toMatchObject({ open: true, held: true });
+    // An ended Implementation shows only the steps it acted on, so stage 2 is not shown at all; it is not held.
+    expect(branch(s, implementation, "stage:current-2")?.held ?? false).toBe(false);
+    const planningHalt = fold([...live([started, foreseen(false, 1), began(planning), ended(planning), { _tag: "Ended", code: 1 }]), flags({ scope: phaseScope(planning), open: false })]);
+    expect(phaseNode(planningHalt, planning)).toMatchObject({ open: true, held: true });
+  });
+
   test("a collapsed phase and stage carry the running step's label while it runs", () => {
     const s = fold(live(executingS1));
     expect(phaseNode(s, implementation).collapsed.running).toBe(`${prompts.stageHeading(1, "stage 1")} — ${prompts.planStepLabel(1, "step S1")}`);

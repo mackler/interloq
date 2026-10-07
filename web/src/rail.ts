@@ -42,9 +42,16 @@ const nodeOf = (run: RunView, scope: UiScope, auto: boolean, held: boolean, coll
   return { scope, open: held || (choice === "untouched" ? auto : choice === "open"), held, collapsed };
 };
 
-/** The index of the entry that needs the user: the one the run is in while a prompt waits, the stopped one after a halt. */
-const needingIndex = (run: RunView): number =>
-  run.pending !== null ? currentIndex(run.timeline) : run.ended === 1 ? run.timeline.findIndex((e) => e.state === "stopped") : -1;
+/**
+ * The index of the entry that needs the user: the one the run is in while a prompt waits; after a halt, the stopped one, or
+ * the one the run was in when no phase was active (a halt while the question after an execution call waited; W1-R1-1).
+ */
+const needingIndex = (run: RunView): number => {
+  if (run.pending !== null) return currentIndex(run.timeline);
+  if (run.ended !== 1) return -1;
+  const stopped = run.timeline.findIndex((e) => e.state === "stopped");
+  return stopped >= 0 ? stopped : currentIndex(run.timeline);
+};
 /** The step of the plan the run is at in an entry: the current one, else the last reported running unless it is done. */
 const stepAt = (entry: TimelineEntry): string | null => {
   if (entry.currentStep !== null) return entry.currentStep;
