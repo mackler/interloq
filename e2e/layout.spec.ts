@@ -806,6 +806,34 @@ test.describe("the tests of the planSteps server, in order", () => {
     await expect(tip).toBeVisible();
     await expect.poll(() => tip.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
   });
+
+  // Issue #109: a step's tooltip is drawn opaque whatever the state of its step. CSS opacity below 1 on any ancestor dims
+  // the whole subtree as one group, so the tooltip's effective opacity is the product over it and its ancestors.
+  test("(L30) at 1280 × 800: the tooltip of a done step and of the current step are drawn at full opacity", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startTask(page, "Build the rail", layoutUrl("planSteps"));
+    const nav = page.getByRole("navigation", { name: "Progress of the run" });
+    const entry = (label: string) => nav.locator("[data-state]", { has: page.locator("[data-label]", { hasText: new RegExp(`^${label}$`) }) });
+    const cases = [
+      ["done", entry("Implementation 1"), "Structured user questions (Q1)"],
+      ["current", entry("Implementation 2"), "The store"],
+    ] as const;
+    for (const [state, within, label] of cases) {
+      const step = within.locator(`[data-plan-step=${state}]`, { hasText: label });
+      await expect(step).toBeVisible();
+      await step.locator("button").focus();
+      const tip = page.getByRole("tooltip");
+      await expect(tip).toBeVisible();
+      const effective = await tip.evaluate((el) => {
+        let product = 1;
+        for (let e: Element | null = el; e !== null; e = e.parentElement) product *= Number(getComputedStyle(e).opacity);
+        return product;
+      });
+      expect(effective, `the effective opacity of a ${state} step's tooltip`).toBe(1);
+      await page.keyboard.press("Escape");
+      await expect(tip).toHaveCount(0);
+    }
+  });
 });
 
 test.describe("the tests of the longQuestion server, in order", () => {

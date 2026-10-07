@@ -199,23 +199,26 @@
   .entry.done { color: var(--m3c-on-surface-variant); }
   .entry.stopped { color: var(--m3c-error); }
   .entry.ahead { color: var(--m3c-on-surface-variant); }
-  .entry.notReached { color: var(--m3c-on-surface-variant); opacity: 0.6; }
+  /* Issue #109: done and not reached are colors, never a group opacity, which would dim everything inside the row, a step's
+     tooltip included. On-surface-variant alone does not tell not reached from ahead (the same hollow glyph), so not
+     reached takes that color made translucent: the text and the mark are dimmed, not the row. */
+  .entry.notReached { color: color-mix(in srgb, var(--m3c-on-surface-variant) 60%, transparent); }
   .plan { margin: 0.25rem 0 0; }
   .stage { margin-top: 0.25rem; }
   .plan-step { position: relative; padding: 0.125rem 0 0.125rem 1.5rem; }
   .plan-step .mark { left: 0.25rem; }
-  .plan-step.done { opacity: 0.8; }
+  .plan-step.done { color: var(--m3c-on-surface-variant); }
   .plan-step.current { font-weight: 600; }
   .mark { position: absolute; left: 0.5rem; }
   .steps { margin: 0.25rem 0 0; }
   .step { position: relative; padding: 0.25rem 0 0.25rem 1.5rem; }
   .step .mark { left: 0.25rem; }
-  .step.done { opacity: 0.8; }
+  .step.done { color: var(--m3c-on-surface-variant); }
   .step.stopped { color: var(--m3c-error); }
   .step.skipped { color: var(--m3c-on-surface-variant); }
   .count { display: block; }
   .group { margin: 0.25rem 0 0 0.25rem; }
-  .group.done { opacity: 0.8; }
+  .group.done { color: var(--m3c-on-surface-variant); }
   .muted { color: var(--m3c-on-surface-variant); }
   .entry > .elapsed { display: block; }
   /* Issue #63: the disclosure of a row, after the one of a decision's entry (issue #87): a native button with a chevron,
