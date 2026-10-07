@@ -1314,14 +1314,42 @@ test("the activity line shows retry 2 of 3", () => {
   expect(one(root, "[data-activity]").textContent).toContain("retry 2 of 3");
 });
 
-// W1-R1-4: the activity line shows the indeterminate indicator while the program waits to retry: no value, no estimate.
-test("the activity line shows an indeterminate progressbar only while busy", () => {
-  const busy = show(ActivityLine, { text: "Codex — connection lost, retry 1 of 3 (x)", busy: true });
-  const bar = one(busy, "[role=progressbar]");
-  expect(bar.hasAttribute("aria-valuenow")).toBe(false);
+// Issue #63 (replacing W1-R1-4's indeterminate bar): the wait before a retry is known exactly, so the activity line counts
+// it down with the determinate indicator of the usage-limit wait, and the time remaining beside it.
+test("the activity line counts down the wait before a retry with a determinate progressbar, and no indeterminate bar remains", () => {
+  const now = Date.now();
+  const retrying = show(ActivityLine, { text: "Codex — connection lost, retry 1 of 3 (x)", retry: { fromMs: now - 1000, untilMs: now + 4000 } });
+  const bar = one(retrying, "[role=progressbar]");
   expect(bar.getAttribute("aria-label")).toBe(prompts.RETRY_WAITING_LABEL);
-  const idle = show(ActivityLine, { text: "Codex — review", busy: false });
+  const value = Number(bar.getAttribute("aria-valuenow"));
+  expect(value).toBeGreaterThanOrEqual(19);
+  expect(value).toBeLessThanOrEqual(21);
+  expect(one(retrying, "[data-remaining]").textContent).toMatch(/^0:0[34] left$/);
+  expect(retrying.querySelector(".indeterminate, [data-waiting]")).toBe(null);
+  const idle = show(ActivityLine, { text: "Codex — review" });
   expect(idle.querySelector("[role=progressbar]")).toBe(null);
+});
+
+// P1-R1-2: the countdown goes at the wait's end, between two ticks and with no further event (a wait received late, as
+// after a replay), for a retry's wait and a usage limit's alike.
+test("a countdown received 250 ms before its end is gone at its end, before the next one-second tick", () => {
+  vi.useFakeTimers();
+  try {
+    const now = Date.UTC(2026, 9, 7, 12, 0, 0);
+    vi.setSystemTime(now);
+    const wait = { fromMs: now - 4750, untilMs: now + 250 };
+    for (const props of [{ text: "Codex — retry", retry: wait }, { text: "Claude — waiting", wait: { ...wait, agent: "claude" as const, limitType: "five_hour" } }]) {
+      vi.setSystemTime(now);
+      const root = show(ActivityLine, props);
+      expect(root.querySelector("[role=progressbar]")).not.toBe(null);
+      vi.advanceTimersByTime(250);
+      flushSync();
+      expect(root.querySelector("[role=progressbar]")).toBe(null);
+      expect(root.querySelector("[data-remaining]")).toBe(null);
+    }
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // Issue #50: M3's indeterminate circular progress indicator, written by hand: no value and no end, an SVG arc in the
@@ -1811,14 +1839,14 @@ test("each option card shows its label in bold as its own element and its descri
 test("the activity line shows a determinate progressbar and the time remaining during a usage-limit wait", () => {
   const now = Date.now();
   const wait = { agent: "claude" as const, limitType: "five_hour", fromMs: now - 3_600_000, untilMs: now + 3_600_000 };
-  const root = show(ActivityLine, { text: "Claude — waiting", busy: false, wait });
+  const root = show(ActivityLine, { text: "Claude — waiting", wait });
   const bar = one(root, "[role=progressbar]");
   expect(bar.getAttribute("aria-label")).toBe(prompts.USAGE_LIMIT_WAITING_LABEL);
   const value = Number(bar.getAttribute("aria-valuenow"));
   expect(value).toBeGreaterThanOrEqual(49);
   expect(value).toBeLessThanOrEqual(51);
   expect(one(root, "[data-remaining]").textContent).toMatch(/^(1:00:00|59:5\d) left$/);
-  const plain = show(ActivityLine, { text: "Codex — review", busy: false, wait: null });
+  const plain = show(ActivityLine, { text: "Codex — review", wait: null });
   expect(plain.querySelector("[role=progressbar]")).toBe(null);
   expect(plain.querySelector("[data-remaining]")).toBe(null);
 });

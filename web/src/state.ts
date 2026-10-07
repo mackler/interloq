@@ -714,6 +714,3 @@ export const limitWaitView = (wait: Countdown, nowMs: number): Readonly<{ percen
 
 /** A wait at an instant while it lasts, as `limitWaitView` gives it; null at and after its end, so nothing asserts a wait that is over. */
 export const countdownView = (wait: Countdown, nowMs: number): Readonly<{ percent: number; remainingMs: number }> | null => (nowMs >= wait.untilMs ? null : limitWaitView(wait, nowMs));
-
-/** Whether the program waits to retry a call (issue #26, W1-R1-4): a retry is pending and no call runs. */
-export const waiting = (run: RunView): boolean => run.retry !== null && run.calls.length === 0;

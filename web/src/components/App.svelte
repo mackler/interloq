@@ -14,7 +14,7 @@
   import type { ClientMessage } from "../../../src/protocol.ts";
   import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { connect, type Connection } from "../socket.ts";
-  import { callStartedAt, dismissUnsent, executing, initialState, keepUnsent, notice, progressOf, protocolError, reduce, type ViewState, waiting } from "../state.ts";
+  import { callStartedAt, dismissUnsent, executing, initialState, keepUnsent, notice, progressOf, protocolError, reduce, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -253,7 +253,7 @@
         <div class="chat" class:hidden={deciding}>
           <ChatPanel title={TITLES.right} messages={run.right} empty="No review yet." visible={shown("right") && !deciding} />
         </div>
-        <ActivityLine text={run.activity} busy={waiting(run)} wait={run.limitWait} />
+        <ActivityLine text={run.activity} retry={run.retry?.wait ?? null} wait={run.limitWait} />
       </div>
     </main>
   {/if}

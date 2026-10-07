@@ -1922,8 +1922,8 @@ export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number
 export function usageLimitActivity(limitType: string | null, untilMs: number): string {
   return `${limitName(limitType)} reached — waiting until ${utcMinute(untilMs)}`;
 }
-/** The time remaining of a wait for a usage limit, beside its indicator on the page (issue #68). */
-export function usageLimitRemaining(remainingMs: number): string {
+/** The time remaining of a wait whose end is known, beside its indicator on the page: a usage limit's (issue #68), a retry's (issue #63). */
+export function remainingTime(remainingMs: number): string {
   return `${durationText(remainingMs)} left`;
 }
 /** A call that succeeded after a retry. */

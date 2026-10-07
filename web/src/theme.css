@@ -23,26 +23,6 @@ html, body { margin: 0; }
 body { font-family: var(--m3-font); }
 
 /*
- * Issue #42: M3's indeterminate linear progress indicator, written by hand because m3-svelte has none. A 4px track in
- * secondary-container with an active indicator in primary that travels along it without end: it asserts that work is in
- * progress and nothing about how much. With reduced motion the indicator stays in place and only pulses slowly.
- */
-.indeterminate { position: relative; height: 4px; overflow: hidden; border-radius: 2px; background: var(--m3c-secondary-container); }
-.indeterminate > .active-indicator { position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: 2px; background: var(--m3c-primary); animation: m3-indeterminate 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
-@keyframes m3-indeterminate {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(250%); }
-}
-@keyframes m3-indeterminate-pulse {
-  from { opacity: 1; }
-  50% { opacity: 0.4; }
-  to { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .indeterminate > .active-indicator { left: 30%; animation: m3-indeterminate-pulse 3s ease-in-out infinite; }
-}
-
-/*
  * Issue #50: M3's indeterminate circular progress indicator, written by hand because m3-svelte has none. It replaces a
  * running step's mark in the mark's own 1em box, so no label moves when a call starts or ends: a track in
  * secondary-container and an arc in primary that turns while it grows and shrinks, without end. It asserts that an agent

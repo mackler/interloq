@@ -572,8 +572,8 @@ test.describe("the tests of the transportRetry server, in order", () => {
   test("(17) a Codex turn that loses its connection: the page shows the retry, and the run converges (issue #26)", async ({ page }) => {
     await startTask(page, "transportRetry", "Document the service");
     await expect(page.locator("[data-activity]")).toContainText("retry 1 of 3");
-    // W1-R1-4: while the program waits to retry, the indeterminate indicator shows that it is busy.
-    await expect(page.locator("[data-waiting] [role=progressbar]")).toBeVisible();
+    // Issue #63: while the program waits to retry, the determinate indicator counts the known wait down.
+    await expect(page.locator("[data-retry-wait] [role=progressbar]")).toHaveAttribute("aria-valuenow", /^\d+$/);
     await expect(left(page).getByText(transportRetryLine("codex", 1, 3, 2, "stream disconnected before completion"))).toBeVisible();
     await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
