@@ -1,6 +1,7 @@
 // The progress rail as a tree that collapses (issue #63): which of its nodes are open, and what a collapsed node carries
 // of what it hides. Pure; the component renders it and sends the user's toggles as the run's shared state.
-import { planStepLabel, stageHeading } from "../../src/prompts.ts";
+import { phaseElapsed, phaseTook, planStepLabel, stageHeading } from "../../src/prompts.ts";
+import { elapsedMs } from "./time.ts";
 import { choiceOf, type UiScope } from "../../src/uiState.ts";
 import { bandKey, currentIndex, currentPlanStep, currentStepIndex, type planStepState, type RunView, type StepState, type ShownStage, type TimelineEntry, type TimelineStep } from "./state.ts";
 
@@ -36,6 +37,20 @@ export const phaseHasChildren = (entry: TimelineEntry): boolean => entry.groups.
 export const stepHasChildren = (step: TimelineStep): boolean => step.groups.length > 0;
 /** Whether a stage of the plan has something to disclose: its steps. */
 export const stageHasChildren = (stage: ShownStage): boolean => stage.steps.length > 0;
+/** A phase that has ended (issue #89): its time is fixed by its two instants alone. */
+export type EndedPhase = Readonly<{ began: string; ended: string }>;
+/** A phase that runs (issue #89): its time is measured against the clock. */
+export type RunningPhase = Readonly<{ began: string }>;
+/** What a phase's row shows as its time: an ended phase's, a running phase's, or none (not begun, or stopped without an end). */
+export type PhaseTiming = Readonly<{ _tag: "Ended"; phase: EndedPhase }> | Readonly<{ _tag: "Running"; phase: RunningPhase }> | Readonly<{ _tag: "Untimed" }>;
+const UNTIMED: PhaseTiming = { _tag: "Untimed" };
+/** The one place a phase's timing is decided, with no clock: the rail's tick reaches only the `Running` text. */
+export const phaseTiming = (entry: TimelineEntry): PhaseTiming =>
+  entry.began === null ? UNTIMED : entry.ended !== null ? { _tag: "Ended", phase: { began: entry.began, ended: entry.ended } } : entry.state === "active" ? { _tag: "Running", phase: { began: entry.began } } : UNTIMED;
+/** How long an ended phase took ("took m:ss"): it takes no clock, so the rail's tick cannot reach it. */
+export const tookText = (phase: EndedPhase): string => phaseTook(elapsedMs(phase.began, Date.parse(phase.ended)));
+/** How long a running phase has run at the instant `at` ("m:ss so far"). */
+export const soFarText = (phase: RunningPhase, at: number): string => phaseElapsed(elapsedMs(phase.began, at));
 // The rail's marks: text glyphs, not an icon set (docs/ui-review.md). Ahead and not reached are hollow, not reached muted
 // by a translucent color (never an opacity; issue #109); skipped is a dash: the phase ended without needing the step.
 /** The mark of a phase and of a step of Gather Requirements, by its state. */
