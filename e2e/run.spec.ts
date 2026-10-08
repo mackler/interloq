@@ -601,7 +601,10 @@ test.describe("the tests of the planSteps server, in order", () => {
     await expect(implementation1.locator("[data-plan-step]")).toHaveCount(2);
     await expect(step(planStepLabel(1, "Structured user questions (Q1)"), implementation1).locator(".mark")).toHaveAttribute("aria-label", PLAN_STEP_STATE_LABEL.done);
     await expect(step(planStepLabel(2, "The store"), implementation1)).toHaveAttribute("data-plan-step", "unfinished");
-    // The step's full text by keyboard.
+    // The step's full text by keyboard. The click that opened the stage above leaves the pointer resting in the rail,
+    // and a tooltip the pointer opens is closed by leaving it, not by Escape, so it would survive the key and be
+    // counted below: the pointer goes out of the rail first, and what follows is about the keyboard alone.
+    await page.mouse.move(0, 0);
     await step(planStepLabel(1, "Structured user questions (Q1)"), implementation1).locator("button").focus();
     await expect(rail(page).getByRole("tooltip")).toContainText("Add the schema of a question.");
     await page.keyboard.press("Escape");
