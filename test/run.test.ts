@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { Effect, Fiber } from "effect";
 import { run } from "../src/run.ts";
 import { countOfKind, foreseenPhases, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
-import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -87,6 +87,26 @@ test("a stop with a question starts a second planning phase with a new Codex thr
   assert.ok(fs.existsSync(path.join(probe.dir, "planning-2", "cc-0.json")));
   assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), /stop in execution phase 1 \(needs_input\): A or B\?\nDecision: B/);
   assert.deepEqual(probe.ui.asked, []);
+});
+
+// Issue #117: each execution phase runs in a Claude Code session of its own, which carries nothing of the planning's
+// session or of an earlier execution's, and its prompt names the task as the run passes it.
+test("issue #117: two execution phases run in two sessions of their own, each with only its own prompt", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [{ status: "needs_input", summary: "step 1", question: "A or B?", remainingWork: "steps 2-3", userInput: "B" }, finished],
+  });
+  assert.equal(await runTask(layer, scriptedTask), 2);
+  const [first, second] = probe.planner.execSessions;
+  assert.equal(probe.planner.execSessions.length, 2);
+  assert.notEqual(first, second);
+  assert.ok(first !== "test-session" && second !== "test-session", probe.planner.execSessions.join(", "));
+  const expected = prompts.executePrompt(scriptedTask, false);
+  assert.deepEqual(probe.planner.execPrompts, [expected, expected]);
+  assert.ok(expected.includes(scriptedTask));
+  assert.deepEqual(probe.planner.history.get(second), [expected], "the second execution's session holds only its own prompt");
+  assert.ok(!(probe.planner.history.get("test-session") ?? []).includes(expected), "no execution prompt reached the run's main session");
 });
 
 test("a stop without a question asks the user for input", async () => {

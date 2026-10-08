@@ -73,7 +73,11 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
         // The steps of the plan (issue #6, Q2): report_step records on the plan as the phase began; when the call ends,
         // however it ends, a started step becomes unfinished and the held plan is written (G-R1-2, P1-R1-4).
         const steps = yield* executionSteps(k);
-        const outcome = yield* planner.executing(executePrompt(task, withRequirements), steps.report).pipe(
+        // Issue #117 (the developer's decision of 8 Oct 2026): each execution phase runs in a Claude Code session of its
+        // own, so that the run's main session does not grow by every execution's tool results; a transport retry and a
+        // usage-limit wait resume this session, which the planner it is called on holds.
+        const executor = yield* planner.fresh;
+        const outcome = yield* executor.executing(executePrompt(task, withRequirements), steps.report).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;
