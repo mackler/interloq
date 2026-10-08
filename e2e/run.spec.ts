@@ -2,7 +2,9 @@ import type { Locator, Page, WebSocketRoute } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { type RunScenario, runUrl } from "./ports.ts";
-import { clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { ownName } from "../src/hostDir.ts";
+import { tabTitle } from "../web/src/title.ts";
+import { endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, AGREED_REASON_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -192,6 +194,43 @@ test.describe("the tests of the decision server, in order", () => {
     await confirmEnd(page);
     await expect(left(page).getByText(/INTERRUPTED by the user\. State is preserved in/)).toBeVisible();
     await expect(page.getByText("This task has ended (interrupted).")).toBeVisible();
+  });
+  // Issue #16: a pause at a hidden tab marks the title, keeping the project, and raises one desktop notification; the
+  // run's end there marks it again and notifies, and the tab seen clears the marker. The stub records and logs nothing.
+  test("(27) a pause and the run's end at a hidden tab: the title's marker beside the project, and one notification each", async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { visibility: string; shown: string[] };
+      w.visibility = "hidden";
+      w.shown = [];
+      Object.defineProperty(Document.prototype, "visibilityState", { configurable: true, get: () => w.visibility });
+      class RecordingNotification {
+        static permission = "granted";
+        static requestPermission = () => Promise.resolve("granted");
+        onclick: unknown = null;
+        constructor(title: string) {
+          w.shown.push(title);
+        }
+        close() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, writable: true, value: RecordingNotification });
+      localStorage.setItem("interloq.alerts", JSON.stringify({ desktop: "on", sound: "off" }));
+    });
+    await startTask(page, "decision", "Add a database and notify");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    const repo = (await page.locator("header .location").textContent())!.trim();
+    const name = ownName(repo);
+    const shown = () => page.evaluate(() => (window as unknown as { shown: string[] }).shown);
+    await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Waiting" }));
+    expect(await shown()).toEqual([pauseNotificationTitle(name)]);
+    await continueWithoutDeciding(page).click();
+    await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Ended", code: 0 }));
+    expect(await shown()).toEqual([pauseNotificationTitle(name), endNotificationTitle(name, 0)]);
+    await page.evaluate(() => {
+      (window as unknown as { visibility: string }).visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await expect(page).toHaveTitle(tabTitle(repo));
   });
 });
 
