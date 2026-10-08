@@ -1163,14 +1163,19 @@ export const TITLE_ENDED_MARK = "✓";
 /** How a run ended, by its exit code: the words of "This task has ended (…)" and of the end's notification. */
 export const endedOutcome = (_code: number): "finished" | "interrupted" | "halted" => "halted";
 /** The desktop notification of a pending prompt, named by the project's own name. */
-export const pauseNotificationTitle = (_name: string): string => "";
-export const PAUSE_NOTIFICATION_BODY = "";
+export const pauseNotificationTitle = (name: string): string => `${name}: Interloq is waiting for you`;
+export const PAUSE_NOTIFICATION_BODY = "The run is paused until you answer its question.";
 /** The desktop notification of a run's end. */
-export const endNotificationTitle = (_name: string, _code: number): string => "";
-export const DESKTOP_ALERTS_LABEL = "";
-export const SOUND_ALERTS_LABEL = "";
+export const endNotificationTitle = (name: string, code: number): string => `${name}: the task has ${endedOutcome(code)}`;
+/** The switch of desktop notifications in the top bar. */
+export const DESKTOP_ALERTS_LABEL = "Desktop alerts";
+/** The switch of the sound in the top bar. */
+export const SOUND_ALERTS_LABEL = "Sound";
 /** Why desktop notifications cannot be shown although the user turned them on. */
-export const desktopBlockedNote = (_permission: "denied" | "unsupported"): string => "";
+export const desktopBlockedNote = (permission: "denied" | "unsupported"): string =>
+  permission === "denied"
+    ? "The browser blocks notifications from this page. Allow them in the browser's site settings for this address; the tab's title and icon still show when a run waits."
+    : "This browser cannot show notifications from this page. The tab's title and icon still show when a run waits.";
 const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 /**
  * A cycle of a review loop in the progress rail (issue #14, Q1): the issues its review raised, and the counted ones
