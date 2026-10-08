@@ -204,3 +204,27 @@ test("S6: the drafting conversation writes plain pieces only; a ref in the list 
   assert.equal(result.failure.repair, prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "unknownRef", subject: "z" }] }]));
   assert.ok(Result.isSuccess(questionListValidation<S.QuestionList>()({ questions: [entry] })));
 });
+
+// Issue #112: a disputed issue of the terms concerns how a question to the user is worded. A disputed self-correction is
+// not put to the user; Claude Code's disposition stands and the review goes on.
+test("issue #112: a disputed self-correction of the terms is not put to the user, and the review goes on", async () => {
+  const amended = terms("A library that checks data against a declared shape and reports what does not fit.");
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    terms: [
+      { output: terms("A library.") },
+      { output: { ...respond([["T-R1-1", "accepted"]]), ...amended } },
+      { output: { ...respond([["T-R2-1", "rejected"]], { self_corrections: [{ id: "T-R1-1", new_action: "rejected", explanation: "the longer text names a term the reader does not know" }] }), ...amended } },
+    ],
+    termsReviews: [{ issues: [issue("T-R1-1", "The explanation of zod does not say what it does.")] }, { issues: [issue("T-R2-1", "Shape is unexplained.")] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  assert.ok(presentedQuestions(probe.ui).every((x) => x.origin.kind !== "pause"));
+  assert.match(read(probe.dir, "conversation.md"), new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* [^\\n]*the accepted correction for T-R1-1`));
+  assert.ok(!(await probe.loadLog("terms")).some((e) => e.action === "decided_by_user"));
+  assert.ok(fs.existsSync(path.join(probe.dir, "terms-review", "review-3.json")));
+});

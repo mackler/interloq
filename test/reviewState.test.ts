@@ -553,3 +553,33 @@ test("the requirements (pause) go straight to the pause, whose Retry is another 
   const again = run(retry, { kind: "Amended" }, amended);
   assert.deepEqual(last(again), { kind: "CallReviewer", round: 2 });
 });
+
+// Issue #112: a subject whose disputes are settled by the agents asks none of the five disputed pauses of behavior 7;
+// each is recorded in conversation.md and said, and Claude Code's disposition stands.
+const agents: ReviewSetup = { ...setup, subject: "questions", heading: "Question review", fileLabel: "questions.json", dirName: "question-review", disputesSettledBy: "agents" };
+const startAgents = (log: LogEntry[] = []): Transition => advance(initialState(agents, { maxRounds: 5, maxIdleRounds: 2, countMinor: true }), { kind: "Begin", hash: "h0", text: "", log });
+const settled = (t: Transition): string[] => t.commands.flatMap((c) => (c.kind === "Converse" && c.markdown.startsWith(`**${prompts.WORDING_DISPUTE_HEADING}**`) ? [c.markdown] : []));
+
+test("issue #112: an issue raised again is not asked when the agents settle disputes; it goes to Claude Code's response", () => {
+  const t = run(startAgents([entry("A", "partially_accepted")]), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B")] } });
+  assert.ok(!kinds(t).includes("AskDecision"));
+  assert.deepEqual(last(t), { kind: "CallPlanner", round: 1 });
+  assert.equal(settled(t).length, 1);
+  assert.match(settled(t)[0], /issue A, raised again/);
+  assert.match(says(t), /issue A, raised again/);
+});
+
+test("issue #112: the four disputed pauses after a response are not asked when the agents settle disputes; the planner's question still is", () => {
+  const log = [entry("C", "accepted"), entry("O", "rejected"), entry("A", "clarification_requested")];
+  const dispositions = respond([["A", "clarification_requested"], ["B", "rejected"], ["N", "rejected"]]).dispositions.map((d) => (d.id === "B" ? { ...d, reverses: "C" } : d.id === "N" ? { ...d, duplicate_of: "O" } : d));
+  const resp = { ...respond([]), dispositions, self_corrections: [{ id: "C", new_action: "rejected" as const, explanation: "x" }] };
+  const reviewed = run(startAgents(log), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B"), issue("N")] } });
+  const t = advance(reviewed.state, { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
+  assert.ok(!kinds(t).includes("AskDecision"), kinds(t).join(","));
+  assert.equal(settled(t).length, 4);
+  assert.deepEqual(last(t), { kind: "ObserveFile", stage: "response" });
+  assert.deepEqual(t.state.log.slice(log.length).filter((e) => e.source === "review").map((e) => [e.id, e.action]), [["A", "clarification_requested"], ["B", "rejected"], ["N", "rejected"]]);
+  const withQuestion = { ...resp, questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] };
+  const asked = advance(reviewed.state, { kind: "ResponseDecoded", response: withQuestion, resultText: "", costUsd: null });
+  assert.equal(askedSubject(last(asked), asked.state), "question from Claude Code: Which?");
+});

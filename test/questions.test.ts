@@ -428,3 +428,31 @@ test("the description of skip_if in the question list's prompt states each requi
   }
   assert.ok(prompts.skipConditionRepairPrompt(problems).includes(prompts.SKIP_IF_FIELD));
 });
+
+// Issue #112: a disputed issue of the question list concerns how a question to the user is worded. It is not put to
+// the user: the issue raised again after a partial acceptance (the pause of 7 Oct 2026) goes to Claude Code's response,
+// conversation.md records it, and the review goes on to agree.
+test("issue #112: an issue of the question list raised again after a partial acceptance is not put to the user", async () => {
+  const amended = questionEntry("Q1", "question Q1, amended?", [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [
+      { output: { questions: [q("Q1")] } },
+      { output: { ...respond([["Q-R1-1", "partially_accepted"]]), questions: [amended] } },
+      { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [amended] } },
+      { output: turn("Q1: A or B?", []) },
+      { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
+      { output: noQuestions, plan: "v1" },
+    ],
+    reviews: [{ issues: [issue("Q-R1-1", "a word needs explaining")] }, { issues: [issue("Q-R1-1", "a word still needs explaining")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: withQuestions,
+  });
+  await runTask(layer);
+  assert.ok(presentedQuestions(probe.ui).every((x) => x.origin.kind !== "pause"), JSON.stringify(presentedSubjects(probe.ui)));
+  const conversation = read(probe.dir, "conversation.md");
+  assert.match(conversation, new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* Question review: issue Q-R1-1, raised again`));
+  assert.ok(probe.ui.said.some((line) => /issue Q-R1-1, raised again/.test(line)));
+  assert.ok(!(await probe.loadLog("questions")).some((e) => e.action === "decided_by_user"));
+  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.questionReviewPrompt(3)));
+});

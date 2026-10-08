@@ -645,3 +645,22 @@ test("a stop without a question presents Claude Code's description in the detail
   assert.equal(piecesText(q.question), prompts.execStopQuestion());
   assert.deepEqual(q.details, prompts.execStopDetails(description));
 });
+
+// Issue #112: the exception is narrow. On the plan, an issue raised again after a partial acceptance is still put to
+// the user, as behavior 7 has it.
+test("issue #112: on the plan, an issue raised again after a partial acceptance is still put to the user", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["keep it"],
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: respond([["A", "partially_accepted"]]), plan: "v2" },
+      { output: respond([["A", "rejected"]]) },
+    ],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("A")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runTask(layer);
+  assert.equal(probe.ui.asked.length, 1);
+  assert.match(presentedSubjects(probe.ui)[0], /issue A, raised again/);
+  assert.doesNotMatch(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), new RegExp(prompts.WORDING_DISPUTE_HEADING));
+});

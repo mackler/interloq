@@ -64,7 +64,8 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
     leaveOnAcceptance: false,
     leaveOnDecision: false,
     onUnchanged: "corrective",
-    disputesSettledBy: "user",
+    // Issue #112: a disputed issue here is about how a question to the user is worded.
+    disputesSettledBy: "agents",
     prepare: null,
   };
 }
@@ -124,7 +125,8 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
     leaveOnAcceptance: false,
     leaveOnDecision: false,
     onUnchanged: "corrective",
-    disputesSettledBy: "user",
+    // Issue #112: a disputed issue here is about how a question to the user is worded.
+    disputesSettledBy: "agents",
     prepare: null,
   };
 }

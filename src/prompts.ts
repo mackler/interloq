@@ -490,6 +490,18 @@ ${QUESTION_OPTIONS_RULE}
 Do not use the AskUserQuestion tool.`;
 }
 
+/**
+ * Issue #112: why a disagreement between the agents about how a question to the user is worded is not put to the user.
+ * The review and response prompts of the question list and of the terms carry it, and their loop does not pause on a
+ * disputed issue (disputesSettledBy "agents" in src/subjects.ts).
+ */
+export const WORDING_DISPUTES = `In this review a disagreement between Codex and Claude Code is about how a question to the user is worded, and it is not put to the user, for three reasons. He is the one person who cannot judge it: whether a word in a question needs explaining to him is a question about what he knows, and he cannot answer it about a question he has not read. Both positions argue from the same rules for every question put to the user, which reach the writer and the reviewers alike, so the disagreement is about applying them, which this review exists to settle. And a stop costs the user time in the part of the run that exists to save it. So an issue raised again, a repetition under a new id, a reversal, a disputed self-correction or a second clarification request does not stop the review, even where the instructions above say the user will decide: Claude Code's disposition stands, its rationale goes back to Codex in the next round, and Codex accepts it or argues again. What stays the user's is everything about the work (the plan, the requirements, the code, what the program should do) and a question whose options differ in what they claim.`;
+/** The heading of the line in conversation.md that records a disputed issue the user was not asked about (issue #112). */
+export const WORDING_DISPUTE_HEADING = "Not put to the user:";
+/** A disputed issue of the question list or the terms, recorded instead of a pause (issue #112). */
+export const wordingDisputeLine = (origin: PauseOrigin, heading: string): string =>
+  `${heading}: ${pauseSubject(origin)}. This concerns how a question to the user is worded, which Codex and Claude Code settle between themselves; ${origin.pause === "reraised" ? "Claude Code answers it in this cycle's response" : "Claude Code's disposition stands, and Codex reads its rationale in the next cycle"}.`;
+
 // ---- question list ------------------------------------------------------------------------------
 
 /** The prefix of an agreed question's id (Q1, Q2, …) and of a follow-up's id (F1, F2, …), issue #35 (Q6). */
@@ -511,19 +523,21 @@ Task: ${task}`;
 }
 
 export function questionReviewPrompt(round: number): string {
-  if (round > 1) return laterRound(pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round);
+  if (round > 1) return `${laterRound(pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round)}\n${WORDING_DISPUTES}`;
   return `Review the question list in plan-review/questions.json against the task text in the same file and against the codebase. Do not modify any file.
 The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
 Raise an issue when: a question whose answer the plan needs is missing; a question combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
 ${questionReviewCriteria()}
 These criteria apply to the question, its context, its reason, its proposed answers and its default alike. Any question in the list may be put to decision support, which works out the arguments for and against each proposed answer, so hold every proposed answer to that standard.
 Put the question id, or 'list' for an issue that concerns the list as a whole, in the location field.
-${logRules(pathOf({ kind: "log", subject: "questions" }), "Q", round)}`;
+${logRules(pathOf({ kind: "log", subject: "questions" }), "Q", round)}
+${WORDING_DISPUTES}`;
 }
 
 export function questionRespondPrompt(round: number): string {
   return `plan-review/question-review/review-${round}.json contains a review of the question list in plan-review/questions.json.
 ${respondRules("you amend the question list for it")}
+${WORDING_DISPUTES}
 Return in 'questions' the complete question list after your amendments, including the entries that did not change. Do not modify any file.`;
 }
 
@@ -547,17 +561,19 @@ Task: ${task}`;
 }
 /** Codex's review of the explanations (S17): the criteria of every question, as they apply to the terms. */
 export function termsReviewPrompt(round: number): string {
-  if (round > 1) return laterRound(pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round);
+  if (round > 1) return `${laterRound(pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round)}\n${WORDING_DISPUTES}`;
   return `Review the explanations of terms in plan-review/terms.json against the agreed question list in plan-review/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
 Each entry of terms.json names a question by its id and holds its explanations, each with its id, term and explanation, and the question's context, question, reason and proposed answers divided into pieces; a piece whose ref is an explanation's id is the words that explanation explains. The user reads each explanation on those words while he answers the question; he may never have seen this codebase. The wording of the question is agreed and cannot change; only its division into pieces and the explanations can.
 ${questionReviewCriteria()}
 Raise an issue about the explanations only: a word or phrase the reader may not know that has no explanation in a question in which it occurs, or a piece that uses it and does not refer to it; an explanation that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
 Put the question id, with the term, in the location field.
-${logRules(pathOf({ kind: "log", subject: "terms" }), "T", round)}`;
+${logRules(pathOf({ kind: "log", subject: "terms" }), "T", round)}
+${WORDING_DISPUTES}`;
 }
 export function termsRespondPrompt(round: number): string {
   return `${recordPath({ kind: "review", subject: "terms", round })} contains a review of the explanations of terms in plan-review/terms.json.
 ${respondRules("you amend the explanations for it")}
+${WORDING_DISPUTES}
 Return in 'entries' the complete explanations after your amendments, including the entries that did not change, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
 ${KEEP_WORDING}`;
 }

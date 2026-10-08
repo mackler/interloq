@@ -263,6 +263,27 @@ const toResponse = (s: ReviewState, before: readonly ReviewCommand[] = []): Tran
   commands: [...before, status(prompts.cycleResponseLine(s.setup.heading, s.round)), { kind: "CallPlanner", round: s.round }],
 });
 
+/**
+ * Issue #112: the asks a subject puts to the user, and the lines that record the disputed pauses it does not. With
+ * disputesSettledBy "agents" (the question list and the terms) no pause of behaviour 7 that concerns a disputed issue
+ * is asked: the dispute is about how a question to the user is worded, which the user cannot judge before he has read
+ * the question, and both agents argue it from the one statement of the rules. The loop exists to settle such a
+ * disagreement by review and response; Claude Code's disposition stands, its rationale goes back to Codex in the next
+ * round, and the round limit and the idle limit still bound the loop. A corrective turn could not move a rejection, and
+ * taking Codex's position would record a decision no one made. The planner's own questions are always asked.
+ */
+const askedOrSettled = (s: ReviewState, asks: readonly Ask[]): Readonly<{ asked: readonly Ask[]; settled: readonly ReviewCommand[] }> => {
+  if (s.setup.disputesSettledBy === "user") return { asked: asks, settled: [] };
+  const disputed = (a: Ask): a is Ask & { asks: { kind: "pause" } } => a.asks.kind === "pause";
+  return {
+    asked: asks.filter((a) => !disputed(a)),
+    settled: asks.filter(disputed).flatMap((a) => {
+      const line = prompts.wordingDisputeLine(pauseOriginOf(a.asks.facts), s.setup.heading);
+      return [say(line), { kind: "Converse", markdown: `**${prompts.WORDING_DISPUTE_HEADING}** ${line}\n\n` } as ReviewCommand];
+    }),
+  };
+};
+
 const askEach = (s: ReviewState, queue: readonly Ask[], step: (asking: Ask, rest: readonly Ask[]) => Step, otherwise: (s: ReviewState, before: readonly ReviewCommand[]) => Transition, before: readonly ReviewCommand[] = []): Transition => {
   if (queue.length === 0) return otherwise(s, before);
   const [asking, ...rest] = queue;
@@ -290,7 +311,8 @@ const onReviewDecoded = (s: ReviewState, review: Review): Transition => {
     id: id as IssueId,
     options: positions(reviewerSays(review.issues.find((i) => i.id === id)), currentEntry(s.log, id)?.rationale ?? ""),
   }));
-  return askEach(state, reraised, (asking, queue) => ({ name: "askingReraised", asking, queue }), toResponse, [...before, checkpoint(state, "reviewed")]);
+  const { asked, settled } = askedOrSettled(state, reraised);
+  return askEach(state, asked, (asking, queue) => ({ name: "askingReraised", asking, queue }), toResponse, [...before, ...settled, checkpoint(state, "reviewed")]);
 };
 
 /**
@@ -343,6 +365,7 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, resultText
   const round = checked.success;
   const pauses = disposedPauses(history, review, round, response).filter((a) => !s.current.asked.includes(a.key ?? ""));
   const state: ReviewState = { ...withCost, current: { ...s.current, round, response, resultText, asked: [...s.current.asked, ...pauses.map((a) => a.key ?? "")] } };
+  const { asked, settled } = askedOrSettled(state, pauses);
   const before: ReviewCommand[] = [
     ...(corrective ? [] : [{ kind: "SaveResponse", round: n, response } as ReviewCommand]),
     {
@@ -366,9 +389,10 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, resultText
       return { kind: "Converse", markdown: `**Reference dropped:** ${note.field} = ${note.named} of issue ${note.id} ${why}; treated as no reference.\n\n` };
     }),
     ...(response.reviewer_feedback !== "" && !corrective ? [{ kind: "RecordFeedback", round: n, text: response.reviewer_feedback } as ReviewCommand] : []),
+    ...settled,
     checkpoint(state, "responded"),
   ];
-  return askEach(state, pauses, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, before);
+  return askEach(state, asked, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, before);
 };
 
 const afterPauses = (s: ReviewState, before: readonly ReviewCommand[] = []): Transition =>

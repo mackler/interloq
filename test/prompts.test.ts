@@ -797,3 +797,13 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     for (const pattern of own) assert.doesNotMatch(outside, pattern, `${name} states its own inclusion test`);
   }
 });
+
+// Issue #112: the review and response prompts of the question list and the terms say why their disputes are not put to
+// the user; the plan's do not, since its disputes stay the user's.
+test("issue #112: WORDING_DISPUTES reaches the question list's and the terms' review and response prompts, and not the plan's", () => {
+  for (const round of [1, 2]) {
+    for (const p of [prompts.questionReviewPrompt(round), prompts.questionRespondPrompt(round), prompts.termsReviewPrompt(round), prompts.termsRespondPrompt(round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.planReviewPrompt(1, round, true), prompts.planRespondPrompt(1, round)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
+  }
+  for (const reason of ["cannot judge", "same rules", "time"]) assert.ok(prompts.WORDING_DISPUTES.includes(reason), reason);
+});
