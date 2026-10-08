@@ -1069,3 +1069,33 @@ test("a stop or a valid report before the rejection ends the execution call with
   assert.equal((await run(fake.planner.executing("implement the plan", noReporter))).status, "finished");
   assert.equal(fake.sdk.calls.length, 1);
 });
+
+// Issue #117: each execution phase runs on a fresh planner. The seam with behavior 14 and issue #68: a transport fault and
+// a usage-limit wait inside that execution resume the phase's own session, and the run's main session is untouched.
+test("issue #117: an execution on a fresh planner retries a transport fault and waits out a usage limit in its own session", async () => {
+  const finishedExec: Script = () => (async function* () {
+    yield init("exec-1");
+    yield success(report);
+  })();
+  const dropped: Script = () => (async function* () {
+    yield init("exec-1");
+    throw econnreset();
+  })();
+  const limited: Script = () => (async function* () {
+    yield init("exec-1");
+    yield* rejectedWith(LIMIT_RESET_S);
+  })();
+  for (const [failing, config] of [[dropped, quickRetry], [limited, {}]] as const) {
+    const fake = await planner([messages(init("main-1"), success({})), failing, finishedExec, messages(init("main-1"), success({}))], [], config);
+    await run(fake.planner.planning("plan", schema));
+    const executor = await run(fake.planner.fresh);
+    const { clock } = steppingClock(LIMIT_START);
+    const outcome = await run(executor.executing("implement the plan", noReporter).pipe(Effect.provideService(Clock.Clock, clock)));
+    assert.equal(outcome.status, "finished");
+    await run(fake.planner.planning("respond", schema));
+    assert.deepEqual(fake.sdk.calls.map((c) => c.options.resume), [undefined, undefined, "exec-1", "main-1"]);
+    assert.equal(fake.sdk.calls[2].prompt, prompts.executionContinuePrompt);
+    assert.equal(await run(executor.sessionId), "exec-1");
+    assert.equal(await run(fake.planner.sessionId), "main-1");
+  }
+});
