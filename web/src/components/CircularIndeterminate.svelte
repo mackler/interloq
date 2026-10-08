@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Issue #50: M3's indeterminate circular progress indicator, by hand (m3-svelte has none): an arc that turns and grows
-  // and shrinks without end, no value. It takes the place of a running step's mark, in the mark's box, so it says "this
+  // Issue #50: M3's indeterminate circular progress indicator, by hand (m3-svelte has none): an arc that turns without
+  // end, no value; since issue #89 at a fixed length, the rotation alone (web/src/theme.css). It takes the place of a running step's mark, in the mark's box, so it says "this
   // step is being worked on" on the step itself and nothing about how much remains. With reduced motion it is the static
   // glyph (web/src/theme.css).
   type Props = { label: string; glyph: string };

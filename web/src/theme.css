@@ -25,23 +25,21 @@ body { font-family: var(--m3-font); }
 /*
  * Issue #50: M3's indeterminate circular progress indicator, written by hand because m3-svelte has none. It replaces a
  * running step's mark in the mark's own 1em box, so no label moves when a call starts or ends: a track in
- * secondary-container and an arc in primary that turns while it grows and shrinks, without end. It asserts that an agent
- * works on this step and nothing about how much remains. With reduced motion the arc is hidden and the step's static
- * glyph shows in its place.
+ * secondary-container and an arc in primary that turns without end. It asserts that an agent works on this step and
+ * nothing about how much remains. With reduced motion the arc is hidden and the step's static glyph shows in its place.
+ * Issue #89: the arc turns at a fixed length. M3's arc also grows and shrinks, but that animates stroke-dasharray and
+ * stroke-dashoffset, geometry the main thread repaints every frame for as long as an execution call stays open, a
+ * permission request included; the rotation alone is a transform, which the compositor runs. The growth asserted
+ * nothing the fixed arc does not, so it is dropped rather than rebuilt from rotated layers.
  */
 .circular-indeterminate { display: inline-block; position: relative; width: 1em; height: 1em; line-height: 1; vertical-align: -0.125em; }
 .circular-indeterminate > svg { position: absolute; inset: 0; width: 100%; height: 100%; animation: m3-circular-rotate 1.568s linear infinite; }
 .circular-indeterminate circle { fill: none; stroke-width: 3; }
 .circular-indeterminate .track { stroke: var(--m3c-secondary-container); }
-.circular-indeterminate .arc { stroke: var(--m3c-primary); stroke-linecap: round; stroke-dasharray: 1 56.5; transform-origin: center; animation: m3-circular-arc 1.333s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+.circular-indeterminate .arc { stroke: var(--m3c-primary); stroke-linecap: round; stroke-dasharray: 21 56.5; }
 .circular-indeterminate > .glyph { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes m3-circular-rotate {
   to { transform: rotate(360deg); }
-}
-@keyframes m3-circular-arc {
-  0% { stroke-dasharray: 1 56.5; stroke-dashoffset: 0; }
-  50% { stroke-dasharray: 42 56.5; stroke-dashoffset: -8; }
-  100% { stroke-dasharray: 1 56.5; stroke-dashoffset: -56; }
 }
 @media (prefers-reduced-motion: reduce) {
   .circular-indeterminate > svg { display: none; }
