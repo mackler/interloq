@@ -3,6 +3,7 @@
 // Replaces src/types.ts and src/schemas.ts. API names: docs/effect-v4-api.md.
 
 import { Schema, SchemaIssue, Struct } from "effect";
+import { ITEM_STATES, type ItemState } from "./tracker.ts";
 
 export const Severity = Schema.Literals(["blocking", "major", "minor"]);
 
@@ -307,6 +308,23 @@ export const UserEntry = Schema.Struct({ ...logEntryBase, source: Schema.Literal
 /** One entry of an issue log, tagged by `source` (finding 6; Q5). */
 export const LogEntry = Schema.Union([ReviewEntry, SelfCorrectionEntry, UserEntry]);
 
+/** A text with a character other than whitespace (a tracker's coordinate or label). */
+const NonBlankText = Schema.String.check(Schema.isPattern(/\S/u));
+/** Each of Interloq's six states mapped to a GitHub label name (issue #120, part 1). */
+export const GithubLabels = Schema.Struct(Object.fromEntries(ITEM_STATES.map((state) => [state, NonBlankText])) as Record<ItemState, typeof NonBlankText>).check(
+  Schema.makeFilter((labels: Readonly<Record<ItemState, string>>) => {
+    const shared = ITEM_STATES.filter((state, i) => ITEM_STATES.findIndex((other) => labels[other] === labels[state]) < i);
+    return shared.length === 0 ? undefined : shared.map((state) => ({ path: [state], issue: `the label ${JSON.stringify(labels[state])} of ${state} is another state's too: each state needs a label of its own` }));
+  }),
+);
+export type GithubLabels = typeof GithubLabels.Type;
+/** The project's GitHub tracker: the repository and the stage labels. No credential: it comes from the environment. */
+export const GithubTrackerConfig = Schema.Struct({ kind: Schema.Literal("github"), owner: NonBlankText, repo: NonBlankText, labels: GithubLabels });
+export type GithubTrackerConfig = typeof GithubTrackerConfig.Type;
+/** The project's issue tracker, a union tagged by `kind`, so that the Trello tracker of a later task adds a member. */
+export const TrackerConfig = Schema.Union([GithubTrackerConfig]);
+export type TrackerConfig = typeof TrackerConfig.Type;
+
 export const Config = Schema.Struct({
   questionPhase: Schema.Boolean,
   /** Paths relative to the project that the change detection ignores. A directory covers everything below it. */
@@ -321,6 +339,8 @@ export const Config = Schema.Struct({
   execPermissionMode: Schema.Literals(["auto", "acceptEdits", "bypassPermissions", "default"]),
   claudeModel: Schema.NullOr(Schema.String),
   codexModel: Schema.NullOr(Schema.String),
+  /** The project's issue tracker (issue #120, part 1), or null for none. */
+  tracker: Schema.NullOr(TrackerConfig),
 });
 
 /** A config file: any subset of the keys of Config. Unknown keys are rejected where it is decoded. */
@@ -436,4 +456,5 @@ export const defaultConfig: Config = {
   execPermissionMode: "auto",
   claudeModel: null,
   codexModel: null,
+  tracker: null,
 };

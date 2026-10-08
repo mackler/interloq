@@ -121,3 +121,44 @@ test("retryDelays doubles the configured delay on each retry", () => {
   assert.deepEqual(retryDelays({ maxTransportRetries: 3, transportRetryDelaySeconds: 5 }), [5, 10, 20]);
   assert.deepEqual(retryDelays({ maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 }), [0.01, 0.02]);
 });
+
+// Issue #120, part 1: the tracker key. GitHub's owner, repo and six stage labels; refused before any call when a
+// coordinate is missing, a state is unknown or missing, or two states share a label. No credential is a config key.
+const LABELS = { unrefined: "stage: unrefined", refining: "stage: refining", refined: "stage: refined", implementing: "stage: implementing", implemented: "stage: implemented", deployed: "stage: deployed" };
+const GITHUB = { kind: "github", owner: "mackler", repo: "interloq", labels: LABELS };
+const trackerText = (tracker: unknown): string => JSON.stringify({ tracker });
+
+test("the tracker key defaults to null and accepts a GitHub tracker with its six labels", () => {
+  assert.equal(defaultConfig.tracker, null);
+  const decoded = decodeConfigText("/p/config.json", trackerText(GITHUB));
+  assert.ok(Result.isSuccess(decoded));
+  assert.deepEqual(decoded.success.tracker, GITHUB);
+});
+
+test("a tracker with a missing or blank coordinate, an unknown state, a missing state or a shared label is ConfigInvalid", () => {
+  const { repo: _repo, ...noRepo } = GITHUB;
+  const { deployed: _deployed, ...fiveLabels } = LABELS;
+  const cases: ReadonlyArray<[string, unknown]> = [
+    ["repo missing", noRepo],
+    ["owner blank", { ...GITHUB, owner: " " }],
+    ["an unknown state", { ...GITHUB, labels: { ...LABELS, reviewing: "stage: reviewing" } }],
+    ["a missing state", { ...GITHUB, labels: fiveLabels }],
+    ["a blank label", { ...GITHUB, labels: { ...LABELS, refined: "" } }],
+    ["two states with one label", { ...GITHUB, labels: { ...LABELS, refined: LABELS.refining } }],
+    ["an unknown kind", { ...GITHUB, kind: "jira" }],
+    ["a token in the config", { ...GITHUB, token: "ghp_secret" }],
+  ];
+  for (const [what, tracker] of cases) {
+    const decoded = decodeConfigText("/p/config.json", trackerText(tracker));
+    assert.ok(Result.isFailure(decoded), `${what} was accepted`);
+    assert.equal(decoded.failure._tag, "ConfigInvalid", what);
+    assert.match(decoded.failure.path, /^tracker/u, what);
+  }
+});
+
+test("the project's tracker replaces the shared one whole", async () => {
+  const { project, shared, projectFile } = setup();
+  fs.writeFileSync(shared, trackerText(GITHUB));
+  fs.writeFileSync(projectFile, trackerText({ ...GITHUB, owner: "someone", repo: "else" }));
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITHUB, owner: "someone", repo: "else" });
+});

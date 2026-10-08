@@ -54,7 +54,9 @@ const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "
 const selfEntry = { id: "P1-S2-1", phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null };
 const userEntry = { id: "A", phase: 1, round: 2, source: "user", problem: "p", action: "decided_by_user", rationale: "r", superseded: true };
 const usage = { version: 2, agent: "claude", time: "2026-09-24T00:00:00.000Z", session: null, num_turns: 0, total_cost_usd: 0 };
-const config: typeof S.Config.Type = { questionPhase: true, ignorePaths: ["a.txt"], maxRounds: 5, maxIdleRounds: 2, maxTransportRetries: 3, transportRetryDelaySeconds: 5, countMinor: true, execPermissionMode: "auto", claudeModel: null, codexModel: null };
+// Issue #120, part 1: the tracker key.
+type GithubTrackerShape = { kind: "github"; owner: string; repo: string; labels: { unrefined: string; refining: string; refined: string; implementing: string; implemented: string; deployed: string } };
+const config: typeof S.Config.Type = { questionPhase: true, ignorePaths: ["a.txt"], maxRounds: 5, maxIdleRounds: 2, maxTransportRetries: 3, transportRetryDelaySeconds: 5, countMinor: true, execPermissionMode: "auto", claudeModel: null, codexModel: null, tracker: null };
 
 test("each schema decodes a valid sample and its type matches the legacy type", () => {
   assert.deepEqual(decode(S.Issue, issue), issue);
@@ -94,7 +96,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<legacy.ExecReport>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<legacy.ExecOutcome>>>();
   // Issue #26, Q1: the transport retry budget.
-  sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<legacy.Config & { maxTransportRetries: number; transportRetryDelaySeconds: number }>>>();
+  sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<legacy.Config & { maxTransportRetries: number; transportRetryDelaySeconds: number; tracker: GithubTrackerShape | null }>>>();
 });
 
 test("each schema rejects a wrong enum value, a missing field and a wrong type", () => {

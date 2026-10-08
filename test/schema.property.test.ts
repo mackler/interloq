@@ -13,6 +13,7 @@ const positiveInt = fc.integer({ min: 1, max: Number.MAX_SAFE_INTEGER });
 const nonNegativeInt = fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 const cost = fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true });
 const nonEmpty = fc.string({ minLength: 1 });
+const nonBlank = fc.string({ minLength: 1 }).filter((t) => /\S/u.test(t));
 
 const arbConfig = record<S.Config>({
   questionPhase: fc.boolean(),
@@ -25,6 +26,10 @@ const arbConfig = record<S.Config>({
   execPermissionMode: fc.constantFrom("auto", "acceptEdits", "bypassPermissions", "default"),
   claudeModel: fc.option(fc.string(), { nil: null }),
   codexModel: fc.option(fc.string(), { nil: null }),
+  tracker: fc.option(
+    fc.record({ owner: nonBlank, repo: nonBlank, labels: fc.uniqueArray(nonBlank, { minLength: 6, maxLength: 6 }) }).map(({ owner, repo, labels }): S.GithubTrackerConfig => ({ kind: "github", owner, repo, labels: { unrefined: labels[0], refining: labels[1], refined: labels[2], implementing: labels[3], implemented: labels[4], deployed: labels[5] } })),
+    { nil: null },
+  ),
 });
 const arbIssueId = nonEmpty.map((s) => s as S.IssueId);
 const entryBase = { id: arbIssueId, phase: nonNegativeInt, round: nonNegativeInt, problem: fc.string(), rationale: fc.string(), superseded: fc.boolean() };
