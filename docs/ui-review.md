@@ -239,3 +239,32 @@ Since 30 Sep 2026 (W2-R1-3, W2-R1-5, P3-R1-2, P3-R1-3):
   is never inside an option's card or a link, and a click in it answers nothing [error prevention]. The text of an
   option's card sits above the card's state layer, so that a term in it is reached by the pointer, not only by the
   keyboard.
+
+## Announcing a pause and a run's end (issue #16, 8 Oct 2026)
+
+A run spends minutes at a time needing no input, so its tab is usually in the background when it pauses for the user,
+and the pause can go unnoticed while the run waits [visibility of system status, for a user who is not looking at the
+page]. Every prompt the page waits on is announced alike, by one rule over the pending prompt's full key (incarnation,
+run, prompt), so a reconnecting tab's replay announces nothing again; the end of a run the page watched is announced
+too, with its own words.
+
+- The tab's title carries a marker in front of the project's name (● while a prompt waits, ✓ after an unseen end), so
+  two waiting windows are still told apart, and the page's icon carries a dot in the scheme's error color (waiting) or
+  tertiary color (ended). They assert that a prompt is pending, or that a watched run ended while the tab was hidden
+  and has not been seen since, and nothing more. They need no permission, are always on, and are not a preference.
+- A desktop notification asserts the same, once per prompt and once per end. It is opt-in, from the "Desktop alerts"
+  switch in the top bar, whose click alone asks the browser's permission; turning the switch off stops it at once
+  [user control and freedom]. Where the browser blocks notifications, or has none, a note beside the switch says so and
+  how to allow them, and the title and the icon still mark the pause [help users recognize, diagnose, and recover from
+  errors]. A click on the notification brings the page's window forward.
+- A sound, a short chime, is a separate opt-in, off by default.
+- Neither the notification nor the sound fires at a visible tab showing the prompt, and every tab of a run fires, since
+  the user may be looking at neither; several tabs' notifications carry one tag, so the system shows one.
+
+Clearing. The marker of a pending prompt is a state, not an acknowledgment: it stays while the prompt is pending, in
+every tab, and goes when the prompt is answered (in any tab), the run is stopped or another run is shown. It does not
+go when the tab becomes visible: the title and the icon then always say whether the run waits, and a user who glances
+at the tab and leaves without answering still sees in the tab strip that it waits, which is the delay this issue
+removes [visibility of system status]. The end of a run asks nothing of the user beyond being seen, so its marker goes
+when the tab becomes visible, the form for a new task is shown, or another run is; an end that happens at a visible tab
+is seen at once and marks nothing.
