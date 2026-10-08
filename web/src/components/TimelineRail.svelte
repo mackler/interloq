@@ -12,14 +12,16 @@
   // and hides the cycle lines [aesthetic and minimalist design]. The phase's indicator is the circular one on its mark;
   // no linear indeterminate bar remains. Issues #110 and #114: one glyph leads each row. A row with nothing beneath it is
   // plain; a row with children has its mark as its control; a stage's glyph gives its condition, and every row's
-  // condition is in its accessible name, not a line of its own.
+  // condition is in its accessible name, not a line of its own. Issue #115: that mark sits in a toggle's container, a
+  // ring while closed, filled while open, flat while held open, so the row shows it opens before it is touched; the row
+  // keeps one glyph.
   import { LinearProgress } from "m3-svelte";
   import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, phaseElapsed, phaseTook, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
   import { elapsedMs } from "../time.ts";
   import { bandKey, currentPlanStep, planStepState, type RoundGroup, type TimelineEntry } from "../state.ts";
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
   import StepTooltip from "./StepTooltip.svelte";
-  import { MARK, PLAIN, STEP_MARK, stageCondition, stageGlyph, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
+  import { disclosureStateOf, MARK, PLAIN, STEP_MARK, stageCondition, stageGlyph, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
   import type { UiScope } from "../../../src/uiState.ts";
 
   /**
@@ -60,7 +62,8 @@
   Issue #110: the leading position holds exactly one glyph. A row with nothing beneath it is plain: its mark, named by its
   state, and its label, with no control. A row with something beneath it carries its mark as its disclosure control: a
   native button holding the mark and the label, so that Enter and Space open and close it [flexibility and efficiency of
-  use]; the mark's words move to the button's name, and aria-expanded says whether it is open. Held open, it is reachable
+  use]; the mark's words move to the button's name, and aria-expanded says whether it is open. Issue #115: data-disclosure
+  (closed, open, held) gives the mark its toggle's container, the one glyph it still is. Held open, it is reachable
   and says why it does not close [error prevention]. `state`: the words of the mark; `working`: the busy indicator's name
   while the mark is the indicator; `condition`: the condition of what the row holds, where the mark does not give it.
 -->
@@ -69,6 +72,7 @@
     <button
       type="button"
       class="rail-toggle"
+      data-disclosure={disclosureStateOf(node)}
       aria-expanded={node.open}
       aria-controls={idOf(node, "body")}
       aria-disabled={node.held ? "true" : undefined}
@@ -237,16 +241,24 @@
      the on-surface color on hover (8 %), focus and press (10 %), a focus ring, the standard easing. Issue #110: the row's
      mark is the control, in place of a chevron. The button reaches back into the row's indent so that its mark stands in
      the mark's column (the indent less the mark's offset, plus the button's padding), and its label where a plain row's
-     label stands. The mark shows that the row is open on its own box: a circle behind the glyph while open, none while
-     closed, since a state glyph that turned would no longer say its state. */
+     label stands. The mark shows whether the row is closed, open or held on its own box (issue #115, below), never by
+     turning, since a state glyph that turned would no longer say its state. */
   .rail-toggle { position: relative; display: inline-flex; align-items: baseline; gap: 0.25rem; max-width: calc(100% + 1.5rem); margin: 0 0 0 -1.5rem; padding: 0.125rem 0.25rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
   .rail-toggle::before { content: ""; position: absolute; inset: 0; background: var(--m3c-on-surface); opacity: 0; transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); pointer-events: none; }
   .rail-toggle:hover::before { opacity: 0.08; }
   .rail-toggle:focus-visible::before, .rail-toggle:active::before { opacity: 0.1; }
   .rail-toggle:focus-visible { outline: 3px solid var(--m3c-secondary); outline-offset: 2px; }
   .rail-toggle[aria-disabled="true"] { cursor: default; }
-  .rail-toggle > .mark { position: static; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1rem; height: 1rem; border-radius: 50%; transition: background-color 200ms cubic-bezier(0.2, 0, 0, 1); }
-  .rail-toggle[aria-expanded="true"] > .mark { background: color-mix(in srgb, var(--m3c-on-surface) 12%, transparent); }
+  .rail-toggle > .mark { position: static; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1rem; height: 1rem; border-radius: 50%; transition: background-color 200ms cubic-bezier(0.2, 0, 0, 1), color 200ms cubic-bezier(0.2, 0, 0, 1), box-shadow 200ms cubic-bezier(0.2, 0, 0, 1); }
+  /* Issue #115: the mark of a row that opens sits in the container of M3's outlined toggle icon button, so that the row
+     shows it is a control before any hover or focus [recognition rather than recall]: closed, the unselected toggle's
+     ring (inset, so the box and the label keep their place); open, the selected toggle's filled container; held open, a
+     flat neutral container, no ring and no state layer, the glyph keeping its state color (M3's disabled content is at
+     38 %, but the glyph states the row's status, and issue #109 forbids dimming by opacity). A plain row's mark has none. */
+  .rail-toggle[data-disclosure="closed"] > .mark { box-shadow: inset 0 0 0 1px var(--m3c-outline); }
+  .rail-toggle[data-disclosure="open"] > .mark { background: var(--m3c-inverse-surface); color: var(--m3c-inverse-on-surface); }
+  .rail-toggle[data-disclosure="held"] > .mark { background: color-mix(in srgb, var(--m3c-on-surface) 12%, transparent); }
+  .rail-toggle[data-disclosure="held"]::before { display: none; }
   @media (prefers-reduced-motion: reduce) {
     .rail-toggle::before, .rail-toggle > .mark { transition: none; }
   }

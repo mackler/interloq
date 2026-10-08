@@ -18,7 +18,7 @@ import TopBar from "./components/TopBar.svelte";
 import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
 import { clockTime, fullTime, TOOLTIP_GRACE_MS } from "./time.ts";
-import { railView, type RailView } from "./rail.ts";
+import { type Disclosure, disclosureStateOf, railView, type RailView } from "./rail.ts";
 import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
 import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
@@ -2185,9 +2185,12 @@ describe("TimelineRail: the tree that collapses", () => {
   const phaseScope = (key: string): UiScope => ({ _tag: "RailPhase", phase: key });
   const stageScope = (n: number): UiScope => ({ _tag: "RailBranch", phase: "execution-1", branch: `stage:current-${n}` });
   type Shown = { timeline: TimelineEntry[]; busy?: boolean; executing?: boolean; flags?: { scope: UiScope; open: boolean }[]; pending?: boolean; onToggle?: (scope: UiScope, open: boolean) => void };
-  const render = ({ timeline, busy = false, executing = false, flags = [], pending = false, onToggle = () => undefined }: Shown) => {
-    const run = { ...emptyRun(1), timeline, busy, ui: flags.reduce(withFlag, emptyUiState), pending: pending ? ({ asked: { prompt: 1 } } as unknown as Widget) : null };
-    return show(TimelineRail, { timeline, busy, executing, callStartedAt: "2026-09-29T10:00:00.000Z", rail: railView(run, executing, busy), onToggle });
+  /** The rail the component is given: the one source of what a test expects of a row and of what the component renders. */
+  const railOf = ({ timeline, busy = false, executing = false, flags = [], pending = false }: Shown) =>
+    railView({ ...emptyRun(1), timeline, busy, ui: flags.reduce(withFlag, emptyUiState), pending: pending ? ({ asked: { prompt: 1 } } as unknown as Widget) : null }, executing, busy);
+  const render = (shown: Shown) => {
+    const { timeline, busy = false, executing = false, onToggle = () => undefined } = shown;
+    return show(TimelineRail, { timeline, busy, executing, callStartedAt: "2026-09-29T10:00:00.000Z", rail: railOf(shown), onToggle });
   };
   const row = (root: HTMLElement, label: string) => [...root.querySelectorAll<HTMLElement>("[data-label], [data-stage], [data-step-label]")].find((e) => e.textContent?.trim() === label)!.closest("li")!;
   const toggleOf = (li: HTMLElement) => li.querySelector<HTMLButtonElement>(":scope > button.rail-toggle")!;
@@ -2251,6 +2254,32 @@ describe("TimelineRail: the tree that collapses", () => {
       expect(li.querySelectorAll(":scope > .mark, :scope > button > .mark").length).toBe(1);
       expect(toggle.querySelector(".mark")).not.toBe(null);
     }
+  });
+
+  // Issue #115: a row that opens shows it before any interaction, and tells closed, open and held apart; a plain row shows
+  // none of the three. The expected state is computed from the rail the component is given.
+  test("the three states of a disclosure render differently from each other and from a plain row", () => {
+    const ahead: TimelineEntry = { ...fresh, phase: { kind: "work", n: 1 }, label: "Code review", state: "ahead", groups: [], steps: [], plan: null };
+    const shownA: Shown = { timeline: [implementation(null, {}, ["S1"]), ahead], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] };
+    const shownB: Shown = { timeline: [planning("active")], pending: true, flags: [{ scope: phaseScope("planning-1"), open: false }] };
+    const a = render(shownA);
+    const b = render(shownB);
+    const railA = railOf(shownA);
+    const expected = (node: unknown) => disclosureStateOf(node as Disclosure);
+    const cases: [HTMLElement, string, string][] = [
+      [a, "Implementation", expected(railA.phases[0].node)],
+      [a, prompts.stageHeading(2, "second"), expected(railA.phases[0].branches.get("stage:current-2"))],
+      [b, "Planning", expected(railOf(shownB).phases[0].node)],
+    ];
+    const shownStates = cases.map(([root, label, state]) => {
+      const toggle = toggleOf(row(root, label));
+      expect(toggle.getAttribute("data-disclosure")).toBe(state);
+      return state;
+    });
+    expect(new Set(shownStates)).toEqual(new Set(["open", "closed", "held"]));
+    const plain = row(a, "Code review");
+    expect(plain.querySelector("button")).toBe(null);
+    expect(plain.querySelector("[data-disclosure]")).toBe(null);
   });
 
   // Issue #110: whichever glyph remains, the name says the row's state in words.
