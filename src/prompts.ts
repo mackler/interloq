@@ -1334,6 +1334,14 @@ export function progressLine(label: string | null, detail: string | null): strin
   if (label === null) return "Progress: no phase has begun";
   return `Progress: ${label}${detail === null ? "" : `, ${detail}`}`;
 }
+/**
+ * The senses of a term as a dictionary numbers them (issue #112): one sense has no number, several are numbered 1…n in
+ * the order given. The one numbering of the page's tooltip and of conversation.md (numberedSenses in src/question.ts).
+ */
+export const sensesNumbered = (senses: readonly string[]): readonly Readonly<{ number: number | null; text: string }>[] =>
+  senses.map((text, i) => ({ number: senses.length === 1 ? null : i + 1, text }));
+/** The senses of a term on one line: the sense alone, or each after its number. */
+export const sensesInline = (senses: readonly string[]): string => sensesNumbered(senses).map((s) => (s.number === null ? s.text : `${s.number}. ${s.text}`)).join(" ");
 /** The count of a hidden panel's new messages on its button. */
 export function unseenBadge(n: number): string {
   return `· ${n} new`;
@@ -1364,7 +1372,7 @@ export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): strin
   const parts = [
     ...(shown.context.trim() === "" ? [] : [`The context paragraph:\n${shown.context.trim()}`]),
     ...(shown.details.trim() === "" ? [] : [shown.details.trim()]),
-    ...(shown.explanations.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.explanations.map((e) => `${e.term}: ${e.senses.join(" ")}`).join("\n")}`]),
+    ...(shown.explanations.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.explanations.map((e) => `${e.term}: ${sensesInline(e.senses)}`).join("\n")}`]),
   ];
   return parts.length === 0 ? "" : `\nWhat the user was shown with the question:\n${parts.join("\n\n")}\n`;
 }

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Result } from "effect";
 import { interviewSays, recordHeading, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
-import { issue, para, plain, questionEntry, respond, term } from "./helpers.ts";
+import { issue, para, plain, questionEntry, respond, shownOf, term } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 import type { PresentedQuestion } from "../src/question.ts";
 import type { LogEntry } from "../src/schema.ts";
@@ -73,7 +74,7 @@ test("renderQuestionRecord writes the heading, the origin, the context, the deta
     number: 4,
     origin: { kind: "relayed" },
     context: { blocks: para("Claude Code, the coding agent, is writing the tool's input check."), by: "agent" },
-    explanations: [{ id: "z", term: "zod", senses: ["a library that checks the shape of data"] }],
+    explanations: [shownOf({ id: "z", term: "zod", senses: ["a library that checks the shape of data"] })],
     question: [...plain("Should "), term("Zod's package", "z"), ...plain(" be declared as a dependency?")],
     options: [
       { label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } },
@@ -106,7 +107,7 @@ test("conversation.md records a question under its displayed number with the rec
   const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], details: [], decision: null };
   assert.match(renderQuestionRecord(q), /^### Question 3 \(Q1\)\n/);
   // S11 (issue #59): each option's label in bold on its own line, the description on the next.
-  const record = renderQuestionRecord({ ...q, explanations: [{ id: "t", term: "zod", senses: ["a library"] }], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
+  const record = renderQuestionRecord({ ...q, explanations: [shownOf({ id: "t", term: "zod", senses: ["a library"] })], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
   assert.ok(record.includes("- 1. **Declare it**  \n  add it to package.json"), record);
   assert.ok(record.includes("- zod: a library"), record);
   assert.match(renderQuestionRecord({ ...q, origin: { kind: "relayed" } }), /^### Question 3\n/);
@@ -153,10 +154,31 @@ test("pauseProse writes every kind of pause as prose, without the record's field
 test("renderQuestionRecord writes a permission's input before its question", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const { permissionDraft, presentedQuestion } = await import("../src/offer.ts");
-  const q = presentedQuestion(permissionDraft("Bash", { command: "rm -rf build" }), 1);
+  const presented = presentedQuestion(permissionDraft("Bash", { command: "rm -rf build" }), 1);
+  assert.ok(Result.isSuccess(presented));
+  const q = presented.success;
   const record = renderQuestionRecord(q);
   const input = record.indexOf("rm -rf build");
   const asked = record.indexOf(piecesText(q.question));
   assert.ok(input > 0 && asked > input, record);
   assert.ok(record.includes(prompts.TOOL_INPUT_HEADING));
+});
+
+// Issue #112: the "Terms:" block labels a term once; one sense stays on its line, several are numbered in order under it.
+test("issue #112: the Terms block of conversation.md numbers two senses in order under the term, and keeps one sense on its line", async () => {
+  const { renderQuestionRecord } = await import("../src/render.ts");
+  const q: PresentedQuestion = {
+    number: 1,
+    origin: { kind: "relayed" },
+    context: { blocks: para("c"), by: "agent" },
+    explanations: [shownOf({ id: "a", term: "zod", senses: ["A library."] }), shownOf({ id: "b", term: "port", senses: ["# The number in the address.", "The socket the server listens on."] })],
+    question: [...plain("Use "), term("zod", "a"), ...plain(" on the "), term("port", "b"), ...plain("?")],
+    options: [],
+    details: [],
+    decision: null,
+  };
+  const record = renderQuestionRecord(q);
+  assert.ok(record.includes("- zod: A library.\n"), record);
+  assert.ok(record.includes("- port:\n  1. \\# The number in the address.\n  2. The socket the server listens on.\n"), record);
+  assert.equal(record.split("- port:").length, 2);
 });

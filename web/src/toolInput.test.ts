@@ -9,6 +9,7 @@ import fc from "fast-check";
 import { renderQuestionRecord } from "../../src/render.ts";
 import QuestionText from "./components/QuestionText.svelte";
 import { render, renderInline } from "./markdown.ts";
+import { shownOf } from "./test-setup.ts";
 
 let mounted: ReturnType<typeof mount>[] = [];
 afterEach(() => {
@@ -19,7 +20,7 @@ afterEach(() => {
 const shown = (blocks: ReturnType<typeof prompts.toolInputBlocks>, explanations: ReturnType<typeof prompts.toolInputExplanations> = []): HTMLElement => {
   const target = document.createElement("div");
   document.body.appendChild(target);
-  mounted.push(mount(QuestionText, { target, props: { blocks, explanations } }));
+  mounted.push(mount(QuestionText, { target, props: { blocks, explanations: explanations.map(shownOf) } }));
   flushSync();
   return target;
 };

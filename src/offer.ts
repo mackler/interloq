@@ -7,7 +7,9 @@ import type { RunError } from "./errors.ts";
 import { chooseOption, isDecide, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
-import type { ContextWritten, OptionAnswer, PresentedQuestion, QuestionContextText, QuestionOrigin } from "./question.ts";
+import { type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
+import { Result } from "effect";
+import type { QuestionInvalid } from "./errors.ts";
 import { renderChoice, renderQuestionRecord } from "./render.ts";
 import { Decider, Store, Ui } from "./services.ts";
 
@@ -46,17 +48,21 @@ export const agentContext = (blocks: readonly ShownBlock[], origin: QuestionOrig
  * answers answer.
  */
 export const decisionQuestionOf = (draft: QuestionDraft): string => (draft.origin.kind === "reply" ? blocksMarkdown(draft.context.blocks) : piecesText(draft.question));
-/** The question as the user is shown it, with its number in the run. */
-export const presentedQuestion = (draft: QuestionDraft, number: number): PresentedQuestion => ({
-  number,
-  origin: draft.origin,
-  context: draft.context,
-  explanations: draft.explanations,
-  question: draft.question,
-  options: draft.options.map((o) => ({ label: o.shown.label, description: o.shown.description, answer: o.answer })),
-  details: draft.details ?? [],
-  decision: draft.decision,
-});
+/**
+ * The question as the user is shown it, with its number in the run; its explanations' senses built by sensesOf (issue
+ * #112), which fails only for an explanation that bypassed every validation: the program's error, typed.
+ */
+export const presentedQuestion = (draft: QuestionDraft, number: number): Result.Result<PresentedQuestion, QuestionInvalid> =>
+  Result.map(shownExplanations(draft.explanations), (explanations) => ({
+    number,
+    origin: draft.origin,
+    context: draft.context,
+    explanations,
+    question: draft.question,
+    options: draft.options.map((o) => ({ label: o.shown.label, description: o.shown.description, answer: o.answer })),
+    details: draft.details ?? [],
+    decision: draft.decision,
+  }));
 
 /**
  * Options chosen by their number or their exact label: the interview, a relayed question, a pause, a plan writer's
@@ -166,7 +172,7 @@ export const askOffering = <E>(
     const ui = yield* Ui;
     const store = yield* Store;
     const explained = draft.explain === undefined ? draft : withContext(draft, yield* explain(draft, draft.explain));
-    const question = presentedQuestion(explained, yield* ui.nextQuestion);
+    const question = yield* Effect.fromResult(presentedQuestion(explained, yield* ui.nextQuestion));
     const present = ui.notify({ _tag: "QuestionPresented", question });
     yield* present;
     yield* store.converse(renderQuestionRecord(question));

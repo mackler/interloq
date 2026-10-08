@@ -8,7 +8,13 @@ import * as prompts from "../src/prompts.ts";
 import { renderQuestionRecord } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
 import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks } from "./helpers.ts";
-import { piecesText } from "../src/pieces.ts";
+import { blocksText, piecesText } from "../src/pieces.ts";
+import fc from "fast-check";
+import { Result } from "effect";
+import { presentedQuestion } from "../src/offer.ts";
+import { turnDraft } from "../src/conversation.ts";
+import { normalizeTurn } from "../src/schemaNormalize.ts";
+import { termsValidation } from "../src/subjects.ts";
 import type { Piece, TermsEntry } from "../src/schema.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -343,4 +349,80 @@ test("work review 2: a context whose link label has a backslash before its line 
   const back = readBlocks(lines.slice(first, first + 2).join("\n"));
   assert.deepEqual(back.types, ["blockquote"]);
   assert.equal(back.text.replace(/^\n+|\n+$/gu, ""), readBack(context.replace(/\r\n?/gu, "\n")).rest);
+});
+
+// Issue #112: an explanation with two senses reaches the page with both, in order, and conversation.md with both,
+// numbered, under the term once.
+test("issue #112: an agreed question whose term has two senses is presented with both, in order, and recorded numbered", async () => {
+  const port = { id: "p", term: "port", senses: ["The number in the address of the page, as in localhost:8090.", "The socket on which the web server listens."] };
+  const entryPort = { ...entry("Q1"), context: para("The web server listens on a port when it starts."), question: plain("Which port should the server use?"), reason: para("the task names none") };
+  const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(port)/).filter((t) => t !== "").map((t) => (t === "port" ? term(t, "p") : { text: t, ref: "", code: false })));
+  const divided: TermsEntry = { id: "Q1", explanations: [port], context: entryPort.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), question: divide(entryPort.question), reason: entryPort.reason, proposed_answers: entryPort.proposed_answers };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [entryPort] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    terms: [{ output: { entries: [divided] } }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  const [q] = presentedQuestions(probe.ui);
+  assert.deepEqual(q.explanations.map((e) => [e.term, [...e.senses]]), [["port", port.senses]]);
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(conversation.includes(`- port:\n  1. ${port.senses[0]}\n  2. ${port.senses[1]}\n`), conversation);
+  assert.equal(conversation.split("- port:").length, 2);
+});
+
+// Issue #112, the task's property: whatever division of an agreed question's words into pieces that refer to
+// explanations of one to three senses, the presented question keeps the agreed words, every explanation its senses in
+// the order given, and conversation.md labels each term once, numbering its senses only where there are several.
+test("property (issue #112): re-dividing an agreed question's pieces keeps its words and presents every sense in order", () => {
+  const TERMS = [
+    { id: "a", term: "zod" },
+    { id: "b", term: "cache" },
+  ] as const;
+  const word = fc.constantFrom("the", "service", "uses", "a", "schema", "when", "it", "starts");
+  const sensesArb = fc.array(fc.constantFrom("A library that checks data.", "A store kept in memory.", "In this program, the input of a tool.", "1. A list that is no list."), { minLength: 1, maxLength: 3 });
+  const divide = (text: string, cuts: readonly boolean[]): readonly Piece[] => {
+    const tokens = text.split(/(zod|cache)/).filter((t) => t !== "");
+    return tokens.flatMap((t, i) => {
+      const known = TERMS.find((x) => x.term === t);
+      if (known !== undefined) return [term(t, known.id)];
+      // A plain run is cut after a word wherever `cuts` says so: the division changes, the words do not.
+      const words = t.split(/(?<= )/);
+      return words.reduce<string[]>((acc, w, j) => (j > 0 && cuts[(i + j) % Math.max(cuts.length, 1)] === true ? [...acc, w] : [...acc.slice(0, -1), (acc.at(-1) ?? "") + w]), []).map((w) => ({ text: w, ref: "", code: false }));
+    });
+  };
+  fc.assert(
+    fc.property(fc.array(word, { minLength: 1, maxLength: 5 }), fc.array(word, { minLength: 1, maxLength: 5 }), sensesArb, sensesArb, fc.array(fc.boolean(), { maxLength: 8 }), (ctx, qs, sensesA, sensesB, cuts) => {
+      const contextText = `${ctx.join(" ")} zod and cache.`;
+      const questionText = `Should ${qs.join(" ")} zod?`;
+      const agreed = { ...entry("Q1"), context: para(contextText), question: plain(questionText) };
+      const senses = { a: sensesA, b: sensesB };
+      const divided: TermsEntry = {
+        id: "Q1",
+        explanations: TERMS.map((t) => ({ ...t, senses: senses[t.id] })),
+        context: [{ kind: "paragraph", pieces: divide(contextText, cuts) }],
+        question: divide(questionText, cuts),
+        reason: agreed.reason,
+        proposed_answers: agreed.proposed_answers,
+      };
+      assert.ok(Result.isSuccess(termsValidation<{ entries: readonly TermsEntry[] }>([agreed])({ entries: [divided] })));
+      const draft = turnDraft(normalizeTurn(asking("Q1", [])), { questions: [agreed], terms: [divided] });
+      const presented = presentedQuestion(draft, 1);
+      assert.ok(Result.isSuccess(presented));
+      const q = presented.success;
+      assert.equal(piecesText(q.question), questionText);
+      assert.deepEqual(q.context.blocks.flatMap((b) => blocksText([b])), [contextText]);
+      assert.deepEqual(q.explanations.map((e) => [e.term, [...e.senses]]), TERMS.map((t) => [t.term, senses[t.id]]));
+      const record = renderQuestionRecord(q);
+      for (const t of TERMS) {
+        assert.equal(record.split(`- ${t.term}:`).length, 2, record);
+        const lines = senses[t.id].length === 1 ? [`- ${t.term}: ${senses[t.id][0]}`] : [`- ${t.term}:`, ...senses[t.id].map((s, i) => `  ${i + 1}. ${s.replace(/^(\d+)\./, "$1\\.")}`)];
+        assert.ok(record.includes(`${lines.join("\n")}\n`), `${JSON.stringify(lines)} in ${record}`);
+      }
+    }),
+    { numRuns: 100 },
+  );
 });

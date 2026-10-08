@@ -7,13 +7,14 @@
   // Escape or leaving closes it [recognition rather than recall: the explanation is where the word is read; help and
   // documentation]. S42: Tab on the word enters the tooltip, Tab there leaves past the word, Shift+Tab and Escape return
   // to it. The explanation costs no space until the reader asks for it: there is no list of terms beside the question.
-  import { type Attached, type Explanation, normalizedRuns, type Piece, type RunItem, type ShownBlock } from "../../../src/pieces.ts";
+  import type { ShownExplanation } from "../../../src/question.ts";
+  import { type Attached, normalizedRuns, type Piece, type RunItem, type ShownBlock } from "../../../src/pieces.ts";
   import { render, renderInline } from "../markdown.ts";
   import { TOOLTIP_GRACE_MS } from "../time.ts";
   import TermTooltip from "./TermTooltip.svelte";
   import { focusablesOf, nextFocusable } from "../focus.ts";
 
-  type Props = { blocks?: readonly ShownBlock[]; pieces?: readonly Piece[]; explanations: readonly Explanation[]; class?: string };
+  type Props = { blocks?: readonly ShownBlock[]; pieces?: readonly Piece[]; explanations: readonly ShownExplanation[]; class?: string };
   let { blocks, pieces, explanations, class: className = "" }: Props = $props();
   // The open tooltip: its anchor, a word that refers to an explanation, and that explanation.
   let open = $state<{ anchor: HTMLElement; ref: string } | null>(null);

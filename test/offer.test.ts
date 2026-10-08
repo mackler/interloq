@@ -7,6 +7,7 @@ import { limitOptions, numberedOptions, type OfferedOption, permissionOptions, p
 import * as prompts from "../src/prompts.ts";
 import { answerOf } from "../src/input.ts";
 import { para, plain } from "./helpers.ts";
+import { Result } from "effect";
 
 /** The one option that an answer chooses. */
 const chosen = (options: readonly OfferedOption[], answer: string): readonly string[] => options.filter((o) => o.matches(answer)).map((o) => o.label);
@@ -65,7 +66,9 @@ test("the cycle limit: p proceeds, 0 stops, and More cycles takes a typed number
 
 test("presentedQuestion numbers the draft and keeps each option's answer, not its matcher", () => {
   const origin = { kind: "relayed" } as const;
-  const q = presentedQuestion({ origin, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: permissionOptions, decision: null }, 7);
+  const presented = presentedQuestion({ origin, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: permissionOptions, decision: null }, 7);
+  assert.ok(Result.isSuccess(presented));
+  const q = presented.success;
   assert.equal(q.number, 7);
   assert.deepEqual(q.options, [
     { label: plain(prompts.PERMISSION_ALLOW), description: plain(prompts.PERMISSION_ALLOW_DESCRIPTION), answer: { token: "y" } },

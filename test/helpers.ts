@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { marked } from "marked";
-import type { PresentedQuestion } from "../src/question.ts";
+import { type PresentedQuestion, type ShownExplanation, shownExplanations } from "../src/question.ts";
 import { programWritten } from "../src/questionContext.ts";
 import { CONTEXT_REQUEST_HEADING, confirmEndText, permissionPrompt, recordSubject } from "../src/prompts.ts";
 import { promptOf } from "../src/userPrompts.ts";
@@ -633,4 +633,11 @@ export const steppingClock = (startMs: number, onSleep: (ms: number) => Effect.E
       }),
   };
   return { clock, sleeps, now: () => time };
+};
+
+/** Issue #112: an explanation as a presented question holds it, its senses built by the program's one constructor. */
+export const shownOf = (e: S.Explanation): ShownExplanation => {
+  const shown = shownExplanations([e]);
+  assert.ok(Result.isSuccess(shown), `not a presented explanation: ${JSON.stringify(e)}`);
+  return shown.success[0];
 };

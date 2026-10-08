@@ -4,7 +4,7 @@
 import { type Brand, Result, Schema } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
-import type { QuestionProblem } from "./prompts.ts";
+import { type QuestionProblem, sensesNumbered } from "./prompts.ts";
 import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption } from "./schema.ts";
 
 export type { QuestionOption };
@@ -48,6 +48,22 @@ const senseProblems = (e: Explanation): readonly QuestionProblem[] => {
   const name = e.term.trim() === "" ? e.id : e.term;
   return built.failure.map((p): QuestionProblem => (p.kind === "noSense" ? { kind: "noSense", subject: name } : { kind: "blankSense", subject: `sense ${p.position} of the term ${JSON.stringify(name)}` }));
 };
+
+/** An explanation as a presented question holds it (issue #112): its senses built by sensesOf. */
+export type ShownExplanation = Readonly<{ id: string; term: string; senses: Senses }>;
+/**
+ * The explanations of a question as it is presented: each one's senses through sensesOf. Every explanation that reaches
+ * a draft has passed questionProblems or is the program's own, so a failure here is the program's error, typed.
+ */
+export const shownExplanations = (explanations: readonly Explanation[], where = "the question shown"): Result.Result<readonly ShownExplanation[], QuestionInvalid> => {
+  const built = explanations.map((e) => ({ e, senses: sensesOf(e.senses) }));
+  const problems = explanations.flatMap(senseProblems);
+  if (problems.length > 0) return Result.fail(new QuestionInvalid({ questions: [{ where, problems }] }));
+  return Result.succeed(built.flatMap(({ e, senses }) => (Result.isSuccess(senses) ? [{ id: e.id, term: e.term, senses: senses.success }] : [])));
+};
+/** The senses as a dictionary numbers them: none for one sense, 1…n in order for several (issue #112). */
+export const numberedSenses = (senses: Senses): readonly Readonly<{ number: number | null; text: Sense }>[] =>
+  sensesNumbered(senses).map((s, i) => ({ number: s.number, text: senses[i] }));
 
 /** Words that stand before a number without saying what it numbers ("see #53", "the #6"). */
 const NOT_A_KIND = new Set(["a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "by", "for", "from", "with", "as", "see", "per", "via"]);
@@ -268,7 +284,7 @@ export type PresentedQuestion = Readonly<{
   number: number;
   origin: QuestionOrigin;
   context: QuestionContextText;
-  explanations: readonly Explanation[];
+  explanations: readonly ShownExplanation[];
   question: readonly Piece[];
   options: readonly PresentedOption[];
   /** What the question is about, shown with the context (S11): a pause's facts, the summary to confirm; empty when none. */

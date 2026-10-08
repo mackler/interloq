@@ -2,9 +2,9 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
-import { CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
-import { type Block, blocksMarkdown, type Piece, type PieceOption, piecesMarkdown, piecesText } from "./pieces.ts";
-import { type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry } from "./question.ts";
+import { CONTEXT_BY_PROGRAM, originLine, questionTitle, sensesInline, TERMS_HEADING } from "./prompts.ts";
+import { type Block, blocksMarkdown, type Piece, type PieceOption, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
+import { numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry } from "./question.ts";
 import * as words from "./prompts.ts";
 import type { Disposition, Issue, TermsEntry } from "./schema.ts";
 import type { PlannerResponse, Review } from "./schema.ts";
@@ -58,7 +58,7 @@ export function renderQuestions(list: RenderableQuestions): string {
 
 /** The explanations of the agreed questions' terms in conversation.md (S17). */
 export const renderTerms = (entries: readonly TermsEntry[]): string =>
-  entries.map((e) => `- **[${e.id}]** ${e.explanations.length === 0 ? "no term" : e.explanations.map((t) => `${t.term}: ${t.senses.join(" ")}`).join("; ")}`).join("\n") + "\n";
+  entries.map((e) => `- **[${e.id}]** ${e.explanations.length === 0 ? "no term" : e.explanations.map((t) => `${t.term}: ${sensesInline(t.senses)}`).join("; ")}`).join("\n") + "\n";
 
 /** The lines said for an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
 export const interviewSays = (turn: TurnText): readonly string[] =>
@@ -106,8 +106,17 @@ export const renderChoice = (k: number, answer: string, option: string | null): 
   `**User choice** after decision ${k}: ${answer === "" ? "(none)" : answer}${option === null ? "" : ` (${option})`}\n\n`;
 // ---- a question in conversation.md (S6, S8) --------------------------------------------------------------------------
 
-/** The "Terms:" block of a question, from its explanations, one line per term labeled with its canonical name (decision Q6 of the run of 29-30 Sep 2026). */
-const termLines = (q: PresentedQuestion): readonly string[] => q.explanations.map((e) => `${e.term}: ${e.senses.join(" ")}`);
+/**
+ * The "Terms:" block of a question, from its explanations, one item per term labeled with its canonical name (decision Q6
+ * of the run of 29-30 Sep 2026). Issue #112: one sense stays on the term's line; several are numbered under the label,
+ * as a dictionary gives them, each written so that it opens no block.
+ */
+const termLines = (q: PresentedQuestion): readonly string[] =>
+  q.explanations.map((e) => {
+    const [first, ...rest] = numberedSenses(e.senses);
+    if (rest.length === 0) return `${e.term}: ${first.text}`;
+    return [`${e.term}:`, ...[first, ...rest].map((s) => `  ${s.number}. ${plainMarkdown([s.text], { lineStart: true, lineEnd: true, after: "" })}`)].join("\n");
+  });
 /** The id by which a record names the question (S6): an agreed question's, a follow-up's, an issue's; null for the others. */
 export const recordIdOf = (origin: QuestionOrigin): string | null =>
   origin.kind === "clarification" || origin.kind === "followUp" ? origin.id : origin.kind === "pause" && "id" in origin ? origin.id : null;

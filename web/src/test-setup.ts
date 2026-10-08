@@ -1,3 +1,6 @@
+import { Result } from "effect";
+import type { Explanation } from "../../src/schema.ts";
+import { type ShownExplanation, shownExplanations } from "../../src/question.ts";
 // The browser APIs that jsdom lacks and that m3-svelte reads, for the component tests only (Vitest's setupFiles).
 if (typeof window.matchMedia !== "function") {
   window.matchMedia = (query: string): MediaQueryList =>
@@ -78,3 +81,10 @@ export class AudioContextStub {
 if (typeof (window as { AudioContext?: unknown }).AudioContext === "undefined") {
   Object.defineProperty(window, "AudioContext", { configurable: true, writable: true, value: AudioContextStub });
 }
+
+/** Issue #112: an explanation as a presented question holds it, its senses built by the program's one constructor. */
+export const shownOf = (e: Explanation): ShownExplanation => {
+  const shown = shownExplanations([e]);
+  if (Result.isFailure(shown)) throw new Error(`not a presented explanation: ${JSON.stringify(e)}`);
+  return shown.success[0];
+};

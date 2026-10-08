@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Sense, Senses } from "../src/question.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { Schema } from "effect";
@@ -32,6 +33,8 @@ const block = fc.oneof(
 );
 const shownBlock = fc.oneof(block, fc.record({ kind: fc.constant("document" as const), markdown: text }));
 const explanation = fc.record({ id: text, term: text, senses: fc.array(text, { minLength: 1, maxLength: 2 }) });
+const sense = text.filter((t) => t.trim() !== "").map((t) => t as Sense);
+const shownExplanation = fc.record({ id: text, term: text, senses: fc.tuple(sense, fc.array(sense, { maxLength: 1 })).map(([first, rest]): Senses => [first, ...rest]) });
 const pieceOption = fc.record({ label: pieces, description: pieces });
 const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
 const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text });
@@ -66,7 +69,8 @@ const presentedQuestion = fc.record({
   number: nat,
   origin,
   context: fc.record({ blocks: fc.array(shownBlock, { maxLength: 2 }), by: fc.constantFrom("agent" as const, "program" as const) }),
-  explanations: fc.array(explanation, { maxLength: 2 }),
+  // Issue #112: a presented explanation has one or more senses, none blank.
+  explanations: fc.array(shownExplanation, { maxLength: 2 }),
   question: pieces,
   options: fc.array(fc.record({ label: pieces, description: pieces, answer: fc.oneof(fc.record({ token: text }), fc.constant({ numeric: true as const })) }), { maxLength: 3 }),
   details: fc.array(shownBlock, { maxLength: 2 }),
@@ -315,4 +319,12 @@ test("the ui frames and a replay with shared states decode; an unknown scope and
     { type: "ui", incarnation: "a", run: 1, flag: { scope, open: true }, extra: 1 },
   ]) assert.ok(Result.isFailure(decodeClient(JSON.stringify(bad))), JSON.stringify(bad));
   assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "ui", run: 1, state: { version: 1, choices: [], extra: 1 } }))));
+});
+
+// Issue #112: a presented question's explanation has one or more senses, none blank; anything else is refused.
+test("issue #112: a presented question with an empty senses list or a blank sense does not decode", () => {
+  const question = (senses: readonly string[]) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [{ id: "z", term: "zod", senses }], question: [], options: [], details: [], decision: null });
+  const frame = (senses: readonly string[]) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "QuestionPresented", question: question(senses) } } });
+  assert.ok(Result.isSuccess(decodeServer(frame(["A library.", "The SDK's input library."]))));
+  for (const senses of [[], [""], ["A library.", "  "]]) assert.ok(Result.isFailure(decodeServer(frame(senses))), JSON.stringify(senses));
 });

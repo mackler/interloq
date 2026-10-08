@@ -5,6 +5,9 @@ import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test } from "vitest";
 import fc from "fast-check";
 import type { Explanation, Piece, ShownBlock } from "../../src/pieces.ts";
+import { Result } from "effect";
+import { numberedSenses, type PresentedQuestion, type ShownExplanation, shownExplanations } from "../../src/question.ts";
+import { renderQuestionRecord } from "../../src/render.ts";
 import QuestionText from "./components/QuestionText.svelte";
 import { INLINE_TAGS, makeInlineRenderer } from "./markdown.ts";
 
@@ -16,7 +19,14 @@ afterEach(() => {
 });
 const plain = (text: string): Piece => ({ text, ref: "", code: false });
 const ref = (text: string, id: string): Piece => ({ text, ref: id, code: false });
-const show = (props: { blocks?: readonly ShownBlock[]; pieces?: readonly Piece[]; explanations: readonly Explanation[] }) => {
+/** Issue #112: an explanation as a presented question holds it, its senses built by the program's one constructor. */
+const shown = (es: readonly Explanation[]): readonly ShownExplanation[] => {
+  const built = shownExplanations(es);
+  if (Result.isFailure(built)) throw new Error(`not presented explanations: ${JSON.stringify(es)}`);
+  return built.success;
+};
+const show = (raw: { blocks?: readonly ShownBlock[]; pieces?: readonly Piece[]; explanations: readonly Explanation[] }) => {
+  const props = { ...raw, explanations: shown(raw.explanations) };
   const target = document.createElement("div");
   document.body.appendChild(target);
   mounted.push(mount(QuestionText, { target, props }));
@@ -230,5 +240,33 @@ describe("a list interrupted by blocks (the format's clause and the rendering)",
     expect(root.querySelectorAll(":scope > div > ul").length).toBe(1);
     expect([...root.querySelectorAll(":scope > div > ul > li")].map(own)).toEqual(["outer", "after"]);
     expect([...root.querySelectorAll(":scope > div > ul > li > ul > li")].map(own)).toEqual(["command", "inner"]);
+  });
+});
+
+// Issue #112: a term with two senses shows both, numbered in the order given, as a dictionary does; one sense has no number.
+describe("the senses of a term", () => {
+  const port: Explanation = { id: "p", term: "port", senses: ["The number in the address of the page.", "The socket the server listens on."] };
+  test("two senses are numbered 1 and 2 in their order; one sense shows no number", () => {
+    const root = show({ pieces: [plain("Which "), ref("port", "p"), plain("?")], explanations: [port] });
+    hover(root.querySelector<HTMLElement>(".term")!);
+    const items = [...tooltip()!.querySelectorAll("li")].map((li) => li.textContent?.replace(/\s+/g, " ").trim());
+    expect(items).toEqual([`1. ${port.senses[0]}`, `2. ${port.senses[1]}`]);
+    document.body.innerHTML = "";
+    const one = show({ pieces: [ref("SQLite", "s")], explanations: [sqlite] });
+    hover(one.querySelector<HTMLElement>(".term")!);
+    expect(tooltip()!.querySelectorAll("li").length).toBe(0);
+    expect(tooltip()!.textContent?.trim()).toBe(sqlite.senses[0]);
+  });
+
+  // The seam: the numbers the tooltip shows and the numbers conversation.md writes are both those of numberedSenses.
+  test("the tooltip and conversation.md number the senses alike, from numberedSenses", () => {
+    const [explanation] = shown([port]);
+    const numbered = numberedSenses(explanation.senses).map((s) => `${s.number}. ${s.text}`);
+    const root = show({ pieces: [ref("port", "p"), plain("?")], explanations: [port] });
+    hover(root.querySelector<HTMLElement>(".term")!);
+    expect([...tooltip()!.querySelectorAll("li")].map((li) => li.textContent?.replace(/\s+/g, " ").trim())).toEqual(numbered);
+    const q: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [explanation], question: [ref("port", "p"), plain("?")], options: [], details: [], decision: null };
+    const record = renderQuestionRecord(q);
+    for (const line of numbered) expect(record).toContain(`  ${line}\n`);
   });
 });
