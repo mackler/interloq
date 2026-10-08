@@ -22,6 +22,7 @@ import { railView, type RailView } from "./rail.ts";
 import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
 import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
+import { tabTitle } from "./title.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
@@ -633,7 +634,7 @@ describe("App and the draft", () => {
     ws.receive({ type: "replay", ui: [], runs: [] });
     expect(root.querySelector("form")).not.toBe(null);
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
-    expect(document.title).toBe("c — Interloq");
+    expect(document.title).toBe(tabTitle("/host/c"));
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/workspace", location: "/host/c", task: "t" }]) }] });
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
   });
@@ -650,7 +651,7 @@ describe("App and the draft", () => {
     flushSync();
     expect(root.querySelector("form")).not.toBe(null);
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/server");
-    expect(document.title).toBe("server — Interloq");
+    expect(document.title).toBe(tabTitle("/host/server"));
   });
   const field = (root: ParentNode) => one(root, "[name=answer]") as HTMLInputElement;
   afterEach(() => {

@@ -13,3 +13,35 @@ if (typeof HTMLDialogElement !== "undefined" && typeof HTMLDialogElement.prototy
     this.dispatchEvent(new Event("close"));
   };
 }
+// Issue #16: jsdom has no Notification. This stub records what the page shows and asks, and logs nothing; the tests
+// set its permission and its answer to a request, and reset it after each test.
+export type NotificationCall = { title: string; options: NotificationOptions | undefined; closed: boolean };
+export class NotificationStub {
+  static calls: NotificationCall[] = [];
+  static requests = 0;
+  static permission: NotificationPermission = "default";
+  static nextAnswer: NotificationPermission = "granted";
+  onclick: ((this: NotificationStub, event: Event) => unknown) | null = null;
+  readonly #call: NotificationCall;
+  constructor(title: string, options?: NotificationOptions) {
+    this.#call = { title, options, closed: false };
+    NotificationStub.calls.push(this.#call);
+  }
+  close(): void {
+    this.#call.closed = true;
+  }
+  static requestPermission(): Promise<NotificationPermission> {
+    NotificationStub.requests += 1;
+    NotificationStub.permission = NotificationStub.nextAnswer;
+    return Promise.resolve(NotificationStub.permission);
+  }
+  static reset(): void {
+    NotificationStub.calls = [];
+    NotificationStub.requests = 0;
+    NotificationStub.permission = "default";
+    NotificationStub.nextAnswer = "granted";
+  }
+}
+if (typeof (window as { Notification?: unknown }).Notification === "undefined") {
+  Object.defineProperty(window, "Notification", { configurable: true, writable: true, value: NotificationStub });
+}
