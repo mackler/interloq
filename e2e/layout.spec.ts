@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
-import { LONG_ANSWERS } from "./longAnswers.ts";
+import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { layoutUrl } from "./ports.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
@@ -834,6 +834,56 @@ test.describe("the tests of the planSteps server, in order", () => {
       await expect(tip).toHaveCount(0);
     }
   });
+  // Issue #116: a stage's steps are drawn one level deeper than the stage, and every row of the rail, a long step label
+  // wrapped included, stays inside the rail's column, at every width (the rail is in the progress panel below 840 px).
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L31) the rail at ${width} × ${height}: a step deeper than its stage, a stage than its phase, every row inside the column, a long label unclipped`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startTask(page, "Build the rail", layoutUrl("planSteps"));
+      if (width < 840) {
+        await page.locator("details.progress > summary, details.progress summary").first().click();
+        await expect(page.locator("details.progress")).toHaveAttribute("open", "");
+      }
+      const nav = page.getByRole("navigation", { name: "Progress of the run" });
+      await nav.getByRole("button", { name: railToggleName(stageHeading(2, "the page"), RAIL_CONDITION_LABEL.notStarted, null, null), exact: true }).click();
+      await expect(nav.locator("[data-plan-step]", { hasText: "The long step" })).toBeVisible();
+      await expect(nav.locator("[data-plan-step]", { hasText: LONG_STEP_LABEL }).first()).toBeVisible();
+      const problems = await nav.evaluate((rail) => {
+        const out: string[] = [];
+        const left = (el: Element | null) => (el === null ? NaN : el.getBoundingClientRect().left);
+        const visible = (el: Element) => el.getBoundingClientRect().width > 0;
+        const style = getComputedStyle(rail);
+        const inner = rail.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+        if (rail.scrollWidth > rail.clientWidth) out.push(`the rail overflows sideways: ${rail.scrollWidth} > ${rail.clientWidth}`);
+        for (const entry of rail.querySelectorAll(".entry")) {
+          const phaseLabel = entry.querySelector(":scope > button [data-label], :scope > [data-label]");
+          const phaseMark = entry.querySelector(":scope > button > .mark, :scope > .mark");
+          for (const stage of entry.querySelectorAll(".stage")) {
+            const stageLabel = stage.querySelector(":scope > button [data-stage], :scope > [data-stage]");
+            const stageMark = stage.querySelector(":scope > button > .mark, :scope > .mark");
+            const name = stageLabel?.textContent?.trim() ?? "?";
+            if (!(left(stageLabel) > left(phaseLabel))) out.push(`${name}: its label starts at ${left(stageLabel)}, not right of its phase's at ${left(phaseLabel)}`);
+            if (!(left(stageMark) > left(phaseMark))) out.push(`${name}: its mark starts at ${left(stageMark)}, not right of its phase's at ${left(phaseMark)}`);
+            for (const step of stage.querySelectorAll(".plan-step")) {
+              const stepLabel = step.querySelector("[data-plan-step-label]");
+              const stepMark = step.querySelector(":scope > .mark");
+              const stepName = stepLabel?.textContent?.trim() ?? "?";
+              if (!(left(stepLabel) > left(stageLabel))) out.push(`${stepName}: its label starts at ${left(stepLabel)}, not right of its stage's at ${left(stageLabel)}`);
+              if (!(left(stepMark) > left(stageMark))) out.push(`${stepName}: its mark starts at ${left(stepMark)}, not right of its stage's at ${left(stageMark)}`);
+            }
+          }
+        }
+        for (const el of rail.querySelectorAll("[data-label], [data-stage], [data-step-label], [data-plan-step], [data-plan-step-label], button.rail-toggle")) {
+          if (!visible(el)) continue;
+          const name = el.textContent?.trim().slice(0, 40) ?? "?";
+          if (el.getBoundingClientRect().right > inner + 0.5) out.push(`${name}: its right edge ${el.getBoundingClientRect().right} is past the rail's content at ${inner}`);
+          if (el.scrollWidth > el.clientWidth + 0.5 && getComputedStyle(el).display !== "inline") out.push(`${name}: clipped, ${el.scrollWidth} > ${el.clientWidth}`);
+        }
+        return out;
+      });
+      expect(problems).toEqual([]);
+    });
+  }
 });
 
 test.describe("the tests of the longQuestion server, in order", () => {

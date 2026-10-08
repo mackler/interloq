@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
-import { LONG_ANSWERS } from "./longAnswers.ts";
+import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { finished, issue, respond, type TestOptions, tempRepo, testWiring, questionOf, currentOf, entryOf } from "../test/helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -221,7 +221,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
 
 // Issue #6: the plan of the "planSteps" scenario, and its revision with a step whose text is long enough to scroll.
 const S1 = { id: "S1", number: 1, label: "Structured user questions (Q1)", text: "Add the **schema** of a question." };
-const S2 = { id: "S2", number: 2, label: "The store", text: "Write `plan.json`." };
+const S2 = { id: "S2", number: 2, label: LONG_STEP_LABEL, text: "Write `plan.json`." };
 export const LONG_STEP_TEXT = Array.from({ length: 40 }, (_, i) => `Line ${i + 1} of the step's text, which the tooltip scrolls.`).join("\n\n");
 const S3 = { id: "S3", number: 1, label: "The long step", text: LONG_STEP_TEXT };
 SCENARIOS.planSteps = {

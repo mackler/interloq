@@ -1,4 +1,8 @@
-// The paragraphs of the "longChoices" scenario (issue #12), shared by e2e/server.ts and e2e/layout.spec.ts.
+// The paragraphs of the "longChoices" scenario (issue #12), and the long step label of the "planSteps" scenario (issue
+// #116), shared by e2e/server.ts and e2e/layout.spec.ts.
+
+/** A plan step's label long enough to wrap in the rail's 14rem column, as the live run's labels did (issue #116). */
+export const LONG_STEP_LABEL = "The store, which keeps the plan and its records on disk between two runs";
 
 /** Three numbered answers of a paragraph each, one with a long unbroken path (issue #12). */
 export const LONG_ANSWERS = [
