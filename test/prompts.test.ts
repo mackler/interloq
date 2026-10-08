@@ -355,7 +355,7 @@ test("every prompt that asks for the whole plan states the step duration rule, i
 });
 
 test("the execution prompt states the ceiling for a foreground command and says to wait for a long suite in the background without editing", () => {
-  assert.ok(prompts.executePrompt.includes(prompts.BACKGROUND_SUITE_SENTENCE));
+  assert.ok(prompts.executePrompt("t", true).includes(prompts.BACKGROUND_SUITE_SENTENCE));
   assert.ok(prompts.BACKGROUND_SUITE_SENTENCE.includes(`timeout set to ${prompts.COMMAND_CEILING_MS}`), prompts.BACKGROUND_SUITE_SENTENCE);
   assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /in the background/);
   assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /do not edit/);
@@ -790,7 +790,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     interviewOpenPrompt: prompts.interviewOpenPrompt,
     interviewGapsPrompt: prompts.interviewGapsPrompt("r.json", ["G-R1-1"]),
     termsPrompt: prompts.termsPrompt("t"),
-    executePrompt: prompts.executePrompt,
+    executePrompt: prompts.executePrompt("t", true),
   };
   for (const [name, text] of Object.entries(texts)) {
     const outside = text.split(prompts.questionWritingRules()).join("").split(prompts.questionReviewCriteria()).join("");
@@ -826,4 +826,20 @@ test("issue #112: the explanations clause states the senses that questionProblem
   assert.deepEqual(questionProblems(question([])).map((p) => p.kind), ["noSense"]);
   assert.deepEqual(questionProblems(question(["A library.", ""])).map((p) => p.kind), ["blankSense"]);
   for (const kind of ["noSense", "blankSense"] as const) assert.ok(prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind, subject: "zod" }] }]).includes(clause.text) || prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind, subject: "zod" }] }]).includes(rule.rule), kind);
+});
+
+// Issue #117: each execution phase runs in a session of its own, which has not seen the planning, so its prompt names the
+// task, the requirements where the question phase ran, and the user's decisions.
+test("issue #117: executePrompt names the task, the requirements where they exist, and user-decisions.md", async () => {
+  const { scriptedTask } = await import("./helpers.ts");
+  const withRequirements = prompts.executePrompt(scriptedTask, true);
+  assert.ok(withRequirements.includes(`Task: ${scriptedTask}`), withRequirements);
+  assert.ok(withRequirements.includes(prompts.REQUIREMENTS_SENTENCE));
+  assert.ok(prompts.initialPlanPrompt(scriptedTask, true).includes(prompts.REQUIREMENTS_SENTENCE), "the planning and the execution name the requirements alike");
+  assert.ok(withRequirements.includes(prompts.USER_DECISIONS_SENTENCE));
+  const without = prompts.executePrompt(scriptedTask, false);
+  assert.ok(without.includes(`Task: ${scriptedTask}`));
+  assert.ok(!without.includes(prompts.REQUIREMENTS_SENTENCE));
+  assert.ok(!prompts.initialPlanPrompt(scriptedTask, false).includes(prompts.REQUIREMENTS_SENTENCE));
+  assert.ok(without.includes(prompts.USER_DECISIONS_SENTENCE));
 });

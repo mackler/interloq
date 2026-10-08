@@ -1800,7 +1800,7 @@ describe("TimelineRail: where the indicator is", () => {
   // The seam of the prompt, the reducer and the rail (P1-R1-5): what executePrompt tells Claude Code to report when it
   // resumes a step is the report that puts the indicator back on that step.
   test("the resume sentence of executePrompt, folded as reports, moves the indicator from S2 to the phase and back to S1", () => {
-    expect(prompts.executePrompt.includes(prompts.resumeStepSentence)).toBe(true);
+    expect(prompts.executePrompt("t", true).includes(prompts.resumeStepSentence)).toBe(true);
     expect(prompts.resumeStepSentence.includes(`'${prompts.REPORT_STEP_STATUSES[0]}'`)).toBe(true);
     const plan = (s1: "started" | "unfinished", s2: "pending" | "started" | "done") => ({ stages: [{ number: 1, title: "t", steps: [planStep("S1", 1, s1), planStep("S2", 2, s2)] }] });
     const report = (id: string, status: (typeof prompts.REPORT_STEP_STATUSES)[number], p: ReturnType<typeof plan>): UiEvent => ({ _tag: "PlanChanged", phase: 1, plan: p, step: { id, status } });

@@ -73,7 +73,7 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
         // The steps of the plan (issue #6, Q2): report_step records on the plan as the phase began; when the call ends,
         // however it ends, a started step becomes unfinished and the held plan is written (G-R1-2, P1-R1-4).
         const steps = yield* executionSteps(k);
-        const outcome = yield* planner.executing(executePrompt, steps.report).pipe(
+        const outcome = yield* planner.executing(executePrompt(task, withRequirements), steps.report).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;

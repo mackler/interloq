@@ -683,10 +683,13 @@ export const PLAN_ID_RULE = `Every step has an id (S1, S2, …) that is unique a
 /** The statuses of plan.json as the agents read them. */
 const PLAN_STATUSES = `Each step of plan-review/plan.json has a status that the program records: a step with status 'done' is implemented, a step with status 'unfinished' was begun and not completed, and a step with status 'pending' is not yet begun.`;
 
+/** The requirements as the prompts name them, where the question phase ran. */
+export const REQUIREMENTS_SENTENCE = "plan-review/requirements.md contains the user's confirmed answers and decisions from the interview. The plan must follow it.";
+/** The user's decisions as an execution call is told of them; the file exists from the start of a run. */
+export const USER_DECISIONS_SENTENCE = "plan-review/user-decisions.md contains input and decisions by the user, which must be followed.";
+
 export function initialPlanPrompt(task: string, withRequirements: boolean): string {
-  const requirements = withRequirements
-    ? "plan-review/requirements.md contains the user's confirmed answers and decisions from the interview. The plan must follow it.\n"
-    : "";
+  const requirements = withRequirements ? `${REQUIREMENTS_SENTENCE}\n` : "";
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
 ${requirements}${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
@@ -798,7 +801,13 @@ ${QUESTION_TEXT_FORMAT}
 - options: the same options as the tool's options, in the same order, each with its label and description as pieces whose words, joined, are exactly the tool option's label and description.
 For example:
 ${relayedQuestionText(RELAYED_EXAMPLE)}`;
-export const executePrompt = `The plan in plan-review/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
+/**
+ * The prompt of an execution call. Each execution phase runs in a Claude Code session of its own (issue #117), which has
+ * not seen the planning, so the prompt names the task and the records it must follow.
+ */
+export function executePrompt(task: string, withRequirements: boolean): string {
+  const requirements = withRequirements ? `${REQUIREMENTS_SENTENCE}\n` : "";
+  return `${requirements}${USER_DECISIONS_SENTENCE}\nThe plan in plan-review/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
 Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, call it with the step's id and the status '${REPORT_STEP_STATUSES[0]}'; when the step is complete and verified, call it with the step's id and the status '${REPORT_STEP_STATUSES[1]}'. ${resumeStepSentence} The program records the status in plan-review/plan.json; do not edit plan-review/plan.json or plan-review/plan.md, and do not change the plan.
 If you need information or a decision from the user, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.
 ${RELAYED_SHAPE}
@@ -806,7 +815,9 @@ ${questionWritingRules()}
 ${BACKGROUND_SUITE_SENTENCE}
 If you cannot continue for another reason, for example a command that fails and that you cannot correct or a denied permission, stop and return status 'blocked' with the description in the question field.
 When every step is completed and verified, return status 'finished'.
-In every case put a summary of the work done in summary and a description of the steps not yet completed in remaining_work.`;
+In every case put a summary of the work done in summary and a description of the steps not yet completed in remaining_work.
+Task: ${task}`;
+}
 
 // ---- repair of an invalid structured reply ------------------------------------------------------
 

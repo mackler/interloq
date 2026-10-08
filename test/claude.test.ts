@@ -720,19 +720,19 @@ test("during execution an edit of plan.json or plan.md is denied; other edits ar
 
 // The seam of Q2: the prompt names the tool and the statuses exactly as the tool's constants define them.
 test("the execution prompt names report_step and its statuses as the tool defines them", () => {
-  assert.ok(prompts.executePrompt.includes(prompts.REPORT_STEP_TOOL));
-  for (const status of prompts.REPORT_STEP_STATUSES) assert.ok(prompts.executePrompt.includes(`'${status}'`), status);
-  assert.match(prompts.executePrompt, /plan-review\/plan\.json/);
-  assert.doesNotMatch(prompts.executePrompt, /marker/);
+  assert.ok(prompts.executePrompt("t", true).includes(prompts.REPORT_STEP_TOOL));
+  for (const status of prompts.REPORT_STEP_STATUSES) assert.ok(prompts.executePrompt("t", true).includes(`'${status}'`), status);
+  assert.match(prompts.executePrompt("t", true), /plan-review\/plan\.json/);
+  assert.doesNotMatch(prompts.executePrompt("t", true), /marker/);
 });
 
 // Issue #53 (Q1, G-R1-1): any order, one step open at a time, a resumed step reported started again; nothing is refused.
 test("the execution prompt allows any order with one step open at a time, and asks for a resumed step to be reported again", () => {
-  assert.doesNotMatch(prompts.executePrompt, /in order/);
-  assert.match(prompts.executePrompt, /in any order/);
-  assert.match(prompts.executePrompt, /one step open at a time/);
+  assert.doesNotMatch(prompts.executePrompt("t", true), /in order/);
+  assert.match(prompts.executePrompt("t", true), /in any order/);
+  assert.match(prompts.executePrompt("t", true), /one step open at a time/);
   assert.match(prompts.resumeStepSentence, new RegExp(`'${prompts.REPORT_STEP_STATUSES[0]}' again`));
-  assert.ok(prompts.executePrompt.includes(prompts.resumeStepSentence));
+  assert.ok(prompts.executePrompt("t", true).includes(prompts.resumeStepSentence));
 });
 
 // Issue #26: a failed planning call is TransportFault when src/transport.ts says so, ClaudeCallFailed otherwise, and

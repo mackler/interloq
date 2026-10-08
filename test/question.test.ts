@@ -267,8 +267,8 @@ test("property: re-dividing a question's plain pieces keeps its words and its pr
 
 test("S8: executePrompt states the relayed shape with the rules, and parseRelayedQuestion reads its own example", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
-  assert.ok(prompts.executePrompt.includes(prompts.RELAYED_SHAPE));
-  assert.ok(prompts.executePrompt.includes(prompts.questionWritingRules()));
+  assert.ok(prompts.executePrompt("t", true).includes(prompts.RELAYED_SHAPE));
+  assert.ok(prompts.executePrompt("t", true).includes(prompts.questionWritingRules()));
   assert.ok(prompts.RELAYED_SHAPE.includes(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE)), "the prompt's example is the composer's");
   const options = prompts.RELAYED_EXAMPLE.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
   assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE), options), prompts.RELAYED_EXAMPLE);
