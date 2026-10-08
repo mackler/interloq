@@ -748,8 +748,8 @@ test("a multi-line value and its escapes note keep the nesting of the settings a
 });
 
 // S1, moved here from test/questionRules.test.ts on 5 Oct 2026 (the requirements name this file): the one list of the
-// ids of QUESTION_RULES, with the seven of issues #59, #91, #92 and #93.
-const RULE_IDS = ["whetherToAsk", "selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
+// ids of QUESTION_RULES, with the seven of issues #59, #91, #92 and #93, and explainedKnowledge of issue #111.
+const RULE_IDS = ["whetherToAsk", "explainedKnowledge", "selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
 
 test("QUESTION_RULES holds one entry per rule, with unique ids and a rule and a criterion each", () => {
   assert.deepEqual(prompts.QUESTION_RULES.map((r) => r.id), RULE_IDS);

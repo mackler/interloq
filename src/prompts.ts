@@ -57,6 +57,13 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: "a question is asked that the task text, the codebase, the project documentation or an earlier answer of the user settles (name the file or the answer), or whose answer changes neither the plan nor the work, or whose options differ in nothing the reader can act on; or every proposed answer of a question assumes a premise that none of those sources establishes (name the premise and the files that would have settled it), and the premise is not asked first.",
   },
   {
+    // Issue #111 (8 Oct 2026): beside whetherToAsk, whose second clause it sharpens. The explanations exist so that a
+    // reader who has never seen the code can understand a question; a question that asks him for that knowledge defeats them.
+    id: "explainedKnowledge",
+    rule: "Never ask the reader for knowledge that the question's own explanations exist to give him: not what a term means or should mean, and not whether a term needs explaining. Either he holds that knowledge, and the explanation is unnecessary for him, or he does not, and he cannot answer. Where a term means something particular in this program, the code settles its meaning, so read the codebase and do not ask, as the second condition of whether to ask requires. A question about which of two wordings helps the reader is not this: there the options differ in how they read, not in what they claim, and he chooses between two texts he can see.",
+    criterion: "a question asks the reader what a term means or should mean, or whether a term needs explaining to him, including a term whose meaning in this program the codebase settles; a question that offers two wordings for the reader to choose between, differing in how they read and not in what they claim, is not this.",
+  },
+  {
     id: "selfContained",
     rule: "Make every question self-contained: it depends on nothing outside itself and its own options. Use no 'also', 'that', 'the above', 'as discussed' or other pointer to earlier material; where the question depends on an earlier decision, state that decision in its own words.",
     criterion: "a question depends on something outside itself and its own options: an 'also', 'that', 'the above' or 'as discussed', or an earlier decision pointed at instead of stated.",

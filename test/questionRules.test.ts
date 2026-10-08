@@ -125,3 +125,18 @@ test("readerConsequence asks for the consequence computed for the configuration 
     for (const cost of ["time", "work that falls to someone later", "a risk", "money"]) assert.ok(text.includes(cost), cost);
   }
 });
+
+// Issue #111: a question may not ask the reader for the knowledge its own explanations exist to give him; a choice between
+// two wordings he can see is the exception. The writer's rule and the reviewers' criterion both say so.
+test("explainedKnowledge names the meaning of a term, whether it needs explaining, the codebase, and the exception of two wordings", () => {
+  const rule = prompts.QUESTION_RULES.find((r) => r.id === "explainedKnowledge");
+  assert.ok(rule !== undefined, "QUESTION_RULES has no entry explainedKnowledge");
+  for (const text of [rule.rule, rule.criterion]) {
+    assert.match(text, /what a term (means|should mean)/);
+    assert.match(text, /whether a term needs explaining/);
+    assert.match(text, /codebase|the code settles/);
+    assert.match(text, /two wordings/);
+    assert.match(text, /in how they read, not in what they claim|in how they read and not in what they claim/);
+  }
+  assert.equal(prompts.QUESTION_RULES.findIndex((r) => r.id === "explainedKnowledge"), prompts.QUESTION_RULES.findIndex((r) => r.id === "whetherToAsk") + 1);
+});
