@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { countOfKind, describeEvent, foreseenPhases, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { para, plain } from "./helpers.ts";
+import * as prompts from "../src/prompts.ts";
 
 const review = { issues: [] };
 const response = { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
 const outcome = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null };
 
 // One example of every variant; the `satisfies` makes a missing tag a type error when the union grows.
+/** The heading the page shows above the conversation (issue #113), and the same text as a pattern. */
+const heading = prompts.clarificationHeading("clarification");
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const headed = (rest: string) => new RegExp(escapeRegExp(heading) + rest);
+
 const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp] } = {
   PhaseBegan: [{ _tag: "PhaseBegan", phase: { kind: "planning", n: 2 } }, /Planning 2 began/],
   PhaseEnded: [{ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" }, /Gather Requirements ended: done/],
@@ -26,8 +32,8 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   TransportRecovered: [{ _tag: "TransportRecovered", agent: "claude" }, /Claude Code: connection restored/],
   UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
   UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],
-  InterviewTurn: [{ _tag: "InterviewTurn", heading: "Clarification", message: "Hello", summary: null, answered: 1, total: 3 }, /Clarification \(1 of 3 answered\): Hello/],
-  InterviewOpened: [{ _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 3 }, /Clarification opened, 3 questions/],
+  InterviewTurn: [{ _tag: "InterviewTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],
+  InterviewOpened: [{ _tag: "InterviewOpened", heading, stage: "clarification", total: 3 }, headed(" opened, 3 questions")],
   ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done" }, /Claude Code said: done/],
   QuestionPresented: [
     { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], answer: { token: "1" } }, { label: plain("B"), description: [], answer: { token: "2" } }], details: [], decision: null } },

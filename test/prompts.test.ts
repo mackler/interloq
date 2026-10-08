@@ -163,7 +163,7 @@ test("the status lines of the phases name Gather Requirements and Implementation
 test("the clarification's headings and help", () => {
   assert.equal(prompts.clarificationHeading("clarification"), prompts.USER_DECISIONS);
   assert.equal(prompts.clarificationHeading("followUp"), "More user decisions");
-  assert.equal(prompts.interviewHelp("User Decisions"), "User Decisions. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.");
+  assert.equal(prompts.interviewHelp(prompts.USER_DECISIONS), `${prompts.USER_DECISIONS}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`);
   assert.equal(prompts.END_CLARIFICATION, "Finish clarification and start planning");
 });
 

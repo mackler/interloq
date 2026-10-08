@@ -436,7 +436,7 @@ describe("runs, replay and gaps", () => {
     fc.constantFrom<UiEvent>(
       { _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } },
       { _tag: "PhaseBegan", phase: { kind: "questions" } },
-      { _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 2 },
+      { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 2 },
       { _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 },
       { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e" }] }, counted: 1 },
       { _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [{ id: "A", action: "accepted", rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" },
@@ -1006,7 +1006,7 @@ describe("the whole run in the timeline", () => {
     expect(formulate.run?.timeline[0].steps[0].groups[0].rounds.length).toBe(1);
     expect(formulate.run?.timeline.slice(1).every((e) => e.groups.length === 0)).toBe(true);
     expect(progressOf(formulate.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
-    const interview = fold(live([...events, notified({ _tag: "InterviewOpened", heading: "Clarification", stage: "clarification", total: 3 }), notified({ _tag: "InterviewTurn", heading: "Clarification", message: "Q?", summary: null, answered: 1, total: 3 })]));
+    const interview = fold(live([...events, notified({ _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 3 }), notified({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Q?", summary: null, answered: 1, total: 3 })]));
     expect(interview.run?.timeline[0].steps.map((st) => [st.kind, st.state, st.count])).toEqual([["formulate", "done", null], ["clarification", "active", { answered: 1, total: 3 }]]);
     expect(progressOf(interview.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(1, 3)));
     const planning = fold(live([...events, notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" }), began({ kind: "planning", n: 1 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 })]));
