@@ -563,6 +563,16 @@ describe("TopBar", () => {
     expect(none.querySelector(".project-name")).toBe(null);
   });
 
+  // W1-R1-1: once a run has ended the bar shows the server's identification, as above the form for a new task.
+  test("an ended run gives way to the server's identification; a run in progress keeps its own", () => {
+    const run = { ...emptyRun(3), project: "/workspace", location: "/host/other", task: "the task" };
+    const ended = show(TopBar, { run: { ...run, ended: 0 }, location: "/host/server", connection: "open", onStop: () => undefined });
+    expect(one(ended, "h1 .project-name").textContent?.trim()).toBe("server");
+    expect(one(ended, ".location").textContent?.trim()).toBe("/host/server");
+    const during = show(TopBar, { run, location: "/host/server", connection: "open", onStop: () => undefined });
+    expect(one(during, ".location").textContent?.trim()).toBe("/host/other");
+  });
+
   test("a failed page: the chip reads disconnected and Stop is disabled", () => {
     const run = { ...emptyRun(3), project: "/p", task: "the task" };
     const root = show(TopBar, { run, location: null, connection: "failed", onStop: () => undefined });
@@ -626,6 +636,21 @@ describe("App and the draft", () => {
     expect(document.title).toBe("c — Interloq");
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/workspace", location: "/host/c", task: "t" }]) }] });
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
+  });
+
+  // W1-R1-1: above the form for a new task, the bar names the server's project, not the ended run's.
+  test("after a run has ended, New task shows the server's identification in the top bar and the title", async () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const { default: App } = await import("./components/App.svelte");
+    const root = show(App, {});
+    const ws = FakeWebSocket.last!;
+    ws.receive({ type: "hello", cwd: "/workspace", location: "/host/server", current: null, incarnation: "a" });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t" }, { _tag: "Ended", code: 0 }]) }] });
+    one(root, "button[name=new]").click();
+    flushSync();
+    expect(root.querySelector("form")).not.toBe(null);
+    expect(one(root, "header .location").textContent?.trim()).toBe("/host/server");
+    expect(document.title).toBe("server — Interloq");
   });
   const field = (root: ParentNode) => one(root, "[name=answer]") as HTMLInputElement;
   afterEach(() => {

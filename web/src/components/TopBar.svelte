@@ -28,9 +28,10 @@
   type Props = { run: RunView | null; location: string | null; incarnation?: string | null; connection: ViewState["connection"]; onStop: (incarnation: string, run: number) => void };
   let { run, location, incarnation = null, connection, onStop }: Props = $props();
   const CONNECTION: Record<ViewState["connection"], string> = { connecting: "connecting…", open: "connected", reconnecting: "reconnecting…", failed: "disconnected" };
-  // The run's identification while there is a run, the server's otherwise; nothing before the first hello.
-  const shown = $derived(run !== null && run.location !== "" ? run.location : location);
   const running = $derived(run !== null && run.ended === null);
+  // The run's identification while it is in progress, the server's otherwise (W1-R1-1: an ended run gives way, as
+  // above the form for a new task); nothing before the first hello.
+  const shown = $derived(running && run !== null && run.location !== "" ? run.location : location);
   let confirming = $state<{ incarnation: string; run: number } | null>(null);
   const current = $derived(run === null || run.ended !== null ? null : { incarnation: incarnation ?? "", run: run.id });
   $effect(() => {
