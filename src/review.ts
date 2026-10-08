@@ -65,6 +65,8 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
    * subject with a value has its file's change measured in the issue log (issue #31).
    */
   onUnchanged: "corrective" | "pause" | null;
+  /** Issue #112: who settles a disagreement between the agents over an issue: the user at a pause, or the agents (Claude Code's disposition stands). */
+  disputesSettledBy: "user" | "agents";
   /** A decision's subject: the number of the question its analysis is for (S21), which its progress names; absent otherwise. */
   question?: number | null;
   /** Run before every round's Codex turn, before its guard's snapshot (the work review rewrites changes.diff); null otherwise. */
@@ -437,7 +439,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
         return yield* Effect.die(new Error("the review loop ended a batch without an event"));
       });
 
-    const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
+    const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
     const begun = yield* store.observeFile(id);
     return yield* interpret(advance(initialState(setup, config), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) }));
   });

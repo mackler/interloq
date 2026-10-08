@@ -92,6 +92,13 @@ export type ReviewSetup = Readonly<{
    * Q7). A subject with a value is measured (issue #31): its file is observed before the round is logged.
    */
   onUnchanged: "corrective" | "pause" | null;
+  /**
+   * Issue #112: who settles a disagreement between Codex and Claude Code over an issue (the disputed pauses of behaviour
+   * 7: an issue raised again or repeated under a new id, a reversal, a disputed self-correction, a second clarification
+   * request). "user": the pause is asked. "agents": it is not; Claude Code's disposition stands and the loop goes on
+   * (the question list and the terms, whose disputes are about how a question to the user is worded).
+   */
+  disputesSettledBy: "user" | "agents";
   maxRounds: number;
   maxIdleRounds: number;
   countMinor: boolean;
