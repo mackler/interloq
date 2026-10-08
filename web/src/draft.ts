@@ -15,7 +15,8 @@ export type Reconciled = Readonly<{ draft: Draft | null; notice: string | null }
 export const pendingKey = (view: ViewState): DraftKey | null =>
   view.incarnation === null || view.run === null || view.run.pending === null ? null : { incarnation: view.incarnation, run: view.run.id, prompt: view.run.pending.asked.prompt };
 
-const sameKey = (a: DraftKey, b: DraftKey): boolean => a.incarnation === b.incarnation && a.run === b.run && a.prompt === b.prompt;
+/** Whether two keys name the same prompt of the same run of the same start of the server. */
+export const sameKey = (a: DraftKey, b: DraftKey): boolean => a.incarnation === b.incarnation && a.run === b.run && a.prompt === b.prompt;
 
 /** The draft's text for that key; "" for another key or no draft. */
 export const draftFor = (draft: Draft | null, key: DraftKey | null): string => (draft !== null && key !== null && sameKey(draft.key, key) ? draft.text : "");

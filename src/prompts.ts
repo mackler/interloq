@@ -1155,6 +1155,22 @@ export function protocolErrorNotice(reason: string): string {
 /** The page has stopped reconnecting after three frames in a row it could not read (decision Q5). */
 export const CONNECTION_FAILED_NOTICE =
   "The page has stopped reconnecting: it could not read the server's messages three times in a row. Nothing you do here is sent any more, and your typed text is kept. Reload the page once the server has been fixed.";
+// Issue #16: the alerts that a run waits for the user, or that a run he watched has ended.
+/** The title marker of a pending prompt, put in front of the tab's title. */
+export const TITLE_WAITING_MARK = "●";
+/** The title marker of a run that ended while the tab was hidden. */
+export const TITLE_ENDED_MARK = "✓";
+/** How a run ended, by its exit code: the words of "This task has ended (…)" and of the end's notification. */
+export const endedOutcome = (_code: number): "finished" | "interrupted" | "halted" => "halted";
+/** The desktop notification of a pending prompt, named by the project's own name. */
+export const pauseNotificationTitle = (_name: string): string => "";
+export const PAUSE_NOTIFICATION_BODY = "";
+/** The desktop notification of a run's end. */
+export const endNotificationTitle = (_name: string, _code: number): string => "";
+export const DESKTOP_ALERTS_LABEL = "";
+export const SOUND_ALERTS_LABEL = "";
+/** Why desktop notifications cannot be shown although the user turned them on. */
+export const desktopBlockedNote = (_permission: "denied" | "unsupported"): string => "";
 const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 /**
  * A cycle of a review loop in the progress rail (issue #14, Q1): the issues its review raised, and the counted ones
