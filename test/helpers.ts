@@ -322,6 +322,10 @@ export class ScriptedPlanner implements PlannerShape {
   readonly execPrompts: string[] = [];
   /** Every prompt sent on each session, planning and execution alike, in order (issue #117). */
   readonly history = new Map<string, string[]>();
+  /** A usage line of a call on this planner's session, as the adapter writes it. */
+  private recordUsage(): void {
+    fs.appendFileSync(path.join(path.dirname(this.state.plan), "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", time: new Date(0).toISOString(), session: this.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
+  }
   private sent(prompt: string): void {
     const root = this.root;
     root.history.set(this.session, [...(root.history.get(this.session) ?? []), prompt]);
@@ -374,7 +378,7 @@ export class ScriptedPlanner implements PlannerShape {
           fs.writeFileSync(file, step.editRecord.content);
         }
       }
-      if (step.usage) fs.appendFileSync(path.join(records, "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", session: this.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
+      if (step.usage) this.recordUsage();
       if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
       if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", resetsAtMs: step.limit.resetsAtMs, limitType: step.limit.limitType }));
@@ -413,7 +417,7 @@ export class ScriptedPlanner implements PlannerShape {
       self.execSessions.push(self.session);
       self.execPrompts.push(prompt);
       script.onCall?.();
-      if (script.usage) fs.appendFileSync(path.join(path.dirname(self.state.plan), "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", session: self.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
+      if (script.usage) self.recordUsage();
       if (script.permission !== undefined && ui !== null && self.callStore !== null) {
         const draft = permissionDraft(script.permission.tool, script.permission.input);
         const answer = yield* askOffering((p) => ui.ask(p), permissionPrompt, draft).pipe(Effect.provideService(Ui, ui), Effect.provideService(Store, self.callStore));

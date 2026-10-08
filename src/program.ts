@@ -5,7 +5,7 @@ import { type Brand, Cause, Context, Data, Effect, Exit, FileSystem, Layer, Opti
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe } from "./errors.ts";
-import { taskFinishedLine } from "./prompts.ts";
+import { mainSessionLine, taskFinishedLine } from "./prompts.ts";
 import { run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
@@ -47,7 +47,7 @@ export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md
  * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
  * A typed error of the run says HALTED and gives 1; UserStopped (End the run: q, /quit, the page's button) says
  * INTERRUPTED and gives 130 (S24). An interruption (Stop task) says INTERRUPTED from a finalizer and leaves the
- * fiber interrupted; `exitCodeOf` turns that into 130. In every case the Claude Code session id and the usage
+ * fiber interrupted; `exitCodeOf` turns that into 130. In every case the main Claude Code session id and the usage
  * summary are said last.
  */
 export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
@@ -61,7 +61,7 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
     /** The last two lines of every ending. */
     const tail = (sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
-        yield* ui.say(`Claude Code session id: ${sessionId ?? "none"}`);
+        yield* ui.say(mainSessionLine(sessionId));
         const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map(renderUsage), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);
       });

@@ -6,17 +6,17 @@ import { test } from "node:test";
 import { Clock, Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
-import { workReviewBeganLine } from "../src/prompts.ts";
+import { mainSessionLine, workReviewBeganLine } from "../src/prompts.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
 const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)));
 const said = (probe: WiringProbe): string => probe.ui.said.join("\n");
 
-/** The lines every ending prints last: the Claude Code session id and the usage summary. */
+/** The lines every ending prints last: the main Claude Code session id and the usage summary. */
 const assertTail = (probe: WiringProbe): void => {
   const lines = probe.ui.said.flatMap((text) => text.split("\n"));
-  assert.match(lines.at(-2) ?? "", /^Claude Code session id: /);
+  assert.ok([mainSessionLine("test-session"), mainSessionLine(null)].includes(lines.at(-2) ?? ""), lines.at(-2));
   assert.match(lines.at(-1) ?? "", /^Usage: /);
 };
 
@@ -25,7 +25,7 @@ test("a finished run prints the plan path and exits 0", async () => {
   assert.equal(await runProgram(probe, wiring), 0);
   assert.match(said(probe), /Claude Code reports that the task is finished after 1 implementation phase\(s\)\./);
   assert.match(said(probe), new RegExp(`Plan: ${path.join(probe.dir, "plan.md")}\\nConversation record: ${probe.dir}/conversation.md`));
-  assert.match(said(probe), /Claude Code session id: test-session/);
+  assert.ok(said(probe).includes(mainSessionLine("test-session")));
   assertTail(probe);
 });
 
@@ -56,7 +56,7 @@ test("an invalid config prints HALTED with the file and field and exits 1, befor
   fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ maxRounds: "5" }));
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: Expected number \(at maxRounds\)/);
-  assert.match(said(probe), /Claude Code session id: none/);
+  assert.ok(said(probe).includes(mainSessionLine(null)));
   assertTail(probe);
   assert.deepEqual(probe.planner.prompts, []);
   assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialised");
@@ -187,4 +187,20 @@ test("interrupt one minute into a weekly usage-limit wait: the summary printed r
   const text = said(probe);
   assert.ok(text.indexOf("INTERRUPTED by the user.") < text.indexOf("Waited for Claude Code's usage limits"), "the summary is not after the interruption");
   assert.match(text, /Waited for Claude Code's usage limits: 1 time, 1:00 in all \(the last interrupted\)\./);
+});
+
+// Issue #117: with a session per execution phase the end names the run's main session as the main one, and the usage line
+// counts every session.
+test("issue #117: a run of two execution phases ends naming its main session as such, and the usage counts three sessions", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1", usage: true }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [{ status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "B" }, finished],
+    execScripts: [{ usage: true }, { usage: true }],
+  });
+  assert.equal(await runProgram(probe, wiring), 0);
+  const lines = probe.ui.said.flatMap((text) => text.split("\n"));
+  assert.equal(lines.at(-2), mainSessionLine("test-session"));
+  assert.match(mainSessionLine("test-session"), /main session/);
+  assert.match(lines.at(-1) ?? "", /Claude Code: 3 calls in 3 sessions/);
 });

@@ -905,6 +905,13 @@ export function implementationBeganLine(label: string, permissionMode: string): 
 export function implementationEndedLine(label: string, status: string): string {
   return `\n${label} ended with status: ${status}`;
 }
+/**
+ * The end of a run names the run's main Claude Code session (issue #117): the planning, the interview and the responses to
+ * reviews ran in it; each execution phase and each decision ran in a session of its own, which the usage line counts.
+ */
+export function mainSessionLine(id: string | null): string {
+  return `Claude Code main session id: ${id ?? "none"} (the planning, the interview and the responses to reviews; each implementation phase and each decision ran in a session of its own, counted below and listed in plan-review/usage.jsonl)`;
+}
 /** The start of a planning phase: the first plan, or a revision. */
 export function planningBeganLine(label: string, first: boolean): string {
   return first ? `${label}: requesting the initial plan from Claude Code ...` : `\n${label}: Claude Code revises the plan ...`;
