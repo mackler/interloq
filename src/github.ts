@@ -4,12 +4,13 @@
 // HttpClientError or its request, which carry the Authorization header.
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
-import { TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
-import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, nextPage } from "./githubIssues.ts";
-import type { GithubTrackerConfig } from "./schema.ts";
+import { NoTracker, type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
+import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled, stageLabelsOf } from "./githubIssues.ts";
+import type { Config, GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
-import type { GithubToken } from "./trackerConfig.ts";
+import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
+import { OPENING_LINE, type Refinement, withRefinement } from "./refinement.ts";
 
 const TRACKER = "GitHub";
 const API = "https://api.github.com";
@@ -90,9 +91,38 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
 
     const read = (id: ItemId): Effect.Effect<TrackerItem, TrackerError> => Effect.flatMap(issueOf(id), (issue) => Effect.fromResult(itemOfIssue(issue, id)));
 
-    const notBuilt = Effect.fail(new TrackerUnreachable({ tracker: TRACKER, message: "not built" }));
-    const tracker: TrackerShape = { list, read, writeRefinement: () => notBuilt, setState: () => notBuilt };
+    const patch = (url: string, id: ItemId, body: Readonly<Record<string, unknown>>): Effect.Effect<void, TrackerError> =>
+      Effect.asVoid(send(HttpClientRequest.patch(url).pipe(HttpClientRequest.bodyJsonUnsafe(body)), { kind: "item", id }));
+
+    /** The developer's text is never replaced: withRefinement appends the section or replaces it alone. */
+    const writeRefinement = (id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(issueOf(id), (issue) => {
+        const body = withRefinement(issue.body ?? "", refinement);
+        return Result.isFailure(body) ? Effect.fail(new TrackerBodyInvalid({ id, message: `the issue's section "${OPENING_LINE}" is malformed: ${body.failure.reason}` })) : patch(issue.url, id, { body: body.success });
+      });
+
+    /**
+     * One PATCH of the full label set, not a DELETE and a POST, which could stop half done: after the add alone the
+     * issue carries two stage labels, which blocks its stage's listing (Q3); after the remove alone an open issue reads
+     * as unrefined. A label added on GitHub between the read and the PATCH is overwritten.
+     */
+    const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(issueOf(id), (issue) => {
+        const names = labelNamesOf(issue);
+        const stages = stageLabelsOf(config.labels, names);
+        return stages.length > 1 ? Effect.fail(new TrackerStateAmbiguous({ id, labels: stages })) : patch(issue.url, id, { labels: relabeled(names, config.labels, state) });
+      });
+
+    const tracker: TrackerShape = { list, read, writeRefinement, setState };
     return tracker;
   });
 
+/**
+ * The GitHub tracker of a configuration, its token from the environment given: refused, before any request, when the
+ * configuration names no tracker or the credential is absent.
+ */
+export const githubTrackerFrom = (config: Config, env: Environment): Result.Result<Layer.Layer<Tracker, never, HttpClient.HttpClient>, TrackerCredentialMissing | NoTracker> => {
+  const tracker = config.tracker;
+  return tracker === null ? Result.fail(new NoTracker()) : Result.map(githubCredential(env), (token) => githubTrackerLayer(tracker, token));
+};
 export const githubTrackerLayer = (config: GithubTrackerConfig, token: GithubToken): Layer.Layer<Tracker, never, HttpClient.HttpClient> => Layer.effect(Tracker, githubTracker(config, token));

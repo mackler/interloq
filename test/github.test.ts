@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Effect, Result } from "effect";
-import { githubTracker } from "../src/github.ts";
+import { Effect, Layer, Option, Result } from "effect";
+import { githubTracker, githubTrackerFrom } from "../src/github.ts";
+import { Tracker } from "../src/services.ts";
+import { defaultConfig } from "../src/schema.ts";
+import { readRefinement, refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import type { GithubTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import { type ItemId, type ItemState, itemIdOf } from "../src/tracker.ts";
@@ -120,6 +123,100 @@ test("every request carries the bearer token and GitHub's headers", async () => 
     assert.equal(r.headers["x-github-api-version"], "2022-11-28");
     assert.equal(r.headers["user-agent"], "Interloq");
   }
+});
+
+// S8: the writes, and the tracker built from the configuration and the environment.
+const refinement = (text: string) => Result.getOrThrow(refinementOf(text));
+const patches = (stub: Stub): readonly SentRequest[] => stub.sent().filter((r) => r.method === "PATCH");
+const patchBody = (r: SentRequest): Record<string, unknown> => JSON.parse(r.body ?? "null");
+
+test("a refinement is PATCHed into the body after the developer's text, which stays intact, and reads back", async () => {
+  const developer = "What the developer wrote.\r\n\r\nTrailing spaces   ";
+  const stub = makeStub(route({ [`GET ${ISSUES}/12`]: json(issue(12, [], { body: developer })), [`PATCH ${ISSUES}/12`]: json(issue(12, [])) }));
+  const r = refinement("## Plan\n\n- one\n- two");
+  await withTracker(stub, (t) => t.writeRefinement(id("12"), r));
+  const [patch] = patches(stub);
+  assert.equal(patch.url.toString(), `${ISSUES}/12`);
+  assert.equal(patch.headers.authorization, "Bearer github_pat_SECRET123");
+  const body = String(patchBody(patch).body);
+  assert.deepEqual(Object.keys(patchBody(patch)), ["body"]);
+  assert.deepEqual(Result.getOrThrow(readRefinement(body)), Option.some(r));
+  assert.equal(Result.getOrThrow(withoutRefinement(body)), developer);
+});
+
+test("a second refinement replaces the first; a null body takes the section alone", async () => {
+  const first = Result.getOrThrow(withRefinement("text", refinement("first")));
+  const stub = makeStub(route({ [`GET ${ISSUES}/1`]: json(issue(1, [], { body: first })), [`GET ${ISSUES}/2`]: json(issue(2, [], { body: null })), [`PATCH ${ISSUES}/1`]: json({}), [`PATCH ${ISSUES}/2`]: json({}) }));
+  await withTracker(stub, (t) => Effect.andThen(t.writeRefinement(id("1"), refinement("second")), t.writeRefinement(id("2"), refinement("only"))));
+  const [one, two] = patches(stub).map((p) => String(patchBody(p).body));
+  assert.deepEqual(Result.getOrThrow(readRefinement(one)), Option.some(refinement("second")));
+  assert.equal(Result.getOrThrow(withoutRefinement(one)), "text");
+  assert.equal(Result.getOrThrow(withoutRefinement(two)), "");
+});
+
+test("a body with a malformed section is TrackerBodyInvalid and nothing is PATCHed", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/3`]: json(issue(3, [], { body: "x\n\n## Refined using Interloq\nno end" })) }));
+  assert.equal((await failure(stub, (t) => t.writeRefinement(id("3"), refinement("r"))))._tag, "TrackerBodyInvalid");
+  assert.equal(patches(stub).length, 0);
+});
+
+test("a state change sends one PATCH of the full label set: the old stage label removed, the new one added, others kept", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/4`]: json(issue(4, ["bug", LABELS.refining])), [`GET ${ISSUES}/5`]: json(issue(5, [])), [`PATCH ${ISSUES}/4`]: json({}), [`PATCH ${ISSUES}/5`]: json({}) }));
+  await withTracker(stub, (t) => Effect.andThen(t.setState(id("4"), "refined"), t.setState(id("5"), "refining")));
+  assert.deepEqual(patches(stub).map(patchBody), [{ labels: ["bug", LABELS.refined] }, { labels: [LABELS.refining] }]);
+});
+
+test("a state change of an ambiguous issue is TrackerStateAmbiguous and nothing is PATCHed", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/6`]: json(issue(6, [LABELS.refining, LABELS.refined])) }));
+  assert.equal((await failure(stub, (t) => t.setState(id("6"), "implementing")))._tag, "TrackerStateAmbiguous");
+  assert.equal(patches(stub).length, 0);
+});
+
+test("a PATCH refused for the token is TrackerAuthRefused", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [])), [`PATCH ${ISSUES}/7`]: json({ message: "Resource not accessible" }, 403) }));
+  assert.equal((await failure(stub, (t) => t.setState(id("7"), "refining")))._tag, "TrackerAuthRefused");
+});
+
+test("githubTrackerFrom refuses an absent credential and a config without a tracker before any request", () => {
+  const config = { ...defaultConfig, tracker: CONFIG };
+  const absent = githubTrackerFrom(config, {});
+  assert.ok(Result.isFailure(absent));
+  assert.deepEqual(absent.failure._tag === "TrackerCredentialMissing" && absent.failure.variable, "INTERLOQ_GITHUB_TOKEN");
+  const none = githubTrackerFrom(defaultConfig, { INTERLOQ_GITHUB_TOKEN: "t" });
+  assert.ok(Result.isFailure(none));
+  assert.equal(none.failure._tag, "NoTracker");
+});
+
+test("the four operations in sequence through Tracker, built from the config and the environment, over one stub GitHub", async () => {
+  const state = new Map<number, Record<string, unknown>>([[1, issue(1, ["bug"], { body: "Do it." })], [2, issue(2, [LABELS.refined])]]);
+  const stub = makeStub((r) => {
+    const n = Number(r.url.pathname.split("/").at(-1));
+    if (r.method === "GET" && r.url.pathname.endsWith("/issues")) {
+      const label = r.url.searchParams.get("labels");
+      return json([...state.values()].filter((i) => label === null || (i.labels as { name: string }[]).some((l) => l.name === label)));
+    }
+    if (r.method === "GET") return state.has(n) ? json(state.get(n)) : json({}, 404);
+    const patch = patchBody(r);
+    const next = { ...state.get(n), ...("labels" in patch ? { labels: (patch.labels as string[]).map((name) => ({ name })) } : patch) };
+    state.set(n, next);
+    return json(next);
+  });
+  const layer = Layer.provide(Result.getOrThrow(githubTrackerFrom({ ...defaultConfig, tracker: CONFIG }, { INTERLOQ_GITHUB_TOKEN: "github_pat_SECRET123" })), stub.layer);
+  const program = Effect.gen(function* () {
+    const tracker = yield* Tracker;
+    const before = yield* tracker.list("unrefined");
+    const item = yield* tracker.read(before[0].id);
+    yield* tracker.writeRefinement(item.id, refinement("Refined."));
+    yield* tracker.setState(item.id, "refined");
+    return { before, after: yield* tracker.list("refined"), unrefined: yield* tracker.list("unrefined") };
+  });
+  const { before, after, unrefined } = await Effect.runPromise(Effect.provide(program, layer));
+  assert.deepEqual(ids(before), ["1"]);
+  assert.deepEqual(ids(after), ["1", "2"]);
+  assert.deepEqual(unrefined, []);
+  assert.deepEqual(Result.getOrThrow(readRefinement(after[0].body)), Option.some(refinement("Refined.")));
+  assert.ok(after[0].body.startsWith("Do it."));
+  for (const r of stub.sent()) assert.equal(r.headers.authorization, "Bearer github_pat_SECRET123");
 });
 
 test("the token is in no error the adapter produced", () => {

@@ -33,11 +33,15 @@ export const isPullRequest = (issue: GithubIssue): boolean => "pull_request" in 
  * stateless; two or more are ambiguous (Q3). Labels outside the mapping are ignored.
  */
 export const stateOf = (labels: GithubLabels, issue: Readonly<{ open: boolean; labelNames: readonly string[] }>): Result.Result<ItemState, NoState | Ambiguous> => {
-  const states = ITEM_STATES.filter((state) => issue.labelNames.includes(labels[state]));
-  if (states.length > 1) return Result.fail({ _tag: "Ambiguous", labels: issue.labelNames.filter((name) => states.some((state) => labels[state] === name)) });
-  if (states.length === 1) return Result.succeed(states[0]);
+  const stages = stageLabelsOf(labels, issue.labelNames);
+  if (stages.length > 1) return Result.fail({ _tag: "Ambiguous", labels: stages });
+  const state = ITEM_STATES.find((s) => labels[s] === stages[0]);
+  if (state !== undefined) return Result.succeed(state);
   return issue.open ? Result.succeed("unrefined") : Result.fail({ _tag: "NoState" });
 };
+
+/** The stage labels among an issue's labels, in the issue's order. */
+export const stageLabelsOf = (labels: GithubLabels, labelNames: readonly string[]): readonly string[] => labelNames.filter((name) => ITEM_STATES.some((state) => labels[state] === name));
 
 /** The item of an issue: its id the issue's number in decimal, a null body the empty string. */
 export const itemOf = (labels: GithubLabels, issue: GithubIssue): Result.Result<TrackerItem, NoState | Ambiguous> =>

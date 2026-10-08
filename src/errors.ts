@@ -51,6 +51,8 @@ export class TrackerItemNotFound extends Data.TaggedError("TrackerItemNotFound")
 export class TrackerBodyInvalid extends Data.TaggedError("TrackerBodyInvalid")<{ readonly id: string; readonly message: string }> {}
 /** An item carrying two or more stage labels (requirements, Q3): its stage's whole listing and its read fail. */
 export class TrackerStateAmbiguous extends Data.TaggedError("TrackerStateAmbiguous")<{ readonly id: string; readonly labels: readonly string[] }> {}
+/** The configuration names no tracker (its `tracker` key is null). */
+export class NoTracker extends Data.TaggedError("NoTracker")<{}> {}
 /** The configured tracker's credential is absent or blank in the environment; names the variable, never a value. */
 export class TrackerCredentialMissing extends Data.TaggedError("TrackerCredentialMissing")<{ readonly variable: string }> {}
 export class AgentReplyInvalid extends Data.TaggedError("AgentReplyInvalid")<{ readonly agent: string; readonly issue: string; readonly files: string[] }> {}
