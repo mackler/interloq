@@ -16,12 +16,12 @@
   // ring while closed, filled while open, flat while held open, so the row shows it opens before it is touched; the row
   // keeps one glyph.
   import { LinearProgress } from "m3-svelte";
-  import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, phaseElapsed, phaseTook, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
+  import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
   import { elapsedMs } from "../time.ts";
   import { bandKey, currentPlanStep, planStepState, type RoundGroup, type TimelineEntry } from "../state.ts";
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
   import StepTooltip from "./StepTooltip.svelte";
-  import { disclosureStateOf, MARK, PLAIN, STEP_MARK, stageCondition, stageGlyph, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
+  import { disclosureStateOf, MARK, phaseTiming, PLAIN, soFarText, STEP_MARK, stageCondition, stageGlyph, tookText, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
   import type { UiScope } from "../../../src/uiState.ts";
 
   /**
@@ -40,7 +40,8 @@
     if (!node.held) onToggle(node.scope, !node.open);
   };
   // The clock of the elapsed times: the edge of the component, ticking once per second while a phase is active (its
-  // time runs whether or not a call runs) or a call runs.
+  // time runs whether or not a call runs, issue #50) or a call runs. Issue #89: a tick invalidates the running phase's
+  // time and the call's own time alone; an ended phase's time is computed by `tookText`, which takes no clock.
   let now = $state(Date.now());
   const ticking = $derived(timeline.some((e) => e.state === "active") || (busy && callStartedAt !== null));
   $effect(() => {
@@ -51,9 +52,6 @@
   });
   // The marks (`MARK`, `STEP_MARK`) are web/src/rail.ts's, beside the stage's glyph derived from them.
   const LABEL = TIMELINE_STATE_LABEL;
-  /** The phase's own time: how long it took once ended, how long it has run while active, nothing before it began. */
-  const phaseTime = (entry: TimelineEntry, at: number): string | null =>
-    entry.began === null ? null : entry.ended !== null ? phaseTook(elapsedMs(entry.began, Date.parse(entry.ended))) : entry.state === "active" ? phaseElapsed(elapsedMs(entry.began, at)) : null;
   /** Whether a step of the entry runs, so that the step and not the phase carries the indicator. */
   const stepRuns = (entry: TimelineEntry): boolean => entry.steps.some((st) => st.state === "active") || currentPlanStep(entry, executing) !== null;
 </script>
@@ -137,9 +135,11 @@
     {#each timeline as entry, i (i)}
       {@const node = phaseNode(i)}
       {@const phaseBusy = entry.state === "active" && busy && !stepRuns(entry)}
+      {@const timing = phaseTiming(entry)}
       <li class="entry {entry.state}" data-state={entry.state} aria-current={entry.state === "active" ? "step" : undefined}>
         {@render head(node, entry.label, "m3-font-label-large", "data-label", MARK[entry.state], LABEL[entry.state], phaseBusy ? stepWorkingLabel("phaseStep") : null, node._tag === "Disclosure" && node.collapsed.condition !== null ? RAIL_CONDITION_LABEL[node.collapsed.condition] : null)}
-        {#if phaseTime(entry, now) !== null}<span class="m3-font-body-small phase-time" data-phase-time>{phaseTime(entry, now)}</span>{/if}
+        {#if timing._tag === "Ended"}<span class="m3-font-body-small phase-time" data-phase-time>{tookText(timing.phase)}</span>
+        {:else if timing._tag === "Running"}<span class="m3-font-body-small phase-time" data-phase-time>{soFarText(timing.phase, now)}</span>{/if}
         {#if phaseBusy}{@render elapsed()}{/if}
         <!-- W1-R1-2: one container per row, named by its button whether the row is open or closed: the children when
              open, the collapsed summary when closed. -->

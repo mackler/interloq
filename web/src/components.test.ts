@@ -1753,6 +1753,25 @@ describe("TimelineRail: where the indicator is", () => {
     expect(times()[2]).toBe(prompts.phaseElapsed(665_000));
   });
 
+  test("issue #89: the clock's tick reaches the running phase's time and never an ended phase's", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-29T10:11:00.000Z"));
+    let reads = 0;
+    const ended = { ...fresh, phase: { kind: "planning", n: 1 }, label: "Planning", state: "done", groups: [], steps: [], plan: null } as const;
+    const counted = Object.defineProperties({ ...ended }, {
+      began: { get: () => (reads++, "2026-09-29T09:00:00.000Z"), enumerable: true },
+      ended: { get: () => (reads++, "2026-09-29T09:11:02.000Z"), enumerable: true },
+    }) as TimelineEntry;
+    const root = showRail({ busy: false, timeline: [counted, { ...fresh, phase: { kind: "execution", n: 1 }, label: "Implementation", state: "active", groups: [], steps: [], plan: null, began: "2026-09-29T10:00:00.000Z" }] });
+    const times = () => [...root.querySelectorAll(".entry")].map((e) => e.querySelector(":scope > [data-phase-time]")?.textContent?.trim() ?? null);
+    expect(times()).toEqual([prompts.phaseTook(662_000), prompts.phaseElapsed(660_000)]);
+    reads = 0;
+    vi.advanceTimersByTime(3_000);
+    flushSync();
+    expect(times()).toEqual([prompts.phaseTook(662_000), prompts.phaseElapsed(663_000)]);
+    expect(reads).toBe(0);
+  });
+
   test("a step shown under two Implementations: each tooltip has its own id, and each step is described by its own", () => {
     const ended: TimelineEntry = { ...implementation(null, { S1: "unfinished" }), state: "done", label: "Implementation 1" };
     const later: TimelineEntry = { ...implementation(null, { S1: "done" }), phase: { kind: "execution", n: 2 }, label: "Implementation 2" };
