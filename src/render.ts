@@ -3,7 +3,7 @@
 
 import type { SubjectId } from "./artifacts.ts";
 import { CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
-import { type Block, blocksMarkdown, type Piece, type PieceOption, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
+import { type Block, blocksMarkdown, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
 import { numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
@@ -123,7 +123,9 @@ export const renderChoice = (k: number, answer: string, option: string | null): 
  */
 const senseMarkdown = (text: string, indent: string, column: number): string =>
   plainMarkdown([text], { lineStart: true, lineEnd: true, after: "" })
-    .split("\n")
+    .split(LINE_BREAK)
+    // The lines are at even indices, the line endings at odd ones (W1-R1-1 of work review 2): every ending becomes "\n".
+    .filter((_, i) => i % 2 === 0)
     .map((line, i) => (i === 0 || line === "" ? line : `${indent}${" ".repeat(column)}${line}`))
     .join("\n");
 /**

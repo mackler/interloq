@@ -387,7 +387,7 @@ test("property (issue #112): re-dividing an agreed question's pieces keeps its w
   const word = fc.constantFrom("the", "service", "uses", "a", "schema", "when", "it", "starts");
   // W1-R1-1 and P2-R1-1 of work review 1: senses with a line break, a blank line, and a link label spanning two lines.
   const sensesArb = fc.array(
-    fc.constantFrom("A library that checks data.", "A store kept in memory.", "In this program, the input of a tool.", "1. A list that is no list.", "One line\nand the next.", "First paragraph.\n\nSecond paragraph.", "Before.\n\n[label\nname]: https://example.com\n\nAfter."),
+    fc.constantFrom("A library that checks data.", "A store kept in memory.", "In this program, the input of a tool.", "1. A list that is no list.", "One line\nand the next.", "First paragraph.\n\nSecond paragraph.", "Before.\n\n[label\nname]: https://example.com\n\nAfter.", "One line\rand the next.", "First paragraph.\r\n\r\nSecond paragraph.", "First paragraph.\r\rSecond paragraph."),
     { minLength: 1, maxLength: 3 },
   );
   const divide = (text: string, cuts: readonly boolean[]): readonly Piece[] => {

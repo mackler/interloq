@@ -216,9 +216,14 @@ const inertLine = (line: string, continuation: string, starts: boolean, ends: bo
  * neither counted as the piece's whitespace nor defeats the escape. A link reference definition's label may span lines
  * and reach into what follows the run, which is why `at.after` holds the Markdown written after it (W1-R1-1).
  */
+/**
+ * A line ending as Markdown reads one (CRLF, CR or LF), capturing, so that a split keeps the endings at odd indices: the
+ * one pattern of plainMarkdown and of termItem in src/render.ts (P3-R1-1, W1-R1-1 of work review 2 of issue #112).
+ */
+export const LINE_BREAK = /(\r\n|\r|\n)/u;
 export const plainMarkdown = (texts: readonly string[], at: LineEdges): string => {
   const joined = texts.map(escapedPiece).join("");
-  const parts = joined.split(/(\r\n|\r|\n)/u);
+  const parts = joined.split(LINE_BREAK);
   // Each part's offset in the joined run, so that a line's continuation reaches through the run and into `at.after`.
   const offsets = parts.reduce<readonly number[]>((acc, part, i) => (i === 0 ? [0] : [...acc, acc[i - 1] + parts[i - 1].length]), []);
   return parts

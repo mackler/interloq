@@ -232,3 +232,20 @@ test("W1-R1-2: the Terms block and the terms list write a term as the same item"
   const nested = rendered.success.split("\n").slice(1).map((l) => l.replace(/^ {2}/u, "")).join("\n");
   assert.ok(nested.includes(item), nested);
 });
+
+// W1-R1-1 of work review 2 (issue #112): a sense whose lines end with CR or CRLF stays whole inside its item too.
+test("W1-R1-1 of work review 2: senses with CR and CRLF line endings stay whole inside their items", async () => {
+  const { renderQuestionRecord } = await import("../src/render.ts");
+  for (const eol of ["\r", "\r\n"]) {
+    const several = [`First paragraph.${eol}${eol}Second paragraph.`, "Another meaning."];
+    const single = `One paragraph.${eol}${eol}And another.`;
+    const q: PresentedQuestion = {
+      ...multiline(),
+      explanations: [shownOf({ id: "a", term: "port", senses: several }), shownOf({ id: "c", term: "zod", senses: [single] })],
+      question: [...plain("Use "), term("port", "a"), ...plain(" and "), term("zod", "c"), ...plain("?")],
+    };
+    const terms = readTerms(renderQuestionRecord(q));
+    assert.deepEqual(terms.get("port"), several.map(senseRead), JSON.stringify(eol));
+    assert.deepEqual(terms.get("zod"), [senseRead(single)], JSON.stringify(eol));
+  }
+});

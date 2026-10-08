@@ -244,3 +244,11 @@ test("a plain piece keeps its emphasis and links; an escaped backtick stays one 
   assert.deepEqual(escaped, { code: [], rest: "a ` b" });
   assert.ok(piecesMarkdown([plain("a `"), codePiece(""), plain("b")]).endsWith("(empty text)b"));
 });
+
+// P3-R1-1 of the plan's review (issue #112): the shared line-break pattern keeps plainMarkdown's behavior: a block opener
+// on a line after each line ending is escaped, and the line ending stays as written.
+test("P3-R1-1: plainMarkdown escapes a block opener after LF, CR and CRLF and keeps each line ending", () => {
+  for (const eol of ["\n", "\r", "\r\n"]) {
+    assert.equal(plainMarkdown([`First line.${eol}# Second line.`], { lineStart: true, lineEnd: true, after: "" }), `First line.${eol}\\# Second line.`, JSON.stringify(eol));
+  }
+});
