@@ -124,6 +124,23 @@ test.describe("the tests of the converge server, in order", () => {
     await startTask(page, "converge", "Document the service once more");
     await expect(rail(page).getByText("Planning", { exact: true })).toBeVisible();
   });
+
+  // Issue #29: the e2e servers run in a temporary repository that is no bind mount, so the page identifies the project
+  // by its path, with no run in progress and during one, and the tab's title is the path's own name.
+  test("(26) the page identifies the project by its path when no mount record names it, with no run and during one", async ({ page }) => {
+    await page.goto(url("converge"));
+    await expect(page.getByText("connected", { exact: true })).toBeVisible();
+    await toTheForm(page);
+    const repo = await page.locator("input[name=project]").inputValue();
+    expect(repo).toMatch(/^\//);
+    const location = page.locator("header .location");
+    await expect(location).toHaveText(repo);
+    await expect(page).toHaveTitle(`${repo.split("/").at(-1)} — Interloq`);
+    await page.locator("textarea[name=task]").fill("Document the service for the identification");
+    await page.locator("button[name=start]").click();
+    await expect(rail(page).getByText("Planning", { exact: true })).toBeVisible();
+    await expect(location).toHaveText(repo);
+  });
 });
 
 test.describe("the tests of the decision server, in order", () => {
