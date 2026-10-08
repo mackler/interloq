@@ -241,3 +241,19 @@ test("issue #112: an explanation with two senses keeps the agreed wording; a cha
   const error = Result.isFailure(failed) ? failed.failure.error : null;
   assert.ok(error !== null && error._tag === "QuestionInvalid" && error.questions.some((q) => q.problems.some((p) => p.kind === "wordingChanged")));
 });
+
+// Issue #112: an explanation with no sense gets the validation repair turn, and the repaired reply is written.
+test("issue #112: an explanation with no sense gets the validation repair turn", async () => {
+  const none = { entries: [{ ...dividedEntry(), explanations: [{ ...zod, senses: [] }] }] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    terms: [{ output: none }, { output: terms() }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { questionPhase: true },
+  });
+  await runTask(layer);
+  assert.equal(probe.planner.termsPrompts[1], prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "noSense", subject: "zod" }] }]));
+  assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, terms().entries);
+});

@@ -172,8 +172,8 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
   },
   {
     id: "terms",
-    rule: "List in explanations every word or phrase that a reader who has never seen this codebase may not know (the program's vocabulary, an SDK's, a third-party library's), each with a plain, non-empty explanation: a definition in ordinary words, not a cross-reference; and let every piece of the text that uses it, wherever it occurs, refer to that explanation.",
-    criterion: "a word or phrase that a reader who has never seen this codebase may not know has no explanation, or a piece that uses it does not refer to it, or its explanation is empty, a cross-reference, or does not make it intelligible.",
+    rule: "List in explanations every word or phrase that a reader who has never seen this codebase may not know (the program's vocabulary, an SDK's, a third-party library's), each with one or more plain, non-empty senses: definitions in ordinary words, not cross-references; and let every piece of the text that uses it, wherever it occurs, refer to that explanation.",
+    criterion: "a word or phrase that a reader who has never seen this codebase may not know has no explanation, or a piece that uses it does not refer to it, or a sense of its explanation is empty, a cross-reference, or does not make it intelligible.",
   },
 ];
 /** The rules as the writer of a question reads them. */
@@ -233,7 +233,7 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
   {
     id: "explanations",
     kind: "data",
-    text: "explanations: one list per question, referred to from all of its parts. Each entry has an id unique in the question, term (the name of the word or phrase, as a reader would look it up) and explanation, neither empty, and at least one piece refers to it. Every question carries all of its own explanations, even where an earlier question explained the same term.",
+    text: "explanations: one list per question, referred to from all of its parts. Each entry has an id unique in the question, term (the name of the word or phrase, as a reader would look it up) and senses, and at least one piece refers to it. The term is non-empty. senses is a list of one or more non-empty texts, each a definition in ordinary words; give a second sense only where the term has two meanings that both bear on the question, as a dictionary gives more than one sense of a word, and the reader is shown them numbered in the order given. Every question carries all of its own explanations, even where an earlier question explained the same term.",
     criterion: "",
   },
   {
@@ -298,7 +298,8 @@ export const QUESTION_PROBLEM_KINDS = [
   "unusedExplanation",
   "duplicateExplanation",
   "blankTerm",
-  "blankExplanation",
+  "noSense",
+  "blankSense",
   "blankTermPiece",
   "refOnCode",
   "multiLineCode",
@@ -318,7 +319,8 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   unusedExplanation: "explanations",
   duplicateExplanation: "explanations",
   blankTerm: "explanations",
-  blankExplanation: "terms",
+  noSense: "explanations",
+  blankSense: "terms",
   blankTermPiece: "refPiece",
   refOnCode: "code",
   multiLineCode: "codeLine",
@@ -350,8 +352,10 @@ export function questionProblemText(problem: QuestionProblem): string {
       return `the id ${subject} is given to more than one explanation`;
     case "blankTerm":
       return `the explanation ${subject} has an empty term`;
-    case "blankExplanation":
-      return `the term ${subject} has an empty explanation`;
+    case "noSense":
+      return `the term ${subject} has no sense: its senses list is empty`;
+    case "blankSense":
+      return `${problem.subject} is empty`;
     case "blankTermPiece":
       return `a piece that refers to ${subject} has no words`;
     case "refOnCode":
@@ -496,6 +500,11 @@ Do not use the AskUserQuestion tool.`;
  * disputed issue (disputesSettledBy "agents" in src/subjects.ts).
  */
 export const WORDING_DISPUTES = `In this review a disagreement between Codex and Claude Code is about how a question to the user is worded, and it is not put to the user, for three reasons. He is the one person who cannot judge it: whether a word in a question needs explaining to him is a question about what he knows, and he cannot answer it about a question he has not read. Both positions argue from the same rules for every question put to the user, which reach the writer and the reviewers alike, so the disagreement is about applying them, which this review exists to settle. And a stop costs the user time in the part of the run that exists to save it. So an issue raised again, a repetition under a new id, a reversal, a disputed self-correction or a second clarification request does not stop the review, even where the instructions above say the user will decide: Claude Code's disposition stands, its rationale goes back to Codex in the next round, and Codex accepts it or argues again. What stays the user's is everything about the work (the plan, the requirements, the code, what the program should do) and a question whose options differ in what they claim.`;
+/**
+ * Issue #112 (the developer's instruction of 7 Oct 2026): where the agents disagree on what a term means, the
+ * disagreement need not be resolved; both definitions are shown, as a dictionary gives more than one sense of a word.
+ */
+export const TWO_SENSES = "Where Codex and Claude Code disagree on what a term means and both meanings bear on the question, do not dispute it: keep both definitions as senses of the term, in the order given, and the reader is shown both, numbered, as a dictionary gives more than one sense of a word.";
 /** The heading of the line in conversation.md that records a disputed issue the user was not asked about (issue #112). */
 export const WORDING_DISPUTE_HEADING = "Not put to the user:";
 /** A disputed issue of the question list or the terms, recorded instead of a pause (issue #112). */
@@ -563,9 +572,10 @@ Task: ${task}`;
 export function termsReviewPrompt(round: number): string {
   if (round > 1) return `${laterRound(pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round)}\n${WORDING_DISPUTES}`;
   return `Review the explanations of terms in plan-review/terms.json against the agreed question list in plan-review/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
-Each entry of terms.json names a question by its id and holds its explanations, each with its id, term and explanation, and the question's context, question, reason and proposed answers divided into pieces; a piece whose ref is an explanation's id is the words that explanation explains. The user reads each explanation on those words while he answers the question; he may never have seen this codebase. The wording of the question is agreed and cannot change; only its division into pieces and the explanations can.
+Each entry of terms.json names a question by its id and holds its explanations, each with its id, term and senses (one or more definitions, shown numbered where there are several), and the question's context, question, reason and proposed answers divided into pieces; a piece whose ref is an explanation's id is the words that explanation explains. The user reads each explanation on those words while he answers the question; he may never have seen this codebase. The wording of the question is agreed and cannot change; only its division into pieces and the explanations can.
 ${questionReviewCriteria()}
-Raise an issue about the explanations only: a word or phrase the reader may not know that has no explanation in a question in which it occurs, or a piece that uses it and does not refer to it; an explanation that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
+Raise an issue about the explanations only: a word or phrase the reader may not know that has no explanation in a question in which it occurs, or a piece that uses it and does not refer to it; a sense that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
+${TWO_SENSES}
 Put the question id, with the term, in the location field.
 ${logRules(pathOf({ kind: "log", subject: "terms" }), "T", round)}
 ${WORDING_DISPUTES}`;
@@ -574,6 +584,7 @@ export function termsRespondPrompt(round: number): string {
   return `${recordPath({ kind: "review", subject: "terms", round })} contains a review of the explanations of terms in plan-review/terms.json.
 ${respondRules("you amend the explanations for it")}
 ${WORDING_DISPUTES}
+${TWO_SENSES}
 Return in 'entries' the complete explanations after your amendments, including the entries that did not change, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
 ${KEEP_WORDING}`;
 }

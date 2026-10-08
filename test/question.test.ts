@@ -9,7 +9,7 @@ import fc from "fast-check";
 import { decodeRunError, haltMessage } from "../src/errors.ts";
 import { piecesMarkdown, piecesText } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
-import { type Piece, type Question, questionProblems, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
+import { type Piece, type Question, questionProblems, sensesOf, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
 import type { Block, Explanation } from "../src/schema.ts";
 import { opt, para, plain, readBack, readBlocks, term } from "./helpers.ts";
 
@@ -89,7 +89,7 @@ test("the data clauses: dangling and unused refs, duplicate ids, blank terms, ex
   assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { id: "t9", term: "SDK", senses: ["A kit."] }] }), ["unusedExplanation"]);
   assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { ...zod }] }), ["duplicateExplanation"]);
   assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, term: " " }] }), ["blankTerm"]);
-  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, senses: ["  "] }] }), ["blankExplanation"]);
+  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, senses: ["  "] }] }), ["blankSense"]);
   assert.deepEqual(kinds({ ...good, question: [term(" ", "t1"), ...good.question] }), ["blankTermPiece"]);
 });
 
@@ -134,9 +134,9 @@ test("validateQuestions names each failing question and fails with QuestionInval
     { where: "questions_for_user 2", question: { ...good, explanations: [{ ...zod, senses: [""] }] } },
   ]);
   assert.ok(Result.isFailure(result));
-  assert.deepEqual(result.failure.questions, [{ where: "questions_for_user 2", problems: [{ kind: "blankExplanation", subject: "zod" }] }]);
+  assert.deepEqual(result.failure.questions, [{ where: "questions_for_user 2", problems: [{ kind: "blankSense", subject: 'sense 1 of the term "zod"' }] }]);
   assert.equal(decodeRunError({ ...result.failure })?._tag, "QuestionInvalid");
-  assert.match(haltMessage(result.failure) ?? "", /^HALTED: a question for the user is invalid: questions_for_user 2: the term "zod" has an empty explanation\./);
+  assert.match(haltMessage(result.failure) ?? "", /^HALTED: a question for the user is invalid: questions_for_user 2: sense 1 of the term "zod" is empty\./);
 });
 
 test("questionsValidation passes a reply whose questions keep the rules, and fails another with the repair prompt of its problems", async () => {
@@ -227,7 +227,8 @@ const arbValid: fc.Arbitrary<Question> = fc.uniqueArray(fc.constantFrom("a", "b"
   fc.record({
     context: fc.tuple(word, fc.array(arbBlock(ids), { maxLength: 3 })).map(([w, rest]) => [{ kind: "paragraph" as const, pieces: [{ text: w, ref: "", code: false }] }, ...rest]),
     question: fc.array(arbPiece(ids), { maxLength: 4 }).map((ps) => [...ps, ...ids.map((ref) => ({ text: `w${ref}`, ref, code: false })), { text: "?", ref: "", code: false }]),
-    explanations: fc.constant(ids.map((id) => ({ id, term: `term ${id}`, senses: [`explains ${id}`] }))),
+    // Issue #112: one to three senses per explanation, so that the properties over valid questions cover several senses.
+    explanations: fc.constant(ids.map((id) => ({ id, term: `term ${id}`, senses: Array.from({ length: 1 + (id.charCodeAt(0) % 3) }, (_, k) => `explains ${id}, sense ${k + 1}`) }))),
     options: fc.array(fc.record({ label: fc.array(arbPiece(ids), { maxLength: 2 }), description: fc.array(arbPiece(ids), { maxLength: 2 }) }), { maxLength: 3 }),
   }),
 );
@@ -301,4 +302,52 @@ test("property S8: any valid question encoded as the shape parses back to itself
     { numRuns: 200 },
   );
   fc.assert(fc.property(fc.string(), (text) => parseRelayedQuestion(text, []) === null || typeof parseRelayedQuestion(text, []) === "object"), { numRuns: 200 });
+});
+
+// ---- the senses of an explanation (issue #112) ----------------------------------------------------------------------
+
+test("issue #112: an explanation with no sense or a blank sense is refused, two non-blank senses are accepted", () => {
+  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, senses: [] }] }), ["noSense"]);
+  assert.deepEqual(questionProblems({ ...good, explanations: [{ ...zod, senses: ["A library.", " "] }] }), [{ kind: "blankSense", subject: 'sense 2 of the term "zod"' }]);
+  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, senses: ["A library that checks data.", "The library the Agent SDK takes a tool's input in."] }] }), []);
+  assert.deepEqual(sensesOf([]), Result.fail([{ kind: "noSense" }]));
+  assert.deepEqual(sensesOf(["a", "", "b", "\t"]), Result.fail([{ kind: "blankSense", position: 2 }, { kind: "blankSense", position: 4 }]));
+  assert.ok(Result.isSuccess(sensesOf(["a", "b"])));
+});
+
+const blankText = fc.constantFrom("", " ", "\t", "  \n ");
+const nonBlankText = fc.string({ minLength: 1, maxLength: 12 }).filter((t) => t.trim() !== "");
+
+test("property (issue #112): every list of senses that is empty or holds a blank entry is refused, by sensesOf and by questionProblems", () => {
+  fc.assert(
+    fc.property(fc.array(fc.oneof(nonBlankText, blankText), { maxLength: 5 }).filter((senses) => senses.length === 0 || senses.some((t) => t.trim() === "")), (senses) => {
+      const problems = kinds({ ...good, explanations: [{ ...zod, senses }] });
+      return Result.isFailure(sensesOf(senses)) && problems.length > 0 && problems.every((k) => k === "noSense" || k === "blankSense");
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("property (issue #112): every non-empty list of non-blank senses is accepted, in its order", () => {
+  fc.assert(
+    fc.property(fc.array(nonBlankText, { minLength: 1, maxLength: 5 }), (senses) => {
+      const built = sensesOf(senses);
+      return Result.isSuccess(built) && JSON.stringify(built.success) === JSON.stringify(senses) && kinds({ ...good, explanations: [{ ...zod, senses }] }).length === 0;
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("property (issue #112): with a single sense the checks are those of one explanation text before the change", () => {
+  // The rule before issue #112, written from it: a blank text was the one problem of an explanation's text.
+  const before = (text: string): readonly string[] => (text.trim() === "" ? ["blank"] : []);
+  fc.assert(
+    fc.property(arbValid.filter((q) => q.explanations.length > 0), fc.oneof(nonBlankText, blankText), (q, text) => {
+      const [first, ...rest] = q.explanations;
+      const one = kinds({ ...q, explanations: [{ ...first, senses: [text] }, ...rest] });
+      const others = kinds({ ...q, explanations: [{ ...first, senses: ["a sense"] }, ...rest] });
+      return JSON.stringify(one.filter((k) => k !== "blankSense")) === JSON.stringify(others) && JSON.stringify(one.filter((k) => k === "blankSense").map(() => "blank")) === JSON.stringify(before(text));
+    }),
+    { numRuns: 200 },
+  );
 });

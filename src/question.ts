@@ -1,7 +1,7 @@
 // A question put to the user (S2 and following): its parts, and the mechanical part of the rules of QUESTION_RULES in
 // src/prompts.ts. Issue #36 (30 Sep 2026): a question's text is a sequence of pieces, and the explanations a list the
 // pieces refer to; the checks are on data alone, and nothing reads Markdown. Pure; also imported by the browser.
-import { Result, Schema } from "effect";
+import { type Brand, Result, Schema } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import type { QuestionProblem } from "./prompts.ts";
@@ -22,6 +22,32 @@ export type Question = Readonly<{
   options: readonly PieceOption[];
   details?: readonly ShownBlock[];
 }>;
+
+// ---- the senses of an explanation (issue #112) -------------------------------------------------------------------------
+
+/** One sense of an explanation: a definition with a character other than whitespace, built by sensesOf alone. */
+export type Sense = Brand.Branded<string, "Sense">;
+/** The senses of an explanation: one or more, in the order the writer gave them, as a dictionary numbers them. */
+export type Senses = readonly [Sense, ...Sense[]];
+/** Why a list of texts is not the senses of an explanation: it is empty, or the entry at `position` (from 1) is blank. */
+export type SenseProblem = Readonly<{ kind: "noSense" }> | Readonly<{ kind: "blankSense"; position: number }>;
+/**
+ * The senses of an explanation from the texts an agent wrote (issue #112): the one place that decides that a list of
+ * senses is not empty and that no sense is blank. At the agent boundary the list is a plain array of strings, so that
+ * the schema needs no keyword Codex's strict mode might reject; a reply that breaks it gets the validation repair turn.
+ */
+export const sensesOf = (texts: readonly string[]): Result.Result<Senses, readonly SenseProblem[]> => {
+  if (texts.length === 0) return Result.fail([{ kind: "noSense" }]);
+  const blank = texts.flatMap((t, i): SenseProblem[] => (t.trim() === "" ? [{ kind: "blankSense", position: i + 1 }] : []));
+  return blank.length === 0 ? Result.succeed(texts as unknown as Senses) : Result.fail(blank);
+};
+/** An explanation's problems of its senses, each named by its term (or its id, where the term is blank). */
+const senseProblems = (e: Explanation): readonly QuestionProblem[] => {
+  const built = sensesOf(e.senses);
+  if (Result.isSuccess(built)) return [];
+  const name = e.term.trim() === "" ? e.id : e.term;
+  return built.failure.map((p): QuestionProblem => (p.kind === "noSense" ? { kind: "noSense", subject: name } : { kind: "blankSense", subject: `sense ${p.position} of the term ${JSON.stringify(name)}` }));
+};
 
 /** Words that stand before a number without saying what it numbers ("see #53", "the #6"). */
 const NOT_A_KIND = new Set(["a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "by", "for", "from", "with", "as", "see", "per", "via"]);
@@ -98,8 +124,8 @@ const refsBeyondSupplied = (q: Question, supplied: readonly SuppliedRef[]): read
 
 /**
  * The problems of one question; none when it keeps every mechanically checkable rule (S3 of the task of issue #36): every
- * ref names an explanation, every explanation is referred to, ids unique, terms, explanations and referring pieces not
- * blank, no ref added to a literal value, the question ending with its question mark, a context, and no bare number.
+ * ref names an explanation, every explanation is referred to, ids unique, terms and referring pieces not blank, every
+ * explanation with one or more senses and none blank (issue #112), no ref added to a literal value, the question ending with its question mark, a context, and no bare number.
  * `supplied`: the code pieces with a ref that the program itself supplied (the names of a tool's settings it explains, S9),
  * each with its part, the one exception to "no ref on a code piece", in that part and as often as supplied (P5-R1-1);
  * none for a question an agent wrote.
@@ -122,7 +148,7 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
     ...q.explanations.flatMap((e, i): QuestionProblem[] => [
       ...(ids.indexOf(e.id) < i ? [{ kind: "duplicateExplanation" as const, subject: e.id }] : []),
       ...(e.term.trim() === "" ? [{ kind: "blankTerm" as const, subject: e.id }] : []),
-      ...(e.senses.every((s) => s.trim() === "") ? [{ kind: "blankExplanation" as const, subject: e.term.trim() === "" ? e.id : e.term }] : []),
+      ...senseProblems(e),
       ...(refs.has(e.id) || ids.indexOf(e.id) < i ? [] : [{ kind: "unusedExplanation" as const, subject: e.term.trim() === "" ? e.id : e.term }]),
     ]),
     ...plainWords.flatMap(bareNumbers).map((subject) => ({ kind: "bareNumber" as const, subject })),

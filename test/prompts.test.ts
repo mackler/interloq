@@ -807,3 +807,23 @@ test("issue #112: WORDING_DISPUTES reaches the question list's and the terms' re
   }
   for (const reason of ["cannot judge", "same rules", "time"]) assert.ok(prompts.WORDING_DISPUTES.includes(reason), reason);
 });
+
+// Issue #112: the format clause that tells an agent what an explanation holds, and the validation that checks it, agree:
+// one or more senses, none blank. An explanation built as the clause says passes; one that breaks it does not.
+test("issue #112: the explanations clause states the senses that questionProblems checks", async () => {
+  const { questionProblems } = await import("../src/question.ts");
+  const clause = prompts.QUESTION_FORMAT.find((c) => c.id === "explanations")!;
+  for (const words of ["senses", "one or more", "non-empty", "in the order given"]) assert.ok(clause.text.includes(words), words);
+  const rule = prompts.QUESTION_RULES.find((r) => r.id === "terms")!;
+  for (const text of [rule.rule, rule.criterion]) assert.match(text, /sense/);
+  const question = (senses: readonly string[]) => ({
+    context: [{ kind: "paragraph" as const, pieces: [{ text: "Interloq asks this.", ref: "", code: false }] }],
+    question: [{ text: "Should ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: " be declared?", ref: "", code: false }],
+    explanations: [{ id: "z", term: "zod", senses }],
+    options: [],
+  });
+  assert.deepEqual(questionProblems(question(["A library.", "In this program, the SDK's input library."])), []);
+  assert.deepEqual(questionProblems(question([])).map((p) => p.kind), ["noSense"]);
+  assert.deepEqual(questionProblems(question(["A library.", ""])).map((p) => p.kind), ["blankSense"]);
+  for (const kind of ["noSense", "blankSense"] as const) assert.ok(prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind, subject: "zod" }] }]).includes(clause.text) || prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind, subject: "zod" }] }]).includes(rule.rule), kind);
+});

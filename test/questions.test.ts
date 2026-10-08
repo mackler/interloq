@@ -278,7 +278,7 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
   const asking = { ...base, current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }] } };
   const failed = turnValidation([], null)(asking);
   assert.ok(Result.isFailure(failed));
-  assert.equal(failed.failure.repair, prompts.questionRepairPrompt([{ where: "the current question", problems: [{ kind: "blankContext", subject: "" }, { kind: "notLast", subject: "" }, { kind: "blankExplanation", subject: "one" }] }]));
+  assert.equal(failed.failure.repair, prompts.questionRepairPrompt([{ where: "the current question", problems: [{ kind: "blankContext", subject: "" }, { kind: "notLast", subject: "" }, { kind: "blankSense", subject: 'sense 1 of the term "one"' }] }]));
   assert.ok(Result.isSuccess(turnValidation([], null)(base)));
   assert.ok(Result.isSuccess(turnValidation(["Q1"], null)({ ...base, current_question: { ...none, id: "Q1" } })));
   // The seam: turnDraft presents as a reply exactly the turns asksNothing names.
