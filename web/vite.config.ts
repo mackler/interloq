@@ -9,7 +9,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   // m3-svelte writes its styles with CSS @function and @mixin, which this plugin resolves at build time.
-  plugins: [svelte(), functionsMixins({ deps: ["m3-svelte"] })],
+  // Under Vitest, the progress rail's styles are injected with the component, so that jsdom computes its indentation
+  // (issue #116); every other component's CSS stays out of the tests, as before.
+  plugins: [
+    svelte(process.env.VITEST ? { dynamicCompileOptions: ({ filename }) => (filename.endsWith("/TimelineRail.svelte") ? { css: "injected" } : undefined) } : {}),
+    functionsMixins({ deps: ["m3-svelte"] }),
+  ],
   build: { outDir: "dist", emptyOutDir: true },
   // Under Vitest, Svelte's browser build, so that components can be mounted in jsdom.
   resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,

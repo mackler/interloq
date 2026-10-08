@@ -2282,6 +2282,40 @@ describe("TimelineRail: the tree that collapses", () => {
     expect(plain.querySelector("[data-disclosure]")).toBe(null);
   });
 
+  // Issue #116: nesting is read from position. Where a row's content starts, from the component's own stylesheet: the
+  // margins and paddings of the row and of each container up to the rail, summed in rem. A step of the plan starts right
+  // of its stage, a stage right of its phase, a step of Gather Requirements right of its phase, and a collapsed stage's
+  // summary right of its stage.
+  test("a step of the plan starts right of its stage, a stage right of its phase; a step of Gather Requirements and a collapsed stage's summary right of their row", () => {
+    const rem = (value: string) => (value.endsWith("rem") ? parseFloat(value) : value.endsWith("px") ? parseFloat(value) / 16 : 0);
+    const leftOf = (el: Element): number => {
+      let sum = 0;
+      for (let e: Element | null = el; e !== null && e.tagName !== "NAV"; e = e.parentElement) {
+        const style = getComputedStyle(e);
+        sum += rem(style.marginLeft) + rem(style.paddingLeft);
+      }
+      return sum;
+    };
+    const root = render({ timeline: [implementation(null, { S3: "done" }, ["S1"])], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(1), open: true }, { scope: stageScope(2), open: true }] });
+    const phase = row(root, "Implementation");
+    const stages = [...root.querySelectorAll(".stage")];
+    expect(stages.length).toBe(2);
+    for (const stage of stages) {
+      expect(leftOf(stage), "a stage starts right of its phase").toBeGreaterThan(leftOf(phase));
+      const steps = [...stage.querySelectorAll(".plan-step")];
+      expect(steps.length).toBe(2);
+      for (const step of steps) expect(leftOf(step), `${step.textContent?.trim()} starts right of its stage`).toBeGreaterThan(leftOf(stage));
+    }
+    const closed = render({ timeline: [implementation(null, { S3: "done" })], flags: [{ scope: phaseScope("execution-1"), open: true }, { scope: stageScope(2), open: false }] });
+    const stage = row(closed, prompts.stageHeading(2, "second"));
+    expect(leftOf(one(stage, "[data-collapsed]")), "a collapsed stage's summary starts right of the stage").toBeGreaterThan(leftOf(stage));
+    const review = { subject: "questions" as const, heading: "Question review", rounds: [{ round: 1, raised: 0, counted: 0, reviewIds: [] }], corrections: 0, result: "converged" as const, done: true };
+    const gatherStep: TimelineStep = { kind: "formulate", label: prompts.stepLabel("formulate"), state: "done", count: null, base: { answered: 0, total: 0 }, groups: [review] };
+    const gather: TimelineEntry = { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "active", began: "2026-09-29T09:00:00.000Z", groups: [], steps: [gatherStep], plan: null };
+    const g = render({ timeline: [gather], flags: [{ scope: phaseScope("questions"), open: true }] });
+    expect(leftOf(row(g, prompts.stepLabel("formulate"))), "a step of Gather Requirements starts right of its phase").toBeGreaterThan(leftOf(row(g, "Gather Requirements")));
+  });
+
   // Issue #110: whichever glyph remains, the name says the row's state in words.
   test("the accessible name states the row's state in words, whichever glyph the row shows", () => {
     const done = render({ timeline: [planning("done")] });

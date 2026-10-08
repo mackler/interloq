@@ -217,10 +217,12 @@
      reached takes that color made translucent: the text and the mark are dimmed, not the row. */
   .entry.notReached { color: color-mix(in srgb, var(--m3c-on-surface-variant) 60%, transparent); }
   .plan { margin: 0.25rem 0 0; }
+  /* Issue #116: each level of the plan has a column for its marks: a stage's indent (1.5rem) holds its mark, and so does a
+     step's. A step is drawn 1rem deeper than its stage, mark and label alike, less than a full level of 1.5rem because the
+     column is 14rem wide and a step's label needs the width it would take (7.75rem left, against 7.25rem). */
   .stage { position: relative; margin-top: 0.25rem; padding-left: 1.5rem; }
   .stage .mark { left: 0.25rem; }
-  /* The plan's steps keep their place under the stage: the stage's own indent is for its mark. */
-  .stage > div > ol { margin-left: -1.5rem; }
+  .stage > div > ol { margin-left: -0.5rem; }
   .plan-step { position: relative; padding: 0.125rem 0 0.125rem 1.5rem; }
   .plan-step .mark { left: 0.25rem; }
   .plan-step.done { color: var(--m3c-on-surface-variant); }
