@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
+import { workExecution } from "./helpers.ts";
 
 test("the context rule names the five points, in the words the reviewer checks", () => {
   const context = prompts.QUESTION_RULES.find((r) => r.id === "context")!;
@@ -17,7 +18,7 @@ test("every prompt that may return questions_for_user carries the writer's rende
     prompts.requirementsRespondPrompt(1),
     prompts.questionRespondPrompt(1),
     prompts.decisionRespondPrompt(1, 1),
-    prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }),
+    prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
     prompts.initialPlanPrompt("t", false),
     prompts.revisePlanPrompt,
     prompts.revisePlanAfterExecutionPrompt(1, { stopped: false, workReview: "converged" }),

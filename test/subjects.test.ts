@@ -8,7 +8,7 @@ import { Store, Ui } from "../src/services.ts";
 import { planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { ScriptedUi, tempRepo, entryOf } from "./helpers.ts";
+import { ScriptedUi, tempRepo, entryOf, workExecution } from "./helpers.ts";
 
 // Finding 12 of docs/functional-design-review.md: a subject's decoded output and its handler share one type.
 
@@ -45,7 +45,7 @@ test("the question subject's handlers receive the decoded list and write questio
 
 // Plan step 2.7: the work subject carries the work review's policies; the other subjects keep today's behaviour.
 test("the work subject: its id, file, prompts and policies", () => {
-  const work = workSubject(2, true);
+  const work = workSubject(2, true, workExecution);
   assert.deepEqual(work.id, { work: 2 });
   assert.equal(work.heading, "Work review 2");
   assert.equal(work.fileLabel, "changes.diff");
@@ -70,5 +70,5 @@ test("the proceed choices name the clarification and implementation", () => {
 
 // Decision support, plan step 1.3: a subject carries the phase its loop records (a decision's is where it took place).
 test("every subject carries its phase", () => {
-  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(3, false, null).phase, workSubject(2, false).phase], [0, 0, 3, 2]);
+  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(3, false, null).phase, workSubject(2, false, workExecution).phase], [0, 0, 3, 2]);
 });

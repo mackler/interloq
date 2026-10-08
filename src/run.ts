@@ -4,8 +4,9 @@
 import { Effect, Exit, Option } from "effect";
 import { describe, type RunError } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
+import { renderPlanMarkdown } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkReviewEnd } from "./prompts.ts";
+import { execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
@@ -67,7 +68,7 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "planning", n: k }, result: reviewed.result });
 
       // Execution phase K.
-      const stopped = yield* Effect.gen(function* () {
+      const execution = yield* Effect.gen(function* () {
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "execution", n: k } });
         yield* ui.say(implementationBeganLine(label("execution", k), config.execPermissionMode));
         // The steps of the plan (issue #6, Q2): report_step records on the plan as the phase began; when the call ends,
@@ -99,14 +100,17 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
           const question = outcome.question.replace(/\s+/g, " ");
           yield* store.appendDecision({ subject: `stop in execution phase ${k} (${outcome.status}): ${question}`, id: null, decision: input, phase: k, round: 0 });
         }
-        return stopped;
+        // Issue #117: the work response, in the main session, is given the execution's report and the plan as its end left it.
+        const ended = Option.getOrNull(yield* store.loadPlan());
+        return { stopped, work: { outcome, plan: ended === null ? "(no plan recorded)" : renderPlanMarkdown(ended) } satisfies WorkExecution };
       }).pipe(inPhase({ kind: "execution", n: k }));
+      const { stopped } = execution;
 
       // Work review K, after every execution phase whatever its status (behaviour 12).
       const work = yield* Effect.gen(function* () {
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "work", n: k } });
         yield* ui.say(workReviewBeganLine(label("work", k)));
-        return yield* reviewLoop(workSubject(k, withRequirements));
+        return yield* reviewLoop(workSubject(k, withRequirements, execution.work));
       }).pipe(inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
       // The run is finished only when Claude Code reported finished and the work review converged.

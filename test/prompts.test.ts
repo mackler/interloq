@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
-import { para, plain } from "./helpers.ts";
+import { para, plain, workExecution } from "./helpers.ts";
 /** A tool's input as conversation.md records it (S34): its blocks as Markdown, without the heading. */
 const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input).slice(1));
 import { appendRound } from "../src/issueLog.ts";
@@ -64,7 +64,7 @@ test("the work review prompt names the change record, the plan, the requirements
 });
 
 test("the work response prompt forbids any file change and defers the corrections", () => {
-  const text = prompts.workRespondPrompt(2, 1, { review: { issues: [] }, log: [], changes: "" });
+  const text = prompts.workRespondPrompt(2, 1, { review: { issues: [] }, log: [], changes: "" }, workExecution);
   assert.match(text, /plan-review\/work-review-2\/review-1\.json/);
   assert.match(text, /later execution phase after the plan has been revised/);
   assert.match(text, /Do not modify any file\./);
@@ -76,7 +76,7 @@ test("the work response prompt carries the review, the log entries of its phase 
   const entry = (phase: number, id: string) => ({ id, phase, round: 1, problem: `problem of ${id}`, rationale: `rationale of ${id}`, superseded: false, source: "review" as const, severity: "minor" as const, location: "x", evidence: "e", action: "rejected" as const, duplicate_of: null, reverses: null });
   const log = [entry(1, "W1-R1-1"), entry(2, "W2-R1-1")] as unknown as Parameters<typeof prompts.workRespondPrompt>[2]["log"];
   const diff = "diff --git a/src/a.ts b/src/a.ts\n+const lines = text.split(\"\\n\");\n";
-  const text = prompts.workRespondPrompt(2, 2, { review, log, changes: diff });
+  const text = prompts.workRespondPrompt(2, 2, { review, log, changes: diff }, workExecution);
   assert.ok(text.includes("the parser drops the last line"), "the review");
   assert.ok(text.includes("rationale of W2-R1-1"), "the phase's log entry");
   assert.ok(!text.includes("W1-R1-1"), "another phase's log entry");
@@ -235,7 +235,7 @@ test("every prompt that may return questions_for_user says how to fill a questio
     prompts.planRespondPrompt(1, 1),
     prompts.requirementsRespondPrompt(1),
     prompts.questionRespondPrompt(1),
-    prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }),
+    prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
     prompts.initialPlanPrompt("t", false),
     prompts.revisePlanPrompt,
     prompts.revisePlanAfterExecutionPrompt(1, { stopped: false, workReview: "converged" }),
@@ -845,4 +845,13 @@ test("issue #117: executePrompt names the task, the requirements where they exis
   assert.ok(!without.includes(prompts.REQUIREMENTS_SENTENCE));
   assert.ok(!prompts.initialPlanPrompt(scriptedTask, false).includes(prompts.REQUIREMENTS_SENTENCE));
   assert.ok(without.includes(prompts.USER_DECISIONS_SENTENCE));
+});
+
+// Issue #117: the work response runs in the main session, the execution in a session of its own, so the response's
+// prompt carries the execution's report and the plan instead of saying they are in its context.
+test("issue #117: workRespondPrompt carries the execution's report and the plan, and does not say they are in its context", () => {
+  const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B" }, plan: "# The plan\n\nS1 done\n" };
+  const text = prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }, execution);
+  for (const part of [execution.outcome.summary, execution.outcome.remainingWork, execution.outcome.question, execution.outcome.status, execution.plan]) assert.ok(text.includes(part), part);
+  assert.doesNotMatch(text, /in your context/);
 });

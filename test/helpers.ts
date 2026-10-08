@@ -1,3 +1,4 @@
+import type { WorkExecution } from "../src/prompts.ts";
 import assert from "node:assert/strict";
 import { marked } from "marked";
 import { type PresentedQuestion, type ShownExplanation, shownExplanations } from "../src/question.ts";
@@ -492,6 +493,8 @@ export const respond = (dispositions: [string, PlannerResponse["dispositions"][n
 });
 
 export const finished: ExecOutcome = { status: "finished", summary: "done", question: "", remainingWork: "", userInput: null };
+/** The execution a work response is given (issue #117): a finished report and a plan text of its own. */
+export const workExecution: WorkExecution = { outcome: finished, plan: "# Plan\n\n1. S1 (done): the scripted step\n" };
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
 export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape };

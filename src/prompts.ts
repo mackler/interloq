@@ -1,7 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, recordPath } from "./artifacts.ts";
-import { FILE_CHANGE_FIELD, type Block, type Explanation, type LogEntry, type Piece, type PieceOption, type Review } from "./schema.ts";
+import { FILE_CHANGE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -1019,12 +1019,19 @@ export type RespondContext = Readonly<{ review: Review; log: readonly LogEntry[]
 
 /**
  * A work response is read-only (finding 1 of docs/gui-review.md): it may call no tool, so the prompt carries the
- * review, the entries of this work review's phase in the work-review log, and changes.diff verbatim.
+ * review, the entries of this work review's phase in the work-review log, changes.diff verbatim, and (issue #117) the
+ * report of the phase's execution and the plan as its end left it, since the execution ran in a session of its own.
  */
-export function workRespondPrompt(phase: number, round: number, context: RespondContext): string {
+/**
+ * What a work response is given of its phase's execution (issue #117): the execution ran in a session of its own, so its
+ * report and the plan as the execution's end left it (plan.md, with the steps' statuses) travel in the prompt.
+ */
+export type WorkExecution = Readonly<{ outcome: ExecOutcome; plan: string }>;
+
+export function workRespondPrompt(phase: number, round: number, context: RespondContext, execution: WorkExecution): string {
   const entries = context.log.filter((e) => e.phase === phase);
   return `plan-review/${pathOf({ kind: "review", subject: { work: phase }, round })} contains a review of the work done in the project (the diff in plan-review/${pathOf({ kind: "changes", phase })}).
-You cannot use any tool in this response: the review, the earlier entries of this work review's log and the diff are below, and what you did in the execution phase is in your context. Answer with the final structured output only.
+You cannot use any tool in this response: the review, the earlier entries of this work review's log, the diff, the report of execution phase ${phase} and the plan with its steps' statuses are below. Execution phase ${phase} ran in a Claude Code session of its own, whose history is not in this one. Answer with the final structured output only.
 ${respondRules("the correction will be made in a later execution phase after the plan has been revised; do not modify any file")}
 Every correction, including one that a self-correction calls for, is made in a later execution phase; state in the rationale what the correction requires.
 Do not modify any file.
@@ -1036,7 +1043,15 @@ The earlier entries of work review ${phase} in plan-review/${pathOf({ kind: "log
 ${entries.length === 0 ? "(none)" : JSON.stringify(entries, null, 2)}
 
 The diff (plan-review/${pathOf({ kind: "changes", phase })}):
-${context.changes ?? "(not available)"}`;
+${context.changes ?? "(not available)"}
+
+The report of execution phase ${phase}:
+Status: ${execution.outcome.status}
+Summary: ${execution.outcome.summary || "none"}
+Remaining work: ${execution.outcome.remainingWork || "not reported"}${execution.outcome.question === "" ? "" : `\nQuestion at the stop: ${execution.outcome.question}`}
+
+The plan as execution phase ${phase} ended (plan-review/plan.md):
+${execution.plan}`;
 }
 
 export function revisePlanAfterExecutionPrompt(phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>): string {

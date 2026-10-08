@@ -74,6 +74,24 @@ test("(b) an accepted work issue leads to planning 2, execution 2 and a second w
   assert.equal((await capture.verify())?.stage, "logged");
 });
 
+// Issue #117: the execution ran in a session of its own; the work response, in the main session, is given its report.
+test("issue #117: the work response's prompt carries the summary the execution, in its own session, returned", async () => {
+  const done: ExecOutcome = { ...finished, summary: "the scripted summary of execution 1", remainingWork: "nothing left" };
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, planWrite("v2")],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [done, finished],
+  });
+  assert.equal(await runTask(layer), 2);
+  assert.notEqual(probe.planner.execSessions[0], "test-session");
+  const response = probe.planner.prompts[1];
+  assert.match(response, /work-review-1\/review-1\.json/);
+  assert.ok(response.includes(done.summary), response);
+  assert.ok(response.includes(done.remainingWork));
+  assert.ok(response.includes("v1"), "the plan as the execution's end left it");
+  assert.deepEqual(probe.planner.history.get("test-session")?.at(-2), response, "the response ran on the main session");
+});
+
 test("(b2) an accepted self-correction of an earlier work issue leaves for planning 2", async () => {
   const repo = tempRepo();
   const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
