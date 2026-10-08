@@ -93,6 +93,23 @@ test("a body that is not JSON, or not issues, is TrackerBodyInvalid", async () =
   }
 });
 
+// W1-R1-2: a client that fails a non-2xx answer (HttpClient.filterStatusOk), or fails to decode one, maps as a returned answer does.
+test("over a client wrapped by filterStatusOk, a 401 and a 403 are TrackerAuthRefused, a 404 on an item TrackerItemNotFound, a 500 TrackerUnreachable", async () => {
+  for (const status of [401, 403]) {
+    const error = await failure(makeStub(() => json({ message: "Bad credentials" }, status), { filtered: true }), (t) => t.list("unrefined"));
+    assert.deepEqual(error._tag === "TrackerAuthRefused" && error.status, status);
+  }
+  assert.equal((await failure(makeStub(() => json({ message: "Not Found" }, 404), { filtered: true }), (t) => t.read(id("4"))))._tag, "TrackerItemNotFound");
+  assert.equal((await failure(makeStub(() => json({}, 500), { filtered: true }), (t) => t.list("refined")))._tag, "TrackerUnreachable");
+});
+
+test("a client failing with a DecodeError or an EmptyBodyError is TrackerBodyInvalid, on a listing and on a read", async () => {
+  for (const answer of ["decode", "emptyBody"] as const) {
+    assert.equal((await failure(makeStub(() => answer), (t) => t.list("unrefined")))._tag, "TrackerBodyInvalid", answer);
+    assert.equal((await failure(makeStub(() => answer), (t) => t.read(id("1"))))._tag, "TrackerBodyInvalid", answer);
+  }
+});
+
 test("read gives an issue with its state; a closed issue with one stage label has it", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [LABELS.implemented], { body: null, state: "closed" })) }));
   assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implemented" });
