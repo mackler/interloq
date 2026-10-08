@@ -27,7 +27,7 @@ import { ownName } from "../../src/hostDir.ts";
 import { faviconHref } from "./favicon.ts";
 import { schemeColors } from "./alerts.ts";
 import type { Mark, Preferences } from "./notify.ts";
-import { writePreferences } from "./storage.ts";
+import { readPreferences, writePreferences } from "./storage.ts";
 import { NotificationStub } from "./test-setup.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
@@ -753,6 +753,56 @@ describe("App and the draft", () => {
       const { ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
       expect(NotificationStub.requests).toBe(0);
+    });
+
+    // The opt-in controls in the top bar: a desktop notification needs the browser's permission, asked from the click.
+    const toggle = (root: ParentNode, name: string) => one(root, `input[role=switch][name=${name}]`) as HTMLInputElement;
+    const labelOf = (input: HTMLElement) => input.closest("label")?.textContent?.trim();
+    const settle = async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      flushSync();
+    };
+
+    test("two switches, off on a first visit; the desktop switch asks the browser from its click and is stored", async () => {
+      localStorage.clear();
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+      const { root } = await openPage();
+      expect(labelOf(toggle(root, "desktop-alerts"))).toBe(prompts.DESKTOP_ALERTS_LABEL);
+      expect(labelOf(toggle(root, "sound-alerts"))).toBe(prompts.SOUND_ALERTS_LABEL);
+      expect(toggle(root, "desktop-alerts").checked).toBe(false);
+      expect(toggle(root, "sound-alerts").checked).toBe(false);
+      expect(NotificationStub.requests).toBe(0);
+      toggle(root, "desktop-alerts").click();
+      await settle();
+      expect(NotificationStub.requests).toBe(1);
+      expect(readPreferences()).toEqual({ ok: true, value: { desktop: "on", sound: "off" } });
+      expect(toggle(root, "desktop-alerts").checked).toBe(true);
+      toggle(root, "desktop-alerts").click();
+      await settle();
+      expect(NotificationStub.requests).toBe(1);
+      expect(readPreferences()).toEqual({ ok: true, value: { desktop: "off", sound: "off" } });
+      toggle(root, "sound-alerts").click();
+      await settle();
+      expect(readPreferences()).toEqual({ ok: true, value: { desktop: "off", sound: "on" } });
+    });
+
+    test("the browser denies: the switch stays on and a note says how to allow notifications", async () => {
+      localStorage.clear();
+      NotificationStub.nextAnswer = "denied";
+      const { root } = await openPage();
+      toggle(root, "desktop-alerts").click();
+      await settle();
+      expect(toggle(root, "desktop-alerts").checked).toBe(true);
+      expect(root.textContent).toContain(prompts.desktopBlockedNote("denied"));
+    });
+
+    test("a browser without notifications: the desktop switch is disabled with its note", async () => {
+      localStorage.clear();
+      vi.stubGlobal("Notification", undefined);
+      const { root } = await openPage();
+      expect(toggle(root, "desktop-alerts").disabled).toBe(true);
+      expect(root.textContent).toContain(prompts.desktopBlockedNote("unsupported"));
     });
   });
 

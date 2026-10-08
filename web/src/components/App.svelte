@@ -15,10 +15,10 @@
   import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { connect, type Connection } from "../socket.ts";
   import { tabTitle } from "../title.ts";
-  import { type Closer, currentPermission, playChime, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
+  import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
   import { type Decision, decide, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
-  import { readPreferences } from "../storage.ts";
+  import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
   import { callStartedAt, dismissUnsent, executing, initialState, keepUnsent, notice, progressOf, protocolError, reduce, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
@@ -179,6 +179,13 @@
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   });
+  const choose = (next: Preferences) => {
+    preferences = next;
+    writePreferences(next);
+  };
+  const requestPermission = () => {
+    void requestDesktopPermission().then((answer) => (permission = answer));
+  };
   /** What the page shows now, as decide observes it. */
   const observation = (): Observation => ({
     pending: pendingKey(view),
@@ -218,7 +225,7 @@
 
 <svelte:window bind:innerWidth={width} onresize={measureRoom} />
 <div class="app">
-  <TopBar {run} location={view.location} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} />
+  <TopBar {run} location={view.location} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} {preferences} {permission} onPreferences={choose} onRequestPermission={requestPermission} />
   <!-- A failed page says so for as long as it lasts, apart from the notices, which a new task marks as seen, and keeps
        the answers it could not send until each is dismissed [visibility of system status; help users recognise,
        diagnose and recover from errors; user control and freedom: nothing typed is lost]. -->
