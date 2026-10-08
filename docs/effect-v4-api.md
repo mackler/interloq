@@ -55,6 +55,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Effect.map` | 3568 | data-first and data-last |
 | `Effect.runPromise` rejection | 16833 | **Observed**: a typed failure rejects with the error object itself (`instanceof` the tagged class, `_tag` set), so `haltMessage(e)` can recognise it; a defect rejects with the defect |
 | `Option.isSome` / `isNone` | Option.d.ts:350 / 324 | type guards; `Cause.findErrorOption(exit.cause)` is `None` for a defect (observed) |
+| `Option.fromNullishOr` / `Option.map` / `Option.match` (read 8 Oct 2026, issue #120) | Option.d.ts:999 / 1350 / 381 | `fromNullishOr(a)`: none for `null` or `undefined` (`nextPage` of src/githubIssues.ts); `map` dual; `match(self, { onNone, onSome })` or data-last (src/refinement.ts) |
 | `Option.some` / `Option.none` / `Option.getOrNull` (read 28 Sep, issue #6) | Option.d.ts:268 / 239 / 1125 | `some(value)`, `none<A>()`; `getOrNull(self): A \| null`. `Store.loadPlan` returns an Option (no plan before the first write); `src/run.ts` and `src/planSteps.ts` take the plan or null |
 | `Effect.acquireRelease` (verified stage 5.3) | 12124 | `(acquire, release: (a, exit) => Effect<unknown, never>) => Effect<A, E, R \| Scope>`; the web server's resources and the run manager's subscriptions |
 | `Effect.scoped` (verified stage 5.3) | 12017 | closes the scope of `acquireRelease` at the end or on interruption; **observed**: interrupting a fiber that waits in `ask` closes the interface and removes its listeners from the input |
