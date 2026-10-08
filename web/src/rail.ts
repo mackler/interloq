@@ -20,6 +20,12 @@ export type Disclosure = Readonly<{ _tag: "Disclosure"; scope: UiScope; open: bo
 /** A node of the rail: a plain row, or a disclosure; a row without children cannot carry an open state. */
 export type NodeView = Plain | Disclosure;
 export const PLAIN: Plain = { _tag: "Plain" };
+/**
+ * What a disclosure row shows (issue #115): closed and openable, open, or held open while something inside needs the user.
+ * Derived from `open` and `held` alone, of which `held` implies `open`, so the three are every reachable combination.
+ */
+export type DisclosureState = "closed" | "open" | "held";
+export const disclosureStateOf = (node: Disclosure): DisclosureState => (node.held ? "held" : node.open ? "open" : "closed");
 /** A phase of the rail with its node and its branches' nodes, keyed `step:<kind>` or `stage:<key>`. */
 export type RailPhase = Readonly<{ entry: TimelineEntry; node: NodeView; branches: ReadonlyMap<string, NodeView> }>;
 export type RailView = Readonly<{ phases: readonly RailPhase[] }>;

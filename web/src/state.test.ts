@@ -5,7 +5,7 @@ import * as prompts from "../../src/prompts.ts";
 import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
 import { foreseenPhases, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
-import { conditionOf, type Disclosure, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
+import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
@@ -1631,6 +1631,28 @@ describe("the rail as a tree that collapses", () => {
       }),
       { numRuns: 200 },
     );
+  });
+
+  // Issue #115: the three states a disclosure row shows, derived from its open and held flags; held implies open.
+  test("disclosureStateOf: held when held, open when open and not held, closed otherwise", () => {
+    const scope: UiScope = { _tag: "RailPhase", phase: "planning-1" };
+    const collapsed = { running: null, condition: null, tally: null };
+    fc.assert(
+      fc.property(fc.boolean(), fc.boolean(), (held, chosenOpen) => {
+        const node: Disclosure = { _tag: "Disclosure", scope, open: held || chosenOpen, held, collapsed };
+        expect(disclosureStateOf(node)).toBe(held ? "held" : chosenOpen ? "open" : "closed");
+      }),
+      { numRuns: 50 },
+    );
+  });
+
+  test("disclosureStateOf over railView: untouched and not begun is closed, opened by the user is open, held by a prompt is held", () => {
+    const notBegun = fold(live([started, foreseen(false, 1), planned]));
+    expect(disclosureStateOf(phaseNode(notBegun, implementation))).toBe("closed");
+    const opened = fold([...live([started, foreseen(false, 1), planned]), flags({ scope: phaseScope(implementation), open: true })]);
+    expect(disclosureStateOf(phaseNode(opened, implementation))).toBe("open");
+    const waiting = fold([...live([started, foreseen(false, 1), began(planning), planRound, asked(1, prompts.decisionPrompt)]), flags({ scope: phaseScope(planning), open: false })]);
+    expect(disclosureStateOf(phaseNode(waiting, planning))).toBe("held");
   });
 
   // Issue #114: a stage's glyph in the vocabulary of its steps' marks.
