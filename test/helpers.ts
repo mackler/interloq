@@ -254,7 +254,8 @@ export type PlanningStep = { fault?: string; limit?: Readonly<{ resetsAtMs: numb
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
 /** `permission`: a permission request the call makes before its reports, asked as the adapter asks it (S49); the answer is recorded in `permissionAnswers`. */
-export type ExecScript = { reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
+/** `usage` appends a Claude Code line to usage.jsonl with the session the execution ran on, as the adapter does (issue #117). */
+export type ExecScript = { usage?: boolean; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
 
 /** The paragraph of a context call's reply that a test does not script (S9): it keeps the rules. */
 export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks this question on behalf of the run." };
@@ -299,19 +300,38 @@ export class ScriptedPlanner implements PlannerShape {
   readonly contextCapabilities: PlanningCapability[] = [];
   /** The scripted replies of the context calls, in order; without one, a context call returns SCRIPTED_CONTEXT. */
   contexts: PlanningStep[] = [];
-  readonly sessionId = Effect.succeed("test-session");
-  /** How often a fresh session was started (a decision loop); the fresh planner shares this script. */
+  /**
+   * Issue #117: the session a call runs on. The run's planner is `test-session`; each `fresh` returns a view of this planner
+   * over a session of its own, `fresh-<n>`, which shares every script, record and setting with it (`root`).
+   */
+  readonly session: string = "test-session";
+  private readonly root: ScriptedPlanner = this;
+  readonly sessionId: Effect.Effect<string | null> = Effect.sync(() => this.session);
+  /** How often a fresh session was started (a decision loop, a context call, an execution phase); the views share this script. */
   freshSessions = 0;
   readonly fresh: Effect.Effect<PlannerShape> = Effect.sync(() => {
-    this.freshSessions++;
-    return this;
+    const root = this.root;
+    root.freshSessions++;
+    const session = `fresh-${root.freshSessions}`;
+    return Object.create(root, { session: { value: session }, sessionId: { value: Effect.succeed(session) } }) as ScriptedPlanner;
   });
+  /** The session each execution call ran on, in order (issue #117). */
+  readonly execSessions: string[] = [];
+  /** The prompt each execution call received, in order (issue #117). */
+  readonly execPrompts: string[] = [];
+  /** Every prompt sent on each session, planning and execution alike, in order (issue #117). */
+  readonly history = new Map<string, string[]>();
+  private sent(prompt: string): void {
+    const root = this.root;
+    root.history.set(this.session, [...(root.history.get(this.session) ?? []), prompt]);
+  }
   /** Returns the scripted output as it is: the caller decodes it, as with the real agent. */
   planning(prompt: string, schema: Schema.Top, purpose?: PlanningPurpose, capability: PlanningCapability = "records"): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed> {
     // S17: the explanations of the terms (their writing, their responses, their repairs) have their own script, and
     // without one no question needs a term.
     if (schema === S.TermsWrite || schema === S.TermsResponse) {
       return Effect.suspend(() => {
+        this.sent(prompt);
         this.termsPrompts.push(prompt);
         const step = this.terms.shift();
         return Effect.succeed({ output: step === undefined ? { entries: [] } : step.output, resultText: "", costUsd: 0.01 });
@@ -319,6 +339,7 @@ export class ScriptedPlanner implements PlannerShape {
     }
     if (purpose === "context") {
       return Effect.suspend(() => {
+        this.sent(prompt);
         this.contextPrompts.push(prompt);
         this.contextCapabilities.push(capability);
         const step = this.contexts.shift();
@@ -329,6 +350,7 @@ export class ScriptedPlanner implements PlannerShape {
       });
     }
     return Effect.suspend(() => {
+      this.sent(prompt);
       this.prompts.push(prompt);
       this.schemas.push(schema);
       this.capabilities.push(capability);
@@ -351,7 +373,7 @@ export class ScriptedPlanner implements PlannerShape {
           fs.writeFileSync(file, step.editRecord.content);
         }
       }
-      if (step.usage) fs.appendFileSync(path.join(records, "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", session: "test-session", num_turns: 1, total_cost_usd: 0.1 }) + "\n");
+      if (step.usage) fs.appendFileSync(path.join(records, "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", session: this.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
       if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
       if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", resetsAtMs: step.limit.resetsAtMs, limitType: step.limit.limitType }));
@@ -365,7 +387,7 @@ export class ScriptedPlanner implements PlannerShape {
    * last plan is returned unchanged, as an agent that leaves the plan as it is. An output that has `plan` keeps its own.
    */
   private withPlan(schema: Schema.Top, step: PlanningStep): unknown {
-    if (step.plan !== undefined) this.lastPlan = step.plan;
+    if (step.plan !== undefined) this.root.lastPlan = step.plan;
     const output = step.output;
     if (!carriesPlan(schema) || output === null || typeof output !== "object" || Array.isArray(output) || "plan" in output || this.lastPlan === null) return output;
     return { ...output, plan: scriptedPlan(this.lastPlan) };
@@ -381,12 +403,16 @@ export class ScriptedPlanner implements PlannerShape {
   /** The run's Store, for a scripted permission request (S49). */
   callStore: StoreShape | null = null;
   readonly permissionAnswers: string[] = [];
-  executing(_prompt: string, reporter: StepReporter): Effect.Effect<ExecOutcome, RunError, Decider> {
+  executing(prompt: string, reporter: StepReporter): Effect.Effect<ExecOutcome, RunError, Decider> {
     const script = this.execScripts.shift() ?? {};
     const self = this;
     const ui = this.callUi;
     const body = Effect.gen(function* () {
+      self.sent(prompt);
+      self.execSessions.push(self.session);
+      self.execPrompts.push(prompt);
       script.onCall?.();
+      if (script.usage) fs.appendFileSync(path.join(path.dirname(self.state.plan), "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", session: self.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
       if (script.permission !== undefined && ui !== null && self.callStore !== null) {
         const draft = permissionDraft(script.permission.tool, script.permission.input);
         const answer = yield* askOffering((p) => ui.ask(p), permissionPrompt, draft).pipe(Effect.provideService(Ui, ui), Effect.provideService(Store, self.callStore));
