@@ -8,9 +8,11 @@
   // indicator), the phase keeps an indicator only while none of its steps runs, and each phase shows its own time.
   // Issue #63: the tree collapses. Each phase, step of Gather Requirements and stage of the plan is a disclosure whose
   // state is the run's shared state (`rail`, from web/src/rail.ts); a collapsed row carries the running step with the
-  // circular indicator, its condition in one word and a determinate bar of steps complete [visibility of system status],
+  // circular indicator and, once a step is complete, a determinate bar of steps complete [visibility of system status],
   // and hides the cycle lines [aesthetic and minimalist design]. The phase's indicator is the circular one on its mark;
-  // no linear indeterminate bar remains.
+  // no linear indeterminate bar remains. Issues #110 and #114: one glyph leads each row. A row with nothing beneath it is
+  // plain; a row with children has its mark as its control; a stage's glyph gives its condition, and every row's
+  // condition is in its accessible name, not a line of its own.
   import { LinearProgress } from "m3-svelte";
   import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, phaseElapsed, phaseTook, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
   import { elapsedMs } from "../time.ts";
@@ -241,7 +243,6 @@
      label stands. The mark shows that the row is open on its own box: a circle behind the glyph while open, none while
      closed, since a state glyph that turned would no longer say its state. */
   .rail-toggle { position: relative; display: inline-flex; align-items: baseline; gap: 0.25rem; max-width: calc(100% + 1.5rem); margin: 0 0 0 -1.5rem; padding: 0.125rem 0.25rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
-  .entry > .rail-toggle { margin-left: -1.5rem; }
   .rail-toggle::before { content: ""; position: absolute; inset: 0; background: var(--m3c-on-surface); opacity: 0; transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); pointer-events: none; }
   .rail-toggle:hover::before { opacity: 0.08; }
   .rail-toggle:focus-visible::before, .rail-toggle:active::before { opacity: 0.1; }

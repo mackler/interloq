@@ -1238,7 +1238,8 @@ export function stepWorkingLabel(step: "phaseStep" | "planStep"): string {
 }
 /**
  * The condition of a collapsed branch of the progress rail in one word (issue #63), from the steps it hides: none begun,
- * some begun and not all finished, all finished.
+ * some begun and not all finished, all finished. Since issue #110 it is not shown as a line: it is the words of a stage's
+ * glyph, and part of a phase's accessible name.
  */
 export const RAIL_CONDITION_LABEL: Record<"notStarted" | "partial" | "completed", string> = {
   notStarted: "not started",

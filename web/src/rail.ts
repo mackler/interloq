@@ -33,11 +33,6 @@ export const stageHasChildren = (stage: ShownStage): boolean => stage.steps.leng
 /** A stage's leading glyph (issue #114), in the vocabulary of its steps' marks: not begun, begun and not finished, done. */
 const STAGE_GLYPH: Record<Condition, "○" | "◐" | "✓"> = { notStarted: "○", partial: "◐", completed: "✓" };
 export const stageGlyph = (condition: Condition): "○" | "◐" | "✓" => STAGE_GLYPH[condition];
-/** The condition of a stage's steps; null for a stage without steps. */
-export const stageCondition = (stage: ShownStage): Condition | null => {
-  const c = stageCount(stage);
-  return conditionOf(c.started, c.finished, c.total);
-};
 
 /** The condition of `total` steps of which `started` began and `finished` ended; null without steps. */
 export const conditionOf = (started: number, finished: number, total: number): Condition | null =>
@@ -55,6 +50,11 @@ const collapsedOf = (count: Count, running: string | null): Collapsed => ({
 /** A stage's plan steps: a step started, done or left unfinished has begun; a done one has finished. */
 const stageCount = (stage: ShownStage): Count =>
   stage.steps.reduce((c, x) => add(c, { started: x.status === "pending" ? 0 : 1, finished: x.status === "done" ? 1 : 0, total: 1 }), NONE);
+/** The condition of a stage's steps; null for a stage without steps. */
+export const stageCondition = (stage: ShownStage): Condition | null => {
+  const c = stageCount(stage);
+  return conditionOf(c.started, c.finished, c.total);
+};
 /** Gather Requirements' steps: begun unless ahead or not reached; a skipped step is left out of the count. */
 const gatherCount = (steps: readonly TimelineStep[]): Count =>
   steps.reduce((c, st) => (st.state === "skipped" ? c : add(c, { started: st.state === "ahead" || st.state === "notReached" ? 0 : 1, finished: st.state === "done" ? 1 : 0, total: 1 })), NONE);
