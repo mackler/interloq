@@ -17,7 +17,7 @@
   import { tabTitle } from "../title.ts";
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
-  import { type Decision, decide, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
+  import { type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
   import { callStartedAt, dismissUnsent, executing, initialState, keepUnsent, notice, progressOf, protocolError, reduce, type ViewState } from "../state.ts";
@@ -169,6 +169,15 @@
   let visible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let preferences = $state<Preferences>(((r) => (r.ok ? r.value : defaultPreferences))(readPreferences()));
   let permission = $state<Permission>(currentPermission());
+  // W1-R1-1: the mark last shown, from which the icon is drawn again when the color scheme changes.
+  let shownMark: Mark = { _tag: "Clear" };
+  $effect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const redraw = () => setFavicon(faviconHref(shownMark, schemeColors()));
+    scheme.addEventListener("change", redraw);
+    return () => scheme.removeEventListener("change", redraw);
+  });
   let closeShown: Closer | null = null;
   let shownFor: string | null = null;
   $effect(() => {
@@ -204,6 +213,7 @@
     const decision = decide(untrack(() => notifyState), observed);
     notifyState = decision.state;
     const mark = markOf(decision);
+    shownMark = mark;
     document.title = tabTitle(view.location, mark);
     setFavicon(faviconHref(mark, schemeColors()));
     const reason = reasonOf(decision);

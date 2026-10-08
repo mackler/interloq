@@ -232,6 +232,33 @@ test.describe("the tests of the decision server, in order", () => {
     });
     await expect(page).toHaveTitle(tabTitle(repo));
   });
+
+  // W1-R1-1 of issue #16: the icon's waiting badge is the error color of the scheme the page is shown in, dark or light.
+  test("(28) the icon's badge has the page's error color in the dark scheme and in the light one", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await startTask(page, "decision", "Add a database in the dark");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    const colors = () =>
+      page.evaluate(() => {
+        const href = document.head.querySelector("link[rel=icon]")?.getAttribute("href") ?? "";
+        const svg = decodeURIComponent(href.slice(href.indexOf(",") + 1));
+        const badge = /<circle class="badge"[^>]* fill="([^"]*)"/.exec(svg)?.[1] ?? null;
+        const probe = document.createElement("span");
+        probe.style.color = "var(--m3c-error)";
+        document.body.append(probe);
+        const error = getComputedStyle(probe).color;
+        probe.remove();
+        return { badge, error };
+      });
+    const dark = await colors();
+    expect(dark.badge).toBe(dark.error);
+    await page.emulateMedia({ colorScheme: "light" });
+    await expect.poll(async () => (await colors()).badge).not.toBe(dark.badge);
+    const light = await colors();
+    expect(light.badge).toBe(light.error);
+    await continueWithoutDeciding(page).click();
+    await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
 });
 
 test.describe("the tests of the stop server, in order", () => {

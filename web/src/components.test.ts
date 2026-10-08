@@ -748,6 +748,18 @@ describe("App and the draft", () => {
       expect(document.title).toBe(tabTitle("/p"));
     });
 
+    // W1-R1-1: the icon's colors are resolved for the page's scheme, never a light-dark() or var() expression.
+    test("schemeColors returns what the resolution gives for each scheme color, never an unresolved expression", () => {
+      const asked: string[] = [];
+      const colors = schemeColors(document, (value) => {
+        asked.push(value);
+        return `rgb(${asked.length}, 0, 0)`;
+      });
+      expect(asked).toEqual(["var(--m3c-primary)", "var(--m3c-error)", "var(--m3c-tertiary)"]);
+      expect(colors).toEqual({ base: "rgb(1, 0, 0)", badge: "rgb(2, 0, 0)", ended: "rgb(3, 0, 0)" });
+      for (const c of Object.values(schemeColors())) expect(c).not.toMatch(/light-dark\(|var\(/);
+    });
+
     test("nothing requests the permission when the page loads", async () => {
       begin("hidden", { desktop: "on", sound: "on" }, "default");
       const { ws } = await openPage();

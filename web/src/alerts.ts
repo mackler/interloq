@@ -92,9 +92,28 @@ export const setFavicon = (href: string, doc: Document = document): void => {
   if (link.href !== href) link.href = href;
 };
 
-/** The scheme's colors for the icon: primary for the square, error for the waiting badge, tertiary for the end's. */
-export const schemeColors = (doc: Document = document): FaviconColors => {
-  const style = getComputedStyle(doc.documentElement);
-  const read = (name: string, fallback: string): string => style.getPropertyValue(name).trim() || fallback;
+/**
+ * Resolves a CSS color for the page's actual color scheme (W1-R1-1): a custom property's computed value is its
+ * unresolved expression (`light-dark(…)`), which an SVG standing alone would evaluate in the light scheme. A hidden
+ * probe takes the value as its color, and its computed color is the resolved one.
+ */
+export const resolveColor =
+  (doc: Document = document) =>
+  (cssValue: string): string => {
+    const probe = doc.createElement("span");
+    probe.style.color = cssValue;
+    probe.style.display = "none";
+    doc.body.append(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  };
+
+/** The scheme's colors for the icon, resolved: primary for the square, error for the waiting badge, tertiary for the end's. */
+export const schemeColors = (doc: Document = document, resolve: (cssValue: string) => string = resolveColor(doc)): FaviconColors => {
+  const read = (name: string, fallback: string): string => {
+    const value = resolve(`var(${name})`).trim();
+    return value === "" || /light-dark\(|var\(/.test(value) ? fallback : value;
+  };
   return { base: read("--m3c-primary", "#4f5b92"), badge: read("--m3c-error", "#ba1a1a"), ended: read("--m3c-tertiary", "#715573") };
 };
