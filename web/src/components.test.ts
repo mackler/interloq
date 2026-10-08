@@ -1146,7 +1146,7 @@ describe("DecisionView", () => {
   test("the question's details are shown in the context region, their pieces marked, the question outside", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const details = [...prompts.toolInputBlocks({ command: "rm -rf build" }), { kind: "paragraph" as const, pieces: [...plainPieces("The **build** directory holds the "), ref("bundle", "b"), ...plainPieces(".")] }];
-    const withDetails = { ...presented, details, explanations: [{ id: "b", term: "bundle", explanation: "The built page." }] };
+    const withDetails = { ...presented, details, explanations: [{ id: "b", term: "bundle", senses: ["The built page."] }] };
     const root = show(DecisionView, { event: { ...(event as object), presented: withDetails } as never, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
     const context = one(root, ".question-context");
     expect(context.textContent).toContain(prompts.TOOL_INPUT_HEADING);
@@ -1818,7 +1818,7 @@ describe("QuestionPane's regions", () => {
     number: 4,
     origin: { kind: "relayed" },
     context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The "), ref("service", "s"), ...plainPieces(" keeps its data in a database.")] }], by: "agent" },
-    explanations: [{ id: "s", term: "service", explanation: "The program this task builds." }],
+    explanations: [{ id: "s", term: "service", senses: ["The program this task builds."] }],
     question: [...plainPieces("Which database should the "), ref("service", "s"), ...plainPieces(" use?")],
     options: [
       { label: plainPieces("SQLite"), description: plainPieces("a file"), answer: { token: "1" } },
@@ -1889,7 +1889,7 @@ describe("QuestionPane's regions", () => {
   test("a term in the numeric option's label and description is marked and opens its explanation", () => {
     const limit: PresentedQuestion = {
       ...question,
-      explanations: [{ id: "c", term: "cycles", explanation: "Rounds of review and response." }, { id: "r", term: "reviewer", explanation: "Codex, which checks the plan." }],
+      explanations: [{ id: "c", term: "cycles", senses: ["Rounds of review and response."] }, { id: "r", term: "reviewer", senses: ["Codex, which checks the plan."] }],
       question: plainPieces("Should the review stop?"),
       context: { blocks: plainBlocks("The review has reached its limit."), by: "agent" },
       details: [],
@@ -1912,7 +1912,7 @@ describe("QuestionPane's regions", () => {
   // S44 (W3-R1-1): a term's tooltip is never inside the card it explains, so a click in it answers nothing.
   test("a click in the tooltip of a term in an option card sends nothing; the tooltip is in no button", () => {
     const sent: string[] = [];
-    const q: PresentedQuestion = { ...question, explanations: [{ id: "f", term: "file", explanation: "A file on the disk." }], options: [{ label: plainPieces("SQLite"), description: [...plainPieces("one "), ref("file", "f")], answer: { token: "1" } }] };
+    const q: PresentedQuestion = { ...question, explanations: [{ id: "f", term: "file", senses: ["A file on the disk."] }], options: [{ label: plainPieces("SQLite"), description: [...plainPieces("one "), ref("file", "f")], answer: { token: "1" } }] };
     const root = show(QuestionPane, { widget: withQuestion(q), onAnswer: (_p: number, t: string) => void sent.push(t) });
     const mark = one(root, ".options .term");
     mark.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -2026,7 +2026,7 @@ test("the question pane and the scripted Ui both take endingOf from src/input.ts
 // S28: the words of an answered question in the transcript, and of the question beside its analysis, carry their
 // explanations; the transcript shows the question whole, its options' labels on their own lines (S14).
 test("an answered question in the transcript marks its words; the question beside an analysis marks its words", async () => {
-  const zod = [{ id: "z", term: "zod", explanation: "A library." }];
+  const zod = [{ id: "z", term: "zod", senses: ["A library."] }];
   const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), answer: { token: "1" } }], details: [], decision: null };
   const root = show(MessageView, { message: { key: "k", author: "program", heading: null, body: "Use zod?", format: "text", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null, question: asked } });
   expect([...root.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["Zod", "zod"]);
@@ -2084,7 +2084,7 @@ describe("the shared rule for code in rendered Markdown", () => {
 // Issue #36 (replacing S59's marking of a split term): a piece that refers to an explanation sits beside inline
 // formatting in the question pane and beside an analysis; the formatting is rendered and the word carries its explanation.
 describe("a word that refers to an explanation beside inline formatting in the context", () => {
-  const presented: PresentedQuestion = { number: 3, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The **saved** "), ref("cache key", "k"), ...plainPieces(" identifies the result.")] }], by: "agent" }, explanations: [{ id: "k", term: "cache key", explanation: "The name of a saved result." }], question: plainPieces("Should we keep it?"), options: [], details: [], decision: null };
+  const presented: PresentedQuestion = { number: 3, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The **saved** "), ref("cache key", "k"), ...plainPieces(" identifies the result.")] }], by: "agent" }, explanations: [{ id: "k", term: "cache key", senses: ["The name of a saved result."] }], question: plainPieces("Should we keep it?"), options: [], details: [], decision: null };
   const check = (region: Element) => {
     expect(region.querySelector("strong")?.textContent).toBe("saved");
     expect(region.textContent).not.toContain("*");

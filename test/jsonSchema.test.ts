@@ -9,7 +9,7 @@ import * as legacy from "./fixtures/legacy-schemas.ts";
 // The seven schemas that an agent call passes as its output schema.
 // Decision Q1 of the decision-support task: questions_for_user is a list of structured questions; the legacy schemas stay frozen.
 // S3 (issues #36, #59): with its context paragraph and the explanations of its terms. Issue #36 (30 Sep 2026): every text
-// is pieces, the context blocks of pieces (a paragraph, a list with levels, a code block), and the explanations a list.
+// is pieces, the context blocks of pieces (a paragraph, a list with levels, a code block), and the explanations a list. Issue #112 (8 Oct 2026): an explanation's text is its senses, a list.
 const pieces = { type: "array", items: { type: "object", properties: { text: { type: "string" }, ref: { type: "string" }, code: { type: "boolean" } } } };
 const blocks = {
   type: "array",
@@ -21,7 +21,7 @@ const blocks = {
     ],
   },
 };
-const explanations = { type: "array", items: { type: "object", properties: { id: { type: "string" }, term: { type: "string" }, explanation: { type: "string" } } } };
+const explanations = { type: "array", items: { type: "object", properties: { id: { type: "string" }, term: { type: "string" }, senses: { type: "array", items: { type: "string" } } } } };
 const options = { type: "array", items: { type: "object", properties: { label: pieces, description: pieces } } };
 const userQuestions = {
   type: "array",

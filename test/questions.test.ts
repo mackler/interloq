@@ -275,7 +275,7 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
   const { turnValidation, asksNothing } = await import("../src/conversation.ts");
   const { Result } = await import("effect");
   const base = turn("m", []);
-  const asking = { ...base, current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", explanation: "" }] } };
+  const asking = { ...base, current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }] } };
   const failed = turnValidation([], null)(asking);
   assert.ok(Result.isFailure(failed));
   assert.equal(failed.failure.repair, prompts.questionRepairPrompt([{ where: "the current question", problems: [{ kind: "blankContext", subject: "" }, { kind: "notLast", subject: "" }, { kind: "blankExplanation", subject: "one" }] }]));
@@ -290,7 +290,7 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
 });
 
 test("a turn with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
-  const bad = { ...turn("m", []), current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", explanation: "" }] } };
+  const bad = { ...turn("m", []), current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }] } };
   const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [], config: withQuestions });
   await runFails(halted.layer, "QuestionInvalid", /the current question/);
 });
@@ -298,7 +298,7 @@ test("a turn with a blank id asking an invalid question gets the repair turn; a 
 // S7 of the task of issue #36: a follow-up question is pieces; a piece that refers to no explanation gets the repair turn.
 test("S7: a follow-up with a dangling ref gets the validation repair turn, and the repaired one is presented with its pieces", async () => {
   const dangling = { ...none, id: "F1", context: para("The service, a web server, listens on a port."), text: [...plain("Which "), term("port", "p"), ...plain("?")] };
-  const repaired = { ...dangling, explanations: [{ id: "p", term: "port", explanation: "The number a program listens on for connections." }] };
+  const repaired = { ...dangling, explanations: [{ id: "p", term: "port", senses: ["The number a program listens on for connections."] }] };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["8080", ""],
     steps: [

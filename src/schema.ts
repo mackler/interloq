@@ -50,7 +50,7 @@ export const Piece = Schema.Struct({ text: Schema.String, ref: Schema.String, co
  * An explanation of a word or phrase of a question that a reader who has never seen the codebase may not know: its id, the
  * canonical name of the term (the label of its line in the "Terms:" block of conversation.md) and the explanation itself.
  */
-export const Explanation = Schema.Struct({ id: Schema.String, term: Schema.String, explanation: Schema.String });
+export const Explanation = Schema.Struct({ id: Schema.String, term: Schema.String, senses: Schema.Array(Schema.String) });
 /** An item of a bulleted list: its nesting depth (0 at the top) and its pieces. */
 export const ListItem = Schema.Struct({ level: Schema.Int, pieces: Schema.Array(Piece) });
 /** A paragraph of pieces. */

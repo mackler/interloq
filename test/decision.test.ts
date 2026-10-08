@@ -512,7 +512,7 @@ test("a relayed question in the shape gives the analysis its context paragraph a
   const text = prompts.relayedQuestionText({
     context: [{ kind: "paragraph", pieces: [...plain("The "), term("service", "s"), ...plain(" keeps its data in a database, which Interloq, the orchestrator, starts with it.")] }],
     question: plain("Which database should the service use?"),
-    explanations: [{ id: "s", term: "service", explanation: "The program this task builds." }],
+    explanations: [{ id: "s", term: "service", senses: ["The program this task builds."] }],
     options: question.options.map((o) => opt(o.label, o.description)),
   });
   const parsed = parseRelayedQuestion(text, question.options);
@@ -529,7 +529,7 @@ test("an agreed question gives the analysis its reviewed context, reason and ter
   const { normalizeTurn } = await import("../src/schemaNormalize.ts");
   const agreed = questionEntry("Q1", "Which database?", question.options.map((o) => [o.label, o.description] as const), { context: "The service stores orders in a database.", reason: "the schema depends on it", default_answer: "SQLite" });
   const turn = normalizeTurn({ message_to_user: "", current_question: { id: "Q1", context: [], text: [], explanations: [], options: [] }, asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" });
-  const divided = { ...agreed, explanations: [{ id: "o", term: "orders", explanation: "What customers buy." }], context: [{ kind: "paragraph" as const, pieces: [...plain("The service stores "), term("orders", "o"), ...plain(" in a database.")] }] };
+  const divided = { ...agreed, explanations: [{ id: "o", term: "orders", senses: ["What customers buy."] }], context: [{ kind: "paragraph" as const, pieces: [...plain("The service stores "), term("orders", "o"), ...plain(" in a database.")] }] };
   const draft = turnDraft(turn, { questions: [agreed], terms: [divided] });
   const { prompt } = await decideOn(draft);
   for (const part of ["The service stores orders in a database.", "the schema depends on it", "orders: What customers buy."]) assert.ok(prompt.includes(part), part);

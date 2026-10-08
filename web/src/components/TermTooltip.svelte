@@ -4,7 +4,7 @@
   // placed inside the viewport, below or above its anchor, with a size limit and its own scrolling.
   // `entries`: the explanation a word refers to (issue #36: a word is a piece with one ref). The term's canonical name
   // is not shown: in the page the words themselves are the anchor; it labels the "Terms:" lines of conversation.md.
-  type Entry = Readonly<{ explanation: string }>;
+  type Entry = Readonly<{ senses: readonly string[] }>;
   // S42: the keyboard inside the tooltip. Tab leaves past its anchor (`onPast`), Shift+Tab and Escape return to the anchor
   // (`onReturn`), and focus leaving for anything but the anchor closes it (`onFocusOut`).
   type Props = {
@@ -55,7 +55,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div role="tooltip" {id} class="tooltip m3-font-body-medium" style={place} tabindex="0" bind:this={tip} use:portal onclick={contain} onpointerdown={contain} onmouseenter={onEnter} onmouseleave={onLeave} onkeydown={onKey} onfocusout={onFocusOut}>
   {#each entries as entry, i (i)}
-    <p>{entry.explanation}</p>
+    <p>{entry.senses.join(" ")}</p>
   {/each}
 </div>
 

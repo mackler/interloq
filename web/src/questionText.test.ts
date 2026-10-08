@@ -39,8 +39,8 @@ const key = (el: Element, k: string, shift = false) => {
   flushSync();
   return e;
 };
-const sqlite: Explanation = { id: "s", term: "SQLite", explanation: "An engine that keeps a database in one file." };
-const database: Explanation = { id: "d", term: "database", explanation: "Data kept for later use." };
+const sqlite: Explanation = { id: "s", term: "SQLite", senses: ["An engine that keeps a database in one file."] };
+const database: Explanation = { id: "d", term: "database", senses: ["Data kept for later use."] };
 
 describe("the pieces of a question", () => {
   test("each piece that refers to an explanation is a focusable word whose tooltip shows that explanation, not the term's name", () => {
@@ -48,13 +48,13 @@ describe("the pieces of a question", () => {
     const words = [...root.querySelectorAll<HTMLElement>(".term")];
     expect(words.map((w) => [w.textContent, w.tabIndex])).toEqual([["SQLite", 0], ["databases", 0]]);
     hover(words[1]);
-    expect(tooltip()?.textContent).toContain(database.explanation);
+    expect(tooltip()?.textContent).toContain(database.senses[0]);
     expect(tooltip()?.textContent).not.toContain("database:");
     expect(words[1].getAttribute("aria-describedby")).toBe(tooltip()!.id);
   });
 
   test("two pieces with one ref, a plural and a capitalized first word, show the same explanation", () => {
-    const root = show({ pieces: [ref("Execution calls", "e"), plain(" and one "), ref("execution call", "e"), plain(".")], explanations: [{ id: "e", term: "execution call", explanation: "The part in which the plan is carried out." }] });
+    const root = show({ pieces: [ref("Execution calls", "e"), plain(" and one "), ref("execution call", "e"), plain(".")], explanations: [{ id: "e", term: "execution call", senses: ["The part in which the plan is carried out."] }] });
     const [a, b] = root.querySelectorAll<HTMLElement>(".term");
     hover(a);
     const first = tooltip()?.textContent;
@@ -131,7 +131,7 @@ describe("the pieces of a question", () => {
 describe("the keyboard (S42)", () => {
   const long = "A long explanation. ".repeat(80);
   const withButton = () => {
-    const root = show({ pieces: [ref("SQLite", "s"), plain(" keeps the "), ref("database", "d"), plain(".")], explanations: [{ ...sqlite, explanation: long }, database] });
+    const root = show({ pieces: [ref("SQLite", "s"), plain(" keeps the "), ref("database", "d"), plain(".")], explanations: [{ ...sqlite, senses: [long] }, database] });
     const after = document.createElement("button");
     after.textContent = "After";
     document.body.appendChild(after);

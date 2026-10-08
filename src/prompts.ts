@@ -764,7 +764,7 @@ export const RELAYED_EXAMPLE: RelayedParts = {
     { text: "<a term>", ref: "t1", code: false },
     { text: " needs its explanation>?", ref: "", code: false },
   ],
-  explanations: [{ id: "t1", term: "<a term>", explanation: "<its explanation>" }],
+  explanations: [{ id: "t1", term: "<a term>", senses: ["<its explanation>"] }],
   options: [
     { label: [{ text: "<the first option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }] },
     { label: [{ text: "<the second option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }] },
@@ -1353,7 +1353,7 @@ export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): strin
   const parts = [
     ...(shown.context.trim() === "" ? [] : [`The context paragraph:\n${shown.context.trim()}`]),
     ...(shown.details.trim() === "" ? [] : [shown.details.trim()]),
-    ...(shown.explanations.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.explanations.map((e) => `${e.term}: ${e.explanation}`).join("\n")}`]),
+    ...(shown.explanations.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.explanations.map((e) => `${e.term}: ${e.senses.join(" ")}`).join("\n")}`]),
   ];
   return parts.length === 0 ? "" : `\nWhat the user was shown with the question:\n${parts.join("\n\n")}\n`;
 }
@@ -1745,7 +1745,7 @@ const unknownNames = (input: unknown): readonly Readonly<{ id: string; shown: Sh
 export const TOOL_SETTING_REF = "setting-";
 /** One explanation per field without a plain label (P2-R1-2): its name as displayed, with the fixed explanation. */
 export function toolInputExplanations(input: unknown): readonly Explanation[] {
-  return unknownNames(input).map(({ id, shown }) => ({ id, term: shown.text, explanation: shown.kind === "literal" ? unknownSettingExplanation : unknownSettingEscapedExplanation }));
+  return unknownNames(input).map(({ id, shown }) => ({ id, term: shown.text, senses: [shown.kind === "literal" ? unknownSettingExplanation : unknownSettingEscapedExplanation] }));
 }
 const plainPiece = (text: string): Piece => ({ text, ref: "", code: false });
 const codePiece = (text: string): Piece => ({ text, ref: "", code: true });

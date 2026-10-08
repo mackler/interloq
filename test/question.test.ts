@@ -13,7 +13,7 @@ import { type Piece, type Question, questionProblems, type SuppliedRef, validate
 import type { Block, Explanation } from "../src/schema.ts";
 import { opt, para, plain, readBack, readBlocks, term } from "./helpers.ts";
 
-const zod: Explanation = { id: "t1", term: "zod", explanation: "A library that checks that data has the expected shape." };
+const zod: Explanation = { id: "t1", term: "zod", senses: ["A library that checks that data has the expected shape."] };
 const good: Question = {
   context: [
     {
@@ -33,7 +33,7 @@ const kinds = (q: Question, supplied: readonly SuppliedRef[] = []) => questionPr
 test("a question that keeps every mechanical rule passes, a plural and a capitalized word referring to one explanation", () => {
   assert.deepEqual(questionProblems(good), []);
   assert.ok(Result.isSuccess(validateQuestion(good)));
-  const plural: Question = { ...good, question: [...plain("Which "), term("Execution calls", "e"), ...plain(" may resume an "), term("execution call", "e"), ...plain("?")], explanations: [...good.explanations, { id: "e", term: "execution call", explanation: "The part of the run in which Claude Code carries out the plan." }] };
+  const plural: Question = { ...good, question: [...plain("Which "), term("Execution calls", "e"), ...plain(" may resume an "), term("execution call", "e"), ...plain("?")], explanations: [...good.explanations, { id: "e", term: "execution call", senses: ["The part of the run in which Claude Code carries out the plan."] }] };
   assert.deepEqual(questionProblems(plural), []);
 });
 
@@ -86,10 +86,10 @@ test("property: prepending or appending a code piece of any text to a sequence o
 
 test("the data clauses: dangling and unused refs, duplicate ids, blank terms, explanations and referring pieces", () => {
   assert.deepEqual(kinds({ ...good, question: [...plain("Is "), term("zod", "t2"), ...plain(" needed?")] }), ["unknownRef"]);
-  assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { id: "t9", term: "SDK", explanation: "A kit." }] }), ["unusedExplanation"]);
+  assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { id: "t9", term: "SDK", senses: ["A kit."] }] }), ["unusedExplanation"]);
   assert.deepEqual(kinds({ ...good, explanations: [...good.explanations, { ...zod }] }), ["duplicateExplanation"]);
   assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, term: " " }] }), ["blankTerm"]);
-  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, explanation: "  " }] }), ["blankExplanation"]);
+  assert.deepEqual(kinds({ ...good, explanations: [{ ...zod, senses: ["  "] }] }), ["blankExplanation"]);
   assert.deepEqual(kinds({ ...good, question: [term(" ", "t1"), ...good.question] }), ["blankTermPiece"]);
 });
 
@@ -131,7 +131,7 @@ test("every problem kind names a rule or clause, and the repair prompt cites its
 test("validateQuestions names each failing question and fails with QuestionInvalid, which decodes and halts", () => {
   const result = validateQuestions([
     { where: "questions_for_user 1", question: good },
-    { where: "questions_for_user 2", question: { ...good, explanations: [{ ...zod, explanation: "" }] } },
+    { where: "questions_for_user 2", question: { ...good, explanations: [{ ...zod, senses: [""] }] } },
   ]);
   assert.ok(Result.isFailure(result));
   assert.deepEqual(result.failure.questions, [{ where: "questions_for_user 2", problems: [{ kind: "blankExplanation", subject: "zod" }] }]);
@@ -158,7 +158,7 @@ test("S4: a question written exactly as QUESTION_TEXT_FORMAT describes it passes
   assert.ok(prompts.QUESTION_TEXT_FORMAT.includes('"execution calls" and "Execution call" are two pieces that refer to one explanation'));
   const violations: Readonly<Record<string, Question>> = {
     refPiece: { ...good, question: [...good.question.slice(0, -1), term("", "t1"), ...good.question.slice(-1)] },
-    explanations: { ...good, explanations: [...good.explanations, { id: "t2", term: "SDK", explanation: "A kit." }] },
+    explanations: { ...good, explanations: [...good.explanations, { id: "t2", term: "SDK", senses: ["A kit."] }] },
     code: { ...good, context: [...good.context, { kind: "paragraph", pieces: [{ text: "npm", ref: "t1", code: true }] }] },
   };
   for (const [id, q] of Object.entries(violations)) {
@@ -227,7 +227,7 @@ const arbValid: fc.Arbitrary<Question> = fc.uniqueArray(fc.constantFrom("a", "b"
   fc.record({
     context: fc.tuple(word, fc.array(arbBlock(ids), { maxLength: 3 })).map(([w, rest]) => [{ kind: "paragraph" as const, pieces: [{ text: w, ref: "", code: false }] }, ...rest]),
     question: fc.array(arbPiece(ids), { maxLength: 4 }).map((ps) => [...ps, ...ids.map((ref) => ({ text: `w${ref}`, ref, code: false })), { text: "?", ref: "", code: false }]),
-    explanations: fc.constant(ids.map((id) => ({ id, term: `term ${id}`, explanation: `explains ${id}` }))),
+    explanations: fc.constant(ids.map((id) => ({ id, term: `term ${id}`, senses: [`explains ${id}`] }))),
     options: fc.array(fc.record({ label: fc.array(arbPiece(ids), { maxLength: 2 }), description: fc.array(arbPiece(ids), { maxLength: 2 }) }), { maxLength: 3 }),
   }),
 );
@@ -244,7 +244,7 @@ test("property: removing a referred explanation always yields unknownRef; adding
   fc.assert(
     fc.property(arbValid, (q) => {
       const removed = q.explanations.length === 0 || questionProblems({ ...q, explanations: q.explanations.slice(1) }).some((p) => p.kind === "unknownRef" && p.subject === q.explanations[0].id);
-      const added = questionProblems({ ...q, explanations: [...q.explanations, { id: "unused", term: "x", explanation: "y" }] }).some((p) => p.kind === "unusedExplanation" && p.subject === "x");
+      const added = questionProblems({ ...q, explanations: [...q.explanations, { id: "unused", term: "x", senses: ["y"] }] }).some((p) => p.kind === "unusedExplanation" && p.subject === "x");
       return removed && added;
     }),
     { numRuns: 200 },

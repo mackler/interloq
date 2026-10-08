@@ -31,7 +31,7 @@ const block = fc.oneof(
   fc.record({ kind: fc.constant("code" as const), text }),
 );
 const shownBlock = fc.oneof(block, fc.record({ kind: fc.constant("document" as const), markdown: text }));
-const explanation = fc.record({ id: text, term: text, explanation: text });
+const explanation = fc.record({ id: text, term: text, senses: fc.array(text, { minLength: 1, maxLength: 2 }) });
 const pieceOption = fc.record({ label: pieces, description: pieces });
 const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
 const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text });

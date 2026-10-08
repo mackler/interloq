@@ -26,7 +26,7 @@ const selfCorrection: legacy.SelfCorrection = { id: "A", new_action: "plan_error
 // S3 (issues #36, #59): with its context paragraph and the explanations of its terms. Issue #36 (30 Sep 2026): every text
 // is a sequence of pieces, the context blocks of pieces (decision Q2), and the explanations a list the pieces refer to.
 type Piece = { text: string; ref: string; code: boolean };
-type Explanation = { id: string; term: string; explanation: string };
+type Explanation = { id: string; term: string; senses: string[] };
 type Block = { kind: "paragraph"; pieces: Piece[] } | { kind: "list"; items: { level: number; pieces: Piece[] }[] } | { kind: "code"; text: string };
 type PieceOption = { label: Piece[]; description: Piece[] };
 type UserQuestion = { context: Block[]; question: Piece[]; explanations: Explanation[]; options: PieceOption[] };
@@ -37,7 +37,7 @@ const option = (label: string, description: string): PieceOption => ({ label: pl
 const userQuestion: UserQuestion = {
   context: [{ kind: "paragraph", pieces: plain("c") }, { kind: "list", items: [{ level: 0, pieces: plain("i") }, { level: 1, pieces: [{ text: "x", ref: "", code: true }] }] }, { kind: "code", text: "ls\n" }],
   question: [{ text: "q", ref: "t1", code: false }, { text: "?", ref: "", code: false }],
-  explanations: [{ id: "t1", term: "q", explanation: "a letter" }],
+  explanations: [{ id: "t1", term: "q", senses: ["a letter"] }],
   options: [option("A", "a"), option("B", "b")],
 };
 const plannerResponse: WithQuestions<legacy.PlannerResponse> = { dispositions: [disposition], self_corrections: [selfCorrection], reviewer_feedback: "", questions_for_user: [userQuestion] };

@@ -122,7 +122,7 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
     ...q.explanations.flatMap((e, i): QuestionProblem[] => [
       ...(ids.indexOf(e.id) < i ? [{ kind: "duplicateExplanation" as const, subject: e.id }] : []),
       ...(e.term.trim() === "" ? [{ kind: "blankTerm" as const, subject: e.id }] : []),
-      ...(e.explanation.trim() === "" ? [{ kind: "blankExplanation" as const, subject: e.term.trim() === "" ? e.id : e.term }] : []),
+      ...(e.senses.every((s) => s.trim() === "") ? [{ kind: "blankExplanation" as const, subject: e.term.trim() === "" ? e.id : e.term }] : []),
       ...(refs.has(e.id) || ids.indexOf(e.id) < i ? [] : [{ kind: "unusedExplanation" as const, subject: e.term.trim() === "" ? e.id : e.term }]),
     ]),
     ...plainWords.flatMap(bareNumbers).map((subject) => ({ kind: "bareNumber" as const, subject })),

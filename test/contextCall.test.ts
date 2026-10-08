@@ -32,7 +32,7 @@ const request: prompts.ContextRequest = {
   explanations: [],
   facts: "The command npm install zod adds the library zod to the project.",
 };
-const zod = { id: "z", term: "zod", explanation: "A library that checks that data has the shape a program expects." };
+const zod = { id: "z", term: "zod", senses: ["A library that checks that data has the shape a program expects."] };
 const good: QuestionContext = {
   context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, is carrying out the plan in this project. It wants to run a command that installs "), term("zod", "z"), ...plain(", a library, now, while the plan's work waits, so that it can check the input of a tool.")] }],
   question: request.question,
@@ -93,7 +93,7 @@ test("G-R1-1: a rephrased question, options and details' prose pass; F1: a chang
   const rephrased: QuestionContext = {
     ...good,
     question: [...plain("Do you want "), term("Claude Code", "c"), ...plain(" to run the command shown above?")],
-    explanations: [...good.explanations, { id: "c", term: "Claude Code", explanation: "The AI agent that carries out the plan." }],
+    explanations: [...good.explanations, { id: "c", term: "Claude Code", senses: ["The AI agent that carries out the plan."] }],
     options: [opt("Yes, allow it", "The library is installed."), opt("No", "Nothing changes.")],
     details: [{ kind: "paragraph", pieces: plain("What the agent would do:") }, { kind: "list", items: [{ level: 0, pieces: [...plain("It would run "), { text: "npm install zod", ref: "", code: true }] }] }],
   };

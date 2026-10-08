@@ -73,7 +73,7 @@ test("renderQuestionRecord writes the heading, the origin, the context, the deta
     number: 4,
     origin: { kind: "relayed" },
     context: { blocks: para("Claude Code, the coding agent, is writing the tool's input check."), by: "agent" },
-    explanations: [{ id: "z", term: "zod", explanation: "a library that checks the shape of data" }],
+    explanations: [{ id: "z", term: "zod", senses: ["a library that checks the shape of data"] }],
     question: [...plain("Should "), term("Zod's package", "z"), ...plain(" be declared as a dependency?")],
     options: [
       { label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } },
@@ -106,7 +106,7 @@ test("conversation.md records a question under its displayed number with the rec
   const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], details: [], decision: null };
   assert.match(renderQuestionRecord(q), /^### Question 3 \(Q1\)\n/);
   // S11 (issue #59): each option's label in bold on its own line, the description on the next.
-  const record = renderQuestionRecord({ ...q, explanations: [{ id: "t", term: "zod", explanation: "a library" }], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
+  const record = renderQuestionRecord({ ...q, explanations: [{ id: "t", term: "zod", senses: ["a library"] }], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
   assert.ok(record.includes("- 1. **Declare it**  \n  add it to package.json"), record);
   assert.ok(record.includes("- zod: a library"), record);
   assert.match(renderQuestionRecord({ ...q, origin: { kind: "relayed" } }), /^### Question 3\n/);

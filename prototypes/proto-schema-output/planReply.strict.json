@@ -216,14 +216,17 @@
                 "term": {
                   "type": "string"
                 },
-                "explanation": {
-                  "type": "string"
+                "senses": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
                 "id",
                 "term",
-                "explanation"
+                "senses"
               ],
               "additionalProperties": false
             }

@@ -19,7 +19,7 @@ const SelfCorrection = Schema.Struct({ id: Str, new_action: Schema.Literals(["ac
 // Issue #36 (30 Sep 2026): a question's text is blocks and pieces, and its explanations a list the pieces refer to.
 const Piece = Schema.Struct({ text: Str, ref: Str, code: Schema.Boolean });
 const Pieces = Schema.Array(Piece);
-const Explanation = Schema.Struct({ id: Str, term: Str, explanation: Str });
+const Explanation = Schema.Struct({ id: Str, term: Str, senses: Schema.Array(Str) });
 const Block = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("paragraph"), pieces: Pieces }),
   Schema.Struct({ kind: Schema.Literal("list"), items: Schema.Array(Schema.Struct({ level: Schema.Int, pieces: Pieces })) }),

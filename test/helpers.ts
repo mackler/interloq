@@ -201,7 +201,7 @@ const withTerms = (text: string, terms: readonly Readonly<{ term: string; explan
   });
 };
 const explanationsOf = (terms: readonly Readonly<{ term: string; explanation: string }>[], used: readonly Piece[]): readonly Explanation[] =>
-  terms.map((t, i) => ({ id: `t${i + 1}`, term: t.term, explanation: t.explanation })).filter((e) => used.some((p) => p.ref === e.id));
+  terms.map((t, i) => ({ id: `t${i + 1}`, term: t.term, senses: [t.explanation] })).filter((e) => used.some((p) => p.ref === e.id));
 const piecesOfWords = (w: Words, text: string) => {
   const terms = w.terms ?? [];
   const context = withTerms(w.context, terms);

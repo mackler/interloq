@@ -24,19 +24,19 @@ const entry: S.QuestionEntry = entryOf({
   proposed_answers: [{ label: "Declare it", description: "add zod to package.json" }, { label: "Leave it", description: "keep it the SDK's" }],
   default_answer: "Declare it",
 });
-const zod = { id: "z", term: "zod", explanation: "A library that checks that data has the shape a program expects." };
+const zod = { id: "z", term: "zod", senses: ["A library that checks that data has the shape a program expects."] };
 /** Pieces in which every "zod" or "Zod" refers to the explanation `z`, the words kept as they stand. */
 const divide = (pieces: readonly Piece[]): readonly Piece[] =>
   pieces.flatMap((p) => p.text.split(/([Zz]od)/).filter((t) => t !== "").map((t) => (/^[Zz]od$/.test(t) ? { text: t, ref: "z", code: false } : { text: t, ref: "", code: false })));
-const dividedEntry = (explanation = zod.explanation): S.TermsEntry => ({
+const dividedEntry = (explanation = zod.senses[0]): S.TermsEntry => ({
   id: "Q1",
-  explanations: [{ ...zod, explanation }],
+  explanations: [{ ...zod, senses: [explanation] }],
   context: entry.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)),
   question: divide(entry.question),
   reason: entry.reason,
   proposed_answers: entry.proposed_answers.map((a) => ({ label: a.label, description: divide(a.description) })),
 });
-const terms = (explanation = zod.explanation) => ({ entries: [dividedEntry(explanation)] });
+const terms = (explanation = zod.senses[0]) => ({ entries: [dividedEntry(explanation)] });
 const interviewTurns = [
   { output: { message_to_user: "", current_question: currentOf({ id: "Q1", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" } },
   { output: { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1"], answered_ids: ["Q1"], complete: true, summary: "# Requirements\n\nQ1: declare it" } },
@@ -85,7 +85,7 @@ test("an accepted issue about an explanation: the response returns the amended e
 });
 
 test("the explanations are validated: a changed wording, an unused explanation, or a question not in the list, gets the repair turn", async () => {
-  const changed = { ...dividedEntry(), question: [...dividedEntry().question.slice(0, -1), { text: " now?", ref: "", code: false }], explanations: [zod, { id: "s", term: "SDK", explanation: "A kit." }] };
+  const changed = { ...dividedEntry(), question: [...dividedEntry().question.slice(0, -1), { text: " now?", ref: "", code: false }], explanations: [zod, { id: "s", term: "SDK", senses: ["A kit."] }] };
   const wrong = { entries: [{ ...dividedEntry(), id: "Q9" }, changed] };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
@@ -227,4 +227,17 @@ test("issue #112: a disputed self-correction of the terms is not put to the user
   assert.match(read(probe.dir, "conversation.md"), new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* [^\\n]*the accepted correction for T-R1-1`));
   assert.ok(!(await probe.loadLog("terms")).some((e) => e.action === "decided_by_user"));
   assert.ok(fs.existsSync(path.join(probe.dir, "terms-review", "review-3.json")));
+});
+
+// Issue #112: the agreed wording is compared over the question's fields alone, never over the explanations, so a second
+// sense of a term passes, and a changed word of the question still fails with wordingChanged.
+test("issue #112: an explanation with two senses keeps the agreed wording; a changed word still does not", () => {
+  const validate = termsValidation<{ entries: readonly S.TermsEntry[] }>([entry]);
+  const twoSenses = { ...dividedEntry(), explanations: [{ ...zod, senses: ["A library that checks data.", "In this program, the library the Agent SDK uses to describe a tool's input."] }] };
+  assert.ok(Result.isSuccess(validate({ entries: [twoSenses] })));
+  const changed = { ...twoSenses, question: [...twoSenses.question.slice(0, -1), { text: " now?", ref: "", code: false }] };
+  const failed = validate({ entries: [changed] });
+  assert.ok(Result.isFailure(failed));
+  const error = Result.isFailure(failed) ? failed.failure.error : null;
+  assert.ok(error !== null && error._tag === "QuestionInvalid" && error.questions.some((q) => q.problems.some((p) => p.kind === "wordingChanged")));
 });

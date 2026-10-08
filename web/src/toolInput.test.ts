@@ -199,7 +199,7 @@ describe("the names of fields without a plain label", () => {
     expect(shownOf("a\nb")).toContain("a\\nb");
     const [term] = prompts.toolInputExplanations(inputWith("a\nb"));
     expect(term.term).toBe("a\\nb");
-    expect(term.explanation).toBe(prompts.unknownSettingEscapedExplanation);
+    expect(term.senses).toEqual([prompts.unknownSettingEscapedExplanation]);
   });
 });
 

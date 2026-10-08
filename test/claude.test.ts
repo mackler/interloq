@@ -878,7 +878,7 @@ test("faults beyond the retries, then Stop at the exhaustion pause: executing fa
 // S14 (Q2, G-R1-2): a relayed question in the shape of RELAYED_SHAPE is shown from its own parts; any other is not denied,
 // and a context call writes its context and terms while the execution call waits.
 test("a relayed question in the shape is presented from its own parts, with no context call", async () => {
-  const zod = { id: "z", term: "zod", explanation: "A library that checks the shape of data." };
+  const zod = { id: "z", term: "zod", senses: ["A library that checks the shape of data."] };
   const options = [{ label: "Declare it", description: "add it to package.json" }, { label: "Leave it", description: "keep it the SDK's" }];
   const text = prompts.relayedQuestionText({
     context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, checks the input of a tool with "), term("Zod", "z"), ...plain(", a library, now, while it carries out the plan, so that bad input is refused.")] }],
@@ -967,13 +967,13 @@ test("an unknown field keeps its own name, explained as a term, with and without
   const overwrite = await permissionAsked("FutureTool", { overwrite: true });
   const dryRun = await permissionAsked("FutureTool", { dry_run: true });
   assert.notEqual(overwrite.q.details, dryRun.q.details);
-  assert.deepEqual(overwrite.q.explanations, [{ id: "setting-1", term: "overwrite", explanation: prompts.unknownSettingExplanation }]);
-  assert.deepEqual(dryRun.q.explanations, [{ id: "setting-1", term: "dry_run", explanation: prompts.unknownSettingExplanation }]);
+  assert.deepEqual(overwrite.q.explanations, [{ id: "setting-1", term: "overwrite", senses: [prompts.unknownSettingExplanation] }]);
+  assert.deepEqual(dryRun.q.explanations, [{ id: "setting-1", term: "dry_run", senses: [prompts.unknownSettingExplanation] }]);
   // The context call rewrites the explanation of the same id, which the name's code piece keeps referring to.
   const agent = await permissionAsked("FutureTool", { overwrite: true }, () =>
-    Effect.succeed({ context: { blocks: plainBlocks("Written by Claude Code."), by: "agent" as const }, explanations: [{ id: "setting-1", term: "overwrite", explanation: "Replaces the file if it exists." }] }),
+    Effect.succeed({ context: { blocks: plainBlocks("Written by Claude Code."), by: "agent" as const }, explanations: [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }] }),
   );
-  assert.deepEqual(agent.q.explanations, [{ id: "setting-1", term: "overwrite", explanation: "Replaces the file if it exists." }]);
+  assert.deepEqual(agent.q.explanations, [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }]);
   const named = agent.q.details.flatMap((b) => (b.kind === "list" ? b.items.flatMap((i) => i.pieces) : [])).find((p) => p.code && p.ref !== "");
   assert.deepEqual(named, { text: "overwrite", ref: "setting-1", code: true });
 });

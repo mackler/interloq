@@ -1319,7 +1319,7 @@ test("the question of an answered exchange is the presented question, whole", ()
   const question: PresentedQuestion = {
     ...presentedOf(presentedEvent("Which zod?", [{ label: "A", description: "a" }])),
     question: [{ text: "Which ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: "?", ref: "", code: false }],
-    explanations: [{ id: "z", term: "zod", explanation: "A library." }],
+    explanations: [{ id: "z", term: "zod", senses: ["A library."] }],
     details: [{ kind: "code", text: "npm i zod" }, { kind: "document", markdown: "# Doc" }],
   };
   const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
@@ -1338,7 +1338,7 @@ test("property: an answered question joins the transcript exactly as it was pres
   );
   fc.assert(
     fc.property(fc.array(block, { maxLength: 3 }), fc.array(piece, { minLength: 1, maxLength: 3 }), fc.array(block, { maxLength: 2 }), (context, text, details) => {
-      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, question: text, details, explanations: [{ id: "a", term: "t", explanation: "e" }] };
+      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, question: text, details, explanations: [{ id: "a", term: "t", senses: ["e"] }] };
       const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
       return JSON.stringify(s.run?.left[0].question) === JSON.stringify(question) && s.run?.left[0].body === piecesText(text);
     }),

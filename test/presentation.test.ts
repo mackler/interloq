@@ -104,7 +104,7 @@ test("S11: a pause reaches the user as prose: no line said and no question shown
 // agent's paragraph; the program's fixed question and options stand as the program wrote them.
 test("S12: a pause, the cycle limit and the unchanged pause are presented with the context call's paragraph and terms", async () => {
   const context = [{ kind: "paragraph" as const, pieces: [term("Codex", "c"), ...plain(", the reviewing agent, checks the plan that Claude Code, the planning agent, writes; this happens now, before the plan is carried out, so that the plan is right.")] }];
-  const explanations = [{ id: "c", term: "Codex", explanation: "An AI agent that reviews the work." }];
+  const explanations = [{ id: "c", term: "Codex", senses: ["An AI agent that reviews the work."] }];
   const pause = scenario();
   pause.probe.planner.contexts = [{ output: (prompt: string) => ({ ...scriptedContextReply(prompt), context, explanations }) }];
   await runTask(pause.layer);
@@ -154,7 +154,7 @@ test("S12: the questions that do not need one make no context call: the clarific
 
 // S18: an agreed question is presented from the reviewed records alone: questions.json and terms.json.
 test("S18: an agreed question is presented as reviewed: its context, text, proposed answers and reason, and the terms of terms.json", async () => {
-  const zod = { id: "z", term: "zod", explanation: "A library that checks the shape of data." };
+  const zod = { id: "z", term: "zod", senses: ["A library that checks the shape of data."] };
   const entryZod = { ...entry("Q1"), context: para("Claude Code checks the input of a tool with zod, a library, when the tool is called."), question: plain("Should zod be declared?"), reason: para("package.json does not list zod") };
   const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(zod)/).filter((t) => t !== "").map((t) => (t === "zod" ? term(t, "z") : { text: t, ref: "", code: false })));
   const divided: TermsEntry = { id: "Q1", explanations: [zod], context: entryZod.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), question: divide(entryZod.question), reason: entryZod.reason, proposed_answers: entryZod.proposed_answers };
@@ -186,7 +186,7 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
   // Every explanation shown with an agreed question is non-empty and referred to by a piece of what is shown.
   const refs = [...(q.context.blocks[0].kind === "paragraph" ? q.context.blocks[0].pieces : []), ...q.question].map((p) => p.ref);
   for (const t of q.explanations) {
-    assert.ok(t.explanation.trim() !== "");
+    assert.ok(t.senses.every((s) => s.trim() !== ""));
     assert.ok(refs.includes(t.id), t.term);
   }
 });
@@ -226,7 +226,7 @@ test("S5: a plan writer's question with a piece that refers to an explanation re
   const asked = {
     context: [{ kind: "paragraph" as const, pieces: [...plain("The service keeps its "), term("Orders", "o"), ...plain(" in a database.")] }],
     question: [...plain("Where should the "), term("orders", "o"), ...plain(" be kept?")],
-    explanations: [{ id: "o", term: "order", explanation: "What a customer buys." }],
+    explanations: [{ id: "o", term: "order", senses: ["What a customer buys."] }],
     options: [{ label: plain("SQLite"), description: [...plain("one file per "), term("order", "o")] }, { label: plain("PostgreSQL"), description: plain("a server") }],
   };
   const { layer, probe } = testLayer(tempRepo(), {
