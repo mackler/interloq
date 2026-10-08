@@ -18,15 +18,18 @@
   import { Button } from "m3-svelte";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
   import type { RunView, ViewState } from "../state.ts";
+  import { ownName } from "../../../src/hostDir.ts";
 
   // A failed page (defect B of docs/page-question-phase-defects.md) reads "disconnected", and Stop, which can no longer
   // reach the server, is disabled [visibility of system status; error prevention].
   // S38 (W2-R1-1, P3-R1-1): the confirmation is bound to the server's incarnation and the run it was opened for (run ids
   // restart at 1 in each incarnation), stops exactly that, and closes without acting when either changes [error
   // prevention].
-  type Props = { run: RunView | null; incarnation?: string | null; connection: ViewState["connection"]; onStop: (incarnation: string, run: number) => void };
-  let { run, incarnation = null, connection, onStop }: Props = $props();
+  type Props = { run: RunView | null; location: string | null; incarnation?: string | null; connection: ViewState["connection"]; onStop: (incarnation: string, run: number) => void };
+  let { run, location, incarnation = null, connection, onStop }: Props = $props();
   const CONNECTION: Record<ViewState["connection"], string> = { connecting: "connecting…", open: "connected", reconnecting: "reconnecting…", failed: "disconnected" };
+  // The run's identification while there is a run, the server's otherwise; nothing before the first hello.
+  const shown = $derived(run !== null && run.location !== "" ? run.location : location);
   const running = $derived(run !== null && run.ended === null);
   let confirming = $state<{ incarnation: string; run: number } | null>(null);
   const current = $derived(run === null || run.ended !== null ? null : { incarnation: incarnation ?? "", run: run.id });
@@ -41,10 +44,13 @@
 </script>
 
 <header class="bar">
-  <h1 class="m3-font-title-large">Interloq</h1>
+  <h1 class="m3-font-title-large">
+    <span class="brand m3-font-label-large">Interloq</span>
+    {#if shown !== null}<span class="project-name">{ownName(shown)}</span>{/if}
+  </h1>
   <div class="task">
+    {#if shown !== null}<span class="m3-font-body-medium location" title={shown}>{shown}</span>{/if}
     {#if run !== null}
-      <span class="m3-font-body-medium project">{run.project}</span>
       <span class="m3-font-body-small summary" title={run.task}>{run.task}</span>
     {/if}
   </div>
@@ -55,7 +61,10 @@
 
 <style>
   .bar { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1rem; background: var(--m3c-surface-container); box-shadow: var(--m3-elevation-2); position: relative; z-index: 1; }
-  h1 { margin: 0; white-space: nowrap; }
+  h1 { margin: 0; white-space: nowrap; display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+  .brand { color: var(--m3c-on-surface-variant); }
+  .project-name { overflow: hidden; text-overflow: ellipsis; }
+  .location { overflow-wrap: anywhere; }
   .task { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .summary { color: var(--m3c-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stop { --m3c-primary: var(--m3c-error); --m3c-outline: var(--m3c-error); }

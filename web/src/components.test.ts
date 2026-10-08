@@ -533,7 +533,7 @@ describe("TopBar", () => {
   test("Stop sends stop for the run on one click, and is disabled without a run in progress", () => {
     const stopped: number[] = [];
     const run = { ...emptyRun(3), project: "/p", task: "the task" };
-    const root = show(TopBar, { run, connection: "open", onStop: (_i: string, r: number) => void stopped.push(r) });
+    const root = show(TopBar, { run, location: null, connection: "open", onStop: (_i: string, r: number) => void stopped.push(r) });
     const stop = one(root, "button[name=stop]") as HTMLButtonElement;
     expect(stop.textContent?.trim()).toBe("Stop task");
     stop.click();
@@ -542,16 +542,30 @@ describe("TopBar", () => {
     one(root, "dialog button[name=confirm-end]").click();
     expect(stopped).toEqual([3]);
     expect(root.textContent).toMatch(/connected/);
-    const idle = show(TopBar, { run: null, connection: "reconnecting", onStop: () => undefined });
+    const idle = show(TopBar, { run: null, location: null, connection: "reconnecting", onStop: () => undefined });
     expect((one(idle, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
     expect(idle.textContent).toMatch(/reconnecting/);
-    const ended = show(TopBar, { run: { ...run, ended: 0 }, connection: "open", onStop: () => undefined });
+    const ended = show(TopBar, { run: { ...run, ended: 0 }, location: null, connection: "open", onStop: () => undefined });
     expect((one(ended, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  // Issue #29: the bar identifies the project, the run's during a run and the server's otherwise.
+  test("the headline is the project's own name and the whole identification stands beside it, with or without a run", () => {
+    const run = { ...emptyRun(3), project: "/workspace", location: "/host/a", task: "the task" };
+    const during = show(TopBar, { run, location: "/host/other", connection: "open", onStop: () => undefined });
+    expect(one(during, "h1 .project-name").textContent?.trim()).toBe("a");
+    expect(one(during, ".location").textContent?.trim()).toBe("/host/a");
+    const idle = show(TopBar, { run: null, location: "/host/b", connection: "open", onStop: () => undefined });
+    expect(one(idle, ".project-name").textContent?.trim()).toBe("b");
+    expect(one(idle, ".location").textContent?.trim()).toBe("/host/b");
+    const none = show(TopBar, { run: null, location: null, connection: "connecting", onStop: () => undefined });
+    expect(none.querySelector(".location")).toBe(null);
+    expect(none.querySelector(".project-name")).toBe(null);
   });
 
   test("a failed page: the chip reads disconnected and Stop is disabled", () => {
     const run = { ...emptyRun(3), project: "/p", task: "the task" };
-    const root = show(TopBar, { run, connection: "failed", onStop: () => undefined });
+    const root = show(TopBar, { run, location: null, connection: "failed", onStop: () => undefined });
     expect(one(root, "[role=status]").textContent?.trim()).toBe("disconnected");
     expect((one(root, "button[name=stop]") as HTMLButtonElement).disabled).toBe(true);
   });
@@ -598,6 +612,21 @@ describe("App and the draft", () => {
     ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
     return { root, ws };
   };
+
+  // Issue #29: the page identifies the project before any run, and the tab's title carries it.
+  test("with no run the top bar shows the server's identification above the start form, and the tab's title its own name", async () => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const { default: App } = await import("./components/App.svelte");
+    const root = show(App, {});
+    const ws = FakeWebSocket.last!;
+    ws.receive({ type: "hello", cwd: "/workspace", location: "/host/c", current: null, incarnation: "a" });
+    ws.receive({ type: "replay", ui: [], runs: [] });
+    expect(root.querySelector("form")).not.toBe(null);
+    expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
+    expect(document.title).toBe("c — Interloq");
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/workspace", location: "/host/c", task: "t" }]) }] });
+    expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
+  });
   const field = (root: ParentNode) => one(root, "[name=answer]") as HTMLInputElement;
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -1724,7 +1753,7 @@ describe("the confirmation before a run ends, in the page", () => {
   test("Stop task opens the dialog; only confirming stops the run", () => {
     const stopped: number[] = [];
     const run = { ...emptyRun(3), project: "/p", task: "t" };
-    const root = show(TopBar, { run, connection: "open", onStop: (_i: string, r: number) => void stopped.push(r) });
+    const root = show(TopBar, { run, location: null, connection: "open", onStop: (_i: string, r: number) => void stopped.push(r) });
     one(root, "button[name=stop]").click();
     flushSync();
     expect(stopped).toEqual([]);

@@ -14,6 +14,7 @@
   import type { ClientMessage } from "../../../src/protocol.ts";
   import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { connect, type Connection } from "../socket.ts";
+  import { tabTitle } from "../title.ts";
   import { callStartedAt, dismissUnsent, executing, initialState, keepUnsent, notice, progressOf, protocolError, reduce, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
@@ -155,11 +156,15 @@
       observer.disconnect();
     };
   });
+  // Issue #29: the tab's title names the server's project, so that a narrow tab strip tells two servers apart.
+  $effect(() => {
+    document.title = tabTitle(view.location);
+  });
 </script>
 
 <svelte:window bind:innerWidth={width} onresize={measureRoom} />
 <div class="app">
-  <TopBar {run} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} />
+  <TopBar {run} location={view.location} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} />
   <!-- A failed page says so for as long as it lasts, apart from the notices, which a new task marks as seen, and keeps
        the answers it could not send until each is dismissed [visibility of system status; help users recognise,
        diagnose and recover from errors; user control and freedom: nothing typed is lost]. -->

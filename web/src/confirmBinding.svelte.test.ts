@@ -27,8 +27,9 @@ const runOf = (id: number): RunView => ({ ...emptyRun(id), project: "/p", task: 
 describe("TopBar's confirmation of Stop task", () => {
   const bar = () => {
     const stopped: [string, number][] = [];
-    const props: { run: RunView | null; incarnation: string | null; connection: "open"; onStop: (incarnation: string, run: number) => void } = $state({
+    const props: { run: RunView | null; location: string | null; incarnation: string | null; connection: "open"; onStop: (incarnation: string, run: number) => void } = $state({
       run: runOf(3),
+      location: null,
       incarnation: "A",
       connection: "open",
       onStop: (incarnation, run) => void stopped.push([incarnation, run]),
