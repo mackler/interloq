@@ -250,7 +250,7 @@ too, with its own words.
 
 - The tab's title carries a marker in front of the project's name (● while a prompt waits, ✓ after an unseen end), so
   two waiting windows are still told apart, and the page's icon carries a dot in the scheme's error color (waiting) or
-  tertiary color (ended). They assert that a prompt is pending, or that a watched run ended while the tab was hidden
+  tertiary color (ended), resolved for the scheme the page is shown in, dark or light, and drawn again when it changes. They assert that a prompt is pending, or that a watched run ended while the tab was hidden
   and has not been seen since, and nothing more. They need no permission, are always on, and are not a preference.
 - A desktop notification asserts the same, once per prompt and once per end. It is opt-in, from the "Desktop alerts"
   switch in the top bar, whose click alone asks the browser's permission; turning the switch off stops it at once
