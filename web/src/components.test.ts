@@ -25,10 +25,10 @@ import { plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { tabTitle } from "./title.ts";
 import { ownName } from "../../src/hostDir.ts";
 import { faviconHref } from "./favicon.ts";
-import { schemeColors } from "./alerts.ts";
+import { CHIME_TONES, resetChime, schemeColors } from "./alerts.ts";
 import type { Mark, Preferences } from "./notify.ts";
 import { readPreferences, writePreferences } from "./storage.ts";
-import { NotificationStub } from "./test-setup.ts";
+import { AudioContextStub, NotificationStub } from "./test-setup.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
@@ -758,6 +758,67 @@ describe("App and the draft", () => {
       expect(asked).toEqual(["var(--m3c-primary)", "var(--m3c-error)", "var(--m3c-tertiary)"]);
       expect(colors).toEqual({ base: "rgb(1, 0, 0)", badge: "rgb(2, 0, 0)", ended: "rgb(3, 0, 0)" });
       for (const c of Object.values(schemeColors())) expect(c).not.toMatch(/light-dark\(|var\(/);
+    });
+
+    // W2-R1-1: the chime, observed through the silent AudioContext of test-setup.ts.
+    describe("the chime", () => {
+      afterEach(() => {
+        AudioContextStub.reset();
+        resetChime();
+      });
+      const SOUND: Preferences = { desktop: "off", sound: "on" };
+      const pending = (ws: InstanceType<typeof FakeWebSocket>) => ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+
+      test("resetChime drops the cached context: the next chime builds a new one", async () => {
+        begin("hidden", SOUND);
+        const { ws } = await openPage();
+        pending(ws);
+        resetChime();
+        ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
+        ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: asked(2) });
+        expect(AudioContextStub.constructed).toBe(2);
+      });
+
+      test("a prompt at a hidden tab with the sound on plays the chime once; a reconnection plays nothing more", async () => {
+        begin("hidden", SOUND);
+        const { ws } = await openPage();
+        pending(ws);
+        expect(AudioContextStub.started).toBe(CHIME_TONES.length);
+        ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
+        pending(ws);
+        expect(AudioContextStub.started).toBe(CHIME_TONES.length);
+      });
+
+      test("a prompt at a visible tab showing it plays nothing", async () => {
+        begin("visible", SOUND);
+        const { ws } = await openPage();
+        pending(ws);
+        expect(AudioContextStub.started).toBe(0);
+      });
+
+      test("with the sound off nothing plays", async () => {
+        begin("hidden", { desktop: "off", sound: "off" });
+        const { ws } = await openPage();
+        pending(ws);
+        expect(AudioContextStub.started).toBe(0);
+      });
+
+      test("turning the sound switch on plays nothing by itself", async () => {
+        localStorage.clear();
+        const { root } = await openPage();
+        one(root, "input[role=switch][name=sound-alerts]").click();
+        await Promise.resolve();
+        flushSync();
+        expect(AudioContextStub.started).toBe(0);
+      });
+
+      test("a watched run's end at a hidden tab with the sound on plays the chime once", async () => {
+        begin("hidden", SOUND);
+        const { ws } = await openPage();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+        ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+        expect(AudioContextStub.started).toBe(CHIME_TONES.length);
+      });
     });
 
     test("nothing requests the permission when the page loads", async () => {

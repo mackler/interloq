@@ -51,7 +51,15 @@ export const showDesktop = (title: string, body: string, tag: string, api: Notif
 
 /** What plays the chime. */
 export type Player = () => void;
+/** The frequencies of the chime's tones, in the order they sound (W2-R1-1). */
+export const CHIME_TONES: readonly number[] = [880, 1320];
+/** The time from one tone's start to the next's. */
+const TONE_SPACING_SECONDS = 0.15;
 let audio: AudioContext | null = null;
+/** Drops the cached audio context, so that the next chime builds a new one (for the tests, W2-R1-1). */
+export const resetChime = (): void => {
+  audio = null;
+};
 /** A short two-tone chime synthesized with the Web Audio API: no asset, no dependency. */
 const webAudioChime: Player = () => {
   if (typeof AudioContext === "undefined") return;
@@ -69,8 +77,7 @@ const webAudioChime: Player = () => {
     oscillator.start(context.currentTime + start);
     oscillator.stop(context.currentTime + start + 0.16);
   };
-  tone(880, 0);
-  tone(1320, 0.15);
+  CHIME_TONES.forEach((frequency, i) => tone(frequency, i * TONE_SPACING_SECONDS));
 };
 /** Plays the chime; where the browser refuses audio, nothing sounds and nothing is logged. */
 export const playChime = (player: Player = webAudioChime): void => {

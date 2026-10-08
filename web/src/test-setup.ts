@@ -45,3 +45,36 @@ export class NotificationStub {
 if (typeof (window as { Notification?: unknown }).Notification === "undefined") {
   Object.defineProperty(window, "Notification", { configurable: true, writable: true, value: NotificationStub });
 }
+// W2-R1-1: jsdom has no AudioContext. This silent stub counts the contexts built and the tones started.
+export class AudioContextStub {
+  static constructed = 0;
+  static started = 0;
+  readonly currentTime = 0;
+  readonly destination = {};
+  constructor() {
+    AudioContextStub.constructed += 1;
+  }
+  resume(): Promise<void> {
+    return Promise.resolve();
+  }
+  createOscillator() {
+    return {
+      frequency: { value: 0 },
+      connect: <T>(node: T): T => node,
+      start: () => {
+        AudioContextStub.started += 1;
+      },
+      stop: () => undefined,
+    };
+  }
+  createGain() {
+    return { gain: { setValueAtTime: () => undefined, exponentialRampToValueAtTime: () => undefined }, connect: <T>(node: T): T => node };
+  }
+  static reset(): void {
+    AudioContextStub.constructed = 0;
+    AudioContextStub.started = 0;
+  }
+}
+if (typeof (window as { AudioContext?: unknown }).AudioContext === "undefined") {
+  Object.defineProperty(window, "AudioContext", { configurable: true, writable: true, value: AudioContextStub });
+}
