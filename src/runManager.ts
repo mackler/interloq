@@ -5,6 +5,7 @@ import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Ref, Result, type Sco
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, taskOf, type Wiring } from "./program.ts";
+import { identify, type MountTable } from "./hostDir.ts";
 import type { RunEvent, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
@@ -23,6 +24,8 @@ export type Refusal = Readonly<{ refused: string }>;
 export type RunManager = Readonly<{
   /** The server's working directory: where the page's directory browser starts. */
   cwd: string;
+  /** The identification of the working directory (issue #29): its host directory, or the path as given. */
+  location: string;
   /** This start of the server (finding 12): an action naming another incarnation is refused. */
   incarnation: string;
   /** Registers a listener for every event appended from now on, until the scope closes. */
@@ -76,7 +79,7 @@ const EARLIER: Refusal = { refused: "that run belongs to an earlier start of the
  * that step, because the record function stays pure; so events published concurrently may carry times in a slightly
  * different order than their seq, and seq is the order.
  */
-export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incarnation: string): Effect.Effect<RunManager, never, Platform> =>
+export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, mounts: MountTable, incarnation: string): Effect.Effect<RunManager, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -174,7 +177,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
               return { refused: "a run is in progress; stop it or wait for its end" };
             }
             yield* Ref.set(idRef, reserved);
-            yield* append(reserved, { _tag: "Started", project, task });
+            yield* append(reserved, { _tag: "Started", project, location: identify(mounts, project), task });
             yield* Deferred.succeed(gate, undefined);
             return reserved;
           }),
@@ -183,6 +186,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, incar
 
     return {
       cwd,
+      location: identify(mounts, cwd),
       incarnation,
       subscribe: (listener) =>
         Effect.acquireRelease(

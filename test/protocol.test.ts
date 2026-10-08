@@ -121,7 +121,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
 );
 const promptTexts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, "unknown > "];
 const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
-  fc.record({ _tag: fc.constant("Started" as const), project: text, task: text }),
+  fc.record({ _tag: fc.constant("Started" as const), project: text, location: text, task: text }),
   fc.record({ _tag: fc.constant("Said" as const), text }),
   fc.tuple(nat, fc.constantFrom(...promptTexts)).map(([prompt, t]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t) })),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
@@ -147,7 +147,7 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
   fc.record({ type: fc.constant("ui" as const), incarnation: text, run: nat, flag: fc.record({ scope: uiScope, open: fc.boolean() }) }),
 );
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
-  fc.record({ type: fc.constant("hello" as const), cwd: text, current: fc.option(nat, { nil: null }), incarnation: text }),
+  fc.record({ type: fc.constant("hello" as const), cwd: text, location: text, current: fc.option(nat, { nil: null }), incarnation: text }),
   fc.constant({ type: "closing" as const }),
   fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
   fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
@@ -190,10 +190,10 @@ test("an event frame without its time, a bare replay entry, and a Started that s
   for (const frame of [
     { type: "event", run: 1, seq: 0, event: said },
     { type: "replay", ui: [], runs: [{ id: 1, events: [said] }] },
-    { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", task: "t", time: T } },
+    { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", location: "/p", task: "t", time: T } },
     { type: "replay", ui: [], runs: [{ id: 1, events: [{ event: said }] }] },
   ]) assert.ok(Result.isFailure(decodeServer(JSON.stringify(frame))), JSON.stringify(frame));
-  const ok: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", task: "t" } };
+  const ok: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(ok))), ok);
 });
 

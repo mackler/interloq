@@ -328,7 +328,7 @@ const repo = tempRepo();
 const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
 
 const main = Effect.gen(function* () {
-  const manager = yield* makeRunManager((ui) => ({ ...testWiring(repo, scenario).wiring, ui: Effect.succeed(ui) }), repo, `e2e-${process.env.SCENARIO ?? "converge"}`);
+  const manager = yield* makeRunManager((ui) => ({ ...testWiring(repo, scenario).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${process.env.SCENARIO ?? "converge"}`);
   // As src/web.ts: the tabs are closed by a finalizer registered after serveEffect, so it runs first (finding 15).
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);

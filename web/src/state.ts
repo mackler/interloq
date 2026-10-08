@@ -110,6 +110,8 @@ export type Widget = Readonly<{ asked: Asked; options: readonly Choice[]; choice
 export type RunView = Readonly<{
   id: number;
   project: string;
+  /** The project's identification from Started (issue #29): its host directory, or the path as given. */
+  location: string;
   task: string;
   nextSeq: number;
   left: readonly Message[];
@@ -159,6 +161,8 @@ export type Listing = Readonly<{ path: string; parent: string | null; dirs: read
 export type ViewState = Readonly<{
   connection: "connecting" | "open" | "reconnecting" | "failed";
   cwd: string;
+  /** The identification of the server's working directory from the last hello (issue #29); null before the first. */
+  location: string | null;
   /** The id of the run in progress on the server, as the last hello or event reported it. */
   current: number | null;
   /** The server's incarnation from the last hello (finding 12); null before the first. */
@@ -175,7 +179,7 @@ export type ViewState = Readonly<{
   unsent: readonly string[];
 }>;
 
-export const initialState: ViewState = { connection: "connecting", cwd: "", current: null, incarnation: null, run: null, last: null, needsReconnect: false, notices: [], listing: null, unsent: [] };
+export const initialState: ViewState = { connection: "connecting", cwd: "", location: null, current: null, incarnation: null, run: null, last: null, needsReconnect: false, notices: [], listing: null, unsent: [] };
 
 const AGENT: Record<"claude" | "codex", string> = { claude: "Claude", codex: "Codex" };
 const sameSubject = (a: SubjectId, b: SubjectId): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -185,6 +189,7 @@ const samePhase = (a: Phase, b: Phase): boolean => JSON.stringify(a) === JSON.st
 export const emptyRun = (id: number): RunView => ({
   id,
   project: "",
+  location: "",
   task: "",
   nextSeq: 0,
   left: [],
@@ -595,7 +600,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   const next = ((): RunView => {
     switch (event._tag) {
       case "Started":
-        return { ...r, project: event.project, task: event.task };
+        return { ...r, project: event.project, location: event.location, task: event.task };
       case "Said":
         return event.text.trim() === "" ? r : withLeft(r, message(r, time, "program", event.text, "text"));
       case "Asked": {
@@ -645,7 +650,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // Another start of the server: its run numbers restart, so the views of the earlier server's runs are dropped.
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const runs = restarted ? { run: null, last: null } : {};
-      return { ...state, ...runs, connection: "open", cwd: message.cwd, current: message.current, incarnation: message.incarnation, needsReconnect: false };
+      return { ...state, ...runs, connection: "open", cwd: message.cwd, location: message.location, current: message.current, incarnation: message.incarnation, needsReconnect: false };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events.

@@ -105,7 +105,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
       const { queue: buffered, overflowed } = yield* subscribeBounded(manager, queueBound);
       const { runs, ui } = yield* manager.replay;
-      yield* send({ type: "hello", cwd: manager.cwd, current: yield* manager.current, incarnation: manager.incarnation });
+      yield* send({ type: "hello", cwd: manager.cwd, location: manager.location, current: yield* manager.current, incarnation: manager.incarnation });
       yield* send({ type: "replay", runs, ui });
       const forward = Effect.gen(function* () {
         for (;;) {

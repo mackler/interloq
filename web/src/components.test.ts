@@ -92,8 +92,8 @@ describe("Claude's messages", () => {
   test("the panel shows Claude's prose from the reducer as Claude's article, without the prefix", () => {
     const time = "2026-09-27T14:00:00.000Z";
     const state = [
-      { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
-      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", task: "t" } },
+      { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
+      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } },
     ].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
     const root = show(ChatPanel, { title: "You and Interloq", messages: state.run?.left ?? [], empty: "none" });
@@ -470,9 +470,9 @@ describe("TimelineRail", () => {
     ];
     const time = "2026-09-29T00:00:00Z";
     const messages: ServerMessage[] = [
-      { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
+      { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
-      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", task: "t" } },
+      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
       ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
     ];
     const s = messages.reduce(reduce, initialState);
@@ -586,7 +586,7 @@ describe("App and the draft", () => {
       flushSync();
     }
   }
-  const started = { _tag: "Started", project: "/p", task: "t" };
+  const started = { _tag: "Started", project: "/p", location: "/p", task: "t" };
   const TIME = "2026-09-27T14:00:00.000Z";
   const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
   const asked = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt) });
@@ -595,7 +595,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", cwd: "/p", current: 1, incarnation: "a" });
+    ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
     return { root, ws };
   };
   const field = (root: ParentNode) => one(root, "[name=answer]") as HTMLInputElement;
@@ -614,7 +614,7 @@ describe("App and the draft", () => {
     one(root, "button[name=conversation]").click();
     flushSync();
     expect(root.querySelector('section[aria-label^="Decision 1"]')).toBe(null);
-    ws.receive({ type: "hello", cwd: "/p", current: 2, incarnation: "a" });
+    ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 2, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
   });
@@ -721,7 +721,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     type(field(root), "draft for question one");
-    ws.receive({ type: "hello", cwd: "/p", current: 1, incarnation: "a" });
+    ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
     expect(field(root).value).toBe("");
     expect(root.textContent).toMatch(/your unsent text was discarded: «draft for question one»/);
@@ -1311,9 +1311,9 @@ test("the activity line shows retry 2 of 3", () => {
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
-    { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
+    { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
     { type: "replay", ui: [], runs: [] },
-    { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", task: "t" } },
+    { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
     ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
   ];
   const s = messages.reduce(reduce, initialState);
@@ -1514,9 +1514,9 @@ describe("TimelineRail: where the indicator is", () => {
     const resumed = report("S1", prompts.REPORT_STEP_STATUSES[0], plan("started", "done"));
     const rail = (list: UiEvent[]) => {
       const messages: ServerMessage[] = [
-        { type: "hello", cwd: "/p", current: 1, incarnation: "a" },
+        { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
         { type: "replay", ui: [], runs: [] },
-        { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", task: "t" } },
+        { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
         ...list.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time: CALL, event: { _tag: "Notified", event } })),
       ];
       const run = messages.reduce(reduce, initialState).run!;
@@ -1864,11 +1864,11 @@ test("the seam of the phase names: the rail and the bands show phaseName's names
   const time = "2026-10-07T14:00:00.000Z";
   const phases = foreseenPhases(false, 2);
   const events: unknown[] = [
-    { _tag: "Started", project: "/p", task: "t" },
+    { _tag: "Started", project: "/p", location: "/p", task: "t" },
     { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },
     ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Said", text: `line ${i}` }]),
   ];
-  const state = [{ type: "hello", cwd: "/p", current: 1, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
+  const state = [{ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
   const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
   const rail = showRail({ busy: false, timeline: state.run?.timeline ?? [] });
   expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);

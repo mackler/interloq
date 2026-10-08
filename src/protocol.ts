@@ -12,7 +12,14 @@ import type { Choice, PromptKind } from "./userPrompts.ts";
 export type Asked = Readonly<{ _tag: "Asked"; prompt: number; text: string; kind: PromptKind; mode: "ask" | "message"; choices: readonly Choice[]; free: "none" | "line" | "message" }>;
 /** What happened in a run, in order: the run's Ui calls and its start and end. */
 export type RunEvent =
-  | Readonly<{ _tag: "Started"; project: string; task: string }>
+  | Readonly<{
+      _tag: "Started";
+      /** The path the user typed, which the records name. */
+      project: string;
+      /** The project's identification (issue #29): its host directory, or the path as given where that cannot be determined. */
+      location: string;
+      task: string;
+    }>
   | Readonly<{ _tag: "Said"; text: string }>
   | Asked
   | Readonly<{ _tag: "Answered"; prompt: number; text: string }>
@@ -38,7 +45,14 @@ export type ClientMessage =
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>;
 export type ServerMessage =
-  | Readonly<{ type: "hello"; cwd: string; current: number | null; incarnation: string }>
+  | Readonly<{
+      type: "hello";
+      cwd: string;
+      /** The identification of the server's working directory (issue #29), computed once when the server starts. */
+      location: string;
+      current: number | null;
+      incarnation: string;
+    }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
   | Readonly<{ type: "listing"; path: string; parent: string | null; dirs: readonly string[]; error: string | null }>
@@ -127,7 +141,7 @@ export const UiEventSchema = Schema.Union([
 
 const ChoiceSchema = Schema.Struct({ label: Str, sends: Str });
 export const RunEventSchema = Schema.Union([
-  tagged("Started", { project: Str, task: Str }),
+  tagged("Started", { project: Str, location: Str, task: Str }),
   tagged("Said", { text: Str }),
   tagged("Asked", {
     prompt: Int,
@@ -156,7 +170,7 @@ export const ClientMessageSchema = Schema.Union([
   typed("ui", { incarnation: Str, run: Int, flag: UiFlagSchema }),
 ]);
 export const ServerMessageSchema = Schema.Union([
-  typed("hello", { cwd: Str, current: Schema.NullOr(Int), incarnation: Str }),
+  typed("hello", { cwd: Str, location: Str, current: Schema.NullOr(Int), incarnation: Str }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("listing", { path: Str, parent: Schema.NullOr(Str), dirs: Schema.Array(Str), error: Schema.NullOr(Str) }),

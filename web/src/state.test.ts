@@ -11,8 +11,8 @@ import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
-const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", current, incarnation: "a" });
-const started: RunEvent = { _tag: "Started", project: "/p", task: "the task" };
+const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", location: "/p", current, incarnation: "a" });
+const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task" };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
 const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text) });
@@ -481,13 +481,13 @@ describe("runs, replay and gaps", () => {
 // Finding 12 of docs/gui-review.md: a hello from another incarnation clears the view of the earlier server's runs.
 describe("a server restart", () => {
   test("a hello with a new incarnation clears the old run's view; the same incarnation keeps it", () => {
-    const withRun = reduce(reduce(initialState, { type: "hello", cwd: "/w", current: 3, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: { _tag: "Started", project: "/p", task: "t" } }] }] });
+    const withRun = reduce(reduce(initialState, { type: "hello", cwd: "/w", location: "/w", current: 3, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: { _tag: "Started", project: "/p", location: "/p", task: "t" } }] }] });
     expect(withRun.run?.id).toBe(3);
     expect(withRun.incarnation).toBe("a");
-    expect(reduce(withRun, { type: "hello", cwd: "/w", current: 3, incarnation: "a" }).run?.id).toBe(3);
-    const restarted = reduce(withRun, { type: "hello", cwd: "/w", current: null, incarnation: "b" });
+    expect(reduce(withRun, { type: "hello", cwd: "/w", location: "/w", current: 3, incarnation: "a" }).run?.id).toBe(3);
+    const restarted = reduce(withRun, { type: "hello", cwd: "/w", location: "/w", current: null, incarnation: "b" });
     expect([restarted.run, restarted.last, restarted.incarnation]).toEqual([null, null, "b"]);
-    const next = reduce(restarted, { type: "event", run: 1, seq: 0, time: at(0), event: { _tag: "Started", project: "/p", task: "u" } });
+    const next = reduce(restarted, { type: "event", run: 1, seq: 0, time: at(0), event: { _tag: "Started", project: "/p", location: "/p", task: "u" } });
     expect(next.run?.id).toBe(1);
   });
 });
@@ -1367,7 +1367,7 @@ describe("the shared state of a run's page", () => {
     expect(s.run?.ui).toEqual(state(0));
   });
   test("a hello of another incarnation drops the state with the runs", () => {
-    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", cwd: "/p", current: null, incarnation: "b" }]);
+    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", cwd: "/p", location: "/p", current: null, incarnation: "b" }]);
     expect(s.run).toBe(null);
   });
   test("after any order of the server's states, the view holds the state of the highest version", () => {

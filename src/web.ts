@@ -46,7 +46,7 @@ const wiringOf = (ui: WebUi): Wiring => ({
 const incarnation = `${Date.now().toString(36)}-${randomUUID()}`;
 
 const main = Effect.gen(function* () {
-  const manager = yield* makeRunManager(wiringOf, process.cwd(), incarnation);
+  const manager = yield* makeRunManager(wiringOf, process.cwd(), [], incarnation);
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);
   // Registered after serveEffect, so that it runs before the HTTP shutdown, which would wait for the open tabs (finding 15).

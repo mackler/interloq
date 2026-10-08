@@ -3,10 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Deferred, Effect, Exit, Fiber, Result } from "effect";
+import { Deferred, Effect, Exit, Fiber, Result, Schema } from "effect";
 import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
+import { ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
@@ -20,9 +22,9 @@ const noQuestions = { questions_for_user: [] };
 const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 const withQuestion: TestOptions = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 
-const managerOf = async (repo: string, scripts: TestOptions[]): Promise<RunManager> => {
+const managerOf = async (repo: string, scripts: TestOptions[], mounts: MountTable = []): Promise<RunManager> => {
   const queue = [...scripts];
-  return Effect.runPromise(makeRunManager((ui) => ({ ...testWiring(repo, queue.shift() ?? {}).wiring, ui: Effect.succeed(ui) }), repo, "test").pipe(Effect.provide(platformLayer)));
+  return Effect.runPromise(makeRunManager((ui) => ({ ...testWiring(repo, queue.shift() ?? {}).wiring, ui: Effect.succeed(ui) }), repo, mounts, "test").pipe(Effect.provide(platformLayer)));
 };
 const dist = (): string => {
   const d = tempDir("pr-dist-");
@@ -94,7 +96,7 @@ test("on connect: hello and an empty replay", async () => {
   await serve(await managerOf(repo, []), dist(), async (port) => {
     const c = await connect(port);
     await until("two messages", () => c.messages.length >= 2);
-    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", cwd: repo, current: null, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
+    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", cwd: repo, location: repo, current: null, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
     c.close();
   });
 });
@@ -381,9 +383,10 @@ test("the closing finalizer registered before serveEffect runs after the HTTP sh
 test("a tab that falls behind by its queue's bound is told, its socket is closed, and a reconnect gets the whole replay", async () => {
   const listeners: ((b: Broadcast) => Effect.Effect<void>)[] = [];
   const time = "2026-09-27T14:00:00.000Z";
-  const events: Stamped[] = [{ time, event: { _tag: "Started", project: "/p", task: "t" } }, ...Array.from({ length: 20 }, (_, i): Stamped => ({ time, event: { _tag: "Said", text: `line ${i}` } }))];
+  const events: Stamped[] = [{ time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } }, ...Array.from({ length: 20 }, (_, i): Stamped => ({ time, event: { _tag: "Said", text: `line ${i}` } }))];
   const fake: RunManager = {
     cwd: "/p",
+    location: "/p",
     incarnation: "test",
     subscribe: (listener) => Effect.acquireRelease(Effect.sync(() => void listeners.push(listener)), () => Effect.sync(() => void listeners.splice(listeners.indexOf(listener), 1))).pipe(Effect.asVoid),
     replay: Effect.succeed({ runs: [{ id: 1, events }], ui: [] }),
@@ -559,5 +562,25 @@ test("two real decisions sharing entry e1: interleaved with run events, every ta
     a.send({ type: "stop", incarnation, run: 1 });
     await until("the end of run 1", () => hasEnded(a, 1));
     for (const x of [a, b, c]) x.close();
+  });
+});
+
+// Issue #29, the seam: the location the server puts in hello and on Started is the one the page's reducer folds.
+test("the identification the server sends in hello and on Started, decoded and folded by the page, is the manager's", async () => {
+  const repo = tempRepo();
+  const mounts: MountTable = [{ root: "/host/proj", point: path.dirname(repo) }];
+  const manager = await managerOf(repo, [converging], mounts);
+  await serve(manager, dist(), async (port) => {
+    const c = await connect(port);
+    await until("hello and replay", () => c.messages.length >= 2);
+    c.send({ type: "start", project: repo, task: "t" });
+    await until("the run's end", () => hasEnded(c, 1));
+    const decoded = c.messages.map((m) => Schema.decodeUnknownSync(ServerMessageSchema)(m));
+    const state = decoded.reduce(reduce, initialState);
+    assert.equal(state.location, manager.location);
+    assert.equal(state.location, identify(mounts, repo));
+    assert.equal(state.run?.location, identify(mounts, repo));
+    assert.equal(state.run?.project, repo);
+    c.close();
   });
 });

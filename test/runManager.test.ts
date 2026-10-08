@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { Clock, Deferred, Effect, Exit, Fiber, Layer, Queue, Ref, Scope } from "effect";
 import { claudePlannerLayer } from "../src/claude.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
+import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
 import { program } from "../src/program.ts";
 import type { RunEvent } from "../src/protocol.ts";
@@ -21,9 +22,9 @@ const noQuestions = { questions_for_user: [] };
 type Harness = { manager: RunManager; received: EventBroadcast[]; uiReceived: UiBroadcast[]; scope: Scope.Closeable; repo: string; scripts: TestOptions[] };
 
 /** A manager whose runs use, in turn, the scripted wiring of each options object; a listener collects the broadcast. */
-const harness = async (repo: string, scripts: TestOptions[], wiringOf = (options: TestOptions) => testWiring(repo, options).wiring): Promise<Harness> => {
+const harness = async (repo: string, scripts: TestOptions[], wiringOf = (options: TestOptions) => testWiring(repo, options).wiring, mounts: MountTable = []): Promise<Harness> => {
   const queue = [...scripts];
-  const manager = await run(makeRunManager((ui) => ({ ...wiringOf(queue.shift() ?? {}), ui: Effect.succeed(ui) }), repo, "test").pipe(Effect.provide(platformLayer)));
+  const manager = await run(makeRunManager((ui) => ({ ...wiringOf(queue.shift() ?? {}), ui: Effect.succeed(ui) }), repo, mounts, "test").pipe(Effect.provide(platformLayer)));
   const received: EventBroadcast[] = [];
   const uiReceived: UiBroadcast[] = [];
   const scope = await run(Scope.make());
@@ -405,4 +406,27 @@ test("a run's shared state leaves with the run when it is no longer the last one
   assert.deepEqual(replay.runs.map((r) => r.id), [third]);
   assert.deepEqual(replay.ui.map((u) => u.run), [third]);
   assert.match(((await run(h.manager.setUi(h.manager.incarnation, first, { scope: entryScope(1, "e1"), open: false }))) as Refusal).refused, /that run has ended/);
+});
+
+// Issue #29: the manager identifies its working directory and every run's project by the mount table it was given.
+test("a manager with a table that identifies its project reports the host directory, in its location and on Started; with an empty table, the path", async () => {
+  const repo = tempRepo();
+  const mounts: MountTable = [{ root: "/host/proj", point: path.dirname(repo) }];
+  const expected = identify(mounts, repo);
+  assert.equal(expected, `/host/proj/${path.basename(repo)}`);
+  const h = await harness(repo, [converging], undefined, mounts);
+  assert.equal(h.manager.location, expected);
+  const id = await started(h, repo);
+  await ended(h, id);
+  const start = eventsOf(h, id).find((e) => e._tag === "Started");
+  assert.deepEqual(start, { _tag: "Started", project: repo, location: expected, task: "task" });
+  await run(Scope.close(h.scope, Exit.void));
+
+  const plainRepo = tempRepo();
+  const p = await harness(plainRepo, [converging]);
+  assert.equal(p.manager.location, plainRepo);
+  const pid = await started(p, plainRepo);
+  await ended(p, pid);
+  assert.deepEqual(eventsOf(p, pid).find((e) => e._tag === "Started"), { _tag: "Started", project: plainRepo, location: plainRepo, task: "task" });
+  await run(Scope.close(p.scope, Exit.void));
 });
