@@ -5,7 +5,7 @@
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 import { NoTracker, type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
-import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled, stageLabelsOf } from "./githubIssues.ts";
+import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import type { Config, GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
@@ -89,14 +89,18 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
         },
       });
 
-    const read = (id: ItemId): Effect.Effect<TrackerItem, TrackerError> => Effect.flatMap(issueOf(id), (issue) => Effect.fromResult(itemOfIssue(issue, id)));
+    /** The issue an id names with the item it is: an issue read refuses (no state, or two) is refused here too, so that no write reaches it. */
+    const itemIssueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GithubIssue & Readonly<{ url: string }>; item: TrackerItem }>, TrackerError> =>
+      Effect.flatMap(issueOf(id), (issue) => Effect.map(Effect.fromResult(itemOfIssue(issue, id)), (item) => ({ issue, item })));
+
+    const read = (id: ItemId): Effect.Effect<TrackerItem, TrackerError> => Effect.map(itemIssueOf(id), ({ item }) => item);
 
     const patch = (url: string, id: ItemId, body: Readonly<Record<string, unknown>>): Effect.Effect<void, TrackerError> =>
       Effect.asVoid(send(HttpClientRequest.patch(url).pipe(HttpClientRequest.bodyJsonUnsafe(body)), { kind: "item", id }));
 
     /** The developer's text is never replaced: withRefinement appends the section or replaces it alone. */
     const writeRefinement = (id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError> =>
-      Effect.flatMap(issueOf(id), (issue) => {
+      Effect.flatMap(itemIssueOf(id), ({ issue }) => {
         const body = withRefinement(issue.body ?? "", refinement);
         return Result.isFailure(body) ? Effect.fail(new TrackerBodyInvalid({ id, message: `the issue's section "${OPENING_LINE}" is malformed: ${body.failure.reason}` })) : patch(issue.url, id, { body: body.success });
       });
@@ -107,11 +111,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
      * as unrefined. A label added on GitHub between the read and the PATCH is overwritten.
      */
     const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> =>
-      Effect.flatMap(issueOf(id), (issue) => {
-        const names = labelNamesOf(issue);
-        const stages = stageLabelsOf(config.labels, names);
-        return stages.length > 1 ? Effect.fail(new TrackerStateAmbiguous({ id, labels: stages })) : patch(issue.url, id, { labels: relabeled(names, config.labels, state) });
-      });
+      Effect.flatMap(itemIssueOf(id), ({ issue }) => patch(issue.url, id, { labels: relabeled(labelNamesOf(issue), config.labels, state) }));
 
     const tracker: TrackerShape = { list, read, writeRefinement, setState };
     return tracker;
