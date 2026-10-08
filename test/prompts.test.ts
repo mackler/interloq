@@ -349,6 +349,9 @@ test("every prompt that asks for the whole plan states the step duration rule, i
   const uses = source.split("${PLAN_FORMAT}").length - 1;
   assert.ok(uses >= 5);
   assert.equal(source.split("${PLAN_FORMAT}\n${PLAN_STEP_DURATION_RULE}").length - 1, uses, "a prompt carries PLAN_FORMAT without the step duration rule");
+  // Issue #117: the same prompts tell the plan writer that each execution phase begins a session that has not seen the planning.
+  for (const text of planProducing()) assert.ok(text.includes(prompts.PLAN_STEP_SELF_CONTAINED_RULE), text.slice(0, 80));
+  assert.equal(source.split("${PLAN_FORMAT}\n${PLAN_STEP_DURATION_RULE}\n${PLAN_STEP_SELF_CONTAINED_RULE}").length - 1, uses, "a prompt carries PLAN_FORMAT without the self-contained step rule");
   // The seam with the environment of every call: the same ceiling.
   const { claudeEnv } = await import("../src/claude.ts");
   assert.equal(claudeEnv({}, prompts.COMMAND_CEILING_MS).BASH_MAX_TIMEOUT_MS, String(prompts.COMMAND_CEILING_MS));

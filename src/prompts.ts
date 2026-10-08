@@ -673,6 +673,11 @@ Return an empty questions_for_user array.`;
 export const COMMAND_CEILING_MS = 1_200_000;
 
 /** The rule of every prompt that asks for the whole plan (issue #78): no step outlasts one shell command. */
+/**
+ * Issue #117: each execution phase runs in a Claude Code session of its own, which has not seen the planning; the plan's
+ * step texts carry what its implementer cannot recover from the files the execution prompt names and the codebase.
+ */
+export const PLAN_STEP_SELF_CONTAINED_RULE = `Each execution phase begins a new Claude Code session, which carries out the phase's remaining steps having read only the task, plan-review/requirements.md, plan-review/user-decisions.md and plan-review/plan.json, and not this planning. So write each step's text to state the facts and the reasons its choices depend on (the files, the decided behavior, why an approach was chosen over another) wherever the implementer could not recover them from those files and the codebase.`;
 export const PLAN_STEP_DURATION_RULE = `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. No step may end with a command expected to run longer than that, such as a full test suite that may outlast it; a step's verification runs only the suites its change touches.`;
 /** The execution prompt's sentences on long commands (issue #78, requirements Q6). */
 export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. Start a command that may run longer than a few minutes, such as a full test suite, in the background with the Bash tool, and wait for it to end before you report the step done. While it runs, read and search, but do not edit any file: the suites read the working tree, and a result must belong to the files as they were when it started.`;
@@ -693,6 +698,7 @@ export function initialPlanPrompt(task: string, withRequirements: boolean): stri
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
 ${requirements}${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
+${PLAN_STEP_SELF_CONTAINED_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
@@ -705,6 +711,7 @@ Revise the plan in plan-review/plan.json for the remaining work: keep the steps 
 ${PLAN_STATUSES}
 ${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
+${PLAN_STEP_SELF_CONTAINED_RULE}
 ${PLAN_ID_RULE}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
@@ -713,6 +720,7 @@ ${QUESTION_OPTIONS_RULE}`;
 export const planApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file and amend the plan in plan-review/plan.json where a decision requires it.
 ${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
+${PLAN_STEP_SELF_CONTAINED_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file.
 Return an empty questions_for_user array.`;
@@ -734,6 +742,7 @@ export function planRespondPrompt(phase: number, round: number): string {
 ${respondRules("you amend the plan for it")}
 ${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
+${PLAN_STEP_SELF_CONTAINED_RULE}
 ${PLAN_ID_RULE}
 Do not modify any file.`;
 }
@@ -1041,6 +1050,7 @@ Revise the plan in plan-review/plan.json: keep the steps with status 'done', add
 ${PLAN_STATUSES} An unfinished step counts as remaining.
 ${PLAN_FORMAT}
 ${PLAN_STEP_DURATION_RULE}
+${PLAN_STEP_SELF_CONTAINED_RULE}
 ${PLAN_ID_RULE}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
