@@ -288,6 +288,31 @@ program as a tested function and as the fallback if a future Effect version gene
 No JSON Schema keyword of the generated documents was rejected. `definitions` was empty for all seven,
 so nothing had to be inlined.
 
+## HTTP client (read 8 Oct 2026, Effect 4.0.1, issue #120: the tracker port)
+
+Imports: `import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"`
+(http/index.d.ts:19, 39, 44, 49, 54). The live client is `FetchHttpClient.layer`, over Node's global `fetch`
+(present from Node 22.18); `@effect/platform-node/NodeHttpClient` `layerUndici` (platform-node/dist/NodeHttpClient.d.ts:124)
+was read and is not used, since it adds nothing the tracker needs. A client made by `HttpClient.make` does not fail on a
+non-2xx status (only `filterStatusOk` does), so the adapter reads `status` itself.
+
+| Name | File:line | Notes |
+|---|---|---|
+| `HttpClient.HttpClient` | http/HttpClient.d.ts:112 (service), 49 (interface), 73 (`execute`) | `execute(request): Effect<HttpClientResponse, HttpClientError>`; the tracker adapter requires it, so a test provides a stub |
+| `HttpClient.make(f)` | http/HttpClient.d.ts:485 | `f: (request, url: URL, signal, fiber) => Effect<HttpClientResponse, HttpClientError>`; `url` carries the request's URL parameters. The test stub is built with it |
+| `HttpClientRequest.HttpClientRequest` | http/HttpClientRequest.d.ts:47 | `method` :49, `url` :50, `urlParams` :51, `headers` :53 (`Headers.Headers`, http/Headers.d.ts:53, a record of lower-case names, `Redactable`), `body` :54 (`HttpBody.HttpBody`; a JSON body is `HttpBody.Uint8Array`, http/HttpBody.d.ts:201, with `text` and `body`) |
+| `HttpClientRequest.get(url)` / `patch(url)` | http/HttpClientRequest.d.ts:121 / 145 | |
+| `HttpClientRequest.setHeader(key, value)` | http/HttpClientRequest.d.ts:248 | dual |
+| `HttpClientRequest.bearerToken(token)` | http/HttpClientRequest.d.ts:373 | sets `Authorization: Bearer <token>`; takes a string or a `Redacted` |
+| `HttpClientRequest.setUrlParams(input)` | http/HttpClientRequest.d.ts:556 | replaces parameters of the same name |
+| `HttpClientRequest.bodyJsonUnsafe(body)` | http/HttpClientRequest.d.ts:773 | synchronous; encoding may throw, which a plain JSON object of strings cannot. `bodyJson` (:739) returns an Effect failing with `HttpBodyError` and is not used |
+| `HttpClientResponse.HttpClientResponse` | http/HttpClientResponse.d.ts:66 | `status` :74; `headers`, `json: Effect<Json, HttpClientError>` and `text` from `HttpIncomingMessage` (http/HttpIncomingMessage.d.ts:58, 60, 61) |
+| `HttpClientResponse.fromWeb(request, response)` | http/HttpClientResponse.d.ts:85 | a web `Response` as a client response; the test stub's answers |
+| `HttpClientError.HttpClientError` | http/HttpClientError.d.ts:23 | `new HttpClientError({ reason })`; `reason: HttpClientErrorReason` (:258), `RequestError` (:242: `TransportError`, `EncodeError`, `InvalidUrlError`) or `ResponseError` (:250: `StatusCodeError`, `DecodeError`, `EmptyBodyError`). Every reason holds the request, whose headers carry the token, so the adapter never copies an `HttpClientError` into its own errors |
+| `HttpClientError.TransportError` | http/HttpClientError.d.ts:62 | `{ request, cause?, description? }`; the stub's scripted network failure |
+| `HttpClientError.StatusCodeError` / `DecodeError` / `EmptyBodyError` | http/HttpClientError.d.ts:152 / 183 / 214 | read; not raised by a client without `filterStatusOk`, except `DecodeError` from `json` |
+| `FetchHttpClient.layer` | http/FetchHttpClient.d.ts:76 | `Layer<HttpClient>`, the live client (`src/trackerLive.ts`) |
+
 ## HTTP server and WebSocket (read 26 Sep 2026, web GUI stage 3.4)
 
 Imports: `import { HttpPlatform, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http"`
