@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
-import { interviewSays, recordHeading, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
-import { issue, para, plain, questionEntry, respond, shownOf, term } from "./helpers.ts";
+import { interviewSays, recordHeading, renderTerms, termItem, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
+import { issue, para, plain, questionEntry, readTerms, respond, senseRead, shownOf, term } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 import type { PresentedQuestion } from "../src/question.ts";
 import type { LogEntry } from "../src/schema.ts";
@@ -181,4 +181,54 @@ test("issue #112: the Terms block of conversation.md numbers two senses in order
   assert.ok(record.includes("- zod: A library.\n"), record);
   assert.ok(record.includes("- port:\n  1. \\# The number in the address.\n  2. The socket the server listens on.\n"), record);
   assert.equal(record.split("- port:").length, 2);
+});
+
+// W1-R1-1 and P2-R1-1 of work review 1 (issue #112): a sense of several lines, a blank line or a link reference definition
+// whose label spans two lines included, stays whole inside its item, and every later sense stays in the numbered list.
+const MULTILINE = ["First paragraph.\n\nSecond paragraph.", "Another meaning."];
+const LINK_LABEL = "First paragraph.\n\n[label\nname]: https://example.com\n\nLast paragraph.";
+const ONE_OF_TWO_PARAGRAPHS = "One paragraph.\n\nAnd another.";
+const multiline = (): PresentedQuestion => ({
+  number: 1,
+  origin: { kind: "relayed" },
+  context: { blocks: para("c"), by: "agent" },
+  explanations: [
+    shownOf({ id: "a", term: "port", senses: MULTILINE }),
+    shownOf({ id: "b", term: "cache", senses: [LINK_LABEL, "A store kept in memory."] }),
+    shownOf({ id: "c", term: "zod", senses: [ONE_OF_TWO_PARAGRAPHS] }),
+  ],
+  question: [...plain("Use "), term("port", "a"), ...plain(", "), term("cache", "b"), ...plain(" and "), term("zod", "c"), ...plain("?")],
+  options: [],
+  details: [],
+  decision: null,
+});
+
+test("W1-R1-1, P2-R1-1: a multiline sense stays whole inside its item in the Terms block, read back as Markdown", async () => {
+  const { renderQuestionRecord } = await import("../src/render.ts");
+  const terms = readTerms(renderQuestionRecord(multiline()));
+  assert.deepEqual(terms.get("port"), MULTILINE.map(senseRead));
+  assert.deepEqual(terms.get("cache"), [senseRead(LINK_LABEL), "A store kept in memory."]);
+  assert.deepEqual(terms.get("zod"), [senseRead(ONE_OF_TWO_PARAGRAPHS)]);
+});
+
+test("W1-R1-2: the terms list of conversation.md nests each term under its entry, multiline senses whole", () => {
+  const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }, { id: "c", term: "zod", senses: [ONE_OF_TWO_PARAGRAPHS] }], context: para("c"), question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
+  const rendered = renderTerms([entry, { ...entry, id: "Q2", explanations: [] }]);
+  assert.ok(Result.isSuccess(rendered));
+  const terms = readTerms(rendered.success);
+  assert.deepEqual(terms.get("port"), MULTILINE.map(senseRead));
+  assert.deepEqual(terms.get("zod"), [senseRead(ONE_OF_TWO_PARAGRAPHS)]);
+  assert.match(rendered.success, /- \*\*\[Q2\]\*\* no term/);
+});
+
+// The seam (W1-R1-2): the Terms block of the record and the terms list write a term as the one item termItem writes.
+test("W1-R1-2: the Terms block and the terms list write a term as the same item", async () => {
+  const { renderQuestionRecord } = await import("../src/render.ts");
+  const explanation = shownOf({ id: "a", term: "port", senses: MULTILINE });
+  const item = termItem(explanation, "");
+  assert.ok(renderQuestionRecord({ ...multiline(), explanations: [explanation], question: [...plain("Use "), term("port", "a"), ...plain("?")] }).includes(`${item}\n`));
+  const rendered = renderTerms([{ id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }], context: para("c"), question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
+  assert.ok(Result.isSuccess(rendered));
+  const nested = rendered.success.split("\n").slice(1).map((l) => l.replace(/^ {2}/u, "")).join("\n");
+  assert.ok(nested.includes(item), nested);
 });

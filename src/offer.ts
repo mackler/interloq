@@ -10,7 +10,7 @@ import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, t
 import { type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
-import { renderChoice, renderQuestionRecord } from "./render.ts";
+import { renderChoice, renderQuestionRecord, termItem } from "./render.ts";
 import { Decider, Store, Ui } from "./services.ts";
 
 // ---- the offer (D2) ------------------------------------------------------------------------------------
@@ -194,7 +194,7 @@ export const askOffering = <E>(
       if (isDecide(answer)) {
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
-        const shown = { context: blocksMarkdown(explained.context.blocks), explanations: explained.explanations, details: blocksMarkdown(explained.details ?? []) };
+        const shown = { context: blocksMarkdown(explained.context.blocks), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: blocksMarkdown(explained.details ?? []) };
         const outcome = yield* decider.decide({ question: asked, options, number: question.number, shown });
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });

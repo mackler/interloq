@@ -568,3 +568,16 @@ test("S10: after a context call rephrases a permission question, the analysis ar
   const analyzed = probe.ui.notified.find((e) => e._tag === "DecisionAnalyzed");
   assert.deepEqual(analyzed?._tag === "DecisionAnalyzed" ? analyzed.presented.question : null, plain("Do you want Claude Code to run the command shown above?"));
 });
+
+// The seam of W1-R1-2 (work review 1, issue #112): the decision analysis's prompt carries each term as the one item the
+// Terms block of conversation.md writes, multiline senses included.
+test("W1-R1-2: the analysis prompt carries the terms as the items of the record's Terms block", async () => {
+  const { termItem } = await import("../src/render.ts");
+  const { shownExplanations } = await import("../src/question.ts");
+  const explanations = [{ id: "s", term: "service", senses: ["The program this task builds.\n\nIt runs as a server.", "In this task, the web server."] }];
+  const offered = numberedOptions(question.options);
+  const { prompt } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: para("The service keeps its data."), by: "agent" }, explanations, question: [...plain("Which database should the "), term("service", "s"), ...plain(" use?")], options: offered, decision: null });
+  const shown = shownExplanations(explanations);
+  assert.ok(shown._tag === "Success");
+  assert.ok(prompt.includes(termItem(shown.success[0], "")), prompt.slice(-1500));
+});

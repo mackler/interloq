@@ -114,6 +114,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Result.succeed` / `Result.fail` | 262 / 288 | `Result<A, E> = Success<A, E> \| Failure<A, E>` (line 57); the value is `.success`, the error `.failure` |
 | `Result.isSuccess` / `Result.isFailure` | 668 / 637 | type guards. A `Result` is not yieldable in `Effect.gen`: a failure is lifted with `Effect.fail(result.failure)` |
 | `Result.map` (read 28 Sep, issue #37) | 992 | dual: `map(self, f)` or `map(f)(self)`; transforms the success, keeps the failure. `validatingField` in src/subjects.ts |
+| `Result.all` (read 8 Oct 2026, W1-R1-2 of issue #112) | 2530 | `all(results)`: an array of Results becomes one Result of the array of successes, or the first failure. `renderTerms` in src/render.ts |
 | `Result.try` (read 26 Sep, web GUI stage 3.1) | Result.d.ts:540 (`try_ as try`, 578) | `({ try: LazyArg<A>, catch: (error: unknown) => E }) => Result<A, E>`; `JSON.parse` of a frame in src/protocol.ts |
 | `Effect.fromResult` | Effect.d.ts:2355 | `(result: Result<A, E>) => Effect<A, E>`: lifts a decoder's `Result` (src/store.ts, review stage 4.4; replaces the throw-based `lift`) |
 | `Effect.result` | Effect.d.ts:3422 | `(self: Effect<A, E, R>) => Effect<Result<A, E>, never, R>`: the typed failure as a value (used in `src/claude.ts` for the synchronous start of a call; review stage 4.3) |

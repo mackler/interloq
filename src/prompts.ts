@@ -1347,8 +1347,6 @@ export function progressLine(label: string | null, detail: string | null): strin
  */
 export const sensesNumbered = (senses: readonly string[]): readonly Readonly<{ number: number | null; text: string }>[] =>
   senses.map((text, i) => ({ number: senses.length === 1 ? null : i + 1, text }));
-/** The senses of a term on one line: the sense alone, or each after its number. */
-export const sensesInline = (senses: readonly string[]): string => sensesNumbered(senses).map((s) => (s.number === null ? s.text : `${s.number}. ${s.text}`)).join(" ");
 /** The count of a hidden panel's new messages on its button. */
 export function unseenBadge(n: number): string {
   return `· ${n} new`;
@@ -1370,8 +1368,11 @@ export type DecisionPromptQuestion = Readonly<{
   label: string;
   question: string;
   options: readonly Readonly<{ label: string; description: string }>[];
-  /** What the user was shown with the question (S37): its context and details as Markdown, and its explanations. */
-  shown?: Readonly<{ context: string; explanations: readonly Explanation[]; details: string }>;
+  /**
+   * What the user was shown with the question (S37): its context, details and terms as Markdown, the terms as the items
+   * of conversation.md's Terms block (termItem of src/render.ts; W1-R1-2 of work review 1).
+   */
+  shown?: Readonly<{ context: string; terms: string; details: string }>;
 }>;
 /** What the user was shown with a question, as the analysis prompt carries it under the options (S37); "" when nothing. */
 export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): string {
@@ -1379,7 +1380,7 @@ export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): strin
   const parts = [
     ...(shown.context.trim() === "" ? [] : [`The context paragraph:\n${shown.context.trim()}`]),
     ...(shown.details.trim() === "" ? [] : [shown.details.trim()]),
-    ...(shown.explanations.length === 0 ? [] : [`${TERMS_HEADING}\n${shown.explanations.map((e) => `${e.term}: ${sensesInline(e.senses)}`).join("\n")}`]),
+    ...(shown.terms.trim() === "" ? [] : [`${TERMS_HEADING}\n${shown.terms}`]),
   ];
   return parts.length === 0 ? "" : `\nWhat the user was shown with the question:\n${parts.join("\n\n")}\n`;
 }

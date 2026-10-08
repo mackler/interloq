@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { renderQuestionRecord } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks } from "./helpers.ts";
+import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead } from "./helpers.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import fc from "fast-check";
 import { Result } from "effect";
@@ -371,7 +371,9 @@ test("issue #112: an agreed question whose term has two senses is presented with
   assert.deepEqual(q.explanations.map((e) => [e.term, [...e.senses]]), [["port", port.senses]]);
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
   assert.ok(conversation.includes(`- port:\n  1. ${port.senses[0]}\n  2. ${port.senses[1]}\n`), conversation);
-  assert.equal(conversation.split("- port:").length, 2);
+  // Once in the question's Terms block (an item at the line's start); the terms list nests it under its entry (W1-R1-2).
+  assert.equal(conversation.split("\n- port:").length, 2);
+  assert.equal(conversation.split("\n  - port:").length, 2);
 });
 
 // Issue #112, the task's property: whatever division of an agreed question's words into pieces that refer to
@@ -383,7 +385,11 @@ test("property (issue #112): re-dividing an agreed question's pieces keeps its w
     { id: "b", term: "cache" },
   ] as const;
   const word = fc.constantFrom("the", "service", "uses", "a", "schema", "when", "it", "starts");
-  const sensesArb = fc.array(fc.constantFrom("A library that checks data.", "A store kept in memory.", "In this program, the input of a tool.", "1. A list that is no list."), { minLength: 1, maxLength: 3 });
+  // W1-R1-1 and P2-R1-1 of work review 1: senses with a line break, a blank line, and a link label spanning two lines.
+  const sensesArb = fc.array(
+    fc.constantFrom("A library that checks data.", "A store kept in memory.", "In this program, the input of a tool.", "1. A list that is no list.", "One line\nand the next.", "First paragraph.\n\nSecond paragraph.", "Before.\n\n[label\nname]: https://example.com\n\nAfter."),
+    { minLength: 1, maxLength: 3 },
+  );
   const divide = (text: string, cuts: readonly boolean[]): readonly Piece[] => {
     const tokens = text.split(/(zod|cache)/).filter((t) => t !== "");
     return tokens.flatMap((t, i) => {
@@ -417,10 +423,13 @@ test("property (issue #112): re-dividing an agreed question's pieces keeps its w
       assert.deepEqual(q.context.blocks.flatMap((b) => blocksText([b])), [contextText]);
       assert.deepEqual(q.explanations.map((e) => [e.term, [...e.senses]]), TERMS.map((t) => [t.term, senses[t.id]]));
       const record = renderQuestionRecord(q);
+      // The record read back as Markdown: each term once, its senses whole and in order (one sense on its line, several
+      // as an ordered list), whatever lines they hold.
+      const read = readTerms(record);
       for (const t of TERMS) {
         assert.equal(record.split(`- ${t.term}:`).length, 2, record);
-        const lines = senses[t.id].length === 1 ? [`- ${t.term}: ${senses[t.id][0]}`] : [`- ${t.term}:`, ...senses[t.id].map((s, i) => `  ${i + 1}. ${s.replace(/^(\d+)\./, "$1\\.")}`)];
-        assert.ok(record.includes(`${lines.join("\n")}\n`), `${JSON.stringify(lines)} in ${record}`);
+        assert.deepEqual(read.get(t.term), senses[t.id].map(senseRead), record);
+        assert.equal(record.includes(`- ${t.term}:\n  1. `), senses[t.id].length > 1, record);
       }
     }),
     { numRuns: 100 },

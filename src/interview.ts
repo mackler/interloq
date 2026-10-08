@@ -24,7 +24,7 @@ const explainTerms = (task: string, agreed: QuestionsFile["questions"]): Effect.
       yield* ui.say(prompts.termsLine);
       const written = yield* planningCall(prompts.termsPrompt(task), S.TermsWrite, "planning", "records", termsValidation<S.TermsWrite>(agreed));
       yield* saveTerms(written.output.entries);
-      yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${renderTerms(written.output.entries)}\n`);
+      yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${yield* Effect.fromResult(renderTerms(written.output.entries))}\n`);
       yield* reviewLoop(termsSubject(agreed));
     }).pipe(Effect.provideService(Planner, planner));
   });

@@ -641,3 +641,31 @@ export const shownOf = (e: S.Explanation): ShownExplanation => {
   assert.ok(Result.isSuccess(shown), `not a presented explanation: ${JSON.stringify(e)}`);
   return shown.success[0];
 };
+
+/**
+ * Issue #112 (W1-R1-1, P2-R1-1 of work review 1): the terms of a Markdown record read back as a reader's renderer shows
+ * them, for the tests alone: each list item that opens with a term's label, mapped to its senses' rendered texts in order
+ * (a nested ordered list's items, or the item's own text after its label), whitespace collapsed and every tag removed.
+ */
+export const readTerms = (markdown: string): ReadonlyMap<string, readonly string[]> => {
+  type Item = { text: string; tokens: readonly Tok[] };
+  type Tok = { type: string; ordered?: boolean; items?: readonly Item[]; tokens?: readonly Tok[] };
+  const shown = (tokens: readonly Tok[]): string =>
+    unescapeHtml(marked.parser(tokens as never, { async: false, gfm: true }).replace(/<[^>]*>/g, "")).replace(/\s+/g, " ").trim();
+  const found = new Map<string, readonly string[]>();
+  const visit = (tokens: readonly Tok[]): void =>
+    tokens.forEach((t) => {
+      if (t.type === "list" && t.ordered !== true)
+        (t.items ?? []).forEach((item) => {
+          const label = /^([^:\n]+):/u.exec(item.text);
+          const senses = item.tokens.find((x) => x.type === "list" && x.ordered === true);
+          if (label !== null) found.set(label[1], senses === undefined ? [shown(item.tokens).slice(label[0].length).trim()] : (senses.items ?? []).map((i) => shown(i.tokens)));
+          visit(item.tokens);
+        });
+      else if (t.tokens !== undefined) visit(t.tokens);
+    });
+  visit(marked.lexer(markdown) as unknown as readonly Tok[]);
+  return found;
+};
+/** A sense as readTerms gives it back: its whitespace collapsed. */
+export const senseRead = (text: string): string => text.replace(/\s+/g, " ").trim();

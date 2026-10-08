@@ -2,9 +2,11 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
-import { CONTEXT_BY_PROGRAM, originLine, questionTitle, sensesInline, TERMS_HEADING } from "./prompts.ts";
+import { CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type Piece, type PieceOption, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
-import { numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry } from "./question.ts";
+import { numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
+import { Result } from "effect";
+import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
 import type { Disposition, Issue, TermsEntry } from "./schema.ts";
 import type { PlannerResponse, Review } from "./schema.ts";
@@ -56,9 +58,16 @@ export function renderQuestions(list: RenderableQuestions): string {
   );
 }
 
-/** The explanations of the agreed questions' terms in conversation.md (S17). */
-export const renderTerms = (entries: readonly TermsEntry[]): string =>
-  entries.map((e) => `- **[${e.id}]** ${e.explanations.length === 0 ? "no term" : e.explanations.map((t) => `${t.term}: ${sensesInline(t.senses)}`).join("; ")}`).join("\n") + "\n";
+/**
+ * The explanations of the agreed questions' terms in conversation.md (S17): each entry's id, then its terms as items
+ * nested under it (termItem; issue #112, W1-R1-2 of work review 1). It is written after termsValidation has passed, so a
+ * failure of the senses is the program's own error, typed.
+ */
+export const renderTerms = (entries: readonly TermsEntry[]): Result.Result<string, QuestionInvalid> =>
+  Result.map(
+    Result.all(entries.map((e) => shownExplanations(e.explanations, e.id))),
+    (shown) => shown.map((terms, i) => (terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n"))).join("\n") + "\n",
+  );
 
 /** The lines said for an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
 export const interviewSays = (turn: TurnText): readonly string[] =>
@@ -107,23 +116,39 @@ export const renderChoice = (k: number, answer: string, option: string | null): 
 // ---- a question in conversation.md (S6, S8) --------------------------------------------------------------------------
 
 /**
- * The "Terms:" block of a question, from its explanations, one item per term labeled with its canonical name (decision Q6
- * of the run of 29-30 Sep 2026). Issue #112: one sense stays on the term's line; several are numbered under the label,
- * as a dictionary gives them, each written so that it opens no block.
+ * A sense as Markdown after a list marker whose content starts `column` spaces past the item's indent: the whole sense
+ * escaped by plainMarkdown at once, so that its lookahead across lines decides a link label that spans two (P2-R1-1),
+ * then every line after the first indented to that column, so that the sense stays inside its item (W1-R1-1). A blank
+ * line stays empty and is a paragraph break within the item.
  */
-const termLines = (q: PresentedQuestion): readonly string[] =>
-  q.explanations.map((e) => {
-    const [first, ...rest] = numberedSenses(e.senses);
-    if (rest.length === 0) return `${e.term}: ${first.text}`;
-    return [`${e.term}:`, ...[first, ...rest].map((s) => `  ${s.number}. ${plainMarkdown([s.text], { lineStart: true, lineEnd: true, after: "" })}`)].join("\n");
-  });
+const senseMarkdown = (text: string, indent: string, column: number): string =>
+  plainMarkdown([text], { lineStart: true, lineEnd: true, after: "" })
+    .split("\n")
+    .map((line, i) => (i === 0 || line === "" ? line : `${indent}${" ".repeat(column)}${line}`))
+    .join("\n");
+/**
+ * A term and its senses as one Markdown list item at `indent` (issue #112; W1-R1-1 and W1-R1-2 of work review 1), the one
+ * rendering of a term in conversation.md and in the decision analysis's prompt: its label once, one sense on the label's
+ * line, several numbered under it in the order given, as a dictionary gives them (numberedSenses).
+ */
+export const termItem = (explanation: ShownExplanation, indent: string): string => {
+  const [first, ...rest] = numberedSenses(explanation.senses);
+  if (rest.length === 0) return `${indent}- ${explanation.term}: ${senseMarkdown(first.text, indent, 2)}`;
+  return [
+    `${indent}- ${explanation.term}:`,
+    ...[first, ...rest].map((s) => {
+      const marker = `${s.number}. `;
+      return `${indent}  ${marker}${senseMarkdown(s.text, indent, 2 + marker.length)}`;
+    }),
+  ].join("\n");
+};
 /** The id by which a record names the question (S6): an agreed question's, a follow-up's, an issue's; null for the others. */
 export const recordIdOf = (origin: QuestionOrigin): string | null =>
   origin.kind === "clarification" || origin.kind === "followUp" ? origin.id : origin.kind === "pause" && "id" in origin ? origin.id : null;
 /** A question in conversation.md (S6): under its displayed number, with the record's id beside it, so that the two can be matched. */
 export const renderQuestionRecord = (q: PresentedQuestion): string => {
   const id = recordIdOf(q.origin);
-  const terms = q.explanations.length === 0 ? "" : `**${TERMS_HEADING}**\n\n${termLines(q).map((t) => `- ${t}`).join("\n")}\n\n`;
+  const terms = q.explanations.length === 0 ? "" : `**${TERMS_HEADING}**\n\n${q.explanations.map((e) => termItem(e, "")).join("\n")}\n\n`;
   // S11 (issue #59): each option's label in bold on its own line, its description below it.
   const option = (o: PresentedOption): string => {
     const description = piecesMarkdown(o.description);
