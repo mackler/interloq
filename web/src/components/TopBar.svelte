@@ -5,6 +5,16 @@
   // Below M3's expanded width (finding 7 of docs/gui-review.md) the bar wraps: the title, the connection and Stop stay
   // on the first line, and the project and the task move to a secondary line [visibility of system status: nothing
   // that says what runs or whether the page is connected is dropped].
+  // Issue #29 (the developer's decisions of 28 Sep and 6 Oct 2026): the bar identifies the project, conspicuously, so
+  // that two windows of two servers are told apart at a glance. The headline (M3's title-large role, where a top app
+  // bar names what the user is in) is the project's own name, the one text that differs between two windows [visibility
+  // of system status; recognition rather than recall; error prevention: an answer or a Stop in the wrong window]. The
+  // word Interloq, the same in every window, stands before it as a small label in the on-surface-variant color
+  // [aesthetic and minimalist design]. The whole identification (the host directory, or the path as given) stands
+  // beside it, on the secondary line below 840 px, wrapping anywhere rather than cut, since its end is what
+  // distinguishes, with its whole text as its title; the task's summary stays below it. The bar shows it with no run
+  // in progress too: the run's location during a run, the server's from its hello otherwise, nothing before the first
+  // hello. The roles are argued from the class names, not from rendered sizes (issue #106: the classes are inert).
   import { Button } from "m3-svelte";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
   import type { RunView, ViewState } from "../state.ts";
