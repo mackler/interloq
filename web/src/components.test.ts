@@ -23,6 +23,12 @@ import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
 import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { tabTitle } from "./title.ts";
+import { ownName } from "../../src/hostDir.ts";
+import { faviconHref } from "./favicon.ts";
+import { schemeColors } from "./alerts.ts";
+import type { Mark, Preferences } from "./notify.ts";
+import { writePreferences } from "./storage.ts";
+import { NotificationStub } from "./test-setup.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
@@ -653,6 +659,103 @@ describe("App and the draft", () => {
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/server");
     expect(document.title).toBe(tabTitle("/host/server"));
   });
+  // Issue #16: the page alerts the user that the run waits for him, or that a run he watched has ended.
+  describe("alerts", () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    const setVisibility = (v: DocumentVisibilityState) => {
+      visibility = v;
+      document.dispatchEvent(new Event("visibilitychange"));
+      flushSync();
+    };
+    const begin = (v: DocumentVisibilityState, preferences: Preferences = { desktop: "on", sound: "off" }, permission: NotificationPermission = "granted") => {
+      visibility = v;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+      writePreferences(preferences);
+      NotificationStub.permission = permission;
+    };
+    afterEach(() => {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+      NotificationStub.reset();
+      document.head.querySelector("link[rel=icon]")?.remove();
+    });
+    const icon = () => document.head.querySelector("link[rel=icon]")?.getAttribute("href") ?? null;
+    const WAITING: Mark = { _tag: "Waiting" };
+    const name = ownName("/p");
+
+    test("a prompt at a hidden tab: one notification, the title and the icon marked; a reconnection adds none; the answer clears", async () => {
+      begin("hidden");
+      const { ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.pauseNotificationTitle(name)]);
+      expect(document.title).toBe(tabTitle("/p", WAITING));
+      expect(icon()).toBe(faviconHref(WAITING, schemeColors()));
+      ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+      expect(NotificationStub.calls).toHaveLength(1);
+      ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
+      expect(document.title).toBe(tabTitle("/p"));
+      expect(icon()).toBe(faviconHref({ _tag: "Clear" }, schemeColors()));
+      expect(NotificationStub.calls[0]!.closed).toBe(true);
+    });
+
+    test("a prompt at a visible tab showing it: no notification, the title still marked", async () => {
+      begin("visible");
+      const { ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+      expect(NotificationStub.calls).toHaveLength(0);
+      expect(document.title).toBe(tabTitle("/p", WAITING));
+    });
+
+    test("permission denied with the preference on: no notification, the title and the icon still marked", async () => {
+      begin("hidden", { desktop: "on", sound: "off" }, "denied");
+      const { ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+      expect(NotificationStub.calls).toHaveLength(0);
+      expect(document.title).toBe(tabTitle("/p", WAITING));
+      expect(icon()).toBe(faviconHref(WAITING, schemeColors()));
+    });
+
+    test("a watched run's end at a hidden tab: one notification and the end marker, cleared when the tab is seen", async () => {
+      begin("hidden");
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle(name, 0)]);
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      expect(root.textContent).toContain(`This task has ended (${prompts.endedOutcome(0)}).`);
+      expect([0, 130, 1].map(prompts.endedOutcome)).toEqual(["finished", "interrupted", "halted"]);
+      setVisibility("visible");
+      expect(document.title).toBe(tabTitle("/p"));
+    });
+
+    test("a watched run's end at a tab kept hidden: New task clears the end marker", async () => {
+      begin("hidden");
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      one(root, "button[name=new]").click();
+      flushSync();
+      expect(document.title).toBe(tabTitle("/p"));
+    });
+
+    test("a run that ends at a visible tab: no notification and no marker", async () => {
+      begin("visible");
+      const { ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(NotificationStub.calls).toHaveLength(0);
+      expect(document.title).toBe(tabTitle("/p"));
+    });
+
+    test("nothing requests the permission when the page loads", async () => {
+      begin("hidden", { desktop: "on", sound: "on" }, "default");
+      const { ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+      expect(NotificationStub.requests).toBe(0);
+    });
+  });
+
   const field = (root: ParentNode) => one(root, "[name=answer]") as HTMLInputElement;
   afterEach(() => {
     vi.unstubAllGlobals();

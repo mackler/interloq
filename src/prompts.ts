@@ -1161,7 +1161,7 @@ export const TITLE_WAITING_MARK = "●";
 /** The title marker of a run that ended while the tab was hidden. */
 export const TITLE_ENDED_MARK = "✓";
 /** How a run ended, by its exit code: the words of "This task has ended (…)" and of the end's notification. */
-export const endedOutcome = (_code: number): "finished" | "interrupted" | "halted" => "halted";
+export const endedOutcome = (code: number): "finished" | "interrupted" | "halted" => (code === 0 ? "finished" : code === 130 ? "interrupted" : "halted");
 /** The desktop notification of a pending prompt, named by the project's own name. */
 export const pauseNotificationTitle = (name: string): string => `${name}: Interloq is waiting for you`;
 export const PAUSE_NOTIFICATION_BODY = "The run is paused until you answer its question.";

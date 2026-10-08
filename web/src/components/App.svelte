@@ -9,12 +9,17 @@
   // Interloq", selects it].
   import { Button, ConnectedButtons } from "m3-svelte";
   import { untrack } from "svelte";
-  import { CONNECTION_FAILED_NOTICE, notSentNotice, PROPOSED_ANSWERS_LABEL, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, PROPOSED_ANSWERS_LABEL, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, type AnalysisMinimum, analysisShown, type Room, roomOf, UNBOUNDED_ROOM, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ClientMessage } from "../../../src/protocol.ts";
   import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { connect, type Connection } from "../socket.ts";
   import { tabTitle } from "../title.ts";
+  import { type Closer, currentPermission, playChime, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
+  import { faviconHref } from "../favicon.ts";
+  import { type Decision, decide, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
+  import { readPreferences } from "../storage.ts";
+  import { ownName } from "../../../src/hostDir.ts";
   import { callStartedAt, dismissUnsent, executing, initialState, keepUnsent, notice, progressOf, protocolError, reduce, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
@@ -157,8 +162,57 @@
     };
   });
   // Issue #29: the tab's title names the server's project, so that a narrow tab strip tells two servers apart.
+  // Issue #16: a pending prompt, or a watched run's end at a hidden tab, puts its marker in front of the title and a
+  // badge on the icon, and is raised once as the user chose: a desktop notification, a chime [visibility of system
+  // status, for a user who is not looking at the page]. decide (web/src/notify.ts) decides; this effect only fires.
+  let notifyState = $state<NotifyState>(initialNotifyState);
+  let visible = $state(typeof document === "undefined" || document.visibilityState === "visible");
+  let preferences = $state<Preferences>(((r) => (r.ok ? r.value : defaultPreferences))(readPreferences()));
+  let permission = $state<Permission>(currentPermission());
+  let closeShown: Closer | null = null;
+  let shownFor: string | null = null;
   $effect(() => {
-    document.title = tabTitle(view.location);
+    const onVisibility = () => {
+      visible = document.visibilityState === "visible";
+      permission = currentPermission();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  });
+  /** What the page shows now, as decide observes it. */
+  const observation = (): Observation => ({
+    pending: pendingKey(view),
+    run: run === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: run.id },
+    ended: run?.ended ?? null,
+    visible,
+    promptShown: asking || deciding,
+    formShown: showForm,
+    preferences,
+    permission,
+  });
+  /** The decision's reason as one text, the tag of its notification; null for none. */
+  const reasonOf = (d: Decision): string | null => (d._tag === "Idle" ? null : JSON.stringify([d._tag, d.key]));
+  $effect(() => {
+    const observed = observation();
+    const decision = decide(untrack(() => notifyState), observed);
+    notifyState = decision.state;
+    const mark = markOf(decision);
+    document.title = tabTitle(view.location, mark);
+    setFavicon(faviconHref(mark, schemeColors()));
+    const reason = reasonOf(decision);
+    if (reason !== shownFor) {
+      closeShown?.();
+      closeShown = null;
+      shownFor = null;
+    }
+    if (decision._tag === "Idle" || decision.raise === null || reason === null) return;
+    const name = ownName(view.location ?? "");
+    const [title, body] = decision._tag === "Waiting" ? [pauseNotificationTitle(name), PAUSE_NOTIFICATION_BODY] : [endNotificationTitle(name, decision.code), ""];
+    if (decision.raise === "desktop" || decision.raise === "desktopAndSound") {
+      closeShown = showDesktop(title, body, reason);
+      shownFor = reason;
+    }
+    if (decision.raise === "sound" || decision.raise === "desktopAndSound") playChime();
   });
 </script>
 
@@ -249,7 +303,7 @@
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}
           <div class="ended">
-            <span class="m3-font-body-medium">This task has ended ({run.ended === 0 ? "finished" : run.ended === 130 ? "interrupted" : "halted"}).</span>
+            <span class="m3-font-body-medium">This task has ended ({endedOutcome(run.ended)}).</span>
             <Button variant="filled" type="button" name="new" onclick={() => { formWanted = true; noticesSeen = view.notices.length; }}>New task</Button>
           </div>
         {/if}
