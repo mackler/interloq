@@ -93,7 +93,7 @@ export type ReviewSetup = Readonly<{
    */
   onUnchanged: "corrective" | "pause" | null;
   /**
-   * Issue #112: who settles a disagreement between Codex and Claude Code over an issue (the disputed pauses of behaviour
+   * Issue #112: who settles a disagreement between Codex and Claude Code over an issue (the disputed pauses of behavior
    * 7: an issue raised again or repeated under a new id, a reversal, a disputed self-correction, a second clarification
    * request). "user": the pause is asked. "agents": it is not; Claude Code's disposition stands and the loop goes on
    * (the question list and the terms, whose disputes are about how a question to the user is worded).
@@ -265,7 +265,7 @@ const toResponse = (s: ReviewState, before: readonly ReviewCommand[] = []): Tran
 
 /**
  * Issue #112: the asks a subject puts to the user, and the lines that record the disputed pauses it does not. With
- * disputesSettledBy "agents" (the question list and the terms) no pause of behaviour 7 that concerns a disputed issue
+ * disputesSettledBy "agents" (the question list and the terms) no pause of behavior 7 that concerns a disputed issue
  * is asked: the dispute is about how a question to the user is worded, which the user cannot judge before he has read
  * the question, and both agents argue it from the one statement of the rules. The loop exists to settle such a
  * disagreement by review and response; Claude Code's disposition stands, its rationale goes back to Codex in the next
