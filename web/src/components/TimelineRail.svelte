@@ -16,10 +16,10 @@
   import { LinearProgress } from "m3-svelte";
   import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, phaseElapsed, phaseTook, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
   import { elapsedMs } from "../time.ts";
-  import { bandKey, currentPlanStep, planStepState, type RoundGroup, type StepState, type TimelineEntry } from "../state.ts";
+  import { bandKey, currentPlanStep, planStepState, type RoundGroup, type TimelineEntry } from "../state.ts";
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
   import StepTooltip from "./StepTooltip.svelte";
-  import { PLAIN, stageCondition, stageGlyph, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
+  import { MARK, PLAIN, STEP_MARK, stageCondition, stageGlyph, type Collapsed, type Disclosure, type NodeView, type RailView } from "../rail.ts";
   import type { UiScope } from "../../../src/uiState.ts";
 
   /**
@@ -47,11 +47,8 @@
     const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
-  // Text glyphs, not an icon set (docs/ui-review.md): ahead and not reached are hollow, not reached muted by a translucent
-  // color (never an opacity; issue #109); skipped is a dash: the phase ended without needing the step.
-  const MARK: Record<StepState, string> = { done: "✓", active: "●", stopped: "■", ahead: "○", notReached: "○", skipped: "–" };
+  // The marks (`MARK`, `STEP_MARK`) are web/src/rail.ts's, beside the stage's glyph derived from them.
   const LABEL = TIMELINE_STATE_LABEL;
-  const STEP_MARK: Record<ReturnType<typeof planStepState>, string> = { done: "✓", current: "●", unfinished: "◐", pending: "○" };
   /** The phase's own time: how long it took once ended, how long it has run while active, nothing before it began. */
   const phaseTime = (entry: TimelineEntry, at: number): string | null =>
     entry.began === null ? null : entry.ended !== null ? phaseTook(elapsedMs(entry.began, Date.parse(entry.ended))) : entry.state === "active" ? phaseElapsed(elapsedMs(entry.began, at)) : null;

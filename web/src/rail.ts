@@ -2,7 +2,7 @@
 // of what it hides. Pure; the component renders it and sends the user's toggles as the run's shared state.
 import { planStepLabel, stageHeading } from "../../src/prompts.ts";
 import { choiceOf, type UiScope } from "../../src/uiState.ts";
-import { bandKey, currentIndex, currentPlanStep, currentStepIndex, type RunView, type ShownStage, type TimelineEntry, type TimelineStep } from "./state.ts";
+import { bandKey, currentIndex, currentPlanStep, currentStepIndex, type planStepState, type RunView, type StepState, type ShownStage, type TimelineEntry, type TimelineStep } from "./state.ts";
 
 /** The condition of a branch in one word, from the steps it hides: none started, some, or all finished. */
 export type Condition = "notStarted" | "partial" | "completed";
@@ -30,9 +30,16 @@ export const phaseHasChildren = (entry: TimelineEntry): boolean => entry.groups.
 export const stepHasChildren = (step: TimelineStep): boolean => step.groups.length > 0;
 /** Whether a stage of the plan has something to disclose: its steps. */
 export const stageHasChildren = (stage: ShownStage): boolean => stage.steps.length > 0;
-/** A stage's leading glyph (issue #114), in the vocabulary of its steps' marks: not begun, begun and not finished, done. */
-const STAGE_GLYPH: Record<Condition, "○" | "◐" | "✓"> = { notStarted: "○", partial: "◐", completed: "✓" };
-export const stageGlyph = (condition: Condition): "○" | "◐" | "✓" => STAGE_GLYPH[condition];
+// The rail's marks: text glyphs, not an icon set (docs/ui-review.md). Ahead and not reached are hollow, not reached muted
+// by a translucent color (never an opacity; issue #109); skipped is a dash: the phase ended without needing the step.
+/** The mark of a phase and of a step of Gather Requirements, by its state. */
+export const MARK = { done: "✓", active: "●", stopped: "■", ahead: "○", notReached: "○", skipped: "–" } as const satisfies Record<StepState, string>;
+/** The mark of a step of the plan, by its state. */
+export const STEP_MARK = { done: "✓", current: "●", unfinished: "◐", pending: "○" } as const satisfies Record<ReturnType<typeof planStepState>, string>;
+type StageMark = (typeof STEP_MARK)["pending" | "unfinished" | "done"];
+/** A stage's leading glyph (issue #114), in its steps' vocabulary: not begun, begun and not finished, done. */
+const STAGE_GLYPH: Record<Condition, StageMark> = { notStarted: STEP_MARK.pending, partial: STEP_MARK.unfinished, completed: STEP_MARK.done };
+export const stageGlyph = (condition: Condition): StageMark => STAGE_GLYPH[condition];
 
 /** The condition of `total` steps of which `started` began and `finished` ended; null without steps. */
 export const conditionOf = (started: number, finished: number, total: number): Condition | null =>
