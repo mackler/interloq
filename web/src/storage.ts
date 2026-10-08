@@ -2,7 +2,7 @@
 // Acquiring the storage, reading and writing may each throw (a SecurityError, a full quota, storage disabled);
 // every such failure is a typed result, and remembering is never a prerequisite for starting a task.
 
-import type { Preferences } from "./notify.ts";
+import { defaultPreferences, type Preferences, type Toggle } from "./notify.ts";
 
 /** The part of the browser's Storage this module uses. */
 export type StorageLike = { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void };
@@ -21,9 +21,24 @@ export const readRemembered = (acquire: AcquireStorage = browserStorage): Stored
 export const remember = (path: string, acquire: AcquireStorage = browserStorage): Stored<void> => guarded(acquire, (s) => s.setItem(KEY, path));
 
 /** The alert preferences (issue #16); defaults where nothing or something unreadable is stored. */
-export const readPreferences = (_acquire: AcquireStorage = browserStorage): Stored<Preferences> => ({ ok: false });
+export const readPreferences = (acquire: AcquireStorage = browserStorage): Stored<Preferences> => guarded(acquire, (s) => decodePreferences(s.getItem(ALERTS_KEY)));
 /** Remembers the alert preferences; `{ ok: false }` when they could not be remembered. */
-export const writePreferences = (_preferences: Preferences, _acquire: AcquireStorage = browserStorage): Stored<void> => ({ ok: false });
+export const writePreferences = (preferences: Preferences, acquire: AcquireStorage = browserStorage): Stored<void> =>
+  guarded(acquire, (s) => s.setItem(ALERTS_KEY, JSON.stringify(preferences)));
+
+const isToggle = (v: unknown): v is Toggle => v === "on" || v === "off";
+/** The stored text as preferences: total, the defaults for nothing stored and for anything not of their shape. */
+const decodePreferences = (text: string | null): Preferences => {
+  if (text === null) return defaultPreferences;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return defaultPreferences;
+    const { desktop, sound } = value as Record<string, unknown>;
+    return isToggle(desktop) && isToggle(sound) ? { desktop, sound } : defaultPreferences;
+  } catch {
+    return defaultPreferences;
+  }
+};
 
 /** The one place where the storage's exceptions are caught and become a typed failure. */
 const guarded = <A>(acquire: AcquireStorage, use: (storage: StorageLike) => A): Stored<A> => {
