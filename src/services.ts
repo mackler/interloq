@@ -3,7 +3,7 @@
 
 import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
-import type { AgentUnreachable, CodexCallFailed, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
+import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
 import type { SubjectId } from "./artifacts.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
@@ -13,6 +13,8 @@ import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
 import type { LimitWait, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
+import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 
 export type StoreError = FileSystemError | StateFileInvalid | GitError;
@@ -82,6 +84,23 @@ export interface ReviewerShape {
   readonly startPhase: Effect.Effect<ReviewSession, CodexCallFailed>;
 }
 export class Reviewer extends Context.Service<Reviewer, ReviewerShape>()("plan-review/Reviewer") {}
+
+/** What the tracker port can fail with (issue #120, part 1; the fifth, an ambiguous state, by requirements Q3). */
+export type TrackerError = TrackerUnreachable | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
+/**
+ * The project's issue tracker (issue #120, part 1): the four operations are the whole common type (developer's
+ * decision). Nothing here names a label, a list or a status: how a state is stored is the adapter's (GitHub: a label
+ * name; Trello: a list id). Beside the six services, not one of them: no run requires it yet.
+ */
+export interface TrackerShape {
+  /** The open items in a state (requirements, Q2: an item closed in the tracker is in no list). */
+  list(state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError>;
+  read(id: ItemId): Effect.Effect<TrackerItem, TrackerError>;
+  /** Writes the item's `Refined using Interloq` section: appended once, replaced later; the rest of the body is kept. */
+  writeRefinement(id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError>;
+  setState(id: ItemId, state: ItemState): Effect.Effect<void, TrackerError>;
+}
+export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-review/Tracker") {}
 
 /** An absolute path inside the project (finding 21): the root the change detection watches. */
 export type ProjectPath = Brand.Branded<string, "ProjectPath">;

@@ -39,6 +39,20 @@ export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ rea
  */
 export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly resetsAtMs: number; readonly limitType: string | null }> {}
 export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null }> {}
+// The tracker's failures (issue #120, part 1). None is a RunError: nothing in a run reaches the tracker yet. No field
+// ever holds a credential: the adapter builds them from statuses and its own words, never from a request.
+/** The network failed, or the tracker answered with a status that is no success and none of the cases below. */
+export class TrackerUnreachable extends Data.TaggedError("TrackerUnreachable")<{ readonly tracker: string; readonly message: string }> {}
+/** The tracker refused the credential (401 or 403): never an empty list. */
+export class TrackerAuthRefused extends Data.TaggedError("TrackerAuthRefused")<{ readonly tracker: string; readonly status: number }> {}
+/** No item with this id: not in the tracker, not in the adapter's format, or not an item (a GitHub pull request). */
+export class TrackerItemNotFound extends Data.TaggedError("TrackerItemNotFound")<{ readonly id: string }> {}
+/** A response or an item that does not decode, a malformed `Refined using Interloq` section, or an item with no state. */
+export class TrackerBodyInvalid extends Data.TaggedError("TrackerBodyInvalid")<{ readonly id: string; readonly message: string }> {}
+/** An item carrying two or more stage labels (requirements, Q3): its stage's whole listing and its read fail. */
+export class TrackerStateAmbiguous extends Data.TaggedError("TrackerStateAmbiguous")<{ readonly id: string; readonly labels: readonly string[] }> {}
+/** The configured tracker's credential is absent or blank in the environment; names the variable, never a value. */
+export class TrackerCredentialMissing extends Data.TaggedError("TrackerCredentialMissing")<{ readonly variable: string }> {}
 export class AgentReplyInvalid extends Data.TaggedError("AgentReplyInvalid")<{ readonly agent: string; readonly issue: string; readonly files: string[] }> {}
 export class ConfigInvalid extends Data.TaggedError("ConfigInvalid")<{ readonly file: string; readonly path: string; readonly message: string }> {}
 export class StateFileInvalid extends Data.TaggedError("StateFileInvalid")<{ readonly file: string; readonly message: string }> {}
