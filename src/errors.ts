@@ -3,7 +3,7 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
-import { interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, analysisInvalidText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, analysisInvalidText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -39,7 +39,7 @@ export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ rea
  */
 export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly resetsAtMs: number; readonly limitType: string | null }> {}
 export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null }> {}
-// The tracker's failures (issue #120, part 1). None is a RunError: nothing in a run reaches the tracker yet. No field
+// The tracker's failures (issue #120, part 1). None is a RunError: a failed tracker step of a run is TrackerStepFailed. No field
 // ever holds a credential: the adapter builds them from statuses and its own words, never from a request.
 /** The network failed, or the tracker answered with a status that is no success and none of the cases below. */
 export class TrackerUnreachable extends Data.TaggedError("TrackerUnreachable")<{ readonly tracker: string; readonly message: string }> {}
@@ -104,6 +104,32 @@ export class UnknownStep extends Data.TaggedError("UnknownStep")<{ readonly id: 
 /** docs/decision-making.md of the program could not be read before the run (decision support, D7). */
 export class DecisionFormatUnreadable extends Data.TaggedError("DecisionFormatUnreadable")<{ readonly file: string; readonly message: string }> {}
 export class Interrupted extends Data.TaggedError("Interrupted")<{ readonly where: string }> {}
+/**
+ * A step of the tracker at the start or the end of a run failed (issue #120): the records stand, and the halt says what
+ * was done and what was not, so that no state that was not written is claimed. `cause` is the tracker's failure as
+ * trackerFailureText says it, never a credential; `done` what the run did before, or null.
+ */
+export class TrackerStepFailed extends Data.TaggedError("TrackerStepFailed")<{ readonly item: string; readonly step: TrackerStep; readonly cause: string; readonly done: string | null }> {}
+
+/** A tracker's failure, or why there is none, as the program says it (issue #120). */
+export const trackerFailureText = (error: TrackerUnreachable | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous | NoTracker | TrackerCredentialMissing): string => {
+  switch (error._tag) {
+    case "NoTracker":
+      return TRACKER_FAILURE_TEXTS.noTracker;
+    case "TrackerCredentialMissing":
+      return TRACKER_FAILURE_TEXTS.credentialMissing(error.variable);
+    case "TrackerUnreachable":
+      return TRACKER_FAILURE_TEXTS.unreachable(error.tracker, error.message);
+    case "TrackerAuthRefused":
+      return TRACKER_FAILURE_TEXTS.authRefused(error.tracker, error.status);
+    case "TrackerItemNotFound":
+      return TRACKER_FAILURE_TEXTS.notFound(error.id);
+    case "TrackerBodyInvalid":
+      return TRACKER_FAILURE_TEXTS.bodyInvalid(error.id, error.message);
+    case "TrackerStateAmbiguous":
+      return TRACKER_FAILURE_TEXTS.ambiguous(error.id, error.labels);
+  }
+};
 
 export type RunError =
   | UserStopped
@@ -129,6 +155,7 @@ export type RunError =
   | SkipConditionInvalid
   | InterviewTurnInvalid
   | AgentUnreachable
+  | TrackerStepFailed
   | Interrupted;
 
 const indent = (changes: readonly Change[]): string => changes.map((change) => `\n  ${renderChange(change)}`).join("");
@@ -209,6 +236,8 @@ export const describe = (error: RunErrorFields): string => {
       return skipConditionInvalidText(error.problems);
     case "InterviewTurnInvalid":
       return interviewTurnInvalidText(error.problems);
+    case "TrackerStepFailed":
+      return trackerStepFailedText(error.item, error.step, error.cause, error.done);
     case "Interrupted":
       return `interrupted during ${error.where}`;
   }
@@ -267,6 +296,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnSkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String) }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);
 /** The fields of one of the program's errors; every `RunError` instance is one. */

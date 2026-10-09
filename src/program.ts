@@ -4,11 +4,12 @@
 import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DecisionFormatUnreadable, describe } from "./errors.ts";
-import { mainSessionLine, taskFinishedLine } from "./prompts.ts";
+import { DecisionFormatUnreadable, describe, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
+import { blankItemText, itemStartedLine, mainSessionLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
+import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
+import type { Config } from "./schema.ts";
 import { loadConfig } from "./config.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
@@ -31,6 +32,8 @@ export type Wiring = Readonly<{
   agents: Layer.Layer<Planner | Reviewer, never, Sdk | Ui | Store | RunConfig>;
   /** The shared config file (live: config.json of this repository). */
   sharedConfig: string;
+  /** The project's tracker from the run's configuration (issue #120; live: liveTracker), or why there is none. */
+  tracker: (config: Config) => Result.Result<Layer.Layer<Tracker>, NoTracker | TrackerCredentialMissing>;
   /** The format of a decision analysis, read before the run (D7); by default docs/decision-making.md of this repository. */
   decisionFormat?: string;
 }>;
@@ -59,7 +62,7 @@ export type RunStart =
  */
 export const taskTextOf = (mode: RunMode, item: TrackerItem): Result.Result<Task, BlankTask | SectionMalformed> => {
   const body = mode === "refinement" ? withoutRefinement(item.body) : Result.succeed(item.body);
-  return Result.flatMap(body, (text) => taskOf(`${item.title}\n\n${text}`));
+  return Result.flatMap(body, (text) => taskOf(text.trim() === "" ? item.title : `${item.title}\n\n${text}`));
 };
 /** What a run starts with until the program reads its item (S5 of issue #120 replaces it with RunStart). */
 export type TaskStart = Readonly<{ task: Task; project: string }>;
@@ -67,21 +70,54 @@ export type TaskStart = Readonly<{ task: Task; project: string }>;
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
 
+/** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
+type Started = Readonly<{ project: string; mode: RunMode; item: string; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Task, string>> }>;
+
 /**
  * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
+ * Issue #120: the run reads its item from the project's tracker, before any agent call, and its task text is the item's
+ * (taskTextOf); a tracker that is not configured or cannot be reached, an item it cannot read, a malformed section or a
+ * blank text halts the run with 1 before any agent exists.
  * A typed error of the run says HALTED and gives 1; UserStopped (End the run: q, /quit, the page's button) says
  * INTERRUPTED and gives 130 (S24). An interruption (Stop task) says INTERRUPTED from a finalizer and leaves the
  * fiber interrupted; `exitCodeOf` turns that into 130. In every case the main Claude Code session id and the usage
  * summary are said last.
  */
-export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+  programWith(
+    {
+      project: start.project,
+      mode: start.mode,
+      item: start.item,
+      task: (config, ui) =>
+        Effect.gen(function* () {
+          const layer = wiring.tracker(config);
+          if (Result.isFailure(layer)) return Result.fail(trackerFailureText(layer.failure));
+          const read = yield* Effect.exit(Effect.flatMap(Tracker, (t) => t.read(start.item)).pipe(Effect.provide(layer.success)));
+          if (Exit.isFailure(read)) {
+            const error = Cause.findErrorOption(read.cause);
+            if (Option.isNone(error)) return yield* Effect.die(Cause.squash(read.cause));
+            return Result.fail(trackerFailureText(error.value));
+          }
+          const item = read.value;
+          yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
+          return Result.mapError(taskTextOf(start.mode, item), (e) => (e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason)));
+        }),
+    },
+    wiring,
+  );
+
+/** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
+export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+  programWith({ project: start.project, mode: "implementation", item: "task", task: () => Effect.succeed(Result.succeed(start.task)) }, wiring);
+
+const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const { task } = start;
     const project = path.resolve(start.project);
     const ui = yield* wiring.ui;
     // Issue #120: the run's records directory, named by its start time, mode and item; allocated after the configuration
-    // is read, so that a run refused by its configuration leaves no directory. Until S5 the mode and item are fixed.
-    const planned = runRootOf("implementation", "task", new Date(yield* Clock.currentTimeMillis).toISOString());
+    // is read, so that a run refused by its configuration leaves no directory.
+    const planned = runRootOf(start.mode, start.item, new Date(yield* Clock.currentTimeMillis).toISOString());
     const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.provide(wiring.platform));
 
     /** The last two lines of every ending. */
@@ -121,6 +157,11 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
       return yield* halted(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), null, yield* store(planned, []));
     }
     const decisionFormat = formatExit.value;
+
+    // Issue #120: the item and its task text, read from the tracker before any agent exists and before the records exist.
+    const taskRead = yield* start.task(config, ui);
+    if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
+    const task = taskRead.success;
 
     const allocated = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
     if (Exit.isFailure(allocated)) {

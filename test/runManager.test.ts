@@ -14,7 +14,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { finished, scriptedPlan, scriptedTask, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry, runDirOf } from "./helpers.ts";
+import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry, runDirOf } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -61,7 +61,7 @@ const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], 
 test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identical to a direct run of the program over the same script", async () => {
   const direct = tempRepo();
   const { wiring } = testWiring(direct, converging);
-  assert.equal(await run(Effect.scoped(program({ task: scriptedTask, project: direct }, wiring))), 0);
+  assert.equal(await run(Effect.scoped(program(scriptedStart(direct), wiring))), 0);
 
   const repo = tempRepo();
   const h = await harness(repo, [converging]);

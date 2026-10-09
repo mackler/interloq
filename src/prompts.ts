@@ -1002,6 +1002,44 @@ export function planProblemLines(problems: PlanProblems): readonly string[] {
 export function planInvalidText(problems: PlanProblems): string {
   return `the plan is invalid: ${planProblemLines(problems).join(" ")}`;
 }
+// ---- the tracker (issue #120) -----------------------------------------------------------------------------------------
+
+/** What a run says when it has read its item: the item and the mode, before any agent call. */
+export function itemStartedLine(mode: "refinement" | "implementation", id: string, title: string): string {
+  return `${mode === "refinement" ? "Refinement" : "Implementation"} of item ${id}: ${title}`;
+}
+/** Why an item gives no task: its title and body are blank. */
+export function blankItemText(id: string): string {
+  return `item ${id} has neither a title nor a text, so the run has no task`;
+}
+/** Why an item gives no task: its section Refined using Interloq cannot be read. */
+export function sectionMalformedText(id: string, reason: string): string {
+  return `the text of item ${id} cannot be read: ${reason}`;
+}
+/** The tracker's failures as the program says them; a variable's name, never a credential. */
+export const TRACKER_FAILURE_TEXTS = {
+  noTracker: "no issue tracker is configured: set the key tracker in the shared config.json of Interloq or in plan-review/config.json of the project",
+  credentialMissing: (variable: string) => `the issue tracker's credential is missing: the environment variable ${variable} is not set`,
+  unreachable: (tracker: string, message: string) => `the ${tracker} issue tracker could not be reached: ${message}`,
+  authRefused: (tracker: string, status: number) => `the ${tracker} issue tracker refused the credential (HTTP status ${status})`,
+  notFound: (id: string) => `the issue tracker has no item ${id}`,
+  bodyInvalid: (id: string, message: string) => `item ${id} of the issue tracker could not be read: ${message}`,
+  ambiguous: (id: string, labels: readonly string[]) => `item ${id} of the issue tracker carries more than one stage label: ${labels.join(", ")}`,
+} as const;
+/** The tracker steps at the end or the start of a run (TrackerStepFailed), as a halt names them. */
+export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "setRefined", "setImplemented"] as const;
+export type TrackerStep = (typeof TRACKER_STEPS)[number];
+/** A tracker step that failed: what was not done, the cause, and that the records stand (behavior 11). */
+export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null): string {
+  const what: Record<TrackerStep, string> = {
+    setImplementing: `item ${item} could not be set to implementing, so the run made no agent call`,
+    writeRefinement: `the requirements could not be written to item ${item}, and its state was not changed`,
+    setRefined: `the requirements were written to item ${item}, but its state was not changed to refined`,
+    setImplemented: `the work is done, but item ${item} could not be set to implemented and stays implementing`,
+  };
+  return `${what[step]}: ${cause}.${done === null ? "" : ` ${done}`} The records of the run are kept.`;
+}
+
 export function decisionFormatUnreadableText(file: string, message: string): string {
   return `the decision-making format ${file} could not be read: ${message}`;
 }

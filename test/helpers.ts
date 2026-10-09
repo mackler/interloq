@@ -19,14 +19,17 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
 import type { Schema } from "effect";
 import type { RunError } from "../src/errors.ts";
-import { AgentUnreachable, ClaudeCallFailed, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
+import { AgentUnreachable, ClaudeCallFailed, NoTracker, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
-import { type Task, taskOf, type Wiring } from "../src/program.ts";
+import { type RunStart, type Task, taskOf, type Wiring } from "../src/program.ts";
 import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifacts.ts";
+import { type FakeItem, type FakeTracker, makeFakeTracker } from "./fakeTracker.ts";
+import { itemIdOf, type ItemId } from "../src/tracker.ts";
+import type { RunMode } from "../src/runMode.ts";
 import { run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
 import type { Plan as SPlan, RecordedPlan, StepStatus } from "../src/schema.ts";
-import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, type Services, type StepReply, type StepReporter, Store, type StoreShape, Ui, type UiShape } from "../src/services.ts";
+import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, type Services, type StepReply, type StepReporter, Store, type StoreShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
 import { type DeciderDeps, deciderLayer } from "../src/decision.ts";
@@ -512,7 +515,7 @@ export const finished: ExecOutcome = { status: "finished", summary: "done", ques
 export const workExecution: WorkExecution = { outcome: finished, plan: "# Plan\n\n1. S1 (done): the scripted step\n" };
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked
@@ -586,8 +589,15 @@ export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag
   return error.value;
 }
 
-/** What a program test inspects: the scripted implementations and the paths. */
-export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string };
+/** What a program test inspects: the scripted implementations, the paths and the tracker. */
+export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string; tracker: FakeTracker | null };
+
+/** The item of every scripted run (issue #120): its title is the scripted task and its body is empty, so taskTextOf gives scriptedTask. */
+export const scriptedItem: FakeItem = { id: Result.getOrThrow(itemIdOf("1")), title: "task", body: "", state: "refined", open: true };
+/** The start of a scripted run from scriptedItem (or another item) in a project. */
+export const scriptedStart = (project: string, mode: RunMode = "implementation", item: ItemId = scriptedItem.id): RunStart => (mode === "refinement" ? { mode, item, project } : { mode, item, project });
+/** A fake tracker over items, built at once (its state is a Ref, made synchronously). */
+export const fakeTrackerOf = (items: readonly FakeItem[]): FakeTracker => Effect.runSync(makeFakeTracker(items));
 
 const scripted = taskOf("task");
 /** The task of every scripted run (issue #88): a Task, never a Result, so that no test passes a blank one by accident. */
@@ -613,6 +623,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   planner.terms = [...(options.terms ?? [])];
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
+  const tracker = options.tracker === undefined ? fakeTrackerOf([scriptedItem]) : options.tracker;
   const wiring: Wiring = {
     ui: Effect.succeed(ui),
     platform: platformLayer,
@@ -631,6 +642,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
       Layer.succeed(Reviewer, reviewer),
     ),
     sharedConfig: shared,
+    tracker: () => (tracker === null ? Result.fail(new NoTracker()) : Result.succeed(Layer.succeed(Tracker, tracker.tracker))),
   };
   return {
     wiring,
@@ -639,6 +651,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
       planner,
       reviewer,
       project: paths.project,
+      tracker,
       /** The run's records directory once the run's store exists; plan-review/ before it. */
       get dir() {
         return records ?? dir;

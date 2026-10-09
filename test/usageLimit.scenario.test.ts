@@ -6,7 +6,7 @@ import { Clock, Effect } from "effect";
 import { program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
-import { finished, scriptedTask, steppingClock, tempRepo, testWiring } from "./helpers.ts";
+import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring } from "./helpers.ts";
 
 // Issue #68: a phase that hits a usage limit with a stated reset waits for it, resumes and finishes, asking nothing;
 // a limit without a reset halts as before.
@@ -22,7 +22,7 @@ test("a plan write that hits a five-hour limit waits until it lifts, resumes, an
     execs: [finished],
   });
   const { clock, sleeps } = steppingClock(START);
-  const code = await Effect.runPromise(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
   assert.equal(code, 0);
   assert.deepEqual(probe.ui.asked, []);
   assert.deepEqual(sleeps, [UNTIL - START]);
@@ -39,7 +39,7 @@ test("a plan write that hits a five-hour limit waits until it lifts, resumes, an
 test("a limit without a stated reset on the same call halts as before, with no wait", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ callFailed: "You've hit your session limit" }] });
   const { clock, sleeps } = steppingClock(START);
-  const code = await Effect.runPromise(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
   assert.equal(code, 1);
   assert.deepEqual(sleeps, []);
   assert.match(probe.ui.said.join("\n"), /HALTED: .*session limit/);

@@ -3,15 +3,18 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Clock, Effect, Exit, Fiber } from "effect";
+import { Clock, Effect, Exit, Fiber, Result } from "effect";
+import type { FakeItem } from "./fakeTracker.ts";
+import { itemIdOf } from "../src/tracker.ts";
+import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
-import { finished, scriptedTask, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT } from "./helpers.ts";
+import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import { mainSessionLine, workReviewBeganLine } from "../src/prompts.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
-const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)));
+const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)));
 const said = (probe: WiringProbe): string => probe.ui.said.join("\n");
 
 /** The run's root, as the program allocated it (issue #120): its records directory relative to plan-review/. */
@@ -82,7 +85,7 @@ test("an unreadable decision-making format prints HALTED with the file and exits
 
 /** Runs the program in a fiber, waits for the double to be reached, interrupts it, and returns its exit. */
 const interruptWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promise<void>): Promise<Exit.Exit<number, never>> => {
-  const fiber = Effect.runFork(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)));
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)));
   await Promise.race([reached, sleep(30_000).then(() => assert.fail("the program did not reach the point to interrupt within 30 s"))]);
   await sleep(10);
   await Effect.runPromise(Fiber.interrupt(fiber));
@@ -186,7 +189,7 @@ test("interrupt one minute into a weekly usage-limit wait: the summary printed r
     currentTimeMillisUnsafe: () => time,
     sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
   };
-  const fiber = Effect.runFork(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
   await Promise.race([waiting, sleep(30_000).then(() => assert.fail("the wait did not begin within 30 s"))]);
   await Effect.runPromise(Fiber.interrupt(fiber));
   const exit = await Effect.runPromise(Fiber.await(fiber));
@@ -210,4 +213,41 @@ test("issue #117: a run of two execution phases ends naming its main session as 
   assert.equal(lines.at(-2), sessionLine(probe, "test-session"));
   assert.match(sessionLine(probe, "test-session"), /main session/);
   assert.match(lines.at(-1) ?? "", /Claude Code: 3 calls in 3 sessions/);
+});
+
+// Issue #120, S5: a run is started from an item; the program reads it from the tracker and its task is the item's. The
+// seam: the item id the run is given, the item the fake holds, and the task the planner receives, all from one item.
+const developerText = "Make the page two tabs.";
+const sectionedItem = (): FakeItem => ({ ...scriptedItem, id: Result.getOrThrow(itemIdOf("120")), title: "Two modes", body: Result.getOrThrow(withRefinement(developerText, Result.getOrThrow(refinementOf("The confirmed requirements.")))), open: true });
+const converging = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
+
+for (const mode of ["refinement", "implementation"] as const) {
+  test(`the task of a${mode === "implementation" ? "n" : ""} ${mode} run is its item's title and body, read from the tracker, ${mode === "refinement" ? "without" : "with"} the section`, async () => {
+    const item = sectionedItem();
+    const tracker = fakeTrackerOf([item]);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker });
+    await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, mode, item.id), wiring)));
+    const held = (await Effect.runPromise(tracker.items)).find((i) => i.id === item.id);
+    assert.ok(held !== undefined);
+    const body = mode === "refinement" ? Result.getOrThrow(withoutRefinement(held.body)) : held.body;
+    assert.ok(probe.planner.prompts[0].includes(`Task: ${held.title}\n\n${body}`), probe.planner.prompts[0].slice(-300));
+    assert.equal(probe.planner.prompts[0].includes("The confirmed requirements."), mode === "implementation");
+    assert.ok(said(probe).includes(`of item ${item.id}: ${item.title}`));
+  });
+}
+
+test("an item the tracker does not hold halts the run with 1 before any agent call and without records", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), converging);
+  const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "implementation", Result.getOrThrow(itemIdOf("999"))), wiring)));
+  assert.equal(code, 1);
+  assert.match(said(probe), /HALTED: the issue tracker has no item 999/);
+  assert.deepEqual(probe.planner.prompts, []);
+  assert.ok(!fs.existsSync(path.join(probe.project, "plan-review", "runs")), "a records directory was created");
+});
+
+test("a project without a configured tracker halts the run with 1 before any agent call, naming the config files", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker: null });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.match(said(probe), /HALTED: no issue tracker is configured: set the key tracker in the shared config\.json of Interloq or in plan-review\/config\.json/);
+  assert.deepEqual(probe.planner.prompts, []);
 });

@@ -4,7 +4,7 @@
 import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
-import { exitCodeOf, program, taskOf, type Wiring } from "./program.ts";
+import { exitCodeOf, programOfTask, taskOf, type Wiring } from "./program.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { RunEvent, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
@@ -165,7 +165,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, mount
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program({ task: checked.success, project }, wiring(ui)))),
+              Effect.andThen(Effect.scoped(programOfTask({ task: checked.success, project }, wiring(ui)))),
               Effect.onExit((exit: Exit.Exit<number>) => Ref.get(idRef).pipe(Effect.flatMap((id) => end(id, exitCodeOf(exit))))),
               Effect.forkDetach({ startImmediately: true }),
             );

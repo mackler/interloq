@@ -15,6 +15,7 @@ import { identify, parseMountinfo } from "./hostDir.ts";
 import { codexReviewerLayer } from "./codex.ts";
 import { platformLayer } from "./platform.ts";
 import type { Wiring } from "./program.ts";
+import { liveTracker } from "./trackerLive.ts";
 import { makeRunManager } from "./runManager.ts";
 import { liveSdk } from "./sdkLive.ts";
 import { distMissingMessage, parsePort, WEB_USAGE } from "./webArgs.ts";
@@ -41,6 +42,7 @@ const wiringOf = (ui: WebUi): Wiring => ({
   sdk,
   agents: Layer.mergeAll(claudePlannerLayer, codexReviewerLayer),
   sharedConfig: fileURLToPath(new URL("../config.json", import.meta.url)),
+  tracker: liveTracker,
 });
 
 /** This start of the server (finding 12 of docs/gui-review.md): run and prompt numbers restart, the incarnation does not. */
