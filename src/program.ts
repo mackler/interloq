@@ -8,7 +8,7 @@ import { DecisionFormatUnreadable, describe, type RunError, type NoTracker, type
 import { blankItemText, itemStartedLine, mainSessionLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
+import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
 import type { Config } from "./schema.ts";
 import { loadConfig } from "./config.ts";
 import type { Platform } from "./platform.ts";
@@ -180,7 +180,7 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
       return yield* halted(describe(error.value), null, yield* store(planned, []));
     }
     const records = yield* store(allocated.value, config.ignorePaths);
-    const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(Sdk, wiring.sdk));
+    const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: start.mode }), Layer.succeed(Sdk, wiring.sdk));
     // Built once, so that the planner whose session id is printed is the one the run used.
     // Decision support (D3): the Decider runs its loops over the same services as the run.
     const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));

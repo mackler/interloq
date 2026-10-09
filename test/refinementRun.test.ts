@@ -11,7 +11,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, questionEntry, respond, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 // Issue #120, S6 (the developer's decision of 8 Oct 2026): a refinement run is the question phase and nothing after it;
 // it writes requirements.md back to its item as the section Refined using Interloq and sets the item to refined. It sets
@@ -102,4 +102,24 @@ test("a refinement whose state cannot be set keeps the section written, the stat
   const after = await held(tracker);
   assert.equal(after.state, "unrefined");
   assert.ok(Option.isSome(Result.getOrThrow(readRefinement(after.body))));
+});
+
+// Issue #120, S8 (the developer's decision of 8 Oct 2026): a refinement run drops the project snapshot of Claude Code's
+// planning calls, whose hook still denies a write outside the records before it happens; Codex's turns keep theirs, their
+// only guard. One run tests both sides, since a test of either alone would pass while they disagreed.
+test("a refinement run survives a project change during a Claude Code planning call, and a Codex turn in it still halts on one", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    mode: "refinement",
+    steps: [{ output: { questions: [q("Q1")] }, touchProject: true }],
+    reviews: [{ issues: [], touchProject: true }],
+  });
+  const error = await refinementFails(layer, "ProjectChanged");
+  assert.equal(error._tag === "ProjectChanged" ? error.during : null, "review");
+  assert.equal(probe.reviewer.prompts.length, 1, "the run did not go on to the question review");
+});
+
+test("an implementation run still halts on a project change during a Claude Code planning call", async () => {
+  const { layer } = testLayer(tempRepo(), { mode: "implementation", steps: [{ output: { questions_for_user: [] }, plan: "v1", touchProject: true }] });
+  const error = await runFails(layer, "ProjectChanged");
+  assert.equal(error._tag === "ProjectChanged" ? error.during : null, "planning");
 });

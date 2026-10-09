@@ -17,9 +17,10 @@ import { answerOf, parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, initialState, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, Reviewer, RunConfig, type Services, Store, type StoreError, Ui } from "./services.ts";
+import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { withTransportRetry } from "./retry.ts";
+import { guardsPlanningProject } from "./runMode.ts";
 
 /** Codex's reply text, decoded as JSON and then as a review; text that is not JSON is a decode failure. */
 const ReviewText = Schema.fromJsonString(S.Review);
@@ -199,10 +200,14 @@ export type PlanningCall<Out> = Readonly<{ output: Out; reply: unknown; resultTe
  * response; "readProject", the context call of a question, which may read the project). Halts if the project changed;
  * a call that may change nothing, its repair turn included, also halts if a guarded record under plan-review/ changed (RecordsChanged; the program's own writes are not guarded, src/artifacts.ts).
  */
-export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string, schema: Out, purpose: PlanningPurpose = "planning", capability: PlanningCapability = "records", validate: Validation<Out["Type"]> | null = null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig> =>
+export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string, schema: Out, purpose: PlanningPurpose = "planning", capability: PlanningCapability = "records", validate: Validation<Out["Type"]> | null = null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const planner = yield* Planner;
+    // Issue #120 (the developer's decision of 8 Oct 2026): a refinement run takes no project snapshot around Claude Code's
+    // planning calls, whose hook still denies a write outside the run's records before it happens (behavior 3), so that an
+    // implementation run beside it may commit. The records guard of a read-only call stays; Codex's turns keep their own.
+    const projectGuarded = guardsPlanningProject((yield* RunKind).mode);
     /**
      * One call, retried after a transport fault (issue #26). The baselines are taken once, before the first attempt, and
      * every attempt, failed ones included, and every retry is checked against them; the records guard of a read-only
@@ -210,12 +215,14 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
      */
     const call = (text: string) =>
       Effect.gen(function* () {
-        const before = yield* store.projectSnapshot();
+        const before = projectGuarded ? yield* store.projectSnapshot() : null;
         const recordsBefore = capability !== "records" ? yield* store.recordsSnapshot() : null;
         const mark = yield* store.journalMark;
         const check = Effect.gen(function* () {
-          const changes = compareSnapshots(before, yield* store.projectSnapshot());
-          if (changes.length > 0) return yield* Effect.fail(new ProjectChanged({ during: "planning", fileLabel: null, changes }));
+          if (before !== null) {
+            const changes = compareSnapshots(before, yield* store.projectSnapshot());
+            if (changes.length > 0) return yield* Effect.fail(new ProjectChanged({ during: "planning", fileLabel: null, changes }));
+          }
           if (recordsBefore !== null) {
             const records = compareJournaled(recordsBefore, yield* store.ownWritesSince(mark), yield* store.recordsSnapshot());
             if (records.length > 0) return yield* Effect.fail(new RecordsChanged({ changes: records }));
@@ -244,7 +251,7 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
  * The corrective turn (issue #30) as a Repair of its own: a planning call in the current session whose reply has fresh
  * schema and validation budgets, so it takes neither's turn and neither takes its.
  */
-export const repairTurn = <Out extends Schema.Decoder<unknown>>(repair: Repair, schema: Out, capability: PlanningCapability, validate: Validation<Out["Type"]> | null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig> =>
+export const repairTurn = <Out extends Schema.Decoder<unknown>>(repair: Repair, schema: Out, capability: PlanningCapability, validate: Validation<Out["Type"]> | null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
   planningCall(repair.prompt, schema, "planning", capability, validate);
 
 /**

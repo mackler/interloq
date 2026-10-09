@@ -10,7 +10,7 @@ import { plainBlocks, type ValueToken, valueTokensOf } from "./pieces.ts";
 import { type ContextWritten, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
-import { type Decider, Planner, type RunConfig, Store, type Ui } from "./services.ts";
+import { type Decider, Planner, type RunConfig, type RunKind, Store, type Ui } from "./services.ts";
 
 /** The code pieces with a ref that the program supplied in its request (the names of a tool's settings it explains, S55), each with its part (P5-R1-1). */
 const suppliedRefs = (request: ContextRequest): readonly SuppliedRef[] => suppliedOf({ context: [], question: request.question, explanations: [], options: request.options, details: request.details });
@@ -62,7 +62,7 @@ export const programWritten = (request: ContextRequest): ContextWritten => ({ co
  * paragraph and terms, or, when the call fails for any reason but the user's stop or a change the guards find, the
  * program's paragraph with a note in conversation.md, so that the question always reaches the user.
  */
-export const writeContext = (task: string, request: ContextRequest): Effect.Effect<ContextWritten, RunError, Store | Planner | Decider | Ui | RunConfig> =>
+export const writeContext = (task: string, request: ContextRequest): Effect.Effect<ContextWritten, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
   Effect.gen(function* () {
     const planner = yield* (yield* Planner).fresh;
     // S33: it may read the project and change nothing; the project and the guarded records are compared after the call.

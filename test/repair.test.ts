@@ -8,7 +8,7 @@ import { planningCall, type Validation } from "../src/review.ts";
 import { claudePlannerLayer } from "../src/claude.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
 import { defaultConfig } from "../src/schema.ts";
-import { Planner, Reviewer, RunConfig, Sdk, type Services, Store, Ui } from "../src/services.ts";
+import { Planner, Reviewer, RunConfig, RunKind, Sdk, type Services, Store, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
 import { storeLayer } from "../src/store.ts";
 import { FakeSdk, init, messages, success, turn, type Script } from "./fakeSdk.ts";
@@ -82,8 +82,8 @@ test("an interview turn is validated the same way", async () => {
 // The same behaviour through the real adapters and the fake SDKs.
 
 /** Store, scripted Ui, config and the fake SDK for one repository. */
-const base = (repo: string, sdk: FakeSdk): Layer.Layer<Store | Ui | RunConfig | Sdk> =>
-  Layer.mergeAll(Layer.provide(storeLayer(repo, TEST_ROOT, []), platformLayer), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, config), Layer.succeed(Sdk, sdk));
+const base = (repo: string, sdk: FakeSdk): Layer.Layer<Store | Ui | RunConfig | RunKind | Sdk> =>
+  Layer.mergeAll(Layer.provide(storeLayer(repo, TEST_ROOT, []), platformLayer), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: "implementation" }), Layer.succeed(Sdk, sdk));
 const dirOf = (repo: string): string => path.join(repo, "plan-review", TEST_ROOT);
 
 /** The five services with a real Codex adapter over a fake SDK and a scripted planner. */

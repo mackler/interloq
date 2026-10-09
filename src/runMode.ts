@@ -37,3 +37,16 @@ export const stateAtEnd = (mode: RunMode): ItemState => {
       return "implemented";
   }
 };
+
+/**
+ * Whether Claude Code's planning calls in a run of this mode take the project snapshot, the second check of behavior 3
+ * (issue #120, the developer's decision of 8 Oct 2026): a refinement run drops it, its hook remaining the first.
+ */
+export const guardsPlanningProject = (mode: RunMode): boolean => {
+  switch (mode) {
+    case "refinement":
+      return false;
+    case "implementation":
+      return true;
+  }
+};

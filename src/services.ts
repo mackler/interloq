@@ -5,6 +5,7 @@ import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
+import type { RunMode } from "./runMode.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { Config, DecisionAnalysis, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
@@ -227,5 +228,11 @@ export class RunConfig extends Context.Service<RunConfig, Config>()("plan-review
 /** The two SDKs (src/sdk.ts): the live binding in src/sdkLive.ts, a fake in the tests. */
 export class Sdk extends Context.Service<Sdk, AgentSdk>()("plan-review/Sdk") {}
 
+/**
+ * The mode of the run (issue #120), a fact of the whole run like its configuration: planningCall reads it, since a
+ * refinement run drops the project snapshot of Claude Code's planning calls (the developer's decision of 8 Oct 2026).
+ */
+export class RunKind extends Context.Service<RunKind, Readonly<{ mode: RunMode }>>()("plan-review/RunKind") {}
+
 /** Everything the procedure needs. */
-export type Services = Ui | Planner | Reviewer | Store | RunConfig | Decider;
+export type Services = Ui | Planner | Reviewer | Store | RunConfig | RunKind | Decider;

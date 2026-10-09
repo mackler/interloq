@@ -8,7 +8,7 @@ import { decodeValidating, decodeWithRepair, planningCall, type Repair } from ".
 import { Planner } from "../src/services.ts";
 import { noDecider, pathsOf, ScriptedPlanner, ScriptedUi, questionOf , TEST_ROOT } from "./helpers.ts";
 import * as S from "../src/schema.ts";
-import { Decider, RunConfig, Store, type StoreShape, Ui } from "../src/services.ts";
+import { Decider, RunConfig, RunKind, Store, type StoreShape, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { tempRepo } from "./helpers.ts";
@@ -39,7 +39,7 @@ test("planningCall reports whether a repair turn was needed", async () => {
   const s = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(s.init("task"));
   const planner = new ScriptedPlanner(pathsOf(repo), [{ output: { questions_for_user: "x" } }, { output: { questions_for_user: [] } }, { output: { questions_for_user: [questionOf({ context: "c", question: "q", terms: [], options: [] })] } }], []);
-  const layer = Layer.mergeAll(Layer.succeed(Store, s), Layer.succeed(Planner, planner), Layer.succeed(Decider, noDecider), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
+  const layer = Layer.mergeAll(Layer.succeed(Store, s), Layer.succeed(Planner, planner), Layer.succeed(Decider, noDecider), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig), Layer.succeed(RunKind, { mode: "implementation" }));
   const repaired = await Effect.runPromise(planningCall("first", S.PlanWriteResult).pipe(Effect.provide(layer)));
   assert.equal(repaired.repaired, true);
   assert.deepEqual(repaired.output, { questions_for_user: [] });
