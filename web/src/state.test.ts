@@ -441,6 +441,37 @@ describe("runs, replay and gaps", () => {
     expect(s.modes.refinement.items).toEqual({ _tag: "Listed", items });
   });
 
+  // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
+  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", location, current: { refinement: null, implementation: null }, incarnation });
+  const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
+
+  test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
+    const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems } }, helloAt("/projects/new", "b")]);
+    expect(s.modes.refinement.items).toEqual({ _tag: "Unasked" });
+    expect(s.location).toBe("/projects/new");
+  });
+
+  test("a hello of another incarnation drops a mode's tracker notice (W3-R1-1)", () => {
+    const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } }, helloAt("/projects/new", "b")]);
+    expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
+  });
+
+  test("a hello of another incarnation drops a mode's refusal (W3-R1-1)", () => {
+    const s = fold([helloAt("/projects/old", "a"), { type: "refused", mode: "implementation", reason: "a refinement run is in progress" }, helloAt("/projects/new", "b")]);
+    expect(s.modes.implementation.refusal).toBeNull();
+  });
+
+  test("a hello of the same incarnation, a reconnection, keeps the items, the notice and the refusal (W3-R1-1)", () => {
+    const before = fold([
+      helloAt("/p", "a"),
+      { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems } },
+      { type: "items", mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } },
+      { type: "refused", mode: "implementation", reason: "r" },
+    ]);
+    const s = fold([helloAt("/p", "a")], before);
+    expect([s.modes.refinement.items, s.modes.implementation.items, s.modes.implementation.refusal]).toEqual([{ _tag: "Listed", items: listedItems }, { _tag: "Unavailable", notice: "no tracker" }, "r"]);
+  });
+
   test("after any hello, no mode's items is Loading (S16)", () => {
     const itemsArb = fc.constantFrom<ItemsViewOf>({ _tag: "Unasked" }, { _tag: "Loading" }, { _tag: "Listed", items: [] }, { _tag: "Unavailable", notice: "n" });
     fc.assert(
