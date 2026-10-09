@@ -11,6 +11,7 @@ import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, 
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
+import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
@@ -470,6 +471,48 @@ describe("runs, replay and gaps", () => {
     ]);
     const s = fold([helloAt("/p", "a")], before);
     expect([s.modes.refinement.items, s.modes.implementation.items, s.modes.implementation.refusal]).toEqual([{ _tag: "Listed", items: listedItems }, { _tag: "Unavailable", notice: "no tracker" }, "r"]);
+  });
+
+  // Each listed item's id names the incarnation it was received under, so a read under another one is visible.
+  type Step = Readonly<{ k: "hello"; incarnation: string }> | Readonly<{ k: "listed"; mode: RunMode; count: number }> | Readonly<{ k: "unavailable"; mode: RunMode }> | Readonly<{ k: "refused"; mode: RunMode }> | Readonly<{ k: "request"; mode: RunMode }>;
+  const modeArb = fc.constantFrom<RunMode>("refinement", "implementation");
+  const stepArb: fc.Arbitrary<Step> = fc.oneof(
+    fc.constantFrom("a", "b", "c").map((incarnation): Step => ({ k: "hello", incarnation })),
+    fc.record({ mode: modeArb, count: fc.integer({ min: 0, max: 2 }) }).map(({ mode, count }): Step => ({ k: "listed", mode, count })),
+    modeArb.map((mode): Step => ({ k: "unavailable", mode })),
+    modeArb.map((mode): Step => ({ k: "refused", mode })),
+    modeArb.map((mode): Step => ({ k: "request", mode })),
+  );
+  const applyStep = (state: ViewState, step: Step): ViewState => {
+    switch (step.k) {
+      case "hello":
+        return reduce(state, helloAt(`/projects/${step.incarnation}`, step.incarnation));
+      case "listed":
+        return reduce(state, { type: "items", mode: step.mode, result: { _tag: "Listed", items: Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e" })) } });
+      case "unavailable":
+        return reduce(state, { type: "items", mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } });
+      case "refused":
+        return reduce(state, { type: "refused", mode: step.mode, reason: "r" });
+      case "request":
+        return itemsRequested(state, step.mode);
+    }
+  };
+  test("property: no listed item received under one incarnation is readable under another (W3-R1-1)", () => {
+    fc.assert(
+      fc.property(fc.constantFrom("a", "b", "c"), fc.array(stepArb, { minLength: 1, maxLength: 20 }), (first, steps) => {
+        steps.reduce((state, step) => {
+          const next = applyStep(state, step);
+          for (const m of RUN_MODES) {
+            const items = next.modes[m].items;
+            if (items._tag === "Listed") expect(items.items.every((i) => i.id.startsWith(`${next.incarnation}:`))).toBe(true);
+            if (items._tag === "Unavailable") expect(items.notice).toBe(next.incarnation);
+            if (state.incarnation !== next.incarnation) expect([items, next.modes[m].refusal]).toEqual([{ _tag: "Unasked" }, null]);
+          }
+          return next;
+        }, applyStep(initialState, { k: "hello", incarnation: first }));
+      }),
+      { numRuns: 200 },
+    );
   });
 
   test("after any hello, no mode's items is Loading (S16)", () => {
