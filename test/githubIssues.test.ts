@@ -29,9 +29,9 @@ test("stateOf: no stage label is unrefined when open and no state when closed", 
 });
 
 test("stateOf: two stage labels are ambiguous, naming them", () => {
-  const two = stateOf(LABELS, { open: true, labelNames: ["stage: refining", "bug", "stage: refined"] });
+  const two = stateOf(LABELS, { open: true, labelNames: ["stage: implementing", "bug", "stage: refined"] });
   assert.ok(Result.isFailure(two));
-  assert.deepEqual(two.failure, { _tag: "Ambiguous", labels: ["stage: refining", "stage: refined"] });
+  assert.deepEqual(two.failure, { _tag: "Ambiguous", labels: ["stage: implementing", "stage: refined"] });
 });
 
 test("itemOf: the id is the decimal number, a null body the empty string", () => {
@@ -53,7 +53,7 @@ test("issueNumberOf: a positive decimal without leading zeros, else none", () =>
 });
 
 test("relabeled removes every stage label, adds the new state's, and keeps the others in order", () => {
-  assert.deepEqual(relabeled(["bug", "stage: refining", "ui"], LABELS, "refined"), ["bug", "ui", "stage: refined"]);
-  assert.deepEqual(relabeled([], LABELS, "refining"), ["stage: refining"]);
-  assert.deepEqual(relabeled(["stage: refining", "stage: refined"], LABELS, "refined"), ["stage: refined"]);
+  assert.deepEqual(relabeled(["bug", "stage: implementing", "ui"], LABELS, "refined"), ["bug", "ui", "stage: refined"]);
+  assert.deepEqual(relabeled([], LABELS, "implementing"), ["stage: implementing"]);
+  assert.deepEqual(relabeled(["stage: implementing", "stage: refined"], LABELS, "refined"), ["stage: refined"]);
 });

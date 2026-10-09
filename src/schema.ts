@@ -310,7 +310,7 @@ export const LogEntry = Schema.Union([ReviewEntry, SelfCorrectionEntry, UserEntr
 
 /** A text with a character other than whitespace (a tracker's coordinate or label). */
 const NonBlankText = Schema.String.check(Schema.isPattern(/\S/u));
-/** Each of Interloq's six states mapped to a GitHub label name (issue #120, part 1). */
+/** Each of Interloq's five states mapped to a GitHub label name (issue #120, part 1). */
 export const GithubLabels = Schema.Struct(Object.fromEntries(ITEM_STATES.map((state) => [state, NonBlankText])) as Record<ItemState, typeof NonBlankText>).check(
   Schema.makeFilter((labels: Readonly<Record<ItemState, string>>) => {
     const shared = ITEM_STATES.filter((state, i) => ITEM_STATES.findIndex((other) => labels[other] === labels[state]) < i);

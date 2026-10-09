@@ -2,8 +2,8 @@
 // tracker. Pure; the port is `Tracker` in src/services.ts, the GitHub adapter src/github.ts.
 import { type Brand, Result, Schema } from "effect";
 
-/** Interloq's own vocabulary of states, in their order (developer's decision, issue #120). The config maps each to a tracker's own. */
-export const ITEM_STATES = ["unrefined", "refining", "refined", "implementing", "implemented", "deployed"] as const;
+/** Interloq's own vocabulary of states, in their order (developer's decision, issue #120; refining removed by his decision of 9 Oct 2026: an item is refined or unrefined). The config maps each to a tracker's own. */
+export const ITEM_STATES = ["unrefined", "refined", "implementing", "implemented", "deployed"] as const;
 export const ItemState = Schema.Literals(ITEM_STATES);
 export type ItemState = typeof ItemState.Type;
 

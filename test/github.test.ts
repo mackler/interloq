@@ -54,12 +54,12 @@ test("unrefined lists the labeled and the unlabeled open issues, and no issue of
 });
 
 test("a labeled state asks GitHub for open issues with its label", async () => {
-  const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(5, [LABELS.refining, "bug"])]) }));
-  const items = await withTracker(stub, (t) => t.list("refining"));
-  assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state: "refining" }]);
+  const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(5, [LABELS.implementing, "bug"])]) }));
+  const items = await withTracker(stub, (t) => t.list("implementing"));
+  assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state: "implementing" }]);
   const params = stub.sent()[0].url.searchParams;
   assert.equal(params.get("state"), "open");
-  assert.equal(params.get("labels"), LABELS.refining);
+  assert.equal(params.get("labels"), LABELS.implementing);
   assert.equal(params.get("per_page"), "100");
 });
 
@@ -125,7 +125,7 @@ test("read of a pull request, a 404, a 410 and an id not in GitHub's format is T
 });
 
 test("read of a closed issue without a stage label is TrackerBodyInvalid; of an ambiguous one TrackerStateAmbiguous", async () => {
-  const stub = makeStub(route({ [`GET ${ISSUES}/1`]: json(issue(1, ["bug"], { state: "closed" })), [`GET ${ISSUES}/2`]: json(issue(2, [LABELS.refining, LABELS.refined])) }));
+  const stub = makeStub(route({ [`GET ${ISSUES}/1`]: json(issue(1, ["bug"], { state: "closed" })), [`GET ${ISSUES}/2`]: json(issue(2, [LABELS.implementing, LABELS.refined])) }));
   assert.equal((await failure(stub, (t) => t.read(id("1"))))._tag, "TrackerBodyInvalid");
   assert.equal((await failure(stub, (t) => t.read(id("2"))))._tag, "TrackerStateAmbiguous");
 });
@@ -178,20 +178,20 @@ test("a body with a malformed section is TrackerBodyInvalid and nothing is PATCH
 });
 
 test("a state change sends one PATCH of the full label set: the old stage label removed, the new one added, others kept", async () => {
-  const stub = makeStub(route({ [`GET ${ISSUES}/4`]: json(issue(4, ["bug", LABELS.refining])), [`GET ${ISSUES}/5`]: json(issue(5, [])), [`PATCH ${ISSUES}/4`]: json({}), [`PATCH ${ISSUES}/5`]: json({}) }));
-  await withTracker(stub, (t) => Effect.andThen(t.setState(id("4"), "refined"), t.setState(id("5"), "refining")));
-  assert.deepEqual(patches(stub).map(patchBody), [{ labels: ["bug", LABELS.refined] }, { labels: [LABELS.refining] }]);
+  const stub = makeStub(route({ [`GET ${ISSUES}/4`]: json(issue(4, ["bug", LABELS.implementing])), [`GET ${ISSUES}/5`]: json(issue(5, [])), [`PATCH ${ISSUES}/4`]: json({}), [`PATCH ${ISSUES}/5`]: json({}) }));
+  await withTracker(stub, (t) => Effect.andThen(t.setState(id("4"), "refined"), t.setState(id("5"), "implementing")));
+  assert.deepEqual(patches(stub).map(patchBody), [{ labels: ["bug", LABELS.refined] }, { labels: [LABELS.implementing] }]);
 });
 
 test("a state change of an ambiguous issue is TrackerStateAmbiguous and nothing is PATCHed", async () => {
-  const stub = makeStub(route({ [`GET ${ISSUES}/6`]: json(issue(6, [LABELS.refining, LABELS.refined])) }));
+  const stub = makeStub(route({ [`GET ${ISSUES}/6`]: json(issue(6, [LABELS.implementing, LABELS.refined])) }));
   assert.equal((await failure(stub, (t) => t.setState(id("6"), "implementing")))._tag, "TrackerStateAmbiguous");
   assert.equal(patches(stub).length, 0);
 });
 
 // W1-R1-1: an item the port cannot read is not one it may write.
 test("a refinement of an ambiguous issue is TrackerStateAmbiguous and nothing is PATCHed", async () => {
-  const stub = makeStub(route({ [`GET ${ISSUES}/8`]: json(issue(8, [LABELS.refining, LABELS.refined])), [`PATCH ${ISSUES}/8`]: json({}) }));
+  const stub = makeStub(route({ [`GET ${ISSUES}/8`]: json(issue(8, [LABELS.implementing, LABELS.refined])), [`PATCH ${ISSUES}/8`]: json({}) }));
   assert.equal((await failure(stub, (t) => t.writeRefinement(id("8"), refinement("r"))))._tag, "TrackerStateAmbiguous");
   assert.equal(patches(stub).length, 0);
 });
@@ -199,13 +199,13 @@ test("a refinement of an ambiguous issue is TrackerStateAmbiguous and nothing is
 test("a refinement or a state change of a closed issue without a stage label is TrackerBodyInvalid and nothing is PATCHed", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}/9`]: json(issue(9, ["bug"], { state: "closed" })), [`PATCH ${ISSUES}/9`]: json({}) }));
   assert.equal((await failure(stub, (t) => t.writeRefinement(id("9"), refinement("r"))))._tag, "TrackerBodyInvalid");
-  assert.equal((await failure(stub, (t) => t.setState(id("9"), "refining")))._tag, "TrackerBodyInvalid");
+  assert.equal((await failure(stub, (t) => t.setState(id("9"), "implementing")))._tag, "TrackerBodyInvalid");
   assert.equal(patches(stub).length, 0);
 });
 
 test("a PATCH refused for the token is TrackerAuthRefused", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [])), [`PATCH ${ISSUES}/7`]: json({ message: "Resource not accessible" }, 403) }));
-  assert.equal((await failure(stub, (t) => t.setState(id("7"), "refining")))._tag, "TrackerAuthRefused");
+  assert.equal((await failure(stub, (t) => t.setState(id("7"), "implementing")))._tag, "TrackerAuthRefused");
 });
 
 test("githubTrackerFrom refuses an absent credential and a config without a tracker before any request", () => {

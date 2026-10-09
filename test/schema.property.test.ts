@@ -27,7 +27,7 @@ const arbConfig = record<S.Config>({
   claudeModel: fc.option(fc.string(), { nil: null }),
   codexModel: fc.option(fc.string(), { nil: null }),
   tracker: fc.option(
-    fc.record({ owner: nonBlank, repo: nonBlank, labels: fc.uniqueArray(nonBlank, { minLength: 6, maxLength: 6 }) }).map(({ owner, repo, labels }): S.GithubTrackerConfig => ({ kind: "github", owner, repo, labels: { unrefined: labels[0], refining: labels[1], refined: labels[2], implementing: labels[3], implemented: labels[4], deployed: labels[5] } })),
+    fc.record({ owner: nonBlank, repo: nonBlank, labels: fc.uniqueArray(nonBlank, { minLength: 5, maxLength: 5 }) }).map(({ owner, repo, labels }): S.GithubTrackerConfig => ({ kind: "github", owner, repo, labels: { unrefined: labels[0], refined: labels[1], implementing: labels[2], implemented: labels[3], deployed: labels[4] } })),
     { nil: null },
   ),
 });

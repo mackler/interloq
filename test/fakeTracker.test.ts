@@ -42,9 +42,9 @@ test("a refinement written twice reads back once, and the developer's text stays
 
 test("a state change moves the item between lists", async () => {
   const { tracker } = await run(makeFakeTracker(ITEMS));
-  await run(tracker.setState(id("1"), "refining"));
+  await run(tracker.setState(id("1"), "implementing"));
   assert.deepEqual((await run(tracker.list("unrefined"))).map((i) => i.id), ["4"]);
-  assert.deepEqual((await run(tracker.list("refining"))).map((i) => i.id), ["1"]);
+  assert.deepEqual((await run(tracker.list("implementing"))).map((i) => i.id), ["1"]);
 });
 
 test("a scripted failure fails the next call of that operation alone", async () => {

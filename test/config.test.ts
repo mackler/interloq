@@ -122,13 +122,13 @@ test("retryDelays doubles the configured delay on each retry", () => {
   assert.deepEqual(retryDelays({ maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 }), [0.01, 0.02]);
 });
 
-// Issue #120, part 1: the tracker key. GitHub's owner, repo and six stage labels; refused before any call when a
+// Issue #120, part 1: the tracker key. GitHub's owner, repo and five stage labels (six until the developer removed refining on 9 Oct 2026); refused before any call when a
 // coordinate is missing, a state is unknown or missing, or two states share a label. No credential is a config key.
-const LABELS = { unrefined: "stage: unrefined", refining: "stage: refining", refined: "stage: refined", implementing: "stage: implementing", implemented: "stage: implemented", deployed: "stage: deployed" };
+const LABELS = { unrefined: "stage: unrefined", refined: "stage: refined", implementing: "stage: implementing", implemented: "stage: implemented", deployed: "stage: deployed" };
 const GITHUB = { kind: "github", owner: "mackler", repo: "interloq", labels: LABELS };
 const trackerText = (tracker: unknown): string => JSON.stringify({ tracker });
 
-test("the tracker key defaults to null and accepts a GitHub tracker with its six labels", () => {
+test("the tracker key defaults to null and accepts a GitHub tracker with its five labels", () => {
   assert.equal(defaultConfig.tracker, null);
   const decoded = decodeConfigText("/p/config.json", trackerText(GITHUB));
   assert.ok(Result.isSuccess(decoded));
@@ -144,7 +144,8 @@ test("a tracker with a missing or blank coordinate, an unknown state, a missing 
     ["an unknown state", { ...GITHUB, labels: { ...LABELS, reviewing: "stage: reviewing" } }],
     ["a missing state", { ...GITHUB, labels: fiveLabels }],
     ["a blank label", { ...GITHUB, labels: { ...LABELS, refined: "" } }],
-    ["two states with one label", { ...GITHUB, labels: { ...LABELS, refined: LABELS.refining } }],
+    ["two states with one label", { ...GITHUB, labels: { ...LABELS, refined: LABELS.implementing } }],
+    ["the removed state refining", { ...GITHUB, labels: { ...LABELS, refining: "stage: refining" } }],
     ["an unknown kind", { ...GITHUB, kind: "jira" }],
     ["a token in the config", { ...GITHUB, token: "ghp_secret" }],
   ];
