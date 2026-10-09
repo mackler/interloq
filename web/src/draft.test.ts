@@ -4,17 +4,19 @@ import type { RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
 import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "./draft.ts";
-import { initialState, reduce, type ViewState } from "./state.ts";
+import { initialState, reduce, type Shown, shownRun, type ViewState } from "./state.ts";
 
 // Finding 5 of docs/gui-review.md: a draft belongs to (incarnation, run, prompt).
-const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "t" };
+const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id: "1", title: "t" } };
 const TIME = "2026-09-27T14:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
 const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt) });
 const answered = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "" });
-const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", cwd: "/p", location: "/p", current, incarnation });
+const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", location: "/p", current: { refinement: null, implementation: current }, incarnation });
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
-const live = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", ui: [], runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
+const liveState = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", ui: [], runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
+/** The implementation tab's run, as the page keys its draft by (issue #120). */
+const live = (events: readonly RunEvent[]): Shown => shownRun(liveState(events), "implementation");
 const draft: Draft = { key: { incarnation: "a", run: 1, prompt: 1 }, text: "my unsent answer" };
 
 describe("draft", () => {
@@ -31,17 +33,17 @@ describe("draft", () => {
   });
 
   test("a replay after a reconnection in which the prompt was answered meanwhile withdraws the draft with a notice", () => {
-    const view = fold([hello(), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), answered(1), asked(2)]) }] }], live([started, asked(1)]));
+    const view = shownRun(fold([hello(), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), answered(1), asked(2)]) }] }], liveState([started, asked(1)])), "implementation");
     expect(reconcile(draft, view)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my unsent answer") });
   });
 
   test("a replay in which the same prompt is still pending keeps the draft", () => {
-    const view = fold([hello(), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], live([started, asked(1)]));
+    const view = shownRun(fold([hello(), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], liveState([started, asked(1)])), "implementation");
     expect(reconcile(draft, view)).toEqual({ draft, notice: null });
   });
 
   test("another incarnation of the server withdraws the draft with a notice; an empty draft goes quietly", () => {
-    const view = fold([hello("b"), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], live([started, asked(1)]));
+    const view = shownRun(fold([hello("b"), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] }], liveState([started, asked(1)])), "implementation");
     expect(reconcile(draft, view)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my unsent answer") });
     expect(reconcile({ ...draft, text: "" }, live([started, asked(1), answered(1)]))).toEqual({ draft: null, notice: null });
   });
@@ -77,8 +79,8 @@ describe("an answer not sent", () => {
     expect(restoreUnsent({ key, text: "same" }, view, answer("same"))).toEqual({ draft: { key, text: "same" }, quoted: null });
   });
 
-  test("a stop, a start and a listing leave the draft and quote nothing", () => {
+  test("a stop, a start and an items request leave the draft and quote nothing", () => {
     const d: Draft = { key, text: "B" };
-    for (const m of [{ type: "stop", incarnation: "a", run: 1 }, { type: "start", project: "/p", task: "t" }, { type: "list", path: "/" }] as const) expect(restoreUnsent(d, view, m)).toEqual({ draft: d, quoted: null });
+    for (const m of [{ type: "stop", incarnation: "a", run: 1 }, { type: "start", mode: "implementation", item: "1" }, { type: "items", mode: "refinement" }] as const) expect(restoreUnsent(d, view, m)).toEqual({ draft: d, quoted: null });
   });
 });

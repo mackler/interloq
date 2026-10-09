@@ -1035,6 +1035,33 @@ export function refinementInvalidText(reason: "blank" | "markerLine" | "trailing
 export function requirementsKeptText(requirements: string): string {
   return `The requirements are in ${requirements}.`;
 }
+// ---- the two tabs of the page (issue #120) -------------------------------------------------------------------------------
+
+/** Each mode's tab: its name, the action of an item's button, what its list is of and what it says when empty. */
+export const TAB_TEXTS = {
+  refinement: { tab: "Refinement", action: "Refine", list: "Unrefined issues", empty: "No unrefined issues" },
+  implementation: { tab: "Implementation", action: "Implement", list: "Refined issues", empty: "No refined issues" },
+} as const;
+/** The tabs' accessible name. */
+export const TABS_LABEL = "Modes";
+/** A tab whose run waits for the user's answer: its name with the title's waiting mark in front (issue #16's mark). */
+export const waitingTabName = (name: string): string => `${TITLE_WAITING_MARK} ${name}`;
+export const ITEMS_REFRESH = "Refresh";
+export const ITEMS_RETRY = "Try again";
+export const ITEMS_LOADING = "Asking the issue tracker for the items …";
+/** The way back from a tab's ended run to its list. */
+export const BACK_TO_LIST = "Back to the list";
+/** An item's headline in a tab: its id and its title. */
+export const itemHeadline = (id: string, title: string): string => `#${id} ${title}`;
+
+/** Why the run manager refuses to start a run (issue #120): no item id, a run of the mode in progress, an item that moved on. */
+export const ITEM_ID_EMPTY = "no item was chosen";
+export function runInProgressText(mode: "refinement" | "implementation"): string {
+  return `a ${mode} run is in progress; stop it or wait for its end`;
+}
+export function itemMovedText(id: string, expected: string, state: string): string {
+  return `item ${id} is no longer ${expected}: it is ${state}; refresh the list`;
+}
 /** The tracker's failures as the program says them; a variable's name, never a credential. */
 export const TRACKER_FAILURE_TEXTS = {
   noTracker: "no issue tracker is configured: set the key tracker in the shared config.json of Interloq or in plan-review/config.json of the project",
@@ -1216,14 +1243,6 @@ export function planWrittenHeading(label: string): string {
 }
 /** The heading of the summary Claude proposes at the end of an interview, in the page. */
 export const SUMMARY_PROPOSED_HEADING = "Summary proposed by Claude:";
-/** The start form's description, in parts: plain text, a path, and the name of a button. */
-export const START_FORM_DESCRIPTION: readonly Readonly<{ text: string; style: "plain" | "code" | "strong" }>[] = [
-  { text: "Claude writes a plan, Codex reviews it until no issue remains, Claude implements it, and Codex reviews the work; the page asks you only where a decision is needed. ", style: "plain" },
-  { text: "Stop task", style: "strong" },
-  { text: " ends the task; its records stay in ", style: "plain" },
-  { text: "plan-review/", style: "code" },
-  { text: " in the project, as they do when a task ends by itself.", style: "plain" },
-];
 
 /**
  * The name of a phase as both interfaces show it (issue #14): the first phase gathers the requirements, and an
@@ -1271,12 +1290,12 @@ export function draftWithdrawnNotice(text: string): string {
 export const SERVER_CLOSED_NOTICE = "The server has ended. The page reconnects when it is started again.";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
-const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "list" | "ui", string> = {
+const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui", string> = {
   answer: "Your answer was not sent",
   ui: "Opening or closing an entry of the analysis was not sent",
   stop: "Stop was not sent",
-  start: "The new task was not sent",
-  list: "The directory listing was not requested",
+  start: "The start of the run was not sent",
+  items: "The request for the tab's items was not sent",
 };
 const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = {
   ended: "the run has ended",
@@ -1287,7 +1306,7 @@ const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = 
  * An action that was not sent: queued while disconnected and overtaken by the reconnection, or refused because the page
  * has stopped reconnecting. A disconnected answer says where its text is: in the answer field, or quoted and kept.
  */
-export function notSentNotice(kind: "answer" | "stop" | "start" | "list" | "ui", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
+export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
   const base = `${NOT_SENT_SUBJECT[kind]}: ${NOT_SENT_REASON[reason]}.`;
   if (kind !== "answer" || reason !== "disconnected") return base;
   return quoted === undefined ? `${base} Its text is still in the answer field.` : `${base} Its text is kept under “${UNSENT_HEADING}”: «${quoted}»`;

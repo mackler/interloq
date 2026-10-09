@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
-import { RUN_MODES, listedState, stateAtEnd, stateAtStart } from "../src/runMode.ts";
+import { EXCERPT_LENGTH, excerptOf, RUN_MODES, listedState, stateAtEnd, stateAtStart } from "../src/runMode.ts";
 import { taskTextOf } from "../src/program.ts";
 import { refinementOf, withRefinement } from "../src/refinement.ts";
 import { ITEM_STATES, itemIdOf, type TrackerItem } from "../src/tracker.ts";
@@ -31,4 +31,15 @@ test("taskTextOf: a malformed section is SectionMalformed for a refinement run; 
   assert.ok(Result.isFailure(malformed) && malformed.failure._tag === "SectionMalformed");
   const blank = taskTextOf("implementation", { id, title: " ", body: " \n\t", state: "refined" });
   assert.ok(Result.isFailure(blank) && blank.failure._tag === "BlankTask");
+});
+
+// Issue #120, S9: what a tab shows of an item beside its title, enough to choose by.
+test("excerptOf: the developer's text without the section, on one line, cut to EXCERPT_LENGTH with an ellipsis", () => {
+  assert.equal(excerptOf(refinedBody), developerText);
+  assert.equal(excerptOf("  first line\n\n  second\tline  "), "first line second line");
+  const long = "word ".repeat(100);
+  const cut = excerptOf(long);
+  assert.ok(cut.length <= EXCERPT_LENGTH && cut.endsWith("…"), cut);
+  assert.equal(excerptOf("## Refined using Interloq\nno closing line"), "## Refined using Interloq no closing line");
+  assert.equal(excerptOf(""), "");
 });

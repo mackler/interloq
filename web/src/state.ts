@@ -2,7 +2,8 @@
 // prompt with its widget, the activity line and the timeline rail. Replay and live events use the same fold.
 
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, ListedItem, ServerMessage, Stamped } from "../../src/protocol.ts";
+import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
@@ -109,6 +110,9 @@ export type Widget = Readonly<{ asked: Asked; options: readonly Choice[]; choice
 
 export type RunView = Readonly<{
   id: number;
+  /** The run's mode and item from Started (issue #120); null before it. */
+  mode: RunMode | null;
+  item: Readonly<{ id: string; title: string }> | null;
   project: string;
   /** The project's identification from Started (issue #29): its host directory, or the path as given. */
   location: string;
@@ -157,29 +161,58 @@ export type RunView = Readonly<{
   ui: RunUiState;
 }>;
 
-export type Listing = Readonly<{ path: string; parent: string | null; dirs: readonly string[]; error: string | null }>;
+/** A tab's items (issue #120): not asked yet, being asked for, listed, or the notice of why the tracker could not list them. */
+export type ItemsView = Readonly<{ _tag: "Unasked" }> | Readonly<{ _tag: "Loading" }> | Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Readonly<{ _tag: "Unavailable"; notice: string }>;
+/**
+ * What the page holds of one mode, the content of its tab (issue #120): the id of its run in progress on the server, its
+ * newest run (in progress or ended) and the one before it, its items, and the refusal of its last action, which its next
+ * items frame or Started clears.
+ */
+export type ModeView = Readonly<{ current: number | null; run: RunView | null; last: RunView | null; items: ItemsView; refusal: string | null }>;
+const emptyMode: ModeView = { current: null, run: null, last: null, items: { _tag: "Unasked" }, refusal: null };
 export type ViewState = Readonly<{
   connection: "connecting" | "open" | "reconnecting" | "failed";
-  cwd: string;
-  /** The identification of the server's working directory from the last hello (issue #29); null before the first. */
+  /** The identification of the server's working directory, the one project, from the last hello (issue #29); null before the first. */
   location: string | null;
-  /** The id of the run in progress on the server, as the last hello or event reported it. */
-  current: number | null;
   /** The server's incarnation from the last hello (finding 12); null before the first. */
   incarnation: string | null;
-  /** The newest run (in progress or ended) and the one before it. */
-  run: RunView | null;
-  last: RunView | null;
+  /** Each mode's tab (issue #120). */
+  modes: Readonly<Record<RunMode, ModeView>>;
+  /** The tab shown. */
+  selected: RunMode;
+  /** The mode of every run the page has seen, from its Started (issue #120): where a later event of the run belongs. */
+  runModes: Readonly<Record<number, RunMode>>;
   /** A seq that did not follow: the page must reconnect to receive the replay. */
   needsReconnect: boolean;
-  /** Messages from the server or the page for the user: refusals and notices. */
+  /** Messages from the server or the page for the user that belong to no tab: notices, and refusals of no mode. */
   notices: readonly string[];
-  listing: Listing | null;
   /** The answers the page could not send and could not put back into the answer field, in order, until dismissed. */
   unsent: readonly string[];
 }>;
 
-export const initialState: ViewState = { connection: "connecting", cwd: "", location: null, current: null, incarnation: null, run: null, last: null, needsReconnect: false, notices: [], listing: null, unsent: [] };
+export const initialState: ViewState = {
+  connection: "connecting",
+  location: null,
+  incarnation: null,
+  modes: { refinement: emptyMode, implementation: emptyMode },
+  selected: "refinement",
+  runModes: {},
+  needsReconnect: false,
+  notices: [],
+  unsent: [],
+};
+
+/** The state with one mode's tab changed. */
+const withMode = (state: ViewState, mode: RunMode, change: (m: ModeView) => ModeView): ViewState => ({ ...state, modes: { ...state.modes, [mode]: change(state.modes[mode]) } });
+/** The tab the user shows (issue #120). */
+export const selectMode = (state: ViewState, mode: RunMode): ViewState => ({ ...state, selected: mode });
+/** A tab's items asked for: loading until the server's items frame. */
+export const itemsRequested = (state: ViewState, mode: RunMode): ViewState => withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" } }));
+/** The run a mode's tab shows, its newest, and the server's incarnation: what the draft and the notifications key by. */
+export type Shown = Readonly<{ incarnation: string | null; run: RunView | null }>;
+export const shownRun = (state: ViewState, mode: RunMode = state.selected): Shown => ({ incarnation: state.incarnation, run: state.modes[mode].run });
+/** The mode of a run's view, from its Started; null before it. */
+const modeOfRun = (run: RunView): RunMode | null => run.mode;
 
 const AGENT: Record<"claude" | "codex", string> = { claude: "Claude", codex: "Codex" };
 const sameSubject = (a: SubjectId, b: SubjectId): boolean => JSON.stringify(a) === JSON.stringify(b);
@@ -188,6 +221,8 @@ const samePhase = (a: Phase, b: Phase): boolean => JSON.stringify(a) === JSON.st
 
 export const emptyRun = (id: number): RunView => ({
   id,
+  mode: null,
+  item: null,
   project: "",
   location: "",
   task: "",
@@ -600,7 +635,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   const next = ((): RunView => {
     switch (event._tag) {
       case "Started":
-        return { ...r, project: event.project, location: event.location, task: event.task };
+        return { ...r, project: event.project, location: event.location, task: event.task, mode: event.mode, item: event.item };
       case "Said":
         return event.text.trim() === "" ? r : withLeft(r, message(r, time, "program", event.text, "text"));
       case "Asked": {
@@ -649,36 +684,49 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
     case "hello": {
       // Another start of the server: its run numbers restart, so the views of the earlier server's runs are dropped.
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
-      const runs = restarted ? { run: null, last: null } : {};
-      return { ...state, ...runs, connection: "open", cwd: message.cwd, location: message.location, current: message.current, incarnation: message.incarnation, needsReconnect: false };
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], ...(restarted ? { run: null, last: null } : {}), current: message.current[m] }])) as Record<RunMode, ModeView>;
+      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false };
     }
     case "replay": {
-      // Issue #87: each replayed run's shared state, held by the server beside its events.
-      const views = message.runs.map((r) => ({ ...foldRun(r.id, r.events), ui: message.ui.find((u) => u.run === r.id)?.state ?? emptyUiState }));
-      return { ...state, run: views[views.length - 1] ?? null, last: views[views.length - 2] ?? null };
+      // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the
+      // mode its Started named, the newest of a mode its run and the one before it its last.
+      const views = message.runs.map((r) => ({ ...foldRun(r.id, r.events), ui: message.ui.find((u) => u.run === r.id)?.state ?? emptyUiState })).sort((a, b) => a.id - b.id);
+      const of = (mode: RunMode) => views.filter((v) => modeOfRun(v) === mode);
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], run: of(m).at(-1) ?? null, last: of(m).at(-2) ?? null }])) as Record<RunMode, ModeView>;
+      const runModes = { ...state.runModes, ...Object.fromEntries(views.flatMap((v) => (v.mode === null ? [] : [[v.id, v.mode]]))) };
+      return { ...state, modes, runModes };
     }
-    case "listing":
-      return { ...state, listing: { path: message.path, parent: message.parent, dirs: message.dirs, error: message.error } };
+    case "items":
+      return withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null }));
     case "refused":
-      return notice(state, message.reason);
+      // Issue #120: a refusal goes to the tab whose action it was, whichever tab is shown; one of no mode is a notice.
+      return message.mode === null ? notice(state, message.reason) : withMode(state, message.mode, (m) => ({ ...m, refusal: message.reason }));
     case "ui": {
       // Issue #87: the run's whole shared state; of two, the higher version stands, whatever their order of arrival.
       const apply = (view: RunView | null): RunView | null => (view !== null && view.id === message.run ? { ...view, ui: newer(view.ui, message.state) } : view);
-      return { ...state, run: apply(state.run), last: apply(state.last) };
+      const mode = state.runModes[message.run];
+      return mode === undefined ? state : withMode(state, mode, (m) => ({ ...m, run: apply(m.run), last: apply(m.last) }));
     }
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.
       return notice({ ...state, connection: state.connection === "failed" ? "failed" : "reconnecting" }, SERVER_CLOSED_NOTICE);
     case "event": {
-      const current = message.event._tag === "Started" ? message.run : message.event._tag === "Ended" ? null : state.current;
-      if (state.run !== null && message.run === state.run.id) {
-        if (message.seq !== state.run.nextSeq) return { ...state, needsReconnect: true };
-        return { ...state, current, run: foldEvent(state.run, { time: message.time, event: message.event }) };
+      // Issue #120: an event belongs to the mode its run's Started named.
+      const mode = message.event._tag === "Started" ? message.event.mode : state.runModes[message.run];
+      if (mode === undefined) return message.seq === 0 ? state : { ...state, needsReconnect: true };
+      const tab = state.modes[mode];
+      const current = message.event._tag === "Started" ? message.run : message.event._tag === "Ended" ? (tab.current === message.run ? null : tab.current) : tab.current;
+      const runModes = message.event._tag === "Started" ? { ...state.runModes, [message.run]: mode } : state.runModes;
+      const stamped = { time: message.time, event: message.event };
+      if (tab.run !== null && message.run === tab.run.id) {
+        if (message.seq !== tab.run.nextSeq) return { ...state, needsReconnect: true };
+        return withMode({ ...state, runModes }, mode, (m) => ({ ...m, current, run: foldEvent(m.run!, stamped) }));
       }
-      if (state.run === null || message.run > state.run.id) {
+      if (tab.run === null || message.run > tab.run.id) {
         if (message.seq !== 0) return { ...state, needsReconnect: true };
-        return { ...state, current, last: state.run, run: foldEvent(emptyRun(message.run), { time: message.time, event: message.event }) };
+        // A run's Started clears its tab's refusal: the action it answers has succeeded.
+        return withMode({ ...state, runModes }, mode, (m) => ({ ...m, current, last: m.run, run: foldEvent(emptyRun(message.run), stamped), refusal: message.event._tag === "Started" ? null : m.refusal }));
       }
       return state;
     }

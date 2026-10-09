@@ -13,14 +13,16 @@ export type FakeTracker = Readonly<{
   tracker: TrackerShape;
   /** The items as they are now, with what was written. */
   items: Effect.Effect<readonly FakeItem[]>;
+  /** The ids the tracker was asked to read, in order (issue #120: the seam between the page's item and the run's). */
+  reads: Effect.Effect<readonly ItemId[]>;
   /** The next call of `operation` fails with `error`, once. */
   failNext: (operation: TrackerOperation, error: TrackerError) => Effect.Effect<void>;
 }>;
 
-type State = Readonly<{ items: readonly FakeItem[]; failures: readonly (readonly [TrackerOperation, TrackerError])[] }>;
+type State = Readonly<{ items: readonly FakeItem[]; failures: readonly (readonly [TrackerOperation, TrackerError])[]; reads: readonly ItemId[] }>;
 
 export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<FakeTracker> =>
-  Effect.map(Ref.make<State>({ items: initial, failures: [] }), (ref) => {
+  Effect.map(Ref.make<State>({ items: initial, failures: [], reads: [] }), (ref) => {
     /** The scripted failure of this operation, taken, or none. */
     const scripted = (operation: TrackerOperation): Effect.Effect<void, TrackerError> =>
       Effect.flatMap(
@@ -39,7 +41,7 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
     const shown = ({ open: _open, ...item }: FakeItem): TrackerItem => item;
     const tracker: TrackerShape = {
       list: (state) => Effect.andThen(scripted("list"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.state === state).map(shown))),
-      read: (id) => Effect.andThen(scripted("read"), Effect.map(find(id), shown)),
+      read: (id) => Effect.andThen(Ref.update(ref, (s) => ({ ...s, reads: [...s.reads, id] })), Effect.andThen(scripted("read"), Effect.map(find(id), shown))),
       writeRefinement: (id, refinement) =>
         Effect.gen(function* () {
           yield* scripted("writeRefinement");
@@ -53,6 +55,7 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
     return {
       tracker,
       items: Effect.map(Ref.get(ref), (s) => s.items),
+      reads: Effect.map(Ref.get(ref), (s) => s.reads),
       failNext: (operation, error) => Ref.update(ref, (s) => ({ ...s, failures: [...s.failures, [operation, error] as const] })),
     };
   });

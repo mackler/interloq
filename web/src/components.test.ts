@@ -5,9 +5,11 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import { viewOf } from "../../src/analysisView.ts";
-import DirectoryDialog from "./components/DirectoryDialog.svelte";
 import QuestionPane from "./components/QuestionPane.svelte";
-import StartForm from "./components/StartForm.svelte";
+import ItemList from "./components/ItemList.svelte";
+import { startFrame } from "./tabs.ts";
+import type { ClientMessage } from "../../src/protocol.ts";
+import type { RunMode } from "../../src/runMode.ts";
 import TimelineRail from "./components/TimelineRail.svelte";
 import CircularIndeterminate from "./components/CircularIndeterminate.svelte";
 import ActivityLine from "./components/ActivityLine.svelte";
@@ -100,11 +102,11 @@ describe("Claude's messages", () => {
   test("the panel shows Claude's prose from the reducer as Claude's article, without the prefix", () => {
     const time = "2026-09-27T14:00:00.000Z";
     const state = [
-      { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
-      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
+      { type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } },
     ].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
-    const root = show(ChatPanel, { title: "You and Interloq", messages: state.run?.left ?? [], empty: "none" });
+    const root = show(ChatPanel, { title: "You and Interloq", messages: state.modes.refinement.run?.left ?? [], empty: "none" });
     const article = one(root, "article[data-author=claude]");
     expect(article.classList.contains("claude")).toBe(true);
     expect(one(article, ".body").textContent?.trim()).toBe("done");
@@ -128,110 +130,40 @@ test("every author's message carries its author as class and data-author", () =>
   }
 });
 
-describe("StartForm", () => {
-  test("the description is the page's help text from src/prompts.ts, and says Claude (issue #5)", () => {
-    const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: () => undefined, onBrowse: () => undefined });
-    const text = (one(root, ".help").textContent ?? "").replace(/\s+/g, " ").trim();
-    expect(text).toContain("Claude writes a plan, Codex reviews it");
-    expect(text).not.toContain("Claude Code");
-    expect(text).toBe(prompts.START_FORM_DESCRIPTION.map((part) => part.text).join("").replace(/\s+/g, " ").trim());
+// Issue #120: a tab's items, each with a button that starts the tab's run; the page never calls the tracker.
+describe("ItemList", () => {
+  const items = [
+    { id: "120", title: "Two modes", excerpt: "Make the page two tabs." },
+    { id: "121", title: "Trello", excerpt: "" },
+  ];
+  const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, running: false, onStart: () => undefined, onRefresh: () => undefined, ...props });
+
+  test("each item shows its id and title and its excerpt, and its button starts the tab's run with that item", () => {
+    const started: unknown[] = [];
+    const root = listed({ onStart: (item: unknown) => void started.push(item) });
+    expect(root.textContent).toContain(prompts.itemHeadline("120", "Two modes"));
+    expect(root.textContent).toContain("Make the page two tabs.");
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>("button[name=start]")];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual([prompts.TAB_TEXTS.refinement.action, prompts.TAB_TEXTS.refinement.action]);
+    buttons[1].click();
+    expect(started).toEqual([items[1]]);
   });
 
-  // Issue #88: the page is the only interface, so its help names no terminal; Stop task ends the task and keeps its records.
-  test("the description says what Stop task does without naming a terminal", () => {
-    const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: () => undefined, onBrowse: () => undefined });
-    const text = (one(root, ".help").textContent ?? "").replace(/\s+/g, " ").trim();
-    expect(text).not.toMatch(/terminal/i);
-    expect(text).toMatch(/Stop task ends the task; its records stay in plan-review\//);
+  test("while the mode's run is in progress, or offline, no item can be started", () => {
+    for (const props of [{ running: true }, { offline: true }]) expect([...listed(props).querySelectorAll<HTMLButtonElement>("button[name=start]")].every((b) => b.disabled)).toBe(true);
   });
 
-  test("Start is disabled while a field is empty or a run is active, and sends the project and the task", () => {
-    const started: string[][] = [];
-    const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: (p: string, t: string) => void started.push([p, t]), onBrowse: () => undefined });
-    const start = one(root, "button[name=start]") as HTMLButtonElement;
-    expect((one(root, "input[name=project]") as HTMLInputElement).value).toBe("/work");
-    expect(start.disabled).toBe(true);
-    type(one(root, "textarea[name=task]") as HTMLTextAreaElement, "Write the docs");
-    expect(start.disabled).toBe(false);
-    start.click();
-    flushSync();
-    expect(started).toEqual([["/work", "Write the docs"]]);
-    const busy = show(StartForm, { cwd: "/work", running: true, refused: null, chosen: null, onStart: () => undefined, onBrowse: () => undefined });
-    type(one(busy, "textarea[name=task]") as HTMLTextAreaElement, "x");
-    expect((one(busy, "button[name=start]") as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  test("the form says what happens after Start (help and documentation)", () => {
-    const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: () => undefined, onBrowse: () => undefined });
-    expect(root.textContent).toMatch(/Claude writes a plan, Codex reviews it/);
-    expect(root.textContent).toMatch(/Stop task/);
-  });
-
-  // Finding 3 of docs/gui-review.md: remembering the directory is never a prerequisite for starting a task.
-  const startsDespite = (breakStorage: () => () => void) => {
-    const restore = breakStorage();
-    try {
-      const started: string[][] = [];
-      const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, onStart: (p: string, t: string) => void started.push([p, t]), onBrowse: () => undefined });
-      expect((one(root, "input[name=project]") as HTMLInputElement).value).toBe("/work");
-      type(one(root, "textarea[name=task]") as HTMLTextAreaElement, "Write the docs");
-      (one(root, "button[name=start]") as HTMLButtonElement).click();
-      flushSync();
-      expect(started).toEqual([["/work", "Write the docs"]]);
-    } finally {
-      restore();
-    }
-  };
-  const denied = () => new DOMException("access denied", "SecurityError");
-  test("Start still starts when storing the directory throws, and a failing read falls back to the server's directory", () => {
-    startsDespite(() => {
-      const set = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-        throw denied();
-      });
-      const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-        throw denied();
-      });
-      return () => {
-        set.mockRestore();
-        get.mockRestore();
-      };
-    });
-  });
-  test("the form renders and Start starts when the localStorage getter itself throws", () => {
-    startsDespite(() => {
-      const original = Object.getOwnPropertyDescriptor(window, "localStorage");
-      Object.defineProperty(window, "localStorage", {
-        configurable: true,
-        get() {
-          throw denied();
-        },
-      });
-      return () => {
-        if (original !== undefined) Object.defineProperty(window, "localStorage", original);
-      };
-    });
-  });
-
-  test("a refusal is shown as the field's error text", () => {
-    const root = show(StartForm, { cwd: "/work", running: false, refused: "/work is not a git repository", chosen: null, onStart: () => undefined, onBrowse: () => undefined });
-    expect(root.textContent).toMatch(/is not a git repository/);
-  });
-
-  test("offline, Start and Browse… are disabled, and the fields stay editable and keep their text", () => {
-    const started: string[] = [];
-    const root = show(StartForm, { cwd: "/work", running: false, refused: null, chosen: null, offline: true, onStart: () => void started.push("start"), onBrowse: () => void started.push("browse") });
-    const task = one(root, "textarea[name=task]") as HTMLTextAreaElement;
-    type(task, "Write the docs");
-    expect(task.disabled).toBe(false);
-    expect((one(root, "input[name=project]") as HTMLInputElement).disabled).toBe(false);
-    expect((one(root, "button[name=start]") as HTMLButtonElement).disabled).toBe(true);
-    expect((one(root, "button[name=browse]") as HTMLButtonElement).disabled).toBe(true);
-    one(root, "form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    flushSync();
-    expect(started).toEqual([]);
-    expect(task.value).toBe("Write the docs");
+  test("the empty state, the loading status, and the unavailable notice with Try again", () => {
+    expect(show(ItemList, { mode: "implementation", items: { _tag: "Listed", items: [] }, running: false, onStart: () => undefined, onRefresh: () => undefined }).textContent).toContain(prompts.TAB_TEXTS.implementation.empty);
+    expect(one(show(ItemList, { mode: "implementation", items: { _tag: "Loading" }, running: false, onStart: () => undefined, onRefresh: () => undefined }), "[role=status]").textContent).toContain(prompts.ITEMS_LOADING);
+    const refreshed: string[] = [];
+    const unavailable = show(ItemList, { mode: "refinement", items: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached" }, running: false, onStart: () => undefined, onRefresh: () => void refreshed.push("again") });
+    expect(one(unavailable, "[role=alert]").textContent).toContain("could not be reached");
+    one(unavailable, "button[name=retry]").click();
+    expect(refreshed).toEqual(["again"]);
   });
 });
+
 
 // Issue #12: the agent's options are cards in a group of their own, the fixed choices buttons below them.
 const optionsGroup = (root: ParentNode) => root.querySelector<HTMLElement>(`[role=group][aria-label="${prompts.PROPOSED_ANSWERS_LABEL}"]`);
@@ -478,13 +410,13 @@ describe("TimelineRail", () => {
     ];
     const time = "2026-09-29T00:00:00Z";
     const messages: ServerMessage[] = [
-      { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
+      { type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
-      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
+      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
     ];
     const s = messages.reduce(reduce, initialState);
-    const root = showRail({ busy: false, timeline: s.run?.timeline ?? [] });
+    const root = showRail({ busy: false, timeline: s.modes.refinement.run?.timeline ?? [] });
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `done:${prompts.stepLabel("clarification")}:-`]);
     expect([...root.querySelectorAll("[data-count]")].map((e) => e.textContent?.trim())).toEqual([prompts.clarificationProgress(10, 10)]);
     expect([...root.querySelectorAll("[data-step] [data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 0, "converged")]);
@@ -512,28 +444,6 @@ describe("TimelineRail", () => {
     const root = showRail({ busy: false, timeline: [] });
     expect(root.querySelector("h2")?.textContent).toBe("Progress");
     expect(root.textContent).toMatch(/No phase has begun\./);
-  });
-});
-
-describe("DirectoryDialog", () => {
-  test("lists the subdirectories, goes up and into a directory, and chooses", () => {
-    const listed: string[] = [];
-    const chosen: string[] = [];
-    const root = show(DirectoryDialog, { open: true, listing: { path: "/work", parent: "/", dirs: ["a", "b"], error: null }, onList: (p: string) => void listed.push(p), onChoose: (p: string) => void chosen.push(p), onClose: () => undefined });
-    const rows = [...root.querySelectorAll("[data-dir]")].map((e) => e.getAttribute("data-dir"));
-    expect(rows).toEqual(["..", "a", "b"]);
-    (one(root, "[data-dir=b]") as HTMLElement).click();
-    (one(root, "[data-dir='..']") as HTMLElement).click();
-    (one(root, "button[name=choose]") as HTMLButtonElement).click();
-    expect(listed).toEqual(["/work/b", "/"]);
-    expect(chosen).toEqual(["/work"]);
-  });
-
-  test("offline, the directories and Choose are disabled, and Cancel is not", () => {
-    const root = show(DirectoryDialog, { open: true, listing: { path: "/work", parent: "/", dirs: ["a"], error: null }, offline: true, onList: () => undefined, onChoose: () => undefined, onClose: () => undefined });
-    expect([...root.querySelectorAll<HTMLButtonElement>("[data-dir]")].map((b) => b.disabled)).toEqual([true, true]);
-    expect((one(root, "button[name=choose]") as HTMLButtonElement).disabled).toBe(true);
-    expect((one(root, "button[name=cancel]") as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
@@ -618,7 +528,7 @@ describe("App and the draft", () => {
       flushSync();
     }
   }
-  const started = { _tag: "Started", project: "/p", location: "/p", task: "t" };
+  const started = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } };
   const TIME = "2026-09-27T14:00:00.000Z";
   const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
   const asked = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt) });
@@ -627,39 +537,125 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
+    ws.receive({ type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
     return { root, ws };
   };
 
   // Issue #29: the page identifies the project before any run, and the tab's title carries it.
-  test("with no run the top bar shows the server's identification above the start form, and the tab's title its own name", async () => {
+  test("with no run the top bar shows the server's identification above the tab's list, and the tab's title its own name", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", cwd: "/workspace", location: "/host/c", current: null, incarnation: "a" });
+    ws.receive({ type: "hello", location: "/host/c", current: { refinement: null, implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [] });
-    expect(root.querySelector("form")).not.toBe(null);
+    expect(root.querySelector("section.items")).not.toBe(null);
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
     expect(document.title).toBe(tabTitle("/host/c"));
-    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/workspace", location: "/host/c", task: "t" }]) }] });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/workspace", location: "/host/c", task: "t", mode: "refinement", item: { id: "11", title: "t" } }]) }] });
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
   });
 
-  // W1-R1-1: above the form for a new task, the bar names the server's project, not the ended run's.
-  test("after a run has ended, New task shows the server's identification in the top bar and the title", async () => {
+  // W1-R1-1: above the list, the bar names the server's project, not the ended run's.
+  test("after a run has ended, Back to the list shows the server's identification in the top bar and the title", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", cwd: "/workspace", location: "/host/server", current: null, incarnation: "a" });
-    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t" }, { _tag: "Ended", code: 0 }]) }] });
+    ws.receive({ type: "hello", location: "/host/server", current: { refinement: null, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t", mode: "refinement", item: { id: "11", title: "t" } }, { _tag: "Ended", code: 0 }]) }] });
+    expect(one(root, "button[name=new]").textContent?.trim()).toBe(prompts.BACK_TO_LIST);
     one(root, "button[name=new]").click();
     flushSync();
-    expect(root.querySelector("form")).not.toBe(null);
+    expect(root.querySelector("section.items")).not.toBe(null);
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/server");
     expect(document.title).toBe(tabTitle("/host/server"));
   });
+  // Issue #120, S12: two M3 primary tabs, the tab being the mode; each lists its items or shows its run.
+  describe("the two tabs", () => {
+    const sentOf = (ws: FakeWebSocket) => ws.sent.map((m) => JSON.parse(m) as ClientMessage);
+    const tabInput = (root: HTMLElement, mode: RunMode) => one(root, `input[type=radio][value=${mode}]`) as HTMLInputElement;
+    const select = (root: HTMLElement, mode: RunMode) => {
+      tabInput(root, mode).click();
+      flushSync();
+    };
+    const startedIn = (mode: RunMode, id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode, item: { id, title: "t" } });
+    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs." };
+    const begin = async () => {
+      vi.stubGlobal("WebSocket", FakeWebSocket);
+      const { default: App } = await import("./components/App.svelte");
+      const root = show(App, {});
+      const ws = FakeWebSocket.last!;
+      ws.onopen?.({});
+      ws.receive({ type: "hello", location: "/p", current: { refinement: null, implementation: null }, incarnation: "a" });
+      ws.receive({ type: "replay", ui: [], runs: [] });
+      return { root, ws };
+    };
+
+    test("both modes are tabs; the shown tab asks for its items, and selecting the other asks for that mode's", async () => {
+      const { root, ws } = await begin();
+      expect([...root.querySelectorAll("nav.tabs label")].map((l) => l.textContent?.trim())).toEqual([prompts.TAB_TEXTS.refinement.tab, prompts.TAB_TEXTS.implementation.tab]);
+      expect(sentOf(ws)).toEqual([{ type: "items", mode: "refinement" }]);
+      select(root, "implementation");
+      expect(sentOf(ws).at(-1)).toEqual({ type: "items", mode: "implementation" });
+    });
+
+    test("an item's button sends start with the tab's mode and the item's id, both from the listed item (the seam with the server)", async () => {
+      const { root, ws } = await begin();
+      select(root, "implementation");
+      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      one(root, `button[name=start][data-item="${fixture.id}"]`).click();
+      expect(sentOf(ws).at(-1)).toEqual(startFrame("implementation", fixture));
+      expect(sentOf(ws).at(-1)).toEqual({ type: "start", mode: "implementation", item: fixture.id });
+    });
+
+    test("a tab whose run waits carries the mark; the other tab shows its own run without an answer field", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), asked(1)]) }, { id: 2, events: stamp([startedIn("implementation", "1")]) }] });
+      const labels = () => [...root.querySelectorAll("nav.tabs label")].map((l) => l.textContent?.trim());
+      expect(labels()).toEqual([prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab), prompts.TAB_TEXTS.implementation.tab]);
+      expect(root.querySelector("input[name=answer], textarea[name=answer]")).not.toBe(null);
+      select(root, "implementation");
+      expect(root.querySelector("input[name=answer], textarea[name=answer]")).toBe(null);
+      expect(labels()[0]).toBe(prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab));
+    });
+
+    test("a refusal of one mode shows in that tab only", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "refused", mode: "implementation", reason: "a implementation run is in progress; stop it or wait for its end" });
+      expect(root.querySelector(".refusal")).toBe(null);
+      select(root, "implementation");
+      expect(one(root, ".refusal[role=alert]").textContent).toContain("a implementation run is in progress");
+      select(root, "refinement");
+      expect(root.querySelector(".refusal")).toBe(null);
+    });
+
+    test("a refinement run's rail shows Gather Requirements alone", async () => {
+      const { root, ws } = await begin();
+      const foreseen = { _tag: "Notified", event: { _tag: "PhasesForeseen", phases: foreseenPhases("refinement", 1) } };
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), foreseen]) }] });
+      expect(root.querySelector(".rail")?.textContent).toContain(phaseName({ kind: "questions" }, 1));
+      expect(root.querySelector(".rail")?.textContent).not.toContain(phaseName({ kind: "planning", n: 1 }, 1));
+    });
+
+    test("an unavailable tracker is a notice in the tab with Try again, which asks again", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: timeout" } });
+      expect(one(root, "section.items [role=alert]").textContent).toContain("could not be reached");
+      const before = ws.sent.length;
+      one(root, "button[name=retry]").click();
+      flushSync();
+      expect(sentOf(ws).slice(before)).toEqual([{ type: "items", mode: "refinement" }]);
+    });
+
+    test("a prompt waiting in the hidden tab marks the browser tab's title", async () => {
+      const { root, ws } = await begin();
+      select(root, "implementation");
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), asked(1)]) }] });
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Waiting" }));
+    });
+  });
+
   // Issue #16: the page alerts the user that the run waits for him, or that a run he watched has ended.
   describe("alerts", () => {
     let visibility: DocumentVisibilityState = "hidden";
@@ -690,7 +686,7 @@ describe("App and the draft", () => {
       expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.pauseNotificationTitle(name)]);
       expect(document.title).toBe(tabTitle("/p", WAITING));
       expect(icon()).toBe(faviconHref(WAITING, schemeColors()));
-      ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
+      ws.receive({ type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
       expect(NotificationStub.calls).toHaveLength(1);
       ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
@@ -785,7 +781,7 @@ describe("App and the draft", () => {
         const { ws } = await openPage();
         pending(ws);
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
-        ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
+        ws.receive({ type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
         pending(ws);
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
       });
@@ -896,7 +892,7 @@ describe("App and the draft", () => {
     one(root, "button[name=conversation]").click();
     flushSync();
     expect(root.querySelector('section[aria-label^="Decision 1"]')).toBe(null);
-    ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 2, incarnation: "a" });
+    ws.receive({ type: "hello", location: "/p", current: { refinement: 2, implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
   });
@@ -1003,7 +999,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     type(field(root), "draft for question one");
-    ws.receive({ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" });
+    ws.receive({ type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
     expect(field(root).value).toBe("");
     expect(root.textContent).toMatch(/your unsent text was discarded: «draft for question one»/);
@@ -1042,7 +1038,8 @@ describe("App and the draft", () => {
     type(field(root), "typed after the failure");
     enter(field(root));
     expect(field(root).value).toBe("typed after the failure");
-    expect(FakeWebSocket.all.flatMap((s) => s.sent)).toEqual([]);
+    // Issue #120: the one frame sent is the request for the shown tab's items after the first hello, before the replay.
+    expect(FakeWebSocket.all.flatMap((s) => s.sent).map((m) => JSON.parse(m).type)).toEqual(["items"]);
   });
 
   test("several actions discarded: the newer draft stays, and the answers are kept under Not sent until dismissed", async () => {
@@ -1593,13 +1590,13 @@ test("the activity line shows retry 2 of 3", () => {
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
-    { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
+    { type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
     { type: "replay", ui: [], runs: [] },
-    { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
+    { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
     ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
   ];
   const s = messages.reduce(reduce, initialState);
-  const root = show(ActivityLine, { text: s.run?.activity ?? "" });
+  const root = show(ActivityLine, { text: s.modes.refinement.run?.activity ?? "" });
   expect(one(root, "[data-activity]").textContent).toContain("retry 2 of 3");
 });
 
@@ -1815,12 +1812,12 @@ describe("TimelineRail: where the indicator is", () => {
     const resumed = report("S1", prompts.REPORT_STEP_STATUSES[0], plan("started", "done"));
     const rail = (list: UiEvent[]) => {
       const messages: ServerMessage[] = [
-        { type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" },
+        { type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
         { type: "replay", ui: [], runs: [] },
-        { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } },
+        { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
         ...list.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time: CALL, event: { _tag: "Notified", event } })),
       ];
-      const run = messages.reduce(reduce, initialState).run!;
+      const run = messages.reduce(reduce, initialState).modes.refinement.run!;
       return showRail({ timeline: run.timeline, busy: run.busy, executing: executing(run), callStartedAt: callStartedAt(run) });
     };
     const where = (root: HTMLElement) => one(root, "[role=progressbar]").closest("[data-plan-step], .entry")?.querySelector("[data-plan-step-label], [data-label]")?.textContent?.trim();
@@ -2165,15 +2162,15 @@ test("the seam of the phase names: the rail and the bands show phaseName's names
   const time = "2026-10-07T14:00:00.000Z";
   const phases = foreseenPhases("implementation", 2);
   const events: unknown[] = [
-    { _tag: "Started", project: "/p", location: "/p", task: "t" },
+    { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } },
     { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },
     ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Said", text: `line ${i}` }]),
   ];
-  const state = [{ type: "hello", cwd: "/p", location: "/p", current: 1, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
+  const state = [{ type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
   const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
-  const rail = showRail({ busy: false, timeline: state.run?.timeline ?? [] });
+  const rail = showRail({ busy: false, timeline: state.modes.refinement.run?.timeline ?? [] });
   expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);
-  const panel = show(ChatPanel, { title: "You and Interloq", messages: state.run?.left ?? [], empty: "none" });
+  const panel = show(ChatPanel, { title: "You and Interloq", messages: state.modes.refinement.run?.left ?? [], empty: "none" });
   expect([...panel.querySelectorAll(".phase-label")].map((e) => e.textContent?.trim())).toEqual(names.map((n) => prompts.phaseBandLabel(n, clockTime(time))));
 });
 

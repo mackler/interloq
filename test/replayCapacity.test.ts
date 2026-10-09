@@ -12,7 +12,7 @@ import { makeRunManager } from "../src/runManager.ts";
 import { Planner, Reviewer, type StepReporter, Ui } from "../src/services.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeWebServer } from "../src/webServer.ts";
-import { finished, issue, type TestOptions, tempDir, tempRepo, testWiring } from "./helpers.ts";
+import { fakeTrackerOf, finished, issue, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf } from "./helpers.ts";
 
 // Finding 13 of docs/gui-review.md, decision Q4: a long scripted run of about 10,000 events typical of a run (tool
 // activity, program lines, reviews with issues), published through the manager, then replayed to one client over
@@ -37,8 +37,9 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
   const repo = tempRepo();
   const options: TestOptions = { steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
   let publishMs = 0;
+  const tracker = fakeTrackerOf(MANAGER_ITEMS);
   const wiringOf = (ui: Parameters<Parameters<typeof makeRunManager>[0]>[0]) => {
-    const { wiring, probe } = testWiring(repo, options);
+    const { wiring, probe } = testWiring(repo, { ...options, tracker });
     // The planner's first call publishes the events, as an agent's activity would, before its scripted output.
     const planner = Layer.effect(
       Planner,
@@ -66,10 +67,11 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
   };
   const dist = tempDir("pr-dist-");
   const before = heap();
-  const manager = await Effect.runPromise(makeRunManager(wiringOf, repo, [], "measure").pipe(Effect.provide(platformLayer)));
-  await Effect.runPromise(manager.start(repo, "a long task"));
-  for (let i = 0; i < 6000 && (await Effect.runPromise(manager.current)) !== null; i++) await sleep(10);
-  assert.equal(await Effect.runPromise(manager.current), null, "the run did not end");
+  const manager = await Effect.runPromise(makeRunManager(wiringOf, repo, [], "measure", trackerAccessOf(tracker)).pipe(Effect.provide(platformLayer)));
+  await Effect.runPromise(manager.start("implementation", MANAGER_ITEMS[0].id));
+  const running = async () => (await Effect.runPromise(manager.current)).implementation !== null;
+  for (let i = 0; i < 6000 && (await running()); i++) await sleep(10);
+  assert.equal(await running(), false, "the run did not end");
   const { runs } = await Effect.runPromise(manager.replay);
   const count = runs.reduce((n, r) => n + r.events.length, 0);
   const retained = heap() - before;

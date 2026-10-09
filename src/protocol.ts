@@ -6,6 +6,7 @@ import * as S from "./schema.ts";
 import type { UiEvent } from "./uiEvents.ts";
 import type { RunUiState, UiFlag } from "./uiState.ts";
 import type { Choice, PromptKind } from "./userPrompts.ts";
+import { RunMode } from "./runMode.ts";
 
 
 /** A prompt the run waits on, with its widget (src/userPrompts.ts). `prompt` numbers the prompts of a run. */
@@ -19,6 +20,9 @@ export type RunEvent =
       /** The project's identification (issue #29): its host directory, or the path as given where that cannot be determined. */
       location: string;
       task: string;
+      /** The run's mode and the item of the tracker it was started from (issue #120). */
+      mode: RunMode;
+      item: Readonly<{ id: string; title: string }>;
     }>
   | Readonly<{ _tag: "Said"; text: string }>
   | Asked
@@ -38,25 +42,32 @@ export type RunUi = Readonly<{ run: number; state: RunUiState }>;
  * with the server, so an answer or a stop carries the incarnation it was made in, and the hello says which one is live.
  */
 export type ClientMessage =
-  | Readonly<{ type: "start"; project: string; task: string }>
+  /** Start a run of the mode from the item of that id (issue #120): the server reads the item, never the page. */
+  | Readonly<{ type: "start"; mode: RunMode; item: string }>
+  /** The items a mode's tab lists (issue #120): the server asks the tracker and answers with an items frame. */
+  | Readonly<{ type: "items"; mode: RunMode }>
   | Readonly<{ type: "answer"; incarnation: string; run: number; prompt: number; text: string }>
   | Readonly<{ type: "stop"; incarnation: string; run: number }>
-  | Readonly<{ type: "list"; path: string }>
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>;
+/** An item as a tab lists it (issue #120): its id, its title, and enough of its text to choose by. No credential. */
+export type ListedItem = Readonly<{ id: string; title: string; excerpt: string }>;
+/** A tab's items, or the notice of why the tracker could not list them; never both. */
+export type ItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Readonly<{ _tag: "Unavailable"; notice: string }>;
 export type ServerMessage =
   | Readonly<{
       type: "hello";
-      cwd: string;
-      /** The identification of the server's working directory (issue #29), computed once when the server starts. */
+      /** The identification of the server's working directory (issue #29), computed once when the server starts: the one project. */
       location: string;
-      current: number | null;
+      /** The run in progress of each mode, or null (issue #120: one run per mode). */
+      current: Readonly<Record<RunMode, number | null>>;
       incarnation: string;
     }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
-  | Readonly<{ type: "listing"; path: string; parent: string | null; dirs: readonly string[]; error: string | null }>
-  | Readonly<{ type: "refused"; reason: string }>
+  | Readonly<{ type: "items"; mode: RunMode; result: ItemsResult }>
+  /** Why an action was not carried out, with the mode of the tab whose action it was, or null where it belongs to none (issue #120). */
+  | Readonly<{ type: "refused"; mode: RunMode | null; reason: string }>
   /** The run's whole shared state after a change (issue #87); a tab keeps the state of the higher version. */
   | Readonly<{ type: "ui"; run: number; state: RunUiState }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
@@ -145,7 +156,7 @@ export const UiEventSchema = Schema.Union([
 
 const ChoiceSchema = Schema.Struct({ label: Str, sends: Str });
 export const RunEventSchema = Schema.Union([
-  tagged("Started", { project: Str, location: Str, task: Str }),
+  tagged("Started", { project: Str, location: Str, task: Str, mode: RunMode, item: Schema.Struct({ id: Str, title: Str }) }),
   tagged("Said", { text: Str }),
   tagged("Asked", {
     prompt: Int,
@@ -167,18 +178,18 @@ const RunUiStateSchema = Schema.Struct({ version: Int, choices: Schema.Array(UiF
 const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });
 
 export const ClientMessageSchema = Schema.Union([
-  typed("start", { project: Str, task: Str }),
+  typed("start", { mode: RunMode, item: Str }),
+  typed("items", { mode: RunMode }),
   typed("answer", { incarnation: Str, run: Int, prompt: Int, text: Str }),
   typed("stop", { incarnation: Str, run: Int }),
-  typed("list", { path: Str }),
   typed("ui", { incarnation: Str, run: Int, flag: UiFlagSchema }),
 ]);
 export const ServerMessageSchema = Schema.Union([
-  typed("hello", { cwd: Str, location: Str, current: Schema.NullOr(Int), incarnation: Str }),
+  typed("hello", { location: Str, current: Schema.Struct({ refinement: Schema.NullOr(Int), implementation: Schema.NullOr(Int) }), incarnation: Str }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
-  typed("listing", { path: Str, parent: Schema.NullOr(Str), dirs: Schema.Array(Str), error: Schema.NullOr(Str) }),
-  typed("refused", { reason: Str }),
+  typed("items", { mode: RunMode, result: Schema.Union([tagged("Listed", { items: Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str })) }), tagged("Unavailable", { notice: Str })]) }),
+  typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("closing", {}),
 ]);

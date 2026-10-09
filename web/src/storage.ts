@@ -1,6 +1,6 @@
-// The page's remembered project directory (finding 3 of docs/gui-review.md): an edge over the browser's storage.
-// Acquiring the storage, reading and writing may each throw (a SecurityError, a full quota, storage disabled);
-// every such failure is a typed result, and remembering is never a prerequisite for starting a task.
+// The page's remembered preferences (finding 3 of docs/gui-review.md): an edge over the browser's storage. Acquiring
+// the storage, reading and writing may each throw (a SecurityError, a full quota, storage disabled); every such failure
+// is a typed result. Issue #120 removed the remembered project directory: the project is the server's directory.
 
 import { defaultPreferences, type Preferences, type Toggle } from "./notify.ts";
 
@@ -10,15 +10,9 @@ export type StorageLike = { getItem: (key: string) => string | null; setItem: (k
 export type AcquireStorage = () => StorageLike | undefined;
 export type Stored<A> = { ok: true; value: A } | { ok: false };
 
-const KEY = "interloq.project";
-/** Issue #16: the alert preferences, a second key beside the remembered project. */
+/** Issue #16: the alert preferences. */
 const ALERTS_KEY = "interloq.alerts";
 export const browserStorage: AcquireStorage = () => (typeof localStorage === "undefined" ? undefined : localStorage);
-
-/** The remembered project directory ("" when none was remembered). */
-export const readRemembered = (acquire: AcquireStorage = browserStorage): Stored<string> => guarded(acquire, (s) => s.getItem(KEY) ?? "");
-/** Remembers the project directory; `{ ok: false }` when it could not be remembered. */
-export const remember = (path: string, acquire: AcquireStorage = browserStorage): Stored<void> => guarded(acquire, (s) => s.setItem(KEY, path));
 
 /** The alert preferences (issue #16); defaults where nothing or something unreadable is stored. */
 export const readPreferences = (acquire: AcquireStorage = browserStorage): Stored<Preferences> => guarded(acquire, (s) => decodePreferences(s.getItem(ALERTS_KEY)));

@@ -613,6 +613,21 @@ export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: 
 export const scriptedItem: FakeItem = { id: Result.getOrThrow(itemIdOf("1")), title: "task", body: "", state: "refined", open: true };
 /** The start of a scripted run from scriptedItem (or another item) in a project. */
 export const scriptedStart = (project: string, mode: RunMode = "implementation", item: ItemId = scriptedItem.id): RunStart => (mode === "refinement" ? { mode, item, project } : { mode, item, project });
+/**
+ * The project's tracker of a run manager under test (issue #120): refined items 1 to 6 for implementation runs and
+ * unrefined items 11 to 16 for refinement runs, each with the scripted item's title and empty body, so that its task is
+ * the scripted task.
+ */
+export const MANAGER_ITEMS: readonly FakeItem[] = [1, 2, 3, 4, 5, 6].flatMap((n): FakeItem[] => [
+  { ...scriptedItem, id: Result.getOrThrow(itemIdOf(`${n}`)), state: "refined" },
+  { ...scriptedItem, id: Result.getOrThrow(itemIdOf(`${10 + n}`)), state: "unrefined" },
+]);
+/** How a run manager under test reaches its tracker: an empty shared config and the fake. */
+export const trackerAccessOf = (tracker: FakeTracker) => {
+  const shared = path.join(tempDir("pr-shared-"), "config.json");
+  fs.writeFileSync(shared, "{}");
+  return { sharedConfig: shared, tracker: () => Result.succeed(Layer.succeed(Tracker, tracker.tracker)) };
+};
 /** A fake tracker over items, built at once (its state is a Ref, made synchronously). */
 export const fakeTrackerOf = (items: readonly FakeItem[]): FakeTracker => Effect.runSync(makeFakeTracker(items));
 

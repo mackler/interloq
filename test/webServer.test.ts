@@ -9,10 +9,13 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
 import { ServerMessageSchema } from "../src/protocol.ts";
-import type { ClientMessage, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
+import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
-import { finished, type TestOptions, tempDir, tempRepo, testWiring, questionOf, runDirOf } from "./helpers.ts";
+import { fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf } from "./helpers.ts";
+import type { FakeTracker } from "./fakeTracker.ts";
+import { itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { listedState } from "../src/runMode.ts";
 import { initialState, reduce } from "../web/src/state.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 
@@ -22,9 +25,14 @@ const noQuestions = { questions_for_user: [] };
 const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 const withQuestion: TestOptions = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 
-const managerOf = async (repo: string, scripts: TestOptions[], mounts: MountTable = []): Promise<RunManager> => {
+/** The refined items the start frames of a test name, in turn (issue #120); reset with every manager. */
+let started = 0;
+/** The page's start frame for the next refined item of the project's tracker. */
+const startFrame = (): ClientMessage => ({ type: "start", mode: "implementation", item: `${++started}` });
+const managerOf = async (repo: string, scripts: TestOptions[], mounts: MountTable = [], tracker: FakeTracker = fakeTrackerOf(MANAGER_ITEMS)): Promise<RunManager> => {
   const queue = [...scripts];
-  return Effect.runPromise(makeRunManager((ui) => ({ ...testWiring(repo, queue.shift() ?? {}).wiring, ui: Effect.succeed(ui) }), repo, mounts, "test").pipe(Effect.provide(platformLayer)));
+  started = 0;
+  return Effect.runPromise(makeRunManager((ui) => ({ ...testWiring(repo, { tracker, ...(queue.shift() ?? {}) }).wiring, ui: Effect.succeed(ui) }), repo, mounts, "test", trackerAccessOf(tracker)).pipe(Effect.provide(platformLayer)));
 };
 const dist = (): string => {
   const d = tempDir("pr-dist-");
@@ -96,7 +104,7 @@ test("on connect: hello and an empty replay", async () => {
   await serve(await managerOf(repo, []), dist(), async (port) => {
     const c = await connect(port);
     await until("two messages", () => c.messages.length >= 2);
-    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", cwd: repo, location: repo, current: null, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
+    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", location: repo, current: { refinement: null, implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
     c.close();
   });
 });
@@ -140,7 +148,7 @@ test("a started run's events reach two clients in the same order with increasing
     const a = await connect(port);
     const b = await connect(port);
     await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the end of run 1", () => hasEnded(a, 1) && hasEnded(b, 1));
     const events = (c: Client) => c.messages.filter((m) => m.type === "event");
     assert.deepEqual(events(a), events(b));
@@ -155,13 +163,13 @@ test("a client that connects mid-run gets the replay with the pending prompt and
   const repo = tempRepo();
   await serve(await managerOf(repo, [withQuestion]), dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the prompt", () => pending(a, 1) !== null);
     const late = await connect(port);
     await until("the replay", () => late.messages.some((m) => m.type === "replay"));
     const asked = pending(late, 1);
     assert.ok(asked !== null && asked._tag === "Asked" && asked.kind === "decision");
-    assert.equal((late.messages[0] as { current: number | null }).current, 1);
+    assert.equal((late.messages[0] as { current: { implementation: number | null } }).current.implementation, 1);
     late.send({ type: "answer", incarnation: "test", run: 1, prompt: asked.prompt, text: "PostgreSQL" });
     a.send({ type: "answer", incarnation: "test", run: 1, prompt: asked.prompt, text: "SQLite" });
     await until("the end", () => hasEnded(a, 1));
@@ -183,7 +191,7 @@ test("an event appended between the subscription and the snapshot reaches the cl
   const manager: RunManager = { ...real, replay: Effect.suspend(() => hook).pipe(Effect.andThen(real.replay)) };
   await serve(manager, dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the prompt", () => pending(a, 1) !== null);
     const asked = pending(a, 1)!;
     hook = real.answer("test", 1, (asked as { prompt: number }).prompt, "PostgreSQL").pipe(Effect.andThen(Effect.sleep("20 millis")), Effect.asVoid);
@@ -204,7 +212,7 @@ test("a run that ends between the subscription and the snapshot is received once
   const manager: RunManager = { ...real, replay: Effect.suspend(() => hook).pipe(Effect.andThen(real.replay)) };
   await serve(manager, dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the prompt", () => pending(a, 1) !== null);
     hook = real.stop("test", 1).pipe(Effect.asVoid);
     const b = await connect(port);
@@ -224,7 +232,7 @@ test("a connection kept open across two runs receives run 2 from its Started, wi
   const repo = tempRepo();
   await serve(await managerOf(repo, [withQuestion, converging]), dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", project: repo, task: "first" });
+    a.send(startFrame());
     await until("the prompt", () => pending(a, 1) !== null);
     // A connection made well into run 1.
     const late = await connect(port);
@@ -235,7 +243,7 @@ test("a connection kept open across two runs receives run 2 from its Started, wi
     a.send({ type: "stop", incarnation: "test", run: 1 });
     await until("the end of run 1", () => hasEnded(late, 1));
     assert.equal((perRun(late).get(1) ?? []).find((e) => e.event._tag === "Ended")?.event._tag, "Ended");
-    a.send({ type: "start", project: repo, task: "second" });
+    a.send(startFrame());
     await until("the end of run 2", () => hasEnded(late, 2) && hasEnded(a, 2));
     for (const c of [a, late]) {
       contiguous(c);
@@ -259,7 +267,7 @@ test("an answer or a stop naming an ended run is refused; a frame that is not a 
   const repo = tempRepo();
   await serve(await managerOf(repo, [converging]), dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the end", () => hasEnded(a, 1));
     a.send({ type: "answer", incarnation: "test", run: 1, prompt: 1, text: "late" });
     a.send({ type: "stop", incarnation: "test", run: 1 });
@@ -272,26 +280,50 @@ test("an answer or a stop naming an ended run is refused; a frame that is not a 
   });
 });
 
-test("start with a bad path is refused with the reason; list gives the subdirectories", async () => {
+// Issue #120: a refusal reaches the tab whose action it was; a tab's items come from the tracker through the server.
+test("a start in a project that does not exist is refused with the reason and its mode; an items frame gives the tab's items", async () => {
   const repo = tempRepo();
-  fs.mkdirSync(path.join(repo, "src"));
-  fs.mkdirSync(path.join(repo, "docs"));
-  await serve(await managerOf(repo, []), dist(), async (port) => {
+  await serve(await managerOf(path.join(repo, "missing"), []), dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", project: path.join(repo, "missing"), task: "t" });
+    a.send({ type: "start", mode: "refinement", item: "11" });
     await until("the refusal", () => refusals(a).length > 0);
     assert.match(refusals(a)[0], /does not exist/);
-    a.send({ type: "list", path: repo });
-    await until("the listing", () => a.messages.some((m) => m.type === "listing"));
-    const listing = a.messages.find((m) => m.type === "listing");
-    assert.deepEqual(listing, { type: "listing", path: repo, parent: path.dirname(repo), dirs: [".git", "docs", "src"], error: null });
-    a.send({ type: "list", path: path.join(repo, "missing") });
-    await until("the second listing", () => a.messages.filter((m) => m.type === "listing").length >= 2);
-    assert.notEqual((a.messages.filter((m) => m.type === "listing")[1] as { error: string | null }).error, null);
+    assert.deepEqual(a.messages.filter((m) => m.type === "refused").map((m) => (m.type === "refused" ? m.mode : "?")), ["refinement"]);
+    a.close();
+  });
+  await serve(await managerOf(repo, []), dist(), async (port) => {
+    const a = await connect(port);
+    a.send(itemsFrame("refinement"));
+    await until("the items", () => a.messages.some((m) => m.type === "items"));
+    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "" })) } });
     a.close();
   });
 });
 
+// Issue #120, the seam of the start: the frame the page builds from a listed item (web/src/tabs.ts), the mode and item of
+// the run the server starts, and the item the run reads from the tracker, all derived from one fixture item.
+for (const mode of ["refinement", "implementation"] as const) {
+  test(`the page's start frame for a listed ${mode} item starts a ${mode} run of that item, which reads that item`, async () => {
+    const repo = tempRepo();
+    const fixture = MANAGER_ITEMS.find((i) => i.state === listedState(mode))!;
+    const listed: ListedItem = { id: fixture.id, title: fixture.title, excerpt: "" };
+    const tracker = fakeTrackerOf(MANAGER_ITEMS);
+    await serve(await managerOf(repo, [{ steps: [{ hang: true }] }], [], tracker), dist(), async (port) => {
+      const a = await connect(port);
+      await until("the replay", () => a.messages.some((m) => m.type === "replay"));
+      a.send(pageStartFrame(mode, listed));
+      await until("Started", () => (perRun(a).get(1) ?? []).length > 0);
+      const started = perRun(a).get(1)![0].event;
+      assert.ok(started._tag === "Started");
+      assert.deepEqual([started.mode, started.item], [mode, { id: fixture.id, title: fixture.title }]);
+      await until("the run's own read", () => Effect.runSync(tracker.reads).length >= 2);
+      assert.deepEqual(Effect.runSync(tracker.reads), [fixture.id, fixture.id], "the manager's check and the run's read");
+      a.send({ type: "stop", incarnation: "test", run: 1 });
+      await until("the end", () => hasEnded(a, 1));
+      a.close();
+    });
+  });
+}
 // Finding 11 of docs/gui-review.md, connection cancellation: a start whose connection closes at once leaves either no
 // run or a run that the next tab sees, can stop, and after which it can start another.
 test("a client that sends start and closes at once leaves the server in a state the next client can recover from", async () => {
@@ -300,13 +332,13 @@ test("a client that sends start and closes at once leaves the server in a state 
   await serve(await managerOf(repo, [hanging, hanging, hanging, converging]), dist(), async (port) => {
     for (let i = 0; i < 3; i++) {
       const quick = await connect(port);
-      quick.send({ type: "start", project: repo, task: `quick ${i}` });
+      quick.send(startFrame());
       quick.close();
       await sleep(20 * i);
       const next = await connect(port);
       await until("hello", () => next.messages.some((m) => m.type === "hello"));
       const hello = next.messages.find((m) => m.type === "hello");
-      const current = hello?.type === "hello" ? hello.current : null;
+      const current = hello?.type === "hello" ? hello.current.implementation : null;
       if (current !== null) {
         next.send({ type: "stop", incarnation: "test", run: current });
         await until(`the end of run ${current}`, () => hasEnded(next, current));
@@ -320,21 +352,22 @@ test("a client that sends start and closes at once leaves the server in a state 
     await until("hello", () => last.messages.some((m) => m.type === "hello"));
     const hello = last.messages.find((m) => m.type === "hello");
     const running = (): number[] => [
-      ...new Set([...(hello?.type === "hello" && hello.current !== null ? [hello.current] : []), ...perRun(last).keys()]),
+      ...new Set([...(hello?.type === "hello" && hello.current.implementation !== null ? [hello.current.implementation] : []), ...perRun(last).keys()]),
     ].filter((run) => !hasEnded(last, run));
-    const afterStarted = () => [...perRun(last).values()].some((events) => events[0]?.event._tag === "Started" && (events[0].event as { task: string }).task === "after");
+    const after = startFrame();
+    const afterStarted = () => [...perRun(last).values()].some((events) => events[0]?.event._tag === "Started" && after.type === "start" && events[0].event.item.id === after.item);
     for (let attempt = 0; attempt < 5 && !afterStarted(); attempt++) {
       for (const run of running()) {
         last.send({ type: "stop", incarnation: "test", run });
         await until(`the end of run ${run}`, () => hasEnded(last, run));
       }
       const before = refusals(last).length;
-      last.send({ type: "start", project: repo, task: "after" });
+      last.send(after);
       await until("the start's outcome", () => afterStarted() || refusals(last).length > before);
     }
     assert.ok(afterStarted(), `no run 'after' started; refusals: ${JSON.stringify(refusals(last))}`);
     assert.deepEqual(
-      refusals(last).filter((r) => r !== "a run is in progress; stop it or wait for its end"),
+      refusals(last).filter((r) => r !== "a implementation run is in progress; stop it or wait for its end"),
       [],
       "a start was refused for another reason than a late run in progress",
     );
@@ -383,15 +416,15 @@ test("the closing finalizer registered before serveEffect runs after the HTTP sh
 test("a tab that falls behind by its queue's bound is told, its socket is closed, and a reconnect gets the whole replay", async () => {
   const listeners: ((b: Broadcast) => Effect.Effect<void>)[] = [];
   const time = "2026-09-27T14:00:00.000Z";
-  const events: Stamped[] = [{ time, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } }, ...Array.from({ length: 20 }, (_, i): Stamped => ({ time, event: { _tag: "Said", text: `line ${i}` } }))];
+  const events: Stamped[] = [{ time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id: "1", title: "t" } } }, ...Array.from({ length: 20 }, (_, i): Stamped => ({ time, event: { _tag: "Said", text: `line ${i}` } }))];
   const fake: RunManager = {
-    cwd: "/p",
     location: "/p",
     incarnation: "test",
     subscribe: (listener) => Effect.acquireRelease(Effect.sync(() => void listeners.push(listener)), () => Effect.sync(() => void listeners.splice(listeners.indexOf(listener), 1))).pipe(Effect.asVoid),
     replay: Effect.succeed({ runs: [{ id: 1, events }], ui: [] }),
-    current: Effect.succeed(1),
-    start: () => Effect.succeed({ refused: "not in this test" }),
+    current: Effect.succeed({ refinement: null, implementation: 1 }),
+    start: () => Effect.succeed({ refused: "not in this test", mode: null }),
+    listItems: () => Effect.succeed({ _tag: "Unavailable", notice: "not in this test" }),
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
@@ -434,10 +467,10 @@ test("tabs of one run agree on the open entries, live and from the replay, keyed
     const a = await connect(port);
     const b = await connect(port);
     await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
     const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
-    const view = (c: Client) => c.messages.reduce(reduce, initialState).run;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.run;
     const e1 = (decision: number) => ({ _tag: "DecisionEntry" as const, decision, entry: "e1" });
     a.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(1), open: true } });
     await until("the state in both tabs", () => view(a)?.ui.version === 1 && view(b)?.ui.version === 1);
@@ -469,10 +502,10 @@ test("tabs of one run agree that a rail phase is closed, live and from the repla
     const a = await connect(port);
     const b = await connect(port);
     await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
     const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
-    const view = (c: Client) => c.messages.reduce(reduce, initialState).run;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.run;
     const phase = { _tag: "RailPhase" as const, phase: "planning-1" };
     const entry = { _tag: "DecisionEntry" as const, decision: 1, entry: "e1" };
     a.send({ type: "ui", incarnation, run: 1, flag: { scope: phase, open: false } });
@@ -533,7 +566,7 @@ test("two real decisions sharing entry e1: interleaved with run events, every ta
     const answer = (c: Client, text: string) => c.send({ type: "answer", incarnation, run: 1, prompt: pending(c, 1)!.prompt, text });
     const e1 = (decision: number) => ({ _tag: "DecisionEntry" as const, decision, entry: "e1" });
     const ui = (c: Client, decision: number, open: boolean) => c.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(decision), open } });
-    a.send({ type: "start", project: repo, task: "task" });
+    a.send(startFrame());
     await until("the first question", () => pending(a, 1) !== null);
     answer(a, "/decide");
     await until("decision 1's analysis and its question asked again", () => askedAfter(a, 1) !== null && askedAfter(b, 1) !== null);
@@ -550,7 +583,7 @@ test("two real decisions sharing entry e1: interleaved with run events, every ta
     await until("the last state in both tabs", () => [a, b].every((c) => c.messages.some((m) => m.type === "ui" && m.state.version === 3)));
     const c = await connect(port);
     await until("the third tab's replay", () => c.messages.some((m) => m.type === "replay"));
-    const view = (x: Client) => x.messages.reduce(reduce, initialState).run;
+    const view = (x: Client) => x.messages.reduce(reduce, initialState).modes.implementation.run;
     const [va, vb, vc] = [view(a), view(b), view(c)];
     assert.deepEqual(vb, va, "tab B's view differs from tab A's");
     assert.deepEqual(vc, va, "the late tab's view differs from tab A's");
@@ -573,14 +606,14 @@ test("the identification the server sends in hello and on Started, decoded and f
   await serve(manager, dist(), async (port) => {
     const c = await connect(port);
     await until("hello and replay", () => c.messages.length >= 2);
-    c.send({ type: "start", project: repo, task: "t" });
+    c.send(startFrame());
     await until("the run's end", () => hasEnded(c, 1));
     const decoded = c.messages.map((m) => Schema.decodeUnknownSync(ServerMessageSchema)(m));
     const state = decoded.reduce(reduce, initialState);
     assert.equal(state.location, manager.location);
     assert.equal(state.location, identify(mounts, repo));
-    assert.equal(state.run?.location, identify(mounts, repo));
-    assert.equal(state.run?.project, repo);
+    assert.equal(state.modes.implementation.run?.location, identify(mounts, repo));
+    assert.equal(state.modes.implementation.run?.project, repo);
     c.close();
   });
 });

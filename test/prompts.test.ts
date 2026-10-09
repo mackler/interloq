@@ -133,8 +133,8 @@ test("an action not sent because the page is no longer connected, with the answe
   assert.equal(prompts.notSentNotice("answer", "disconnected"), "Your answer was not sent: the page is no longer connected to the server. Its text is still in the answer field.");
   assert.equal(prompts.notSentNotice("answer", "disconnected", "my text"), "Your answer was not sent: the page is no longer connected to the server. Its text is kept under “Not sent”: «my text»");
   assert.equal(prompts.notSentNotice("stop", "disconnected"), "Stop was not sent: the page is no longer connected to the server.");
-  assert.equal(prompts.notSentNotice("start", "disconnected"), "The new task was not sent: the page is no longer connected to the server.");
-  assert.equal(prompts.notSentNotice("list", "disconnected"), "The directory listing was not requested: the page is no longer connected to the server.");
+  assert.equal(prompts.notSentNotice("start", "disconnected"), "The start of the run was not sent: the page is no longer connected to the server.");
+  assert.equal(prompts.notSentNotice("items", "disconnected"), "The request for the tab's items was not sent: the page is no longer connected to the server.");
 });
 
 // Issue #14: the user reads "cycle", never "round", at the limit; the agents' prompts and the records keep "round".

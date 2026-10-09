@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { defaultPreferences } from "./notify.ts";
-import { readPreferences, readRemembered, remember, type StorageLike, writePreferences } from "./storage.ts";
+import { readPreferences, type StorageLike, writePreferences } from "./storage.ts";
 
 // Finding 3 of docs/gui-review.md: the storage edge returns typed results; nothing it does can throw.
 const memory = (): StorageLike & { items: Map<string, string> } => {
@@ -10,21 +10,14 @@ const memory = (): StorageLike & { items: Map<string, string> } => {
 const securityError = () => new DOMException("access denied", "SecurityError");
 
 describe("storage", () => {
-  test("a remembered path is read back; nothing remembered reads as the empty string", () => {
-    const store = memory();
-    expect(readRemembered(() => store)).toEqual({ ok: true, value: "" });
-    expect(remember("/work/p", () => store)).toEqual({ ok: true, value: undefined });
-    expect(readRemembered(() => store)).toEqual({ ok: true, value: "/work/p" });
-  });
-
   test("a throwing acquisition, getItem or setItem, and absent storage, are failures, not exceptions", () => {
     const throwingGetter = () => {
       throw securityError();
     };
-    expect(readRemembered(throwingGetter)).toEqual({ ok: false });
-    expect(remember("/p", throwingGetter)).toEqual({ ok: false });
-    expect(readRemembered(() => undefined)).toEqual({ ok: false });
-    expect(remember("/p", () => undefined)).toEqual({ ok: false });
+    expect(readPreferences(throwingGetter)).toEqual({ ok: false });
+    expect(writePreferences({ desktop: "on", sound: "on" }, throwingGetter)).toEqual({ ok: false });
+    expect(readPreferences(() => undefined)).toEqual({ ok: false });
+    expect(writePreferences({ desktop: "on", sound: "on" }, () => undefined)).toEqual({ ok: false });
     const broken: StorageLike = {
       getItem: () => {
         throw securityError();
@@ -33,8 +26,8 @@ describe("storage", () => {
         throw securityError();
       },
     };
-    expect(readRemembered(() => broken)).toEqual({ ok: false });
-    expect(remember("/p", () => broken)).toEqual({ ok: false });
+    expect(readPreferences(() => broken)).toEqual({ ok: false });
+    expect(writePreferences({ desktop: "on", sound: "on" }, () => broken)).toEqual({ ok: false });
   });
 
   // Issue #16: the alert preferences, under a key of their own.
@@ -47,15 +40,6 @@ describe("storage", () => {
       store.items.set("interloq.alerts", unreadable);
       expect(readPreferences(() => store)).toEqual({ ok: true, value: defaultPreferences });
     }
-  });
-
-  test("the preferences and the remembered project do not disturb each other", () => {
-    const store = memory();
-    remember("/work/p", () => store);
-    writePreferences({ desktop: "off", sound: "on" }, () => store);
-    expect(readRemembered(() => store)).toEqual({ ok: true, value: "/work/p" });
-    remember("/work/q", () => store);
-    expect(readPreferences(() => store)).toEqual({ ok: true, value: { desktop: "off", sound: "on" } });
   });
 
   test("a throwing or absent storage is a failure for the preferences too, not an exception", () => {

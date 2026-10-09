@@ -53,7 +53,8 @@ const main = Effect.gen(function* () {
   // platform) is the empty table, so every path identifies as itself.
   const files = yield* FileSystem.FileSystem;
   const mounts = parseMountinfo(yield* files.readFileString("/proc/self/mountinfo").pipe(Effect.orElseSucceed(() => "")));
-  const manager = yield* makeRunManager(wiringOf, process.cwd(), mounts, incarnation);
+  // Issue #120: the tracker of the project in the server's directory, reached from the server and never from the page.
+  const manager = yield* makeRunManager(wiringOf, process.cwd(), mounts, incarnation, { sharedConfig: fileURLToPath(new URL("../config.json", import.meta.url)), tracker: liveTracker });
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);
   // Registered after serveEffect, so that it runs before the HTTP shutdown, which would wait for the open tabs (finding 15).

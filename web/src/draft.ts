@@ -4,15 +4,15 @@
 
 import { draftWithdrawnNotice } from "../../src/prompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
-import type { ViewState } from "./state.ts";
+import type { Shown } from "./state.ts";
 
 export type DraftKey = Readonly<{ incarnation: string; run: number; prompt: number }>;
 export type Draft = Readonly<{ key: DraftKey; text: string }>;
 export type Reconciled = Readonly<{ draft: Draft | null; notice: string | null }>;
 
 
-/** The key of the prompt the view waits on, or null. */
-export const pendingKey = (view: ViewState): DraftKey | null =>
+/** The key of the prompt the shown run waits on, or null (issue #120: each tab's run, shownRun of web/src/state.ts). */
+export const pendingKey = (view: Shown): DraftKey | null =>
   view.incarnation === null || view.run === null || view.run.pending === null ? null : { incarnation: view.incarnation, run: view.run.id, prompt: view.run.pending.asked.prompt };
 
 /** Whether two keys name the same prompt of the same run of the same start of the server. */
@@ -26,7 +26,7 @@ export const draftFor = (draft: Draft | null, key: DraftKey | null): string => (
  * pending; it is withdrawn when its prompt was answered (the tab's own send clears the draft first, so that answer
  * came from another tab), or when the server or the run is another one. A non-empty draft is never dropped silently.
  */
-export const reconcile = (draft: Draft | null, view: ViewState): Reconciled => {
+export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
   if (draft === null) return { draft, notice: null };
   const pending = pendingKey(view);
   if (pending !== null && sameKey(pending, draft.key)) return { draft, notice: null };
@@ -43,7 +43,7 @@ export const reconcile = (draft: Draft | null, view: ViewState): Reconciled => {
  * quoted, to be kept apart. An answer equal to the field's text (the field was not cleared) needs neither. It never
  * replaces text typed since. Other actions carry no text.
  */
-export const restoreUnsent = (draft: Draft | null, view: ViewState, message: ClientMessage): Readonly<{ draft: Draft | null; quoted: string | null }> => {
+export const restoreUnsent = (draft: Draft | null, view: Shown, message: ClientMessage): Readonly<{ draft: Draft | null; quoted: string | null }> => {
   if (message.type !== "answer") return { draft, quoted: null };
   const pending = pendingKey(view);
   const own = pending !== null && sameKey(pending, { incarnation: message.incarnation, run: message.run, prompt: message.prompt });

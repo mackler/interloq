@@ -4,6 +4,7 @@ import type { Sense, Senses } from "../src/question.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { Schema } from "effect";
+import { RUN_MODES } from "../src/runMode.ts";
 import { type ClientMessage, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
@@ -123,9 +124,11 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
     analysis: fc.record({ decision: text, columns: fc.array(fc.oneof(fc.record({ kind: fc.constant("argued" as const), option: text, advantages: fc.constant([]), disadvantages: fc.constant([]) }), fc.record({ kind: fc.constant("unclear" as const), option: text, unclear: text })), { maxLength: 2 }), recommendation: fc.record({ option: text, reason: text }) }),
   }),
 );
+// Issue #120: the mode of a run, from the one source of the modes.
+const mode = fc.constantFrom(...RUN_MODES);
 const promptTexts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, "unknown > "];
 const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
-  fc.record({ _tag: fc.constant("Started" as const), project: text, location: text, task: text }),
+  fc.record({ _tag: fc.constant("Started" as const), project: text, location: text, task: text, mode, item: fc.record({ id: text, title: text }) }),
   fc.record({ _tag: fc.constant("Said" as const), text }),
   fc.tuple(nat, fc.constantFrom(...promptTexts)).map(([prompt, t]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t) })),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
@@ -144,20 +147,24 @@ const uiScope: fc.Arbitrary<UiScope> = fc.oneof(
 );
 const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, choices: fc.array(fc.record({ scope: uiScope, open: fc.boolean() }), { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(
-  fc.record({ type: fc.constant("start" as const), project: text, task: text }),
+  fc.record({ type: fc.constant("start" as const), mode, item: text }),
+  fc.record({ type: fc.constant("items" as const), mode }),
   fc.record({ type: fc.constant("answer" as const), incarnation: text, run: nat, prompt: nat, text }),
   fc.record({ type: fc.constant("stop" as const), incarnation: text, run: nat }),
-  fc.record({ type: fc.constant("list" as const), path: text }),
   fc.record({ type: fc.constant("ui" as const), incarnation: text, run: nat, flag: fc.record({ scope: uiScope, open: fc.boolean() }) }),
 );
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
-  fc.record({ type: fc.constant("hello" as const), cwd: text, location: text, current: fc.option(nat, { nil: null }), incarnation: text }),
+  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.option(nat, { nil: null }), implementation: fc.option(nat, { nil: null }) }), incarnation: text }),
   fc.constant({ type: "closing" as const }),
   fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
   fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
   fc.record({ type: fc.constant("event" as const), run: nat, seq: nat, time: text, event: runEvent }),
-  fc.record({ type: fc.constant("listing" as const), path: text, parent: fc.option(text, { nil: null }), dirs: fc.array(text, { maxLength: 3 }), error: fc.option(text, { nil: null }) }),
-  fc.record({ type: fc.constant("refused" as const), reason: text }),
+  fc.record({
+    type: fc.constant("items" as const),
+    mode,
+    result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(fc.record({ id: text, title: text, excerpt: text }), { maxLength: 3 }) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
+  }),
+  fc.record({ type: fc.constant("refused" as const), mode: fc.option(mode, { nil: null }), reason: text }),
 );
 
 /** The value as plain objects (fast-check's records have no prototype, which strict deepEqual distinguishes). */
@@ -167,8 +174,17 @@ const decoded = <A>(r: Result.Result<A, string>): A => {
   return r.success;
 };
 
-test("a start message decodes", () => {
-  assert.deepEqual(decoded(decodeClient(JSON.stringify({ type: "start", project: "/p", task: "t" }))), { type: "start", project: "/p", task: "t" });
+// Issue #120: a run is started from a mode and an item; the page sends no project and no task text.
+test("a start message decodes with its mode and item; one with a project and a task, or an unknown mode, is refused", () => {
+  for (const m of RUN_MODES) assert.deepEqual(decoded(decodeClient(JSON.stringify({ type: "start", mode: m, item: "120" }))), { type: "start", mode: m, item: "120" });
+  for (const frame of [{ type: "start", project: "/p", task: "t" }, { type: "start", mode: "review", item: "1" }, { type: "items", mode: "deployment" }, { type: "list", path: "/" }]) {
+    assert.ok(Result.isFailure(decodeClient(JSON.stringify(frame))), JSON.stringify(frame));
+  }
+});
+
+test("a refused frame keeps its mode, null included", () => {
+  for (const m of [...RUN_MODES, null]) assert.deepEqual(decoded(decodeServer(JSON.stringify({ type: "refused", mode: m, reason: "r" }))), { type: "refused", mode: m, reason: "r" });
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "refused", reason: "r" }))), "a refusal without its mode");
 });
 
 test("property: every client message survives the JSON round trip", () => {
@@ -194,10 +210,10 @@ test("an event frame without its time, a bare replay entry, and a Started that s
   for (const frame of [
     { type: "event", run: 1, seq: 0, event: said },
     { type: "replay", ui: [], runs: [{ id: 1, events: [said] }] },
-    { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", location: "/p", task: "t", time: T } },
+    { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "1", title: "t" }, time: T } },
     { type: "replay", ui: [], runs: [{ id: 1, events: [{ event: said }] }] },
   ]) assert.ok(Result.isFailure(decodeServer(JSON.stringify(frame))), JSON.stringify(frame));
-  const ok: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", location: "/p", task: "t" } };
+  const ok: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "1", title: "t" } } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(ok))), ok);
 });
 

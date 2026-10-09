@@ -105,7 +105,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
       const { queue: buffered, overflowed } = yield* subscribeBounded(manager, queueBound);
       const { runs, ui } = yield* manager.replay;
-      yield* send({ type: "hello", cwd: manager.cwd, location: manager.location, current: yield* manager.current, incarnation: manager.incarnation });
+      yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation });
       yield* send({ type: "replay", runs, ui });
       const forward = Effect.gen(function* () {
         for (;;) {
@@ -117,18 +117,20 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       });
       yield* Effect.forkScoped(forward);
 
-      const refuse = (r: Refusal | null) => (r === null ? Effect.void : send({ type: "refused", reason: r.refused }));
+      // Issue #120: a refusal names the mode of the tab whose action it was, or none.
+      const refuse = (r: Refusal | null) => (r === null ? Effect.void : send({ type: "refused", mode: r.mode, reason: r.refused }));
       const dispatch = (message: ClientMessage): Effect.Effect<void, never, Scope.Scope> => {
         switch (message.type) {
           case "start":
-            return manager.start(message.project, message.task).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))));
+            return manager.start(message.mode, message.item).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))));
+          case "items":
+            // Issue #120: the server makes the tracker call; the page receives ids, titles and excerpts alone.
+            return manager.listItems(message.mode).pipe(Effect.flatMap((result) => send({ type: "items", mode: message.mode, result })));
           case "answer":
             return manager.answer(message.incarnation, message.run, message.prompt, message.text).pipe(Effect.flatMap(refuse));
           case "stop":
             // The interruption waits for the run's finalizers; the connection keeps reading meanwhile.
             return Effect.forkScoped(manager.stop(message.incarnation, message.run).pipe(Effect.flatMap(refuse))).pipe(Effect.asVoid);
-          case "list":
-            return listing(message.path, fs, path).pipe(Effect.flatMap(send));
           case "ui":
             return manager.setUi(message.incarnation, message.run, message.flag).pipe(Effect.flatMap(refuse));
         }
@@ -139,7 +141,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
           for (const chunk of yield* reader.value.pull) {
             const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
             const decoded = decodeClient(text);
-            yield* decoded._tag === "Success" ? dispatch(decoded.success) : send({ type: "refused", reason: `not a message: ${decoded.failure}` });
+            yield* decoded._tag === "Success" ? dispatch(decoded.success) : send({ type: "refused", mode: null, reason: `not a message: ${decoded.failure}` });
           }
         }
       }).pipe(Effect.ignore);
@@ -150,24 +152,10 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       );
       // A tab too far behind (finding 13): told, then closed; its reconnection gets the whole run from the replay.
       const behind = Deferred.await(overflowed).pipe(
-        Effect.andThen(send({ type: "refused", reason: "this tab fell too far behind the run; reconnecting to receive it again" })),
+        Effect.andThen(send({ type: "refused", mode: null, reason: "this tab fell too far behind the run; reconnecting to receive it again" })),
         Effect.andThen(writer.write(new Socket.CloseEvent(1013, "too far behind")).pipe(Effect.ignore)),
       );
       yield* Effect.raceAll([read, closed, behind]);
     }),
   );
 
-/** The subdirectories of a directory, sorted, with its parent (null at the root); an error names the failure. */
-const listing = (dir: string, fs: FileSystem.FileSystem, path: Path.Path): Effect.Effect<ServerMessage> =>
-  Effect.gen(function* () {
-    const resolved = path.resolve(dir);
-    const parent = path.dirname(resolved) === resolved ? null : path.dirname(resolved);
-    const names = yield* Effect.exit(fs.readDirectory(resolved));
-    if (Exit.isFailure(names)) return { type: "listing", path: resolved, parent, dirs: [], error: `${resolved} cannot be listed` } as const;
-    const dirs: string[] = [];
-    for (const name of names.value) {
-      const info = yield* Effect.exit(fs.stat(path.join(resolved, name)));
-      if (Exit.isSuccess(info) && info.value.type === "Directory") dirs.push(name);
-    }
-    return { type: "listing", path: resolved, parent, dirs: dirs.sort(), error: null } as const;
-  });
