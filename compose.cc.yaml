@@ -24,6 +24,11 @@ services:
       # with Issues read and write, so that the assistant in this container can file an issue directly.
       # Nothing in the program reads it. Absent, the variable is simply empty.
       - INTERLOQ_ISSUES_TOKEN
+      # The program's own tracker credential (issue #120): a fine-grained GitHub token limited to the
+      # project's repository with Issues read and write, which src/trackerLive.ts reads and passes to the
+      # adapter. Separate from INTERLOQ_ISSUES_TOKEN above, which is the assistant's and is scoped
+      # differently. A new entry here takes effect when the container is recreated.
+      - INTERLOQ_GITHUB_TOKEN
     # The web GUI (node /opt/interloq/src/web.ts, default port 8090), reached from the host's browser at
     # http://localhost:8090/ without a token or login. A new ports line takes effect when the container is recreated.
     ports:
