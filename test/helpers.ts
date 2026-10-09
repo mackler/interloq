@@ -26,7 +26,7 @@ import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifact
 import { type FakeItem, type FakeTracker, makeFakeTracker } from "./fakeTracker.ts";
 import { itemIdOf, type ItemId } from "../src/tracker.ts";
 import type { RunMode } from "../src/runMode.ts";
-import { run } from "../src/run.ts";
+import { refinementRun, run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
 import type { Plan as SPlan, RecordedPlan, StepStatus } from "../src/schema.ts";
 import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, type Services, type StepReply, type StepReporter, Store, type StoreShape, Tracker, Ui, type UiShape } from "../src/services.ts";
@@ -545,6 +545,8 @@ export type Probe = {
   planner: ScriptedPlanner;
   reviewer: ScriptedReviewer;
   config: Config;
+  /** The project's tracker of testLayer (issue #120). */
+  tracker: FakeTracker;
 };
 
 /** The developer's format of the representation (docs/decision-making.md), as the program reads it. */
@@ -557,9 +559,9 @@ export const noDecider: DeciderShape = { at: () => noDecider, decide: () => Effe
 export const withDecider = (layer: Layer.Layer<DeciderDeps>, task = "task"): Layer.Layer<Services> => Layer.provideMerge(deciderLayer(task, DECISION_FORMAT_TEXT), layer);
 
 /** The layer of the six services with scripted agents and Ui over a temporary repository. */
-export function testLayer(repo: string, options: TestOptions = {}): { layer: Layer.Layer<Services>; probe: Probe } {
+export function testLayer(repo: string, options: TestOptions = {}): { layer: Layer.Layer<Services | Tracker>; probe: Probe } {
   const paths = pathsOf(repo);
-  const config: Config = { ...defaultConfig, questionPhase: false, ...options.config };
+  const config: Config = { ...defaultConfig, ...options.config };
   const ui = new ScriptedUi(options.answers ?? [], options.confirmEnds ?? false);
   const planner = new ScriptedPlanner(paths, options.steps ?? [], options.execs ?? [], options.execScripts ?? []);
   planner.contexts = [...(options.contexts ?? [])];
@@ -568,15 +570,30 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   const wrap = options.store ?? ((s: StoreShape) => s);
   const store = Layer.effect(Store, makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.map(wrap))).pipe(Layer.provide(options.platform ?? platformLayer));
-  const layer = withDecider(Layer.mergeAll(store, Layer.succeed(Ui, ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config)));
+  // Issue #120: the project's tracker, a fake holding the scripted item (unrefined, as a refinement run finds it).
+  const tracker = options.tracker ?? fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
+  const layer = Layer.merge(withDecider(Layer.mergeAll(store, Layer.succeed(Ui, ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config))), Layer.succeed(Tracker, tracker.tracker));
   const dir = paths.records();
   const loadLog = (subject: SubjectId = { plan: 1 }): Promise<readonly LogEntry[]> =>
     Effect.runPromise(makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.flatMap((s) => s.loadLog(subject)), Effect.provide(platformLayer)));
-  return { layer, probe: { dir, plan: planOf(paths), requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config } };
+  return { layer, probe: { dir, plan: planOf(paths), requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config, tracker } };
 }
 
 /** Runs the procedure against a layer and returns the number of execution phases. */
 export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<number> => Effect.runPromise(run(task).pipe(Effect.provide(layer)));
+
+/** Runs a refinement run of the scripted item (issue #120): the question phase, written back to the item. */
+export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task"): Promise<void> => Effect.runPromise(refinementRun(task, scriptedItem.id).pipe(Effect.provide(layer)));
+/** Runs a refinement run and asserts that it fails with the given error tag and description texts. */
+export async function refinementFails(layer: Layer.Layer<Services | Tracker>, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
+  const exit = await Effect.runPromiseExit(refinementRun("task", scriptedItem.id).pipe(Effect.provide(layer)));
+  assert.ok(Exit.isFailure(exit), "the run succeeded");
+  const error = Cause.findErrorOption(exit.cause);
+  assert.ok(Option.isSome(error), `the run ended with a defect, not a typed error: ${Cause.pretty(exit.cause)}`);
+  assert.equal(error.value._tag, tag);
+  for (const text of texts) assert.match(describe(error.value), text);
+  return error.value;
+}
 
 /** Runs the procedure and asserts that it fails with the given error tag and description texts. */
 export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
@@ -616,7 +633,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   const shared = path.join(tempDir("pr-shared-"), "config.json");
   fs.writeFileSync(shared, "{}");
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ questionPhase: false, ...options.config }));
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ ...options.config }));
   const ui = new ScriptedUi(options.answers ?? [], options.confirmEnds ?? false);
   const planner = new ScriptedPlanner(paths, options.steps ?? [], options.execs ?? [], options.execScripts ?? []);
   planner.contexts = [...(options.contexts ?? [])];

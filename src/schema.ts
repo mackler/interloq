@@ -326,7 +326,6 @@ export const TrackerConfig = Schema.Union([GithubTrackerConfig]);
 export type TrackerConfig = typeof TrackerConfig.Type;
 
 export const Config = Schema.Struct({
-  questionPhase: Schema.Boolean,
   /** Paths relative to the project that the change detection ignores. A directory covers everything below it. */
   ignorePaths: Schema.Array(Schema.String),
   maxRounds: PositiveInt,
@@ -446,7 +445,6 @@ export const firstIssue = (error: Schema.SchemaError): { path: string; message: 
 const formatIssue = SchemaIssue.makeFormatterStandardSchemaV1({ leafHook: SchemaIssue.defaultLeafHook });
 
 export const defaultConfig: Config = {
-  questionPhase: true,
   ignorePaths: [],
   maxRounds: 5,
   maxIdleRounds: 2,

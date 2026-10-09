@@ -145,13 +145,13 @@ test("q at a question, confirmed, ends the run as an interruption with exit code
 test("/quit in the clarification, confirmed, ends the run with exit code 130", async () => {
   const turn = { message_to_user: "Tell me more.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: false, summary: "" };
   const { wiring, probe } = testWiring(tempRepo(), {
-    config: { questionPhase: true },
     steps: [{ output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } }, { output: turn }],
     reviews: [{ issues: [] }],
     answers: ["/quit", "y"],
     confirmEnds: true,
   });
-  assert.equal(await runProgram(probe, wiring), 130);
+  // The clarification belongs to a refinement run (issue #120).
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "refinement"), wiring))), 130);
   assert.match(said(probe), /INTERRUPTED by the user/);
 });
 

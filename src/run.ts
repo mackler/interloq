@@ -2,8 +2,8 @@
 // 'finished' and the work review converges.
 
 import { Effect, Exit, Option, Result } from "effect";
-import { refinementOf } from "./refinement.ts";
-import { stateAtEnd } from "./runMode.ts";
+import { type Refinement, refinementOf } from "./refinement.ts";
+import { stateAtEnd, stateAtStart } from "./runMode.ts";
 import type { ItemId } from "./tracker.ts";
 import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
@@ -56,8 +56,39 @@ export const refinementRun = (task: string, item: ItemId): Effect.Effect<void, R
 /** The first line of a task: an item's title (taskTextOf puts it first). */
 const firstLine = (task: string): string => task.split("\n")[0] ?? "";
 
-/** The whole run. Succeeds with the number of execution phases when Claude Code reports 'finished' and the work review converges. */
+/**
+ * An implementation run (issue #120, the developer's decisions of 8 Oct 2026): no question phase. It sets its item to
+ * implementing before any agent call, writes the item's section Refined using Interloq to its own requirements.md where
+ * the item has one (then the plan, the work review and the execution follow it, as after a question phase), plans,
+ * executes and reviews, and sets the item to implemented when the run finishes. A run that halts or is stopped sets
+ * nothing more, and Interloq never moves an item backward. Succeeds with the number of execution phases.
+ */
+export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null): Effect.Effect<number, RunError, Services | Tracker> =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const tracker = yield* Tracker;
+    yield* store.init(task);
+    yield* store.converse(`${itemStartedLine("implementation", item, firstLine(task))}\n\n`);
+    const start = stateAtStart("implementation");
+    if (start !== null) yield* tracker.setState(item, start).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplementing", cause: trackerFailureText(e), done: null }))));
+    if (requirements !== null) yield* store.writeRequirements(requirements);
+    const phases = yield* implementationPhases(task, requirements !== null);
+    yield* tracker.setState(item, stateAtEnd("implementation")).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplemented", cause: trackerFailureText(e), done: null }))));
+    return phases;
+  });
+
+/** The planning, execution and review of a task without a tracker item: the implementation run's phases after a new records directory. */
 export const run = (task: string): Effect.Effect<number, RunError, Services> =>
+  Effect.gen(function* () {
+    yield* (yield* Store).init(task);
+    return yield* implementationPhases(task, false);
+  });
+
+/**
+ * Planning phase K, execution phase K and work review K, until Claude Code reports 'finished' and the work review
+ * converges; succeeds with the number of execution phases. `withRequirements`: the run's requirements.md exists.
+ */
+const implementationPhases = (task: string, withRequirements: boolean): Effect.Effect<number, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -68,22 +99,17 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
     // W1-R1-2: the Decider names the phase as its phase line does, by the phases known when the phase begins.
     const inPhase = (phase: Phase) => <A, E, R>(body: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => Effect.provideService(body, Decider, decider.at(phase, phase.kind === "questions" ? phaseName(phase, 1) : label(phase.kind, phase.n))));
-    yield* store.init(task);
     // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120).
     yield* store.writeBaseline();
     // The SDK does not report which model answered a Codex turn; the configured one is all that can be said.
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
-    const withRequirements = config.questionPhase;
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
     let known = 1;
-    // Until the refinement run exists (S6 of issue #120), a run with the question phase foresees it before planning.
-    const foreseenPhases = (_: boolean, iterations: number): readonly Phase[] => [...(withRequirements ? foreseen("refinement", 1) : []), ...foreseen("implementation", iterations)];
     const foresee = (iterations: number) =>
-      iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), ui.notify({ _tag: "PhasesForeseen", phases: foreseenPhases(withRequirements, iterations) })));
-    yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseenPhases(withRequirements, known) });
+      iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", iterations) })));
+    yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", known) });
     /** A phase's label as the phases known now number it. */
-    const label = (kind: "planning" | "execution" | "work", n: number): string => phaseName({ kind, n }, countOfKind(foreseenPhases(withRequirements, known), kind));
-    if (withRequirements) yield* questionPhase(task).pipe(inPhase({ kind: "questions" }));
+    const label = (kind: "planning" | "execution" | "work", n: number): string => phaseName({ kind, n }, countOfKind(foreseen("implementation", known), kind));
 
     /** How the previous execution phase and its work review ended; the next plan revision is written from it. */
     let previous: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }> | null = null;

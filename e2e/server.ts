@@ -79,7 +79,6 @@ export const SCENARIOS: Record<string, TestOptions> = {
   // Finding 10 of docs/gui-review.md: the scenarios the review names.
   // The question phase: a question list, an interview message, /done, a proposed summary and its confirmation.
   interview: {
-    config: { questionPhase: true },
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
       { output: asksQ1("The first question.") },
@@ -92,7 +91,6 @@ export const SCENARIOS: Record<string, TestOptions> = {
   },
   // W3-R1-1: an empty message after the analysis is rejected and asked again; the analysis stays shown.
   decideBlank: {
-    config: { questionPhase: true },
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
       { output: asksQ1("The first question.") },
@@ -105,14 +103,12 @@ export const SCENARIOS: Record<string, TestOptions> = {
   },
   // Issue #83: an empty agreed question list, which the review accepts; planning starts without a prompt.
   emptyQuestions: {
-    config: { questionPhase: true },
     steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "1. [ ] the step\n" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   },
   // Issue #12: the interview's numbered answers are paragraphs.
   longChoices: {
-    config: { questionPhase: true },
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "How should a message show its time?", reason: "r", proposed_answers: LONG_ANSWERS.map((a) => { const [label, ...rest] = a.replace(/^\d+\. /, "").split(": "); return { label, description: rest.join(": ") }; }), default_answer: "Absolute clock time" })] } },
       { output: asksQ1("The first question.") },
@@ -127,7 +123,6 @@ export const SCENARIOS: Record<string, TestOptions> = {
   // response with the amended list, a second round without an issue, one interview turn with numbered answers, the
   // user's answer, a summary, the requirements review, then planning, execution and the work review.
   questionReview: {
-    config: { questionPhase: true },
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
       {

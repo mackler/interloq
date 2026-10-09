@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { blocksText, piecesText } from "../src/pieces.ts";
@@ -51,9 +51,8 @@ test("the terms are written in a fresh session after the question review converg
     // The question review, the requirements review, the plan review, the work review; the terms review converges.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")), { version: 2, entries: terms().entries });
   assert.equal(probe.planner.termsPrompts[0], prompts.termsPrompt(TEST_ROOT, "task"));
   assert.ok(probe.planner.termsPrompts[0].includes(prompts.questionWritingRules()));
@@ -75,9 +74,8 @@ test("an accepted issue about an explanation: the response returns the amended e
     termsReviews: [{ issues: [issue("T-R1-1", "The explanation of zod does not say what it does.")] }, { issues: [] }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, amended.entries);
   const [logged] = await probe.loadLog("terms");
   assert.deepEqual([logged?.id, logged?.action], ["T-R1-1", "accepted"]);
@@ -93,9 +91,8 @@ test("the explanations are validated: a changed wording, an unused explanation, 
     terms: [{ output: wrong }, { output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(
     probe.planner.termsPrompts[1],
     prompts.questionRepairPrompt([
@@ -114,12 +111,12 @@ test("the terms review at its cycle limit: p proceeds to the clarification with 
       termsReviews: [{ issues: [issue("T-R1-1", "The explanation says too little.")] }],
       reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
       execs: [finished],
-      config: { questionPhase: true, maxRounds: 1 },
+      config: { maxRounds: 1 },
     });
   const proceeding = limited("p");
-  await runTask(proceeding.layer);
+  await runRefinement(proceeding.layer);
   assert.match(read(proceeding.probe.dir, "conversation.md"), new RegExp(`\\*\\*User decision:\\*\\* ${prompts.PROCEED_TO_CLARIFICATION_WITH_TERMS} without convergence`));
-  await runFails(limited("0").layer, "RoundLimitStop", /Terms review/);
+  await refinementFails(limited("0").layer, "RoundLimitStop", /Terms review/);
 });
 
 test("an empty agreed list writes no terms and has no terms review", async () => {
@@ -128,9 +125,8 @@ test("an empty agreed list writes no terms and has no terms review", async () =>
     steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(fs.existsSync(path.join(probe.dir, "terms-review")), false);
   assert.deepEqual(probe.planner.termsPrompts, []);
 });
@@ -144,9 +140,8 @@ test("the interview presents the agreed question divided into pieces, every form
     terms: [{ output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const [q] = presentedQuestions(probe.ui);
   assert.deepEqual(q.explanations, [zod]);
   const refs = [...(q.context.blocks[0].kind === "paragraph" ? q.context.blocks[0].pieces : []), ...q.question].filter((p) => p.ref === "z").map((p) => p.text);
@@ -190,9 +185,8 @@ test("S6: a second explanations reply that changes the wording halts with Questi
     steps: [{ output: { questions: [entry] } }],
     terms: [{ output: changed }, { output: changed }],
     reviews: [{ issues: [] }],
-    config: { questionPhase: true },
   });
-  await runFails(layer, "QuestionInvalid", /Q1: the words or blocks of its field "question" differ from the agreed question/);
+  await refinementFails(layer, "QuestionInvalid", /Q1: the words or blocks of its field "question" differ from the agreed question/);
 });
 
 test("S6: the drafting conversation writes plain pieces only; a ref in the list gets the validation repair turn", async () => {
@@ -220,9 +214,8 @@ test("issue #112: a disputed self-correction of the terms is not put to the user
     termsReviews: [{ issues: [issue("T-R1-1", "The explanation of zod does not say what it does.")] }, { issues: [issue("T-R2-1", "Shape is unexplained.")] }, { issues: [] }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(presentedQuestions(probe.ui).every((x) => x.origin.kind !== "pause"));
   assert.match(read(probe.dir, "conversation.md"), new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* [^\\n]*the accepted correction for T-R1-1`));
   assert.ok(!(await probe.loadLog("terms")).some((e) => e.action === "decided_by_user"));
@@ -251,9 +244,8 @@ test("issue #112: an explanation with no sense gets the validation repair turn",
     terms: [{ output: none }, { output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(probe.planner.termsPrompts[1], prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "noSense", subject: "zod" }] }]));
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, terms().entries);
 });

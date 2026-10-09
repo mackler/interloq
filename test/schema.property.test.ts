@@ -16,7 +16,6 @@ const nonEmpty = fc.string({ minLength: 1 });
 const nonBlank = fc.string({ minLength: 1 }).filter((t) => /\S/u.test(t));
 
 const arbConfig = record<S.Config>({
-  questionPhase: fc.boolean(),
   ignorePaths: fc.array(fc.string()),
   maxRounds: positiveInt,
   maxIdleRounds: positiveInt,

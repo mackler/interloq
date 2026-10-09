@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
-import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT } from "./helpers.ts";
+import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
@@ -22,9 +22,8 @@ const turn = (message: string, answered: string[], summary = ""): InterviewTurn 
   summary,
 });
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
-const withQuestions = { questionPhase: true };
 
-test("question list is amended in review, the interview runs, the summary is confirmed, and planning follows", async () => {
+test("question list is amended in review, the interview runs, the summary is confirmed, and the refinement ends (issue #120)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "B, because of X", ""],
     steps: [
@@ -37,9 +36,8 @@ test("question list is amended in review, the interview runs, the summary is con
     ],
     reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
 
   const questions = JSON.parse(read(probe.dir, "questions.json"));
   assert.equal(questions.version, 2);
@@ -47,9 +45,9 @@ test("question list is amended in review, the interview runs, the summary is con
   assert.deepEqual(questions.questions.map((x: QuestionEntry) => x.id), ["Q1", "Q2"]);
   assert.match(read(probe.dir, "requirements.md"), /Q2: B because of X/);
   assert.equal((await probe.loadLog("questions"))[0].action, "accepted");
-  assert.equal(probe.reviewer.phases, 5); // question review, terms review (S17), requirements review, plan review, work review
+  assert.equal(probe.reviewer.phases, 3); // question review, terms review (S17), requirements review: a refinement plans nothing
   assert.ok(probe.planner.prompts.some((p) => p.includes("User: B, because of X")));
-  assert.match(probe.planner.prompts.at(-1) ?? "", /requirements\.md contains the user's confirmed answers/);
+  assert.ok(!probe.planner.prompts.some((p) => /Produce an implementation plan/.test(p)), "a plan was asked for");
   const conversation = read(probe.dir, "conversation.md");
   assert.match(conversation, /## Agreed question list/);
   assert.match(conversation, /\*\*User:\*\* B, because of X/);
@@ -57,16 +55,15 @@ test("question list is amended in review, the interview runs, the summary is con
 });
 
 // Issue #83 (the developer's instruction of 4 Oct 2026): an empty agreed list is no reason to pause. Nothing is asked;
-// requirements.md is written, the phase ends with "no conversation", and planning begins.
-test("an empty agreed list asks nothing: requirements.md is written, the phase ends with no conversation, planning begins", async () => {
+// requirements.md is written and the phase ends with "no conversation"; since issue #120 the refinement run then ends.
+test("an empty agreed list asks nothing: requirements.md is written, the phase ends with no conversation, and nothing begins after it", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: [],
     steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(probe.ui.asked, [], "a prompt was asked");
   assert.deepEqual(presentedQuestions(probe.ui), [], "a question was presented");
   assert.match(read(probe.dir, "requirements.md"), /No question was needed/);
@@ -75,9 +72,8 @@ test("an empty agreed list asks nothing: requirements.md is written, the phase e
   const ended = probe.ui.notified.findIndex((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions");
   assert.deepEqual(probe.ui.notified[ended], { _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
   assert.ok(tags.indexOf("InterviewOpened") === -1, "an interview was opened");
-  assert.ok(probe.ui.notified.slice(ended).some((e) => e._tag === "PhaseBegan" && e.phase.kind === "planning"), "planning did not begin after the question phase");
-  assert.match(probe.planner.prompts[1], /Produce an implementation plan/);
-  assert.equal(probe.reviewer.phases, 3); // question, plan and work review: no requirements review without a conversation
+  assert.ok(!probe.ui.notified.slice(ended).some((e) => e._tag === "PhaseBegan"), "a phase began after the question phase");
+  assert.equal(probe.reviewer.phases, 1); // the question review: no requirements review without a conversation
 });
 
 test("an unconfirmed summary continues the conversation", async () => {
@@ -92,9 +88,8 @@ test("an unconfirmed summary continues the conversation", async () => {
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(read(probe.dir, "requirements.md"), "Q1: B\n");
   assert.ok(probe.planner.prompts.some((p) => p.startsWith("The user does not confirm the summary")));
 });
@@ -113,9 +108,8 @@ test("a gap that Claude Code accepts produces a second interview and a revised r
     ],
     reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "retry count absent")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(read(probe.dir, "requirements.md"), "Q1: A\nRetries: 3\n");
   assert.match(read(probe.dir, "conversation.md"), /## Interview\n[\s\S]*## Second interview\n/);
   assert.equal((await probe.loadLog("requirements"))[0].id, "G-R1-1");
@@ -148,9 +142,8 @@ test("a gap accepted but the confirmed summary unchanged: the pause, and Retry h
     ],
     reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "retry count absent")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(read(probe.dir, "requirements.md"), "Q1: A\nRetries: 3\n");
   assert.ok(probe.ui.asked.some((p) => p.endsWith(prompts.unchangedPrompt)), "the pause was not asked");
   assert.equal(probe.planner.prompts.some((p) => /did not change during your response/.test(p)), false, "a corrective turn was taken");
@@ -162,9 +155,8 @@ test("/done ends the interview early", async () => {
     steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1?", []) }, { output: turn("Ended.", [], "Open points: Q1 -> default A") }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.planner.prompts.some((p) => p.startsWith("The user ends the interview now")));
   assert.match(read(probe.dir, "requirements.md"), /default A/);
 });
@@ -183,9 +175,8 @@ test("a follow-up asked during the clarification raises its total", async () => 
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const counts = probe.ui.notified.flatMap((e) => (e._tag === "InterviewTurn" ? [`${e.answered} of ${e.total}`] : []));
   assert.deepEqual(counts, ["0 of 2", "1 of 3", "2 of 3"]);
 });
@@ -205,12 +196,11 @@ test("a question list whose entry breaks a rule gets the validation repair turn 
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(repaired.layer);
+  await runRefinement(repaired.layer);
   assert.equal(repaired.probe.planner.prompts[1], prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "blankContext", subject: "" }] }]));
-  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [blank("Q1")] } }, { output: { questions: [blank("Q1")] } }], config: withQuestions });
-  await runFails(halted.layer, "QuestionInvalid", /Q1: the context paragraph is empty/);
+  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [blank("Q1")] } }, { output: { questions: [blank("Q1")] } }] });
+  await refinementFails(halted.layer, "QuestionInvalid", /Q1: the context paragraph is empty/);
 });
 
 test("a response to the question review whose list breaks a rule gets the validation repair turn", async () => {
@@ -225,9 +215,8 @@ test("a response to the question review whose list breaks a rule gets the valida
     ],
     reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(probe.planner.prompts[2], prompts.questionRepairPrompt([{ where: "Q2", problems: [{ kind: "notLast", subject: "" }] }]));
   assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => piecesText(x.question)), ["question Q1?", "question Q2?"]);
 });
@@ -263,9 +252,8 @@ test("an interview question outside questions.json is validated, an agreed one a
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const repair = prompts.questionRepairPrompt([{ where: "F1", problems: [{ kind: "blankContext", subject: "" }] }]);
   assert.equal(probe.planner.prompts.filter((p) => p === repair).length, 1, "the follow-up got one repair turn, the agreed question none");
 });
@@ -291,8 +279,8 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
 
 test("a turn with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
   const bad = { ...turn("m", []), current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }] } };
-  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [], config: withQuestions });
-  await runFails(halted.layer, "QuestionInvalid", /the current question/);
+  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [] });
+  await refinementFails(halted.layer, "QuestionInvalid", /the current question/);
 });
 
 // S7 of the task of issue #36: a follow-up question is pieces; a piece that refers to no explanation gets the repair turn.
@@ -310,9 +298,8 @@ test("S7: a follow-up with a dangling ref gets the validation repair turn, and t
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.planner.prompts.includes(prompts.questionRepairPrompt([{ where: "F1", problems: [{ kind: "unknownRef", subject: "p" }] }])));
   const followUp = presentedQuestions(probe.ui).find((q) => q.origin.kind === "followUp");
   assert.deepEqual(followUp?.question, repaired.text);
@@ -327,14 +314,16 @@ test("the seven rules of 5 Oct 2026 reach the writers of the question list and t
     steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1: A or B?", []) }, { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
+  // Issue #120: the plan is written by an implementation run of its own.
+  const implementation = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+  await runTask(implementation.layer);
   const ids = ["contextBearsOnChoice", "askOutcome", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor"];
   const rules = ids.map((id) => prompts.QUESTION_RULES.find((r) => r.id === id));
   assert.ok(rules.every((r) => r !== undefined), "a rule is missing");
   const listPrompt = probe.planner.prompts[0];
-  const planPrompt = probe.planner.prompts.at(-1) ?? "";
+  const planPrompt = implementation.probe.planner.prompts[0];
   assert.match(planPrompt, /Produce an implementation plan/);
   const reviewPrompt = probe.reviewer.prompts[0];
   for (const r of rules) {
@@ -360,7 +349,6 @@ const skipConditionRun = (first: readonly QuestionEntry[], second: readonly Ques
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
 
 test("a skip condition naming an unknown question, an unknown answer or forming a cycle gets the validation repair turn", async () => {
@@ -371,13 +359,13 @@ test("a skip condition naming an unknown question, an unknown answer or forming 
   ];
   for (const [list, problem] of cases) {
     const { layer, probe } = skipConditionRun(list, [q("Q1"), dependent("Q2", "Q1", "B")]);
-    await runTask(layer);
+    await runRefinement(layer);
     assert.equal(probe.planner.prompts[1], prompts.skipConditionRepairPrompt([problem]), problem.kind);
     assert.ok(probe.planner.prompts[1].includes(prompts.skipConditionProblemLine(problem)));
     assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => x.skip_if), [null, { question: "Q1", answer: "B" }]);
   }
-  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1"), dependent("Q2", "Q9", "A")] } }, { output: { questions: [q("Q1"), dependent("Q2", "Q9", "A")] } }], config: withQuestions });
-  await runFails(halted.layer, "SkipConditionInvalid", /Q2/);
+  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1"), dependent("Q2", "Q9", "A")] } }, { output: { questions: [q("Q1"), dependent("Q2", "Q9", "A")] } }] });
+  await refinementFails(halted.layer, "SkipConditionInvalid", /Q2/);
 });
 
 test("a skip condition is checked at a response to the review and at the application of the user's decisions", async () => {
@@ -404,9 +392,8 @@ test("a dependent question listed before its premise is recorded after it, and c
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => x.id), ["Q1", "Q2"]);
   assert.ok(read(probe.dir, "conversation.md").includes(prompts.skipIfLine({ question: "Q1", answer: "B" })));
 });
@@ -446,9 +433,8 @@ test("issue #112: an issue of the question list raised again after a partial acc
     ],
     reviews: [{ issues: [issue("Q-R1-1", "a word needs explaining")] }, { issues: [issue("Q-R1-1", "a word still needs explaining")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: withQuestions,
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(presentedQuestions(probe.ui).every((x) => x.origin.kind !== "pause"), JSON.stringify(presentedSubjects(probe.ui)));
   const conversation = read(probe.dir, "conversation.md");
   assert.match(conversation, new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* Question review: issue Q-R1-1, raised again`));

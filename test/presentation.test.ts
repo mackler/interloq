@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { renderQuestionRecord } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead } from "./helpers.ts";
+import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead , runRefinement, refinementFails } from "./helpers.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import fc from "fast-check";
 import { Result } from "effect";
@@ -30,61 +30,62 @@ const asking = (id: string, answered: string[]) => ({
 const done = { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1", "Q2"], answered_ids: ["Q1", "Q2"], complete: true, summary: "# Requirements\n\nA and B." };
 const plannerQuestion = questionOf({ context: "Claude Code, the planning agent, writes the plan.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] });
 
-/** A run with two clarification questions, the summary's confirmation, a question of the plan writer and a pause. */
-const scenario = () =>
+/**
+ * Two runs, since issue #120 separated the question phase from planning: a refinement run with two clarification
+ * questions and the summary's confirmation, and an implementation run with a question of the plan writer and a pause.
+ */
+const refinementScenario = () =>
   testLayer(tempRepo(), {
-    // Q1, Q2, the confirmation, the plan writer's question, the pause on issue A raised again.
-    answers: ["1", "2", "", "1", ""],
-    steps: [
-      { output: { questions: [entry("Q1"), entry("Q2")] } },
-      { output: asking("Q1", []) },
-      { output: asking("Q2", ["Q1"]) },
-      { output: done },
-      { output: { questions_for_user: [plannerQuestion] }, plan: "v1" },
-      { output: noQuestions, plan: "v1" },
-      { output: respond([["P1-R1-1", "rejected"]]) },
-      { output: respond([["P1-R1-1", "rejected"]]) },
-    ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
-    config: { questionPhase: true, maxIdleRounds: 5 },
+    // Q1, Q2, the confirmation.
+    answers: ["1", "2", ""],
+    steps: [{ output: { questions: [entry("Q1"), entry("Q2")] } }, { output: asking("Q1", []) }, { output: asking("Q2", ["Q1"]) }, { output: done }],
+    reviews: [{ issues: [] }, { issues: [] }],
   });
+const implementationScenario = () =>
+  testLayer(tempRepo(), {
+    // The plan writer's question, the pause on issue A raised again.
+    answers: ["1", ""],
+    steps: [{ output: { questions_for_user: [plannerQuestion] }, plan: "v1" }, { output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 5 },
+  });
+/** Both runs, each to its end; the probes of the refinement and of the implementation. */
+const scenario = async () => {
+  const refinement = refinementScenario();
+  await runRefinement(refinement.layer);
+  const implementation = implementationScenario();
+  await runTask(implementation.layer);
+  return { refinement: refinement.probe, implementation: implementation.probe, uis: [refinement.probe.ui, implementation.probe.ui] };
+};
 
 test("S6: the questions are numbered in one sequence for the run, whatever produced them; the records keep their ids", async () => {
-  const { layer, probe } = scenario();
-  await runTask(layer);
-  const questions = presentedQuestions(probe.ui);
-  assert.deepEqual(
-    questions.map((q) => [q.number, q.origin.kind]),
-    [
-      [1, "clarification"],
-      [2, "clarification"],
-      [3, "confirmSummary"],
-      [4, "planner"],
-      [5, "pause"],
-    ],
-  );
-  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
-  for (const heading of ["### Question 1 (Q1)", "### Question 2 (Q2)", "### Question 3\n", "### Question 4\n", "### Question 5 (P1-R1-1)"]) assert.ok(conversation.includes(heading), heading);
+  const { refinement, implementation } = await scenario();
+  assert.deepEqual(presentedQuestions(refinement.ui).map((q) => [q.number, q.origin.kind]), [[1, "clarification"], [2, "clarification"], [3, "confirmSummary"]]);
+  assert.deepEqual(presentedQuestions(implementation.ui).map((q) => [q.number, q.origin.kind]), [[1, "planner"], [2, "pause"]]);
+  const read = (dir: string) => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
+  for (const heading of ["### Question 1 (Q1)", "### Question 2 (Q2)", "### Question 3\n"]) assert.ok(read(refinement.dir).includes(heading), heading);
+  for (const heading of ["### Question 1\n", "### Question 2 (P1-R1-1)"]) assert.ok(read(implementation.dir).includes(heading), heading);
   // The ids in the records and in the prompts to the agents are the records' own.
-  assert.ok(!fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8").includes("Question 4"));
-  assert.ok(probe.planner.prompts.every((p) => !/Question [0-9]/.test(p)));
+  assert.ok(!fs.readFileSync(path.join(implementation.dir, "user-decisions.md"), "utf8").includes("Question 1"));
+  for (const probe of [refinement, implementation]) assert.ok(probe.planner.prompts.every((p) => !/Question [0-9]/.test(p)));
 });
 
 test("S7: every ask is preceded by the presentation of its question, and every kind presents itself alike (issue #46)", async () => {
-  const { layer, probe } = scenario();
-  await runTask(layer);
+  const { uis } = await scenario();
   // Between two asks there is a presentation: none is asked without its question in view.
-  const order = probe.ui.order;
-  order.forEach((step, i) => {
-    if (step !== "ask") return;
-    const since = order.slice(0, i).lastIndexOf("ask");
-    assert.ok(order.slice(since + 1, i).some((s) => s.startsWith("presented")), `ask ${i} came without a presented question: ${order.join(", ")}`);
-  });
-  const questions = presentedQuestions(probe.ui);
+  for (const ui of uis) {
+    const order = ui.order;
+    order.forEach((step, i) => {
+      if (step !== "ask") return;
+      const since = order.slice(0, i).lastIndexOf("ask");
+      assert.ok(order.slice(since + 1, i).some((s) => s.startsWith("presented")), `ask ${i} came without a presented question: ${order.join(", ")}`);
+    });
+  }
+  const questions = uis.flatMap((ui) => presentedQuestions(ui));
   // S19: the plan writer's question reaches the user once, as its presented question; nothing else announces it.
   assert.equal(questions.filter((q) => q.origin.kind === "planner").length, 1);
-  assert.ok(!probe.ui.said.some((line) => line.includes(piecesText(plannerQuestion.question))), "the run announced the question in its own way");
+  assert.ok(!uis[1].said.some((line) => line.includes(piecesText(plannerQuestion.question))), "the run announced the question in its own way");
   const shape = (q: PresentedQuestion) => Object.keys(q).sort();
   for (const q of questions) {
     assert.deepEqual(shape(q), shape(questions[0]));
@@ -96,7 +97,7 @@ test("S7: every ask is preceded by the presentation of its question, and every k
 });
 
 test("S11: a pause reaches the user as prose: no line said and no question shown carries JSON (issue #19)", async () => {
-  const { layer, probe } = scenario();
+  const { layer, probe } = implementationScenario();
   await runTask(layer);
   const pause = presentedQuestions(probe.ui).find((q) => q.origin.kind === "pause");
   assert.ok(pause !== undefined);
@@ -111,7 +112,7 @@ test("S11: a pause reaches the user as prose: no line said and no question shown
 test("S12: a pause, the cycle limit and the unchanged pause are presented with the context call's paragraph and terms", async () => {
   const context = [{ kind: "paragraph" as const, pieces: [term("Codex", "c"), ...plain(", the reviewing agent, checks the plan that Claude Code, the planning agent, writes; this happens now, before the plan is carried out, so that the plan is right.")] }];
   const explanations = [{ id: "c", term: "Codex", senses: ["An AI agent that reviews the work."] }];
-  const pause = scenario();
+  const pause = implementationScenario();
   pause.probe.planner.contexts = [{ output: (prompt: string) => ({ ...scriptedContextReply(prompt), context, explanations }) }];
   await runTask(pause.layer);
   const paused = presentedQuestions(pause.probe.ui).find((q) => q.origin.kind === "pause");
@@ -147,11 +148,10 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
 });
 
 test("S12: the questions that do not need one make no context call: the clarification, the plan writer's, the summary's", async () => {
-  const { layer, probe } = scenario();
-  await runTask(layer);
+  const { refinement, implementation, uis } = await scenario();
   // The one context call of the scenario is the pause's.
-  assert.equal(probe.planner.contextPrompts.length, 1);
-  const byKind = new Map(presentedQuestions(probe.ui).map((q) => [q.origin.kind, q.context]));
+  assert.deepEqual([refinement.planner.contextPrompts.length, implementation.planner.contextPrompts.length], [0, 1]);
+  const byKind = new Map(uis.flatMap((ui) => presentedQuestions(ui)).map((q) => [q.origin.kind, q.context]));
   // S18: an agreed question's context is the reviewed one of questions.json, not what the turn writes beside its id.
   assert.deepEqual(byKind.get("clarification"), { blocks: entry("Q2").context, by: "agent" });
   assert.deepEqual(byKind.get("planner"), { blocks: plannerQuestion.context, by: "agent" });
@@ -176,9 +176,8 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const [q] = presentedQuestions(probe.ui);
   assert.deepEqual(q.origin, { kind: "clarification", id: "Q1" });
   assert.deepEqual(q.context, { blocks: divided.context, by: "agent" });
@@ -215,9 +214,8 @@ test("S18: an accepted requirements issue in the second interview is validated, 
     ],
     reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "The port is not decided.")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.planner.prompts.includes(prompts.questionRepairPrompt([{ where: "G-R1-1", problems: [{ kind: "blankContext", subject: "" }] }])));
   const gapQuestion = presentedQuestions(probe.ui).find((q) => q.origin.kind === "followUp");
   assert.deepEqual(gapQuestion?.origin, { kind: "followUp", id: "G-R1-1" });
@@ -291,9 +289,8 @@ test("issue #94: a plain piece that would open a block reaches conversation.md a
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
   const quoted = conversation.split("\n").find((l) => l.includes("not a list, the context of Q1.")) ?? "";
   assert.ok(quoted.startsWith("> "), quoted);
@@ -316,9 +313,8 @@ test("W1-R1-1: a context whose link label spans two lines reaches conversation.m
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const lines = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").split("\n");
   const first = lines.findIndex((l, i) => l.startsWith("> ") && l.includes("[a") && (lines[i + 1] ?? "").startsWith("> ") && (lines[i + 1] ?? "").includes("]: b"));
   assert.ok(first >= 0, "the quoted context lines");
@@ -340,9 +336,8 @@ test("work review 2: a context whose link label has a backslash before its line 
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const lines = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").split("\n");
   const first = lines.findIndex((l, i) => l.startsWith("> ") && l.includes("[a") && (lines[i + 1] ?? "").startsWith("> ") && (lines[i + 1] ?? "").includes("b]: c"));
   assert.ok(first >= 0, "the quoted context lines");
@@ -364,9 +359,8 @@ test("issue #112: an agreed question whose term has two senses is presented with
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const [q] = presentedQuestions(probe.ui);
   assert.deepEqual(q.explanations.map((e) => [e.term, [...e.senses]]), [["port", port.senses]]);
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");

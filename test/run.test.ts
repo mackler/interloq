@@ -7,9 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Fiber } from "effect";
-import { run } from "../src/run.ts";
+import { refinementRun, run } from "../src/run.ts";
 import { countOfKind, foreseenPhases, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
-import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT, scriptedItem } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -589,11 +589,15 @@ test("a stopped execution foresees the second iteration at once; a work review t
   assert.deepEqual(foreseen(revise.probe.ui.notified), ["foreseen p1,e1,w1", "began p1", "began e1", "began w1", "foreseen p1,e1,w1,p2,e2,w2", "began p2", "began e2", "began w2"]);
 });
 
-test("with the question phase configured, Gather Requirements is foreseen first", async () => {
-  // The run ends at its first planning call, which is not scripted; what was notified before is what counts.
-  const { layer, probe } = testLayer(tempRepo(), { config: { questionPhase: true } });
-  await Effect.runPromiseExit(run("task").pipe(Effect.provide(layer)));
-  assert.equal(foreseen(probe.ui.notified)[0], "foreseen Q,p1,e1,w1");
+// Issue #120: a refinement run foresees Gather Requirements alone, and an implementation run never foresees it.
+test("a refinement run foresees Gather Requirements alone; an implementation run foresees it never", async () => {
+  // Each run ends at its first agent call, which is not scripted; what was notified before is what counts.
+  const refinement = testLayer(tempRepo(), {});
+  await Effect.runPromiseExit(refinementRun("task", scriptedItem.id).pipe(Effect.provide(refinement.layer)));
+  assert.equal(foreseen(refinement.probe.ui.notified)[0], "foreseen Q");
+  const implementation = testLayer(tempRepo(), {});
+  await Effect.runPromiseExit(run("task").pipe(Effect.provide(implementation.layer)));
+  assert.equal(foreseen(implementation.probe.ui.notified)[0], "foreseen p1,e1,w1");
 });
 
 test("the phase lines carry numbers only once a second iteration is foreseen", async () => {

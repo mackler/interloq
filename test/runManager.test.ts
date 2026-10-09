@@ -9,7 +9,7 @@ import { claudePlannerLayer } from "../src/claude.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
-import { program } from "../src/program.ts";
+import { program, programOfTask } from "../src/program.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
@@ -61,7 +61,8 @@ const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], 
 test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identical to a direct run of the program over the same script", async () => {
   const direct = tempRepo();
   const { wiring } = testWiring(direct, converging);
-  assert.equal(await run(Effect.scoped(program(scriptedStart(direct), wiring))), 0);
+  // Until the manager starts runs from items (S10 of issue #120), it runs the program from a task.
+  assert.equal(await run(Effect.scoped(programOfTask({ task: scriptedTask, project: direct }, wiring))), 0);
 
   const repo = tempRepo();
   const h = await harness(repo, [converging]);
@@ -158,13 +159,14 @@ test("the replay during a run holds the last run and the current one", async () 
   await ended(h, second);
 });
 
-test("an interview's numbered answer sent through the manager reaches Claude Code as the scripted Ui's text", async () => {
+// Until S10 of issue #120 the manager starts implementation runs from a task alone, which have no interview; S10 starts
+// this test's refinement run from an item again.
+test.skip("an interview's numbered answer sent through the manager reaches Claude Code as the scripted Ui's text", async () => {
   const repo = tempRepo();
   const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete, summary });
   const database = currentOf({ id: "F1", context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", text: "Which database should the service use?", terms: [], options: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }] });
   const h = await harness(repo, [
     {
-      config: { questionPhase: true },
       steps: [{ output: { questions: [questionEntry("Q1", "Which cache should the service use?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }, { output: { ...turn("One question.", false, ""), current_question: database, asked_ids: ["F1"] } }, { output: turn("Done.", true, "# Requirements\n\nPostgreSQL.") }, { output: noQuestions, plan: "v1" }],
       reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
       execs: [finished],

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
 import * as prompts from "../src/prompts.ts";
-import { finished, plain, questionEntry, questionText, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT } from "./helpers.ts";
+import { finished, plain, questionEntry, questionText, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
 // Step 4.6 (finding 8; Q4): the interview matches on turn variants, and the question list is normalised.
@@ -25,9 +25,8 @@ test("a turn that is complete with a blank summary continues the conversation in
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.ui.asked.some((p) => p.startsWith("You >")), "the blank summary was not treated as a continuing turn");
   assert.ok(probe.ui.said.includes("Gather Requirements: Claude Code formulates the question list ..."), probe.ui.said.join("\n"));
   assert.match(read(probe.dir, "requirements.md"), /None\./);
@@ -37,9 +36,8 @@ test("a turn that is complete with a blank summary continues the conversation in
 test("duplicate question ids halt with QuestionListInvalid before any review", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: { questions: [q("Q1"), q("Q1")] } }],
-    config: { questionPhase: true },
   });
-  await runFails(layer, "QuestionListInvalid", /Q1/);
+  await refinementFails(layer, "QuestionListInvalid", /Q1/);
   assert.equal(probe.reviewer.prompts.length, 0);
 });
 
@@ -54,9 +52,8 @@ test("a default answer that names no proposed answer is recorded as null, with a
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const file = JSON.parse(read(probe.dir, "questions.json"));
   assert.equal(file.questions[0].default_answer, null);
   assert.match(read(probe.dir, "conversation.md"), /default answer.*Q1.*C/i);
@@ -75,9 +72,8 @@ test("the question phase notifies its beginning and end and every interview turn
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   // Issue #6: the run's shape is notified first, then the question phase begins.
   const tags = probe.ui.notified.map((e) => e._tag);
   assert.deepEqual(tags.slice(0, 2), ["PhasesForeseen", "PhaseBegan"]);
@@ -90,7 +86,8 @@ test("the question phase notifies its beginning and end and every interview turn
   // Issue #21: the clarification counts the agreed questions.
   assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 1 });
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
-  assert.ok(tags.indexOf("PhaseEnded") < tags.lastIndexOf("PhaseBegan"), "the question phase ends before planning begins");
+  // Issue #120: a refinement run is the question phase alone; nothing begins after it ends.
+  assert.equal(tags.lastIndexOf("PhaseBegan"), 1, "a phase began after the question phase");
   // The line said for a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
   assert.ok(probe.ui.said.includes("\nAnything to add?\n"));
   const confirm = presentedQuestions(probe.ui).find((q) => q.origin.kind === "confirmSummary");
@@ -105,9 +102,8 @@ test("the interview's opening is an InterviewOpened event, not a say", async () 
     steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Done.", true, "# Requirements\n\nNone.") }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.ui.notified.some((e) => e._tag === "InterviewOpened"), "no InterviewOpened event");
   assert.ok(!probe.ui.said.some((line) => line.includes('"""')), "a multiline convention was said");
 });
@@ -134,12 +130,11 @@ const decided = (answers: string[], current = asksAgreed("Q1")) =>
     // The question review, the analysis's review, the requirements review, the plan review, the work review.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
 
 test("an agreed question with proposed answers offers Help me decide; after the analysis the number is the answer", async () => {
   const { layer, probe } = decided(["/decide", "2", ""]);
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.ui.asked.filter((p) => p.endsWith("You > ")).every((p) => p.startsWith(prompts.OFFER_LINE)));
   const question = JSON.parse(read(probe.dir, "decision-1/question.json"));
   assert.deepEqual(question.phase, { kind: "questions" });
@@ -151,14 +146,14 @@ test("an agreed question with proposed answers offers Help me decide; after the 
 // W1-R1-1: a blank reply after the analysis is not the choice; the answer that follows is.
 test("an agreed question answered /decide, blank, 2 records option 2", async () => {
   const { layer, probe } = decided(["/decide", "", "2", ""]);
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "decision-1/chosen.json")), { version: 2, decision: 1, answer: "2", option: labels[1] });
 });
 
 // W2-R1-2: an option chosen by its label is recorded as that option; the columns are the bare labels.
 test("an agreed question answered /decide, then a label, records that option; the question's options are the bare labels", async () => {
   const { layer, probe } = decided(["/decide", "SQLite", ""]);
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "decision-1/question.json")).options.map((o: { label: string }) => o.label), labels);
   assert.deepEqual(JSON.parse(read(probe.dir, "decision-1/chosen.json")), { version: 2, decision: 1, answer: "SQLite", option: "SQLite" });
 });
@@ -167,7 +162,7 @@ test("an agreed question answered /decide, then a label, records that option; th
 // beside its id is ignored, and the message with the record of the previous answer is not the question.
 test("Help me decide on an agreed question names the question as reviewed, not the turn's text or its message", async () => {
   const { layer, probe } = decided(["/decide", "2", ""], { ...asksAgreed("Q1", "Some other wording?"), message_to_user: "Q3 recorded: changed flag." });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(JSON.parse(read(probe.dir, "decision-1/question.json")).question, dbQuestion);
   const analyzed = probe.ui.notified.find((e) => e._tag === "DecisionAnalyzed");
   assert.equal(analyzed?._tag === "DecisionAnalyzed" ? analyzed.question : null, dbQuestion);
@@ -182,9 +177,8 @@ test("a turn without a current question asks for the user's reply, its message t
     steps: [{ output: { questions: [db] } }, { output: turn("Tell me about the deployment.", false, "") }, { output: turn("Done.", true, "# R") }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   const [reply] = presentedQuestions(probe.ui);
   assert.deepEqual([reply.origin, reply.context, questionText(reply), reply.options], [{ kind: "reply" }, { blocks: [{ kind: "document", markdown: "Tell me about the deployment." }], by: "agent" }, prompts.REPLY_QUESTION, []]);
   assert.ok(!probe.ui.asked[0].startsWith(prompts.OFFER_LINE));
@@ -210,9 +204,8 @@ test("a question whose premise the user denied is skipped, recorded and not coun
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(presentedQuestions(probe.ui).flatMap((p) => (p.origin.kind === "clarification" ? [p.origin.id] : [])), ["Q1"]);
   const note = prompts.skippedNote(skipped, []);
   assert.ok(note.includes("Q2") && note.includes("Q1") && note.includes('"A"'), note);
@@ -239,9 +232,8 @@ test("a turn that asks a skipped question, asks one before its premise, or propo
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runFails(layer, "InterviewTurnInvalid", /Q2/);
+  await refinementFails(layer, "InterviewTurnInvalid", /Q2/);
   assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "askedBeforePremise", id: "Q2", premise: "Q1" }])));
   assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "skippedAsked", id: "Q2", question: "Q1", answer: "A" }])));
   assert.ok(prompts.interviewTurnRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }]).includes("Q2"));
@@ -259,9 +251,8 @@ test("a summary that omits a skipped question gets the repair turn, and the repa
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
   assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
 });
@@ -278,9 +269,8 @@ test("a free-text answer to the premise question skips nothing: the dependent qu
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.deepEqual(presentedQuestions(probe.ui).flatMap((p) => (p.origin.kind === "clarification" ? [p.origin.id] : [])), ["Q1", "Q2"]);
   assert.ok(!read(probe.dir, "conversation.md").includes("not asked"));
 });
@@ -306,9 +296,8 @@ test("a summary naming a longer id that contains a skipped question's id gets th
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.ok(probe.planner.prompts.includes(prompts.interviewTurnRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
   assert.match(read(probe.dir, "requirements.md"), /Skipped questions/);
 });

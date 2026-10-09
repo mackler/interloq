@@ -12,14 +12,14 @@ import { Planner, Reviewer, RunConfig, Sdk, type Services, Store, Ui } from "../
 import { platformLayer } from "../src/platform.ts";
 import { storeLayer } from "../src/store.ts";
 import { FakeSdk, init, messages, success, turn, type Script } from "./fakeSdk.ts";
-import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, currentOf, questionEntry , TEST_ROOT } from "./helpers.ts";
+import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, currentOf, questionEntry , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 
 // Decision Q5: an invalid structured reply in a planning, interview or review call gets one repair
 // turn in the same session or thread; a second invalid reply stops the run, and both replies are kept.
 const REPAIR = /^Your structured output did not match the required schema/;
 const noQuestions = { questions_for_user: [] };
 const kept = (dir: string, name: string): string => fs.readFileSync(path.join(dir, "invalid-replies", name), "utf8");
-const config = { ...defaultConfig, questionPhase: false };
+const config = { ...defaultConfig };
 
 test("an invalid planner reply gets one repair turn and the corrected reply is used", async () => {
   const { layer, probe } = testLayer(tempRepo(), { steps: [{ output: { dispositions: "x" } }, { output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
@@ -72,9 +72,8 @@ test("an interview turn is validated the same way", async () => {
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  assert.equal(await runTask(layer), 1);
+  await runRefinement(layer);
   assert.match(probe.planner.prompts[2], REPAIR);
   assert.match(fs.readFileSync(probe.requirements, "utf8"), /hello/);
   assert.deepEqual(JSON.parse(kept(probe.dir, "claude-1.json")), { message_to_user: 1 });

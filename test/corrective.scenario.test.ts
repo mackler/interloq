@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { correctivePrompt } from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf , TEST_ROOT } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 
 // Issue #30 (plan step S11): scenario tests of the corrective turn over the test layers, which issue #30 names as
 // missing: a corrective turn that succeeds, one that changes its dispositions, and the guards around it.
@@ -105,9 +105,8 @@ test("(f) the question list: an accepted issue with questions.json unchanged get
     ],
     reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-    config: { questionPhase: true },
   });
-  await runTask(layer);
+  await runRefinement(layer);
   assert.equal(probe.planner.prompts[2], correctivePrompt(TEST_ROOT, "questions.json", 1, ["Q-R1-1"]));
   assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: { id: string }) => x.id), ["Q1", "Q2"]);
 });

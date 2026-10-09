@@ -81,6 +81,17 @@ test("a round limit of 0 is reported with its field path", async () => {
 });
 
 // Finding 10: the config decoder returns a Result instead of throwing ConfigInvalid.
+// Issue #120 (the developer's decision of 8 Oct 2026): questionPhase is removed with the question phase of a run, so a
+// config that still names it is refused as an unknown key (behavior 9).
+test("a config that names questionPhase is ConfigInvalid", () => {
+  for (const value of [true, false]) {
+    const decoded = decodeConfigText("/p/config.json", JSON.stringify({ questionPhase: value }));
+    assert.ok(Result.isFailure(decoded), `questionPhase: ${value} was accepted`);
+    assert.equal(decoded.failure._tag, "ConfigInvalid");
+    assert.match(decoded.failure.path, /questionPhase/);
+  }
+});
+
 test("decodeConfigText returns a Result: ConfigInvalid for bad JSON or a wrong type, the partial config otherwise", () => {
   const badJson = decodeConfigText("/p/config.json", "{nope");
   assert.ok(Result.isFailure(badJson));

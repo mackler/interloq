@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe, type RunError, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
 import { blankItemText, itemStartedLine, mainSessionLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
-import { refinementRun, run } from "./run.ts";
+import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
 import type { Config } from "./schema.ts";
@@ -18,7 +18,7 @@ import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
 import type { ItemId, TrackerItem } from "./tracker.ts";
 import type { RunMode } from "./runMode.ts";
-import { type SectionMalformed, withoutRefinement } from "./refinement.ts";
+import { readRefinement, type Refinement, type SectionMalformed, withoutRefinement } from "./refinement.ts";
 
 /** What the program is wired to: the Ui, the platform, the SDKs and the agents. */
 export type Wiring = Readonly<{
@@ -75,7 +75,7 @@ type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implement
 /** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
 type Started = Readonly<{ project: string; mode: RunMode; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>> }>;
 /** What a run has read before its records exist: its task, and its tracker (none for a run started from a task). */
-type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null }>;
+type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null }>;
 
 /**
  * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
@@ -105,9 +105,12 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
           }
           const item = read.value;
           yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
+          // An implementation run's requirements are the item's section, where it has one (S7).
+          const section = readRefinement(item.body);
+          if (Result.isFailure(section)) return Result.fail(sectionMalformedText(item.id, section.failure.reason));
           return Result.mapBoth(taskTextOf(start.mode, item), {
             onFailure: (e) => (e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason)),
-            onSuccess: (task): Readied => ({ task, tracker: layer.success }),
+            onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success) }),
           });
         }),
     },
@@ -116,7 +119,7 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
-  programWith({ project: start.project, mode: "implementation", item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null })) }, wiring);
+  programWith({ project: start.project, mode: "implementation", item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null })) }, wiring);
 
 const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -168,7 +171,7 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
     // Issue #120: the item and its task text, read from the tracker before any agent exists and before the records exist.
     const taskRead = yield* start.task(config, ui);
     if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
-    const { task, tracker } = taskRead.success;
+    const { task, tracker, requirements } = taskRead.success;
 
     const allocated = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
     if (Exit.isFailure(allocated)) {
@@ -194,7 +197,10 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
         ? tracker === null
           ? Effect.die(new Error("a refinement run is started from an item, with its tracker"))
           : refinementRun(task, start.item).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
-        : run(task).pipe(Effect.provide(context), Effect.map((phases) => ({ mode: "implementation", phases }) as const));
+        : (tracker === null ? run(task) : implementationRun(task, start.item, requirements).pipe(Effect.provide(tracker))).pipe(
+            Effect.provide(context),
+            Effect.map((phases) => ({ mode: "implementation", phases }) as const),
+          );
     const exit = yield* body.pipe(Effect.onInterrupt(() => interrupted), Effect.exit);
 
     if (Exit.isSuccess(exit)) {
