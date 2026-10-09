@@ -691,13 +691,19 @@ export const keepUnsent = (state: ViewState, text: string): ViewState => ({ ...s
 /** The user dismisses one kept answer; the others stay. */
 export const dismissUnsent = (state: ViewState, index: number): ViewState => ({ ...state, unsent: state.unsent.filter((_, i) => i !== index) });
 
+/**
+ * A mode's items after a hello (S16): an answer still awaited was lost with the connection the hello replaces, so a
+ * Loading mode becomes Unasked and is asked again; a list or a notice already received stays.
+ */
+const afterHello = (items: ItemsView): ItemsView => (items._tag === "Loading" ? { _tag: "Unasked" } : items);
+
 /** The next state after a message of the server. Pure. */
 export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
   switch (message.type) {
     case "hello": {
       // Another start of the server: its run numbers restart, so the views of the earlier server's runs are dropped.
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
-      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], ...(restarted ? { run: null, last: null } : {}), current: message.current[m] }])) as Record<RunMode, ModeView>;
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], ...(restarted ? { run: null, last: null } : {}), current: message.current[m], items: afterHello(state.modes[m].items) }])) as Record<RunMode, ModeView>;
       return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false };
     }
     case "replay": {

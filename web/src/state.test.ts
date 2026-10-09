@@ -11,7 +11,7 @@ import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, 
 import { promptOf } from "../../src/userPrompts.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
-import { itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", location: "/p", current: { refinement: null, implementation: current }, incarnation: "a" });
@@ -431,6 +431,27 @@ describe("runs, replay and gaps", () => {
     const none = fold([{ type: "refused", mode: null, reason: "not a message" }], s);
     expect(none.notices).toEqual(["not a message"]);
     expect(none.modes.refinement.refusal).toBe("a refinement run is in progress");
+  });
+
+  test("a hello turns a mode's Loading items Unasked and leaves a listed mode as it is (S16)", () => {
+    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
+    const listed = fold([hello(null), { type: "items", mode: "refinement", result: { _tag: "Listed", items } }]);
+    const s = fold([hello(null)], itemsRequested(listed, "implementation"));
+    expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
+    expect(s.modes.refinement.items).toEqual({ _tag: "Listed", items });
+  });
+
+  test("after any hello, no mode's items is Loading (S16)", () => {
+    const itemsArb = fc.constantFrom<ItemsViewOf>({ _tag: "Unasked" }, { _tag: "Loading" }, { _tag: "Listed", items: [] }, { _tag: "Unavailable", notice: "n" });
+    fc.assert(
+      fc.property(itemsArb, itemsArb, fc.constantFrom("a", "b"), (r, i, incarnation) => {
+        const base = fold([hello(null)]);
+        const state: ViewState = { ...base, modes: { refinement: { ...base.modes.refinement, items: r }, implementation: { ...base.modes.implementation, items: i } } };
+        const s = reduce(state, { type: "hello", location: "/p", current: { refinement: null, implementation: null }, incarnation });
+        expect([s.modes.refinement.items._tag, s.modes.implementation.items._tag]).not.toContain("Loading");
+      }),
+      { numRuns: 50 },
+    );
   });
 
   test("an items frame sets its mode's items alone and clears its refusal; a request shows the tab loading", () => {

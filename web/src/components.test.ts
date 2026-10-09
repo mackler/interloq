@@ -610,6 +610,21 @@ describe("App and the draft", () => {
       expect(sentOf(ws).slice(before)).toEqual([{ type: "items", mode: "implementation" }]);
     });
 
+    test("a connection lost while the shown tab's items load: the new connection asks for them again (S16)", async () => {
+      vi.useFakeTimers();
+      const { ws } = await begin();
+      expect(sentOf(ws)).toEqual([{ type: "items", mode: "refinement" }]);
+      ws.close();
+      flushSync();
+      vi.advanceTimersByTime(30_000);
+      flushSync();
+      const next = FakeWebSocket.last!;
+      expect(next).not.toBe(ws);
+      next.onopen?.({});
+      next.receive({ type: "hello", location: "/p", current: { refinement: null, implementation: null }, incarnation: "a" });
+      expect(sentOf(next)).toEqual([{ type: "items", mode: "refinement" }]);
+    });
+
     test("selecting a tab that shows a run in progress asks for nothing (S15)", async () => {
       const { root, ws } = await begin();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("implementation", "1")]) }] });
