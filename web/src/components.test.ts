@@ -600,6 +600,24 @@ describe("App and the draft", () => {
       expect(sentOf(ws).at(-1)).toEqual({ type: "items", mode: "implementation" });
     });
 
+    test("a tab revisited after its list was loaded asks for its items again (S15)", async () => {
+      const { root, ws } = await begin();
+      select(root, "implementation");
+      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      select(root, "refinement");
+      const before = ws.sent.length;
+      select(root, "implementation");
+      expect(sentOf(ws).slice(before)).toEqual([{ type: "items", mode: "implementation" }]);
+    });
+
+    test("selecting a tab that shows a run in progress asks for nothing (S15)", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("implementation", "1")]) }] });
+      const before = ws.sent.length;
+      select(root, "implementation");
+      expect(sentOf(ws).slice(before).filter((m) => m.type === "items")).toEqual([]);
+    });
+
     test("an item's button sends start with the tab's mode and the item's id, both from the listed item (the seam with the server)", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");

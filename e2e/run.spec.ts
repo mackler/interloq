@@ -305,9 +305,15 @@ test.describe("the tests of the emptyQuestions server, in order", () => {
   test("(23) a refinement run from a listed item with an empty agreed list ends successfully, and the item moves to the Implementation tab", async ({ page }) => {
     await page.goto(url("emptyQuestions"));
     await expect(page.getByText("connected", { exact: true })).toBeVisible();
+    // S15: the Implementation tab's list is loaded once before the run, so that its later visit must ask again.
+    await toTheList(page, "implementation");
+    await expect(listOf(page).locator("li").first()).toBeVisible();
     await toTheList(page, "refinement");
     const item = listOf(page).locator("li").first();
     const id = (await item.locator("button[name=start]").getAttribute("data-item")) ?? "";
+    await tabOf(page, "implementation").click();
+    await expect(listOf(page).locator(`button[name=start][data-item="${id}"]`)).toHaveCount(0);
+    await tabOf(page, "refinement").click();
     await item.locator("button[name=start]").click();
     await expect(left(page).getByText(NOTHING_TO_SETTLE)).toBeVisible();
     await expect(page.getByText("This task has ended (finished).")).toBeVisible();
@@ -320,6 +326,7 @@ test.describe("the tests of the emptyQuestions server, in order", () => {
     await page.locator("button[name=new]").click();
     await expect(listOf(page)).toBeVisible();
     await expect(listOf(page).locator(`button[name=start][data-item="${id}"]`)).toHaveCount(0);
+    // S15: selected again, the tab asks for its items again and lists the refined item without Refresh.
     await tabOf(page, "implementation").click();
     await expect(listOf(page).locator(`button[name=start][data-item="${id}"]`)).toBeVisible();
   });

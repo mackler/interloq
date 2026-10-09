@@ -105,7 +105,16 @@
   const promptKey = $derived(JSON.stringify(pendingKey(shownTab)));
   const asking = $derived(run?.pending != null && conversationForPrompt !== promptKey);
   // Issue #120: a tab shows its run while one is in progress, or its ended run until the user goes back to its list.
-  const showList = $derived(run === null || (run.ended !== null && listWanted[mode]));
+  const showsList = (m: RunMode): boolean => {
+    const r = view.modes[m].run;
+    return r === null || (r.ended !== null && listWanted[m]);
+  };
+  const showList = $derived(showsList(mode));
+  /** Selecting a tab that shows its list asks for its items every time, so a revisited list is current (S15). */
+  const selectTab = (value: RunMode) => {
+    view = selectMode(view, value);
+    if (showsList(value) && view.connection === "open") requestItems(value);
+  };
   // The notices since the user last started a run or went back to a list.
   let noticesSeen = $state(0);
   const latestNotice = $derived(view.notices.length > noticesSeen ? (view.notices.at(-1) ?? null) : null);
@@ -284,7 +293,7 @@
        M3 specifies as primary tabs [recognition rather than recall: both modes are always in view; visibility of system
        status: a tab whose run waits for an answer carries the waiting mark]. -->
   <nav class="tabs" aria-label={TABS_LABEL}>
-    <Tabs items={tabItems} bind:tab={() => mode, (value) => { view = selectMode(view, value as RunMode); }} />
+    <Tabs items={tabItems} bind:tab={() => mode, (value) => selectTab(value as RunMode)} />
   </nav>
   {#if tab.refusal !== null}<p class="notice refusal m3-font-body-medium" role="alert">{tab.refusal}</p>{/if}
   {#if showList}
