@@ -4,7 +4,7 @@ import * as prompts from "../../src/prompts.ts";
 import type { RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import { type DraftKey, pendingKey, sameKey } from "./draft.ts";
-import { type Decision, decide, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey } from "./notify.ts";
+import { combinedMark, type Decision, decide, type Mark, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey } from "./notify.ts";
 import { initialState, reduce, shownRun, type ViewState } from "./state.ts";
 
 // Issue #16: the decision whether to alert the user that a run waits for him, or that a run he watched has ended.
@@ -198,5 +198,28 @@ describe("decide: examples", () => {
     const ds = foldDecisions([observation({ visible: true }), observation({ ended: 0, visible: true }), observation({ ended: 0, visible: false })]);
     expect(ds[1]!._tag).toBe("Idle");
     expect(ds[2]!._tag).toBe("Idle");
+  });
+});
+
+// Issue #120, S17: the title and the icon show one mark for the two tabs' runs.
+describe("combinedMark", () => {
+  const markArb = fc.oneof(fc.constant<Mark>({ _tag: "Clear" }), fc.constant<Mark>({ _tag: "Waiting" }), fc.integer({ min: 0, max: 255 }).map((code): Mark => ({ _tag: "Ended", code })));
+  test("Waiting exactly when some mark waits, Ended when none waits and some ended, Clear otherwise", () => {
+    fc.assert(
+      fc.property(fc.array(markArb, { maxLength: 4 }), (marks) => {
+        const combined = combinedMark(marks);
+        const waiting = marks.some((m) => m._tag === "Waiting");
+        const ended = marks.find((m) => m._tag === "Ended");
+        if (waiting) expect(combined).toBe(marks.find((m) => m._tag === "Waiting"));
+        else if (ended !== undefined) expect(combined).toBe(ended);
+        else expect(combined).toEqual({ _tag: "Clear" });
+      }),
+    );
+  });
+  test("examples: waiting over ended, ended over clear, an empty list clear", () => {
+    expect(combinedMark([{ _tag: "Ended", code: 0 }, { _tag: "Waiting" }])).toEqual({ _tag: "Waiting" });
+    expect(combinedMark([{ _tag: "Clear" }, { _tag: "Ended", code: 130 }])).toEqual({ _tag: "Ended", code: 130 });
+    expect(combinedMark([{ _tag: "Clear" }, { _tag: "Clear" }])).toEqual({ _tag: "Clear" });
+    expect(combinedMark([])).toEqual({ _tag: "Clear" });
   });
 });

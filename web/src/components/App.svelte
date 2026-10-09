@@ -19,7 +19,7 @@
   import { tabTitle } from "../title.ts";
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
-  import { type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
+  import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
   import { callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
@@ -194,7 +194,8 @@
   // Issue #16: a pending prompt, or a watched run's end at a hidden tab, puts its marker in front of the title and a
   // badge on the icon, and is raised once as the user chose: a desktop notification, a chime [visibility of system
   // status, for a user who is not looking at the page]. decide (web/src/notify.ts) decides; this effect only fires.
-  let notifyState = $state<NotifyState>(initialNotifyState);
+  // Issue #120 (S17): one decision per tab's run, so that each prompt and each end is raised once whichever tab is shown.
+  let notifyStates = $state<Record<RunMode, NotifyState>>({ refinement: initialNotifyState, implementation: initialNotifyState });
   let visible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let preferences = $state<Preferences>(((r) => (r.ok ? r.value : defaultPreferences))(readPreferences()));
   let permission = $state<Permission>(currentPermission());
@@ -207,8 +208,8 @@
     scheme.addEventListener("change", redraw);
     return () => scheme.removeEventListener("change", redraw);
   });
-  let closeShown: Closer | null = null;
-  let shownFor: string | null = null;
+  const closers: Record<RunMode, Closer | null> = { refinement: null, implementation: null };
+  const shownFor: Record<RunMode, string | null> = { refinement: null, implementation: null };
   $effect(() => {
     const onVisibility = () => {
       visible = document.visibilityState === "visible";
@@ -225,47 +226,50 @@
     void requestDesktopPermission().then((answer) => (permission = answer));
   };
   /**
-   * What the page shows now, as decide observes it (issue #120): the pending prompt of either tab, the shown tab's first;
-   * the run of the shown tab, or the other tab's when the shown one has none.
+   * What the page shows of one tab's run, as decide observes it (issue #120, S17): its pending prompt, the run and its
+   * end; the prompt counts as shown, and the list as the form for a new task, only in the selected tab.
    */
-  const observation = (): Observation => {
-    const other = RUN_MODES.find((m) => m !== mode) ?? mode;
-    const watched = run ?? view.modes[other].run;
+  const observation = (m: RunMode): Observation => {
+    const watched = view.modes[m].run;
+    const selected = m === mode;
     return {
-    pending: pendingKey(shownTab) ?? pendingKey(shownRun(view, other)),
-    run: watched === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: watched.id },
-    ended: watched?.ended ?? null,
-    visible,
-    promptShown: asking || deciding,
-    formShown: showList,
-    preferences,
-    permission,
+      pending: pendingKey(shownRun(view, m)),
+      run: watched === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: watched.id },
+      ended: watched?.ended ?? null,
+      visible,
+      promptShown: selected && (asking || deciding),
+      formShown: selected && showList,
+      preferences,
+      permission,
     };
   };
   /** The decision's reason as one text, the tag of its notification; null for none. */
   const reasonOf = (d: Decision): string | null => (d._tag === "Idle" ? null : JSON.stringify([d._tag, d.key]));
-  $effect(() => {
-    const observed = observation();
-    const decision = decide(untrack(() => notifyState), observed);
-    notifyState = decision.state;
-    const mark = markOf(decision);
-    shownMark = mark;
-    document.title = tabTitle(view.location, mark);
-    setFavicon(faviconHref(mark, schemeColors()));
+  /** Fires one tab's decision: closes its notification when its reason is gone, and raises a new reason once. */
+  const fire = (m: RunMode, decision: Decision) => {
     const reason = reasonOf(decision);
-    if (reason !== shownFor) {
-      closeShown?.();
-      closeShown = null;
-      shownFor = null;
+    if (reason !== shownFor[m]) {
+      closers[m]?.();
+      closers[m] = null;
+      shownFor[m] = null;
     }
     if (decision._tag === "Idle" || decision.raise === null || reason === null) return;
     const name = ownName(view.location ?? "");
     const [title, body] = decision._tag === "Waiting" ? [pauseNotificationTitle(name), PAUSE_NOTIFICATION_BODY] : [endNotificationTitle(name, decision.code), ""];
     if (decision.raise === "desktop" || decision.raise === "desktopAndSound") {
-      closeShown = showDesktop(title, body, reason);
-      shownFor = reason;
+      closers[m] = showDesktop(title, body, reason);
+      shownFor[m] = reason;
     }
     if (decision.raise === "sound" || decision.raise === "desktopAndSound") playChime();
+  };
+  $effect(() => {
+    const decisions = RUN_MODES.map((m) => [m, decide(untrack(() => notifyStates[m]), observation(m))] as const);
+    notifyStates = Object.fromEntries(decisions.map(([m, d]) => [m, d.state])) as Record<RunMode, NotifyState>;
+    const mark = combinedMark(decisions.map(([, d]) => markOf(d)));
+    shownMark = mark;
+    document.title = tabTitle(view.location, mark);
+    setFavicon(faviconHref(mark, schemeColors()));
+    for (const [m, d] of decisions) fire(m, d);
   });
 </script>
 

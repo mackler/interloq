@@ -53,6 +53,10 @@ export type Mark = Readonly<{ _tag: "Clear" }> | Readonly<{ _tag: "Waiting" }> |
 export const markOf = (decision: Decision): Mark =>
   decision._tag === "Idle" ? { _tag: "Clear" } : decision._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", code: decision.code };
 
+/** The mark of several runs' decisions (issue #120, S17): a waiting one if any, else an ended one if any, else Clear. */
+export const combinedMark = (marks: readonly Mark[]): Mark =>
+  marks.find((m) => m._tag === "Waiting") ?? marks.find((m) => m._tag === "Ended") ?? { _tag: "Clear" };
+
 const sameRun = (a: RunKey | null, b: RunKey | null): boolean => a !== null && b !== null && a.incarnation === b.incarnation && a.run === b.run;
 
 /** The interrupt of a reason first alerted: none at a tab where the user sees it, otherwise what he chose and may have. */

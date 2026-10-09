@@ -728,6 +728,45 @@ describe("App and the draft", () => {
       expect(NotificationStub.calls[0]!.closed).toBe(true);
     });
 
+    // Issue #120, S17: each tab's run is observed on its own.
+    const startedOf = (mode: RunMode, id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode, item: { id, title: "t" } });
+    const selectTab = (root: HTMLElement, mode: RunMode) => {
+      (one(root, `input[type=radio][value=${mode}]`) as HTMLInputElement).click();
+      flushSync();
+    };
+
+    test("two prompts pending in two tabs: two notifications, and switching tabs raises none again (S17)", async () => {
+      begin("hidden");
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("refinement", "11"), asked(1)]) }, { id: 2, events: stamp([startedOf("implementation", "1"), asked(1)]) }] });
+      expect(NotificationStub.calls).toHaveLength(2);
+      for (let i = 0; i < 3; i++) {
+        selectTab(root, "implementation");
+        selectTab(root, "refinement");
+      }
+      expect(NotificationStub.calls).toHaveLength(2);
+    });
+
+    test("the end of the hidden tab's run is raised while the shown tab's run is in progress (S17)", async () => {
+      begin("hidden");
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("refinement", "11")]) }, { id: 2, events: stamp([startedOf("implementation", "1")]) }] });
+      selectTab(root, "refinement");
+      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle(name, 0)]);
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+    });
+
+    test("the title shows the waiting marker while either tab's run waits (S17)", async () => {
+      begin("visible");
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("refinement", "11")]) }, { id: 2, events: stamp([startedOf("implementation", "1"), asked(1)]) }] });
+      for (const mode of ["refinement", "implementation", "refinement"] as const) {
+        selectTab(root, mode);
+        expect(document.title).toBe(tabTitle("/p", WAITING));
+      }
+    });
+
     test("a prompt at a visible tab showing it: no notification, the title still marked", async () => {
       begin("visible");
       const { ws } = await openPage();
