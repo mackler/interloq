@@ -692,20 +692,28 @@ export const keepUnsent = (state: ViewState, text: string): ViewState => ({ ...s
 export const dismissUnsent = (state: ViewState, index: number): ViewState => ({ ...state, unsent: state.unsent.filter((_, i) => i !== index) });
 
 /**
- * A mode's items after a hello (S16): an answer still awaited was lost with the connection the hello replaces, so a
- * Loading mode becomes Unasked and is asked again; a list or a notice already received stays.
+ * A mode's items after a hello of the same incarnation, a reconnection (S16): an answer still awaited was lost with the
+ * connection the hello replaces, so a Loading mode becomes Unasked and is asked again; a list or a notice already
+ * received stays. A hello of another incarnation keeps none of them (`restartedMode`).
  */
 const afterHello = (items: ItemsView): ItemsView => (items._tag === "Loading" ? { _tag: "Unasked" } : items);
+/**
+ * A mode after a hello of another incarnation: a new server's, holding nothing of the earlier one's, neither its runs nor
+ * its items, notice or refusal, because a tracker id of one server names nothing in another, which may serve another
+ * project (W3-R1-1).
+ */
+const restartedMode = (current: number | null): ModeView => ({ ...emptyMode, current });
+/** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
+const reconnectedMode = (mode: ModeView, current: number | null): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
 
 /** The next state after a message of the server. Pure. */
 export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
   switch (message.type) {
     case "hello": {
-      // Another start of the server: its run numbers restart, so the views of the earlier server's runs are dropped, and so
-      // are its item lists, tracker notices and refusals, because a tracker id of one server names nothing in another,
-      // which may serve another project (W3-R1-1).
+      // Another start of the server: its run numbers restart and its tracker may be another project's, so each mode becomes
+      // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
-      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], ...(restarted ? { run: null, last: null, items: { _tag: "Unasked" }, refusal: null } : { items: afterHello(state.modes[m].items) }), current: message.current[m] }])) as Record<RunMode, ModeView>;
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(message.current[m]) : reconnectedMode(state.modes[m], message.current[m])])) as Record<RunMode, ModeView>;
       return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false };
     }
     case "replay": {
