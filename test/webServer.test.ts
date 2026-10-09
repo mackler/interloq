@@ -325,6 +325,46 @@ for (const mode of ["refinement", "implementation"] as const) {
     });
   });
 }
+// W2-R1-3 of work review 2 (issue #120, S21): a tracker that never answers a listing holds back no later frame of the
+// tab: the server forks the items and start frames, as it forks a stop, so the read loop returns to the next frame at once.
+const stalledListing = (): FakeTracker => {
+  const base = fakeTrackerOf(MANAGER_ITEMS);
+  return { ...base, tracker: { ...base.tracker, list: () => Effect.never } };
+};
+const itemsArrived = (c: Client) => c.messages.some((m) => m.type === "items");
+
+test("a listing the tracker never answers does not hold back a stop of the other mode's run", async () => {
+  const repo = tempRepo();
+  await serve(await managerOf(repo, [{ steps: [{ hang: true }] }], [], stalledListing()), dist(), async (port) => {
+    const a = await connect(port);
+    a.send(startFrame());
+    await until("Started", () => (perRun(a).get(1) ?? []).length > 0);
+    a.send({ type: "items", mode: "refinement" });
+    a.send({ type: "stop", incarnation: "test", run: 1 });
+    await until("the end", () => hasEnded(a, 1), 10_000);
+    const ended = perRun(a).get(1)!.find((e) => e.event._tag === "Ended")!.event;
+    assert.ok(ended._tag === "Ended" && ended.code === 130);
+    assert.ok(!itemsArrived(a), "the stalled listing answered");
+    a.close();
+  });
+});
+
+test("a listing the tracker never answers does not hold back an answer to the other mode's run", async () => {
+  const repo = tempRepo();
+  await serve(await managerOf(repo, [withQuestion], [], stalledListing()), dist(), async (port) => {
+    const a = await connect(port);
+    a.send(startFrame());
+    await until("the prompt", () => pending(a, 1) !== null);
+    const asked = pending(a, 1)!;
+    a.send({ type: "items", mode: "refinement" });
+    a.send({ type: "answer", incarnation: "test", run: 1, prompt: asked.prompt, text: "PostgreSQL" });
+    await until("the end", () => hasEnded(a, 1), 10_000);
+    assert.match(fs.readFileSync(path.join(runDirOf(repo), "user-decisions.md"), "utf8"), /Decision: PostgreSQL/);
+    assert.ok(!itemsArrived(a), "the stalled listing answered");
+    a.close();
+  });
+});
+
 // Finding 11 of docs/gui-review.md, connection cancellation: a start whose connection closes at once leaves either no
 // run or a run that the next tab sees, can stop, and after which it can start another.
 test("a client that sends start and closes at once leaves the server in a state the next client can recover from", async () => {

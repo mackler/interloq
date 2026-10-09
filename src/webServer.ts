@@ -121,11 +121,15 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const refuse = (r: Refusal | null) => (r === null ? Effect.void : send({ type: "refused", mode: r.mode, reason: r.refused }));
       const dispatch = (message: ClientMessage): Effect.Effect<void, never, Scope.Scope> => {
         switch (message.type) {
+          // Issue #120, W2-R1-3: a start reads the item and a listing waits for the tracker, so both are forked like a stop,
+          // in the session's scope, and a slow tracker holds back no later frame of the tab. Two starts of one mode are
+          // settled by the manager's reservation; two listings of one mode may answer out of order, and the page keeps the
+          // last one received, as after a second Refresh.
           case "start":
-            return manager.start(message.mode, message.item).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))));
+            return Effect.forkScoped(manager.start(message.mode, message.item).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))))).pipe(Effect.asVoid);
           case "items":
             // Issue #120: the server makes the tracker call; the page receives ids, titles and excerpts alone.
-            return manager.listItems(message.mode).pipe(Effect.flatMap((result) => send({ type: "items", mode: message.mode, result })));
+            return Effect.forkScoped(manager.listItems(message.mode).pipe(Effect.flatMap((result) => send({ type: "items", mode: message.mode, result })))).pipe(Effect.asVoid);
           case "answer":
             return manager.answer(message.incarnation, message.run, message.prompt, message.text).pipe(Effect.flatMap(refuse));
           case "stop":
