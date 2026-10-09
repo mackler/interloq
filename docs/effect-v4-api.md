@@ -97,6 +97,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Context.Service` (verified 24 Sep, stage 5.1) | Context.d.ts:188 | `Context.Service<Shape>("Key")` (function form) or `class X extends Context.Service<X, Shape>()("Key") {}` (class form). Replaces v3 `Context.Tag` / `Effect.Service`. The key can be yielded in `Effect.gen` to get the service. |
 | `Context.make` / `add` / `get` | Context.d.ts:646 / 683 / 1220 | `make(key, service)`; `get(context, key)` |
 | `Layer.succeed` | Layer.d.ts:813 | `(key, resource) => Layer<I>` |
+| `Layer.succeedContext` (read 9 Oct 2026, issue #120) | Layer.d.ts:924 | `<A>(context: Context.Context<A>) => Layer<A>`: a layer of every service of a context. The run manager captures the platform's services with `Effect.context` and provides them to the tracker it builds per call (src/runManager.ts) |
 | `Layer.sync` | Layer.d.ts:983 | `(key, evaluate) => Layer<I>` |
 | `Layer.effect` | Layer.d.ts:1131 | `(key, effect: Effect<S, E, R>) => Layer<I, E, Exclude<R, Scope>>`. Scoped layers go through `Layer.effect` with `acquireRelease` inside (no `Layer.scoped` in v4). |
 | `Layer.mergeAll` | Layer.d.ts:1392 | `(...layers) => Layer<…>` |
@@ -116,6 +117,10 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Result.isSuccess` / `Result.isFailure` | 668 / 637 | type guards. A `Result` is not yieldable in `Effect.gen`: a failure is lifted with `Effect.fail(result.failure)` |
 | `Result.map` (read 28 Sep, issue #37) | 992 | dual: `map(self, f)` or `map(f)(self)`; transforms the success, keeps the failure. `validatingField` in src/subjects.ts |
 | `Result.mapError` (read 8 Oct 2026, issue #120) | 898 | dual: transforms the failure, keeps the success; the GitHub adapter turns `NoState` and `Ambiguous` into its typed errors (src/github.ts) |
+| `Result.flatMap` (read 9 Oct 2026, issue #120) | 2008 | dual: chains a function returning a `Result` onto the success; `taskTextOf` in src/program.ts |
+| `Result.mapBoth` (read 9 Oct 2026, issue #120) | 791 | dual: `mapBoth(self, { onSuccess, onFailure })`, transforms both channels, keeps which one holds; the program's read of the task text (src/program.ts) |
+| `Result.getOrElse` (read 9 Oct 2026, issue #120) | 1606 | dual: `getOrElse(self, (error) => fallback)`, the success or a fallback computed from the error; `excerptOf` in src/runMode.ts and the task of `Started` in src/runManager.ts |
+| `Result.match` (read 9 Oct 2026, issue #120) | 1095 | dual: `match({ onSuccess, onFailure })`, folds both branches into one value; the run manager's tracker access (src/runManager.ts) |
 | `Result.all` (read 8 Oct 2026, W1-R1-2 of issue #112) | 2530 | `all(results)`: an array of Results becomes one Result of the array of successes, or the first failure. `renderTerms` in src/render.ts |
 | `Result.try` (read 26 Sep, web GUI stage 3.1) | Result.d.ts:540 (`try_ as try`, 578) | `({ try: LazyArg<A>, catch: (error: unknown) => E }) => Result<A, E>`; `JSON.parse` of a frame in src/protocol.ts |
 | `Effect.fromResult` | Effect.d.ts:2355 | `(result: Result<A, E>) => Effect<A, E>`: lifts a decoder's `Result` (src/store.ts, review stage 4.4; replaces the throw-based `lift`) |
@@ -343,5 +348,5 @@ their relative imports.
 | `Queue.unbounded` / `offer` / `take` | Queue.d.ts:557 / 590 / 1624 | the per-connection buffer of broadcast events. `offer` is dual since 4.0.1, `offer(self, message)` or `offer(message)(self)` (rc.117 had the data-first form only); the program uses the data-first form |
 | `Queue.dropping` / `Queue.size` (read 26 Sep, gui-review stage E, finding 13) | Queue.d.ts:521 / 1877 | `dropping(capacity)`: `offer` never suspends and returns `false` when the queue is full (the message is dropped). A tab's forwarding queue (src/webServer.ts `subscribeBounded`, bound 1,000): a `false` marks the tab overflowed, and the session closes it so that it recovers by replay |
 | `Effect.raceAll` (read 26 Sep, gui-review stage E) | Effect.d.ts:8195 | `raceAll(effects)`: the first to succeed, the others interrupted. A tab's session races its read loop, the server's closing and its own overflow |
-| `Effect.forkScoped` | Effect.d.ts:16496 | the connection's forwarding fiber and a stop's interruption, ended with the connection's scope |
+| `Effect.forkScoped` | Effect.d.ts:16496 | the connection's forwarding fiber and a stop's interruption, ended with the connection's scope; since issue #120 (W2-R1-3) also a start and an items listing, so that a slow tracker holds back no later frame of the tab |
 | `Effect.option` | Effect.d.ts:3464 | `Effect<Option<A>, never, R>`: an upgrade or reader failure ends the session quietly |

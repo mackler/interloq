@@ -268,3 +268,40 @@ at the tab and leaves without answering still sees in the tab strip that it wait
 removes [visibility of system status]. The end of a run asks nothing of the user beyond being seen, so its marker goes
 when the tab becomes visible, the form for a new task is shown, or another run is; an end that happens at a visible tab
 is seen at once and marks nothing.
+
+## Two tabs, a run in each (issue #120, 9 Oct 2026)
+
+By the developer's decision of 8 Oct 2026 in issue #120, the page's top level is two tabs, Refinement and
+Implementation, and the tab is the mode. The start form, its directory browser (the `Dialog` above) and the remembered
+project path are removed, so the entries of the table above that name them (heuristics 5, 6, 9 and 10) describe the
+page before this change: both tabs take their project from the server's directory (the developer's answer to question
+Q1 in the interview of 9 Oct 2026).
+
+- **The control.** M3's primary tabs (m3-svelte's `Tabs`), under the top app bar, where M3 places them. The two modes
+  are destinations of equal rank within one project, each with content of its own, which M3 specifies primary tabs
+  for; a segmented button would choose a setting of one view, and a navigation rail or bar would claim destinations of
+  the whole application. Both modes stay in view [recognition rather than recall]. A tab asserts which mode's content
+  is shown, and nothing about the other mode's state.
+- **The waiting mark.** A tab whose run waits for an answer carries the waiting mark (●) in its name, drawn in the
+  label in place of M3's badge, which m3-svelte's `Tabs` does not take. Under the substitution rule: it asserts that
+  the run of that tab waits for an answer, and nothing more; it is not a count and does not claim how long the run has
+  waited, which a badge with a number would. The browser tab's title and icon carry the same mark when either run
+  waits [visibility of system status].
+- **The list's start button.** Each item of a tab's list is an M3 list item, its id and title as the headline and its
+  excerpt as supporting text, with a trailing text button ("Refine", "Implement") that starts the tab's run. Selecting
+  or scrolling through the list starts nothing; only the button does [error prevention without a confirmation, which
+  behavior 1 excludes]. The buttons are disabled while the tab's run is in progress or the page is offline.
+- **The unavailable notice.** A tracker that cannot be reached, or one not configured, is an alert in the tab with the
+  server's notice and Try again, not a failure of the page: the other tab and a run in progress stay usable [help users
+  recognize, diagnose, and recover from errors].
+- **The per-tab refusal and the global notice.** A refusal of a mode's action (a second run of that mode, an item no
+  longer in the tab's state) is an alert in that tab only. A notice of no tab (an unreadable frame, the server's end, a
+  withdrawn draft) is shown in the list view at every width and after Back to the list (W2-R1-2 of work review 2), and
+  above the run while a run is shown, once in either case.
+- **The 450 px limit.** The tab bar takes 48 px. By the developer's decision of 9 Oct 2026, at the stop of execution
+  phase 1, the question a run waits on and its first answer stay in view without the run area scrolling in windows 450
+  pixels high and taller; below that, the run area scrolls to the first answer, and the analysis of a decision keeps
+  its heading and the whole question (`IN_VIEW_MIN_HEIGHT` and `QuestionFloor` in `web/src/layout.ts`). By his
+  decision at the stop of execution phase 2, the same day, a notice line in a window 450 pixels high keeps the first
+  answer in view, and the last line of the question beside the analysis may be clipped by about 10 px until the notice
+  goes.

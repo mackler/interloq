@@ -1,6 +1,7 @@
 // The live tracker (issue #120, part 1): the GitHub adapter over Node's fetch, its token read from process.env. Untested
 // wiring like src/sdkLive.ts, and the one module of the tracker that reads the environment; it passes the credential
-// on and never logs, says or records it. Not yet wired into a run: the task after this one does that.
+// on and never logs, says or records it. Wired into the server by src/web.ts (issue #120, parts 2 to 4), which gives it
+// to the run manager: every run reads its item and sets its state through it.
 import { Layer, Result } from "effect";
 import { FetchHttpClient } from "effect/http";
 import type { NoTracker, TrackerCredentialMissing } from "./errors.ts";
