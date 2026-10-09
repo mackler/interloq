@@ -1021,7 +1021,7 @@ export function sectionMalformedText(id: string, reason: string): string {
  * agreed that no question needed the user's answer, so the refinement found nothing to settle (issue #120).
  */
 export const NOTHING_TO_SETTLE =
-  "This refinement found nothing to settle: Claude Code and Codex agreed that no question needed your answer. The run ends successfully, and the item is written back and set to refined.";
+  "This refinement found nothing to settle: Claude Code and Codex agreed that no question needed your answer. That is not a failure.";
 /** What a refinement run says when it has written its requirements back to the item. */
 export function refinementWrittenLine(item: string, requirements: string): string {
   return `The requirements (${requirements}) were written to item ${item} as its section "Refined using Interloq", and the item was set to refined.`;

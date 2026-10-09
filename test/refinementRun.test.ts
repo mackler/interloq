@@ -66,6 +66,25 @@ test("a refinement run with an empty agreed list ends successfully, writes the s
   assert.ok(Option.isSome(Result.getOrThrow(readRefinement(after.body))));
   assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(prompts.NOTHING_TO_SETTLE));
   assert.ok(probe.ui.said.includes(prompts.NOTHING_TO_SETTLE));
+  // W2-R1-1: the success line comes after it, once both tracker steps succeeded.
+  const said = probe.ui.said;
+  const written = said.findIndex((s) => s === prompts.refinementWrittenLine(item.id, probe.requirements) || (s.includes(`item ${item.id}`) && s.includes("set to refined")));
+  assert.ok(written > said.indexOf(prompts.NOTHING_TO_SETTLE), "the write-back is not said after the empty list's line");
+});
+
+// W2-R1-1 of work review 2: the empty list's line is written before the tracker steps, so it claims neither of them.
+test("a refinement with an empty agreed list whose section cannot be written claims no write-back and no state", async () => {
+  const tracker = fakeTrackerOf([item]);
+  await Effect.runPromise(tracker.failNext("writeRefinement", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset" })));
+  const { exit, probe } = refine({ steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }] }, tracker);
+  assert.equal(failureOf(await exit)._tag, "TrackerStepFailed");
+  const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(conversation.includes(prompts.NOTHING_TO_SETTLE));
+  const written = prompts.refinementWrittenLine(item.id, probe.requirements);
+  for (const text of [conversation, ...probe.ui.said]) {
+    assert.ok(!text.includes(written), `a write-back is claimed: ${text}`);
+    assert.ok(!text.includes("set to refined"), `a state is claimed: ${text}`);
+  }
 });
 
 test("a refinement run that halts or is stopped leaves the item unrefined and its body unchanged", async () => {
