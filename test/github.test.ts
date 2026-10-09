@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { Effect, Layer, Option, Result } from "effect";
 import { githubTracker, githubTrackerFrom } from "../src/github.ts";
 import { Tracker } from "../src/services.ts";
-import { defaultConfig } from "../src/schema.ts";
 import { readRefinement, refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import type { GithubTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
@@ -208,14 +207,10 @@ test("a PATCH refused for the token is TrackerAuthRefused", async () => {
   assert.equal((await failure(stub, (t) => t.setState(id("7"), "implementing")))._tag, "TrackerAuthRefused");
 });
 
-test("githubTrackerFrom refuses an absent credential and a config without a tracker before any request", () => {
-  const config = { ...defaultConfig, tracker: CONFIG };
-  const absent = githubTrackerFrom(config, {});
+test("githubTrackerFrom refuses an absent credential before any request", () => {
+  const absent = githubTrackerFrom(CONFIG, {});
   assert.ok(Result.isFailure(absent));
   assert.deepEqual(absent.failure._tag === "TrackerCredentialMissing" && absent.failure.variable, "INTERLOQ_GITHUB_TOKEN");
-  const none = githubTrackerFrom(defaultConfig, { INTERLOQ_GITHUB_TOKEN: "t" });
-  assert.ok(Result.isFailure(none));
-  assert.equal(none.failure._tag, "NoTracker");
 });
 
 test("the four operations in sequence through Tracker, built from the config and the environment, over one stub GitHub", async () => {
@@ -232,7 +227,7 @@ test("the four operations in sequence through Tracker, built from the config and
     state.set(n, next);
     return json(next);
   });
-  const layer = Layer.provide(Result.getOrThrow(githubTrackerFrom({ ...defaultConfig, tracker: CONFIG }, { INTERLOQ_GITHUB_TOKEN: "github_pat_SECRET123" })), stub.layer);
+  const layer = Layer.provide(Result.getOrThrow(githubTrackerFrom(CONFIG, { INTERLOQ_GITHUB_TOKEN: "github_pat_SECRET123" })), stub.layer);
   const program = Effect.gen(function* () {
     const tracker = yield* Tracker;
     const before = yield* tracker.list("unrefined");

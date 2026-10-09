@@ -338,8 +338,8 @@ export type TrelloLists = typeof TrelloLists.Type;
  */
 export const TrelloTrackerConfig = Schema.Struct({ kind: Schema.Literal("trello"), board: TrelloId, lists: TrelloLists });
 export type TrelloTrackerConfig = typeof TrelloTrackerConfig.Type;
-/** The project's issue tracker, a union tagged by `kind`, so that the Trello tracker of a later task adds a member. */
-export const TrackerConfig = Schema.Union([GithubTrackerConfig]);
+/** The project's issue tracker, a union tagged by `kind`: GitHub Issues or a Trello board. */
+export const TrackerConfig = Schema.Union([GithubTrackerConfig, TrelloTrackerConfig]);
 export type TrackerConfig = typeof TrackerConfig.Type;
 
 export const Config = Schema.Struct({

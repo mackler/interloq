@@ -19,11 +19,11 @@
 //   refinement that would pass it is refused before the request, never truncated.
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
-import { TrackerBodyInvalid, TrackerItemNotFound, TrackerUnreachable } from "./errors.ts";
+import { TrackerBodyInvalid, type TrackerCredentialMissing, TrackerItemNotFound, TrackerUnreachable } from "./errors.ts";
 import type { TrelloTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
-import type { TrelloCredential } from "./trackerConfig.ts";
+import { type Environment, type TrelloCredential, trelloCredential } from "./trackerConfig.ts";
 import { OPENING_LINE, type Refinement } from "./refinement.ts";
 import { authorizationOf, CARD_FIELDS, cardIdOf, descTooLongText, itemOfCard, moveBody, refinedDesc, nextCursor, type NoCardState, pageProblem, TRELLO_PAGE_SIZE, TrelloCard, type TrelloTarget, targetName, trelloStatusFailure } from "./trelloCards.ts";
 
@@ -143,3 +143,7 @@ export const trelloTracker = (config: TrelloTrackerConfig, credential: TrelloCre
   });
 
 export const trelloTrackerLayer = (config: TrelloTrackerConfig, credential: TrelloCredential): Layer.Layer<Tracker, never, HttpClient.HttpClient> => Layer.effect(Tracker, trelloTracker(config, credential));
+
+/** The Trello tracker of its configuration, its key and token from the environment given: refused, before any request, when either is absent. */
+export const trelloTrackerFrom = (config: TrelloTrackerConfig, env: Environment): Result.Result<Layer.Layer<Tracker, never, HttpClient.HttpClient>, TrackerCredentialMissing> =>
+  Result.map(trelloCredential(env), (credential) => trelloTrackerLayer(config, credential));

@@ -4,9 +4,9 @@
 // HttpClientError or its request, which carry the Authorization header.
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
-import { NoTracker, type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
+import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
 import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
-import type { Config, GithubTrackerConfig } from "./schema.ts";
+import type { GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
@@ -145,12 +145,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
     return tracker;
   });
 
-/**
- * The GitHub tracker of a configuration, its token from the environment given: refused, before any request, when the
- * configuration names no tracker or the credential is absent.
- */
-export const githubTrackerFrom = (config: Config, env: Environment): Result.Result<Layer.Layer<Tracker, never, HttpClient.HttpClient>, TrackerCredentialMissing | NoTracker> => {
-  const tracker = config.tracker;
-  return tracker === null ? Result.fail(new NoTracker()) : Result.map(githubCredential(env), (token) => githubTrackerLayer(tracker, token));
-};
+/** The GitHub tracker of its configuration, its token from the environment given: refused, before any request, when the credential is absent. */
+export const githubTrackerFrom = (config: GithubTrackerConfig, env: Environment): Result.Result<Layer.Layer<Tracker, never, HttpClient.HttpClient>, TrackerCredentialMissing> =>
+  Result.map(githubCredential(env), (token) => githubTrackerLayer(config, token));
 export const githubTrackerLayer = (config: GithubTrackerConfig, token: GithubToken): Layer.Layer<Tracker, never, HttpClient.HttpClient> => Layer.effect(Tracker, githubTracker(config, token));

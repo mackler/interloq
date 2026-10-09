@@ -7,7 +7,7 @@ import type { TrelloTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import { type ItemId, itemIdOf } from "../src/tracker.ts";
 import { type TrelloCredential, trelloCredential } from "../src/trackerConfig.ts";
-import { trelloTracker, trelloTrackerLayer } from "../src/trello.ts";
+import { trelloTracker, trelloTrackerFrom } from "../src/trello.ts";
 import { CARD_FIELDS, TRELLO_DESC_LIMIT } from "../src/trelloCards.ts";
 import { BOARD, LISTS } from "./trelloLists.ts";
 import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stubHttp.ts";
@@ -226,7 +226,15 @@ test("a PUT refused for the credential is TrackerAuthRefused", async () => {
   assert.equal((await failure(stub, (t) => t.writeRefinement(id(C1), refinement("r"))))._tag, "TrackerAuthRefused");
 });
 
-test("the four operations in sequence through Tracker, over one stub Trello", async () => {
+test("trelloTrackerFrom refuses an absent key or token before any request, naming its variable", () => {
+  for (const [env, variable] of [[{ INTERLOQ_TRELLO_TOKEN: "t" }, "INTERLOQ_TRELLO_KEY"], [{ INTERLOQ_TRELLO_KEY: "k" }, "INTERLOQ_TRELLO_TOKEN"]] as const) {
+    const absent = trelloTrackerFrom(CONFIG, env);
+    assert.ok(Result.isFailure(absent));
+    assert.deepEqual(absent.failure._tag === "TrackerCredentialMissing" && absent.failure.variable, variable);
+  }
+});
+
+test("the four operations in sequence through Tracker, built from the config and the environment, over one stub Trello", async () => {
   const cards = new Map<string, Record<string, unknown>>([[C1, card(C1, LISTS.unrefined, { desc: "Do it." })], [C2, card(C2, LISTS.refined)]]);
   const stub = makeStub((r) => {
     const parts = r.url.pathname.split("/");
@@ -236,7 +244,7 @@ test("the four operations in sequence through Tracker, over one stub Trello", as
     if (r.method === "PUT") cards.set(cardId, { ...cards.get(cardId), ...putBody(r) });
     return json(cards.get(cardId));
   });
-  const layer = Layer.provide(trelloTrackerLayer(CONFIG, CREDENTIAL), stub.layer);
+  const layer = Layer.provide(Result.getOrThrow(trelloTrackerFrom(CONFIG, ENV)), stub.layer);
   const program = Effect.gen(function* () {
     const tracker = yield* Tracker;
     const before = yield* tracker.list("unrefined");

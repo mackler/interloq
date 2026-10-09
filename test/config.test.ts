@@ -10,6 +10,7 @@ import { defaultConfig } from "../src/schema.ts";
 import { decodeConfigText, loadConfig } from "../src/config.ts";
 import { platformLayer } from "../src/platform.ts";
 import { tempRepo } from "./helpers.ts";
+import { BOARD, LISTS } from "./trelloLists.ts";
 
 /** A project with a plan-review/ directory and a shared config file outside it. Neither file exists yet. */
 const setup = (): { project: string; shared: string; projectFile: string } => {
@@ -173,4 +174,38 @@ test("the project's tracker replaces the shared one whole", async () => {
   fs.writeFileSync(shared, trackerText(GITHUB));
   fs.writeFileSync(projectFile, trackerText({ ...GITHUB, owner: "someone", repo: "else" }));
   assert.deepEqual((await load(project, shared)).tracker, { ...GITHUB, owner: "someone", repo: "else" });
+});
+
+// The Trello tracker: the board and each state's list id, refused before any call when an id is missing, blank or
+// shared, as behavior 9 refuses an invalid configuration.
+const TRELLO = { kind: "trello", board: BOARD, lists: LISTS };
+
+test("a configuration file with a Trello tracker loads", async () => {
+  const { project, shared, projectFile } = setup();
+  fs.writeFileSync(projectFile, trackerText(TRELLO));
+  assert.deepEqual((await load(project, shared)).tracker, TRELLO);
+});
+
+test("a Trello tracker with a missing, blank or shared list id is ConfigInvalid under tracker", () => {
+  const { refined: _refined, ...fourLists } = LISTS;
+  const cases: ReadonlyArray<[string, unknown]> = [
+    ["a missing list id", { ...TRELLO, lists: fourLists }],
+    ["a blank list id", { ...TRELLO, lists: { ...LISTS, refined: "" } }],
+    ["two states with one list", { ...TRELLO, lists: { ...LISTS, refined: LISTS.implementing } }],
+    ["a missing board", { kind: "trello", lists: LISTS }],
+    ["a credential in the config", { ...TRELLO, token: "secret" }],
+  ];
+  for (const [what, tracker] of cases) {
+    const decoded = decodeConfigText("/p/config.json", trackerText(tracker));
+    assert.ok(Result.isFailure(decoded), `${what} was accepted`);
+    assert.equal(decoded.failure._tag, "ConfigInvalid", what);
+    assert.match(decoded.failure.path, /^tracker/u, what);
+  }
+});
+
+test("the project's Trello tracker replaces a shared GitHub one whole", async () => {
+  const { project, shared, projectFile } = setup();
+  fs.writeFileSync(shared, trackerText(GITHUB));
+  fs.writeFileSync(projectFile, trackerText(TRELLO));
+  assert.deepEqual((await load(project, shared)).tracker, TRELLO);
 });
