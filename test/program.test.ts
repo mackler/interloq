@@ -33,7 +33,7 @@ test("a halt prints HALTED and the reason, the session id and the usage, and exi
   // Issue #6 (F1): a plan write without the plan, twice, halts after the repair turn.
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions }, { output: noQuestions }] });
   assert.equal(await runProgram(probe, wiring), 1);
-  assert.match(said(probe), /HALTED: the reply of Claude Code does not match its schema: [^]*\nState is preserved in .*plan-review\./);
+  assert.match(said(probe), /HALTED: the reply of Claude Code does not match its schema: [^]*\nState is preserved in .*plan-review\/runs\/[^/\s]+\./);
   assertTail(probe);
 });
 
@@ -84,7 +84,7 @@ const interruptWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promis
 
 const assertInterrupted = (probe: WiringProbe, exit: Exit.Exit<number, never>): void => {
   assert.equal(exitCodeOf(exit), 130);
-  assert.match(said(probe), /INTERRUPTED by the user\. State is preserved in .*plan-review\./);
+  assert.match(said(probe), /INTERRUPTED by the user\. State is preserved in .*plan-review\/runs\/[^/\s]+\./);
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*Interrupted by the user\.\*\*\n$/);
   assertTail(probe);
 };
@@ -126,7 +126,7 @@ test("q at a question, confirmed, ends the run as an interruption with exit code
   assert.equal(code, 130);
   assert.equal(code, statedCode(prompts.confirmEndText("endRun")), "the confirmation states another exit code");
   assert.ok(probe.ui.asked.includes(prompts.confirmEndText("endRun")));
-  assert.match(said(probe), /INTERRUPTED by the user\. State is preserved in .*plan-review\./);
+  assert.match(said(probe), /INTERRUPTED by the user\. State is preserved in .*plan-review\/runs\/[^/\s]+\./);
   assert.doesNotMatch(said(probe), /HALTED/);
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*Interrupted by the user\.\*\*\n$/);
   assertTail(probe);

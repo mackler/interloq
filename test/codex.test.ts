@@ -14,13 +14,13 @@ import { type ReviewerShape, RunConfig, Sdk, Store, Ui } from "../src/services.t
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { command, FakeSdk, fileChange, turn, turnFailed, type TurnAnswer, webSearch } from "./fakeSdk.ts";
-import { ScriptedUi, tempRepo } from "./helpers.ts";
+import { ScriptedUi, tempRepo , TEST_ROOT } from "./helpers.ts";
 
 const run = Effect.runPromise;
 
 /** A Codex reviewer over a fake SDK and a store on a temporary repository. */
 const reviewer = async (turns: TurnAnswer[], config: Partial<typeof S.Config.Type> = {}): Promise<{ reviewer: ReviewerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string }> => {
-  const store = await run(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await run(store.init("task"));
   const sdk = new FakeSdk([], turns);
   const ui = new ScriptedUi([]);
@@ -103,7 +103,7 @@ const typedFailure = async <E>(effect: Effect.Effect<unknown, E>): Promise<E> =>
 };
 
 test("a startThread that throws makes startPhase fail with CodexCallFailed, not a defect", async () => {
-  const store = await run(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   const fake = new FakeSdk();
   const sdk: AgentSdk = { inheritedEnv: fake.inheritedEnv, query: (params) => fake.query(params), stepReporter: (handler) => fake.stepReporter(handler), startThread: () => { throw new Error("spawn codex ENOENT"); } };
   const deps = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Sdk, sdk), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));

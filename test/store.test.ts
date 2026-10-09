@@ -6,10 +6,10 @@ import { test } from "node:test";
 import { Effect, Option } from "effect";
 import { platformLayer } from "../src/platform.ts";
 import type { StoreShape } from "../src/services.ts";
-import { makeStore } from "../src/store.ts";
+import { allocateRunRoot, makeStore } from "../src/store.ts";
 import { compareRecords } from "../src/snapshot.ts";
-import { pathOf } from "../src/artifacts.ts";
-import { tempRepo } from "./helpers.ts";
+import { pathOf, type RunRoot, runRootOf } from "../src/artifacts.ts";
+import { tempRepo , TEST_ROOT } from "./helpers.ts";
 
 // Plan step 2.3 (decision Q7; P1-R1-5, P1-R2-1, P1-R2-2, P4-R1-1): the baseline tree at init, the change
 // record before each work-review turn, and the two hashes of the work subject.
@@ -20,8 +20,8 @@ const write = (dir: string, name: string, text: string) => {
   fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
   fs.writeFileSync(path.join(dir, name), text);
 };
-const storeOf = (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => run(makeStore(repo, ignorePaths).pipe(Effect.provide(platformLayer)));
-const changes = (repo: string, phase = 1): string => fs.readFileSync(path.join(repo, "plan-review", `work-review-${phase}`, "changes.diff"), "utf8");
+const storeOf = (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => run(makeStore(repo, TEST_ROOT, ignorePaths).pipe(Effect.provide(platformLayer)));
+const changes = (repo: string, phase = 1): string => fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, `work-review-${phase}`, "changes.diff"), "utf8");
 
 test("init records the baseline tree, and the change record holds new, modified and committed changes", async () => {
   const repo = tempRepo();
@@ -32,7 +32,8 @@ test("init records the baseline tree, and the change record holds new, modified 
   const indexBefore = fs.readFileSync(path.join(repo, ".git", "index"));
   const store = await storeOf(repo);
   await run(store.init("task"));
-  const baseline = JSON.parse(fs.readFileSync(path.join(repo, "plan-review", "baseline.json"), "utf8"));
+  await run(store.writeBaseline());
+  const baseline = JSON.parse(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, "baseline.json"), "utf8"));
   assert.equal(baseline.version, 2);
   assert.equal(git(repo, "cat-file", "-t", baseline.tree).trim(), "tree");
   assert.ok(!git(repo, "ls-tree", "-r", "--name-only", baseline.tree).includes("plan-review/"), "the baseline tree contains plan-review/");
@@ -61,6 +62,7 @@ test("the change record leaves out ignorePaths literally and keeps tracked files
   write(repo, ".gitignore", "*.log\n");
   const store = await storeOf(repo, ["src/[rs]*.ts", ".devcontainer/claude.json"]);
   await run(store.init("task"));
+  await run(store.writeBaseline());
   write(repo, "src/run.ts", "run\nchanged\n");
   write(repo, "src/[rs]*.ts", "literal\nchanged\n");
   write(repo, "tracked.log", "log\nchanged\n");
@@ -76,8 +78,9 @@ test("the change record leaves out ignorePaths literally and keeps tracked files
 test("changeRecord rewrites the file; fileHash of the work subject follows the project, recordHash the file on disk", async () => {
   const repo = tempRepo();
   const store = await storeOf(repo);
-  assert.equal(await run(store.fileHash({ work: 1 })), "", "fileHash before init");
+  assert.equal(await run(store.fileHash({ work: 1 })), "", "fileHash before the baseline");
   await run(store.init("task"));
+  await run(store.writeBaseline());
   const before = await run(store.fileHash({ work: 1 }));
   write(repo, "a.txt", "x\nfirst\n");
   await run(store.changeRecord(1));
@@ -89,7 +92,7 @@ test("changeRecord rewrites the file; fileHash of the work subject follows the p
   assert.match(changes(repo), /\+second/);
   // An edit of changes.diff itself changes recordHash but not fileHash (P1-R2-2).
   const hashes = { file: await run(store.fileHash({ work: 1 })), record: await run(store.recordHash({ work: 1 })) };
-  fs.appendFileSync(path.join(repo, "plan-review", "work-review-1", "changes.diff"), "edited\n");
+  fs.appendFileSync(path.join(repo, "plan-review", TEST_ROOT, "work-review-1", "changes.diff"), "edited\n");
   assert.equal(await run(store.fileHash({ work: 1 })), hashes.file);
   assert.notEqual(await run(store.recordHash({ work: 1 })), hashes.record);
   // For the other subjects the two hashes are the same.
@@ -97,12 +100,78 @@ test("changeRecord rewrites the file; fileHash of the work subject follows the p
   assert.equal(await run(store.recordHash({ plan: 1 })), await run(store.fileHash({ plan: 1 })));
 });
 
+// Issue #120: two runs may be in progress at once in one project, each with its own records directory.
+const rootB = runRootOf("refinement", "2", "2026-01-01T00:00:00.000Z");
+const storeAt = (repo: string, root: RunRoot): Promise<StoreShape> => run(makeStore(repo, root, []).pipe(Effect.provide(platformLayer)));
+const filesUnder = (dir: string): readonly string[] => (fs.existsSync(dir) ? (fs.readdirSync(dir, { recursive: true }) as string[]).sort() : []);
+
+test("two stores with distinct roots write their records to disjoint directories, and neither's init moves the other's files", async () => {
+  const repo = tempRepo();
+  const a = await storeAt(repo, TEST_ROOT);
+  await run(a.init("task a"));
+  await run(a.converse("from a\n"));
+  const before = filesUnder(a.dir);
+  const b = await storeAt(repo, rootB);
+  await run(b.init("task b"));
+  await run(b.converse("from b\n"));
+  assert.equal(a.dir, path.join(repo, "plan-review", TEST_ROOT));
+  assert.equal(b.dir, path.join(repo, "plan-review", rootB));
+  assert.deepEqual(filesUnder(a.dir), before);
+  assert.match(fs.readFileSync(path.join(a.dir, "conversation.md"), "utf8"), /task a[\s\S]*from a/);
+  assert.doesNotMatch(fs.readFileSync(path.join(a.dir, "conversation.md"), "utf8"), /from b/);
+  assert.match(fs.readFileSync(path.join(b.dir, "conversation.md"), "utf8"), /task b[\s\S]*from b/);
+  assert.deepEqual(fs.readdirSync(path.join(repo, "plan-review")).filter((n) => n.startsWith("archive-")), []);
+});
+
+test("allocateRunRoot creates the run's directory, and a clashing root gets -2, then -3", async () => {
+  const repo = tempRepo();
+  const first = await run(allocateRunRoot(repo, TEST_ROOT).pipe(Effect.provide(platformLayer)));
+  const second = await run(allocateRunRoot(repo, TEST_ROOT).pipe(Effect.provide(platformLayer)));
+  const third = await run(allocateRunRoot(repo, TEST_ROOT).pipe(Effect.provide(platformLayer)));
+  assert.deepEqual([first, second, third], [TEST_ROOT, `${TEST_ROOT}-2`, `${TEST_ROOT}-3`]);
+  for (const root of [first, second, third]) assert.ok(fs.statSync(path.join(repo, "plan-review", root)).isDirectory());
+});
+
+test("a read-only call's records guard ignores a file written under another run's root and sees a change under its own", async () => {
+  const repo = tempRepo();
+  const a = await storeAt(repo, TEST_ROOT);
+  await run(a.init("task"));
+  const before = await run(a.recordsSnapshot());
+  write(path.join(repo, "plan-review", rootB), "conversation.md", "the other run\n");
+  write(path.join(repo, "plan-review"), "loose.md", "an earlier run's loose file\n");
+  assert.deepEqual(compareRecords(before, await run(a.recordsSnapshot())), []);
+  fs.appendFileSync(path.join(a.dir, "conversation.md"), "x");
+  assert.equal(compareRecords(before, await run(a.recordsSnapshot())).length, 1);
+});
+
+test("init writes no baseline.json, and writeBaseline does", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  assert.ok(!fs.existsSync(path.join(store.dir, "baseline.json")));
+  await run(store.writeBaseline());
+  assert.equal(JSON.parse(fs.readFileSync(path.join(store.dir, "baseline.json"), "utf8")).version, 2);
+});
+
+test("the project snapshot leaves the repository's index unchanged, even when the index is stale", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  // A tracked file touched without a change of content makes the index's stat data stale; a plain git status refreshes it.
+  const later = new Date(Date.now() + 5_000);
+  fs.utimesSync(path.join(repo, "a.txt"), later, later);
+  const index = path.join(repo, ".git", "index");
+  const [bytes, mtime] = [fs.readFileSync(index), fs.statSync(index).mtimeMs];
+  await run(store.projectSnapshot());
+  assert.ok(fs.readFileSync(index).equals(bytes), "the index's bytes changed");
+  assert.equal(fs.statSync(index).mtimeMs, mtime, "the index was rewritten");
+});
+
 // Stage A (finding 1 of docs/gui-review.md): the records snapshot that a read-only call is checked with.
 test("recordsSnapshot changes with every guarded record and not with usage.jsonl or invalid-replies/", async () => {
   const repo = tempRepo();
   const store = await storeOf(repo);
   await run(store.init("task"));
-  const dir = path.join(repo, "plan-review");
+  const dir = path.join(repo, "plan-review", TEST_ROOT);
   for (const [name, text] of [["plan.md", "p"], ["requirements.md", "r"], ["work-review-1/changes.diff", "d"], ["work-review-1/round-1.json", "{}"], ["checkpoint.json", "{}"]] as const) write(dir, name, text);
   const moved = async (change: () => void): Promise<number> => {
     const before = await run(store.recordsSnapshot());
@@ -122,7 +191,7 @@ test("recordsSnapshot changes with every guarded record and not with usage.jsonl
 const logEntry = (id: string, phase = 1) => ({ id, phase, round: 1, source: "self_correction" as const, problem: "p", action: "plan_error" as const, rationale: "r", superseded: false, file_change: null }) as never;
 const analysis = { decision: "d", columns: [{ kind: "argued" as const, option: "A", advantages: [], disadvantages: [] }, { kind: "argued" as const, option: "B", advantages: [], disadvantages: [] }], recommendation: { option: "", reason: "" } };
 const question = { phase: { kind: "planning" as const, n: 1 }, label: "Planning", question: "Which?", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] };
-const json = (repo: string, name: string) => JSON.parse(fs.readFileSync(path.join(repo, "plan-review", name), "utf8"));
+const json = (repo: string, name: string) => JSON.parse(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, name), "utf8"));
 
 test("decisions are numbered across the run, each with its question, analysis, raw output and choice", async () => {
   const repo = tempRepo();
@@ -169,7 +238,7 @@ test("readContext gives requirements.md and plan.md where they exist", async () 
   const store = await storeOf(repo);
   await run(store.init("task"));
   assert.deepEqual(await run(store.readContext()), { requirements: null, plan: null });
-  write(repo, "plan-review/plan.md", "1. [ ] step\n");
+  write(repo, `plan-review/${TEST_ROOT}/plan.md`, "1. [ ] step\n");
   assert.deepEqual(await run(store.readContext()), { requirements: null, plan: "1. [ ] step\n" });
 });
 
@@ -186,17 +255,17 @@ test("savePlan writes plan.json and plan.md rendered from it, and replaces both;
   const loaded = await run(store.loadPlan());
   assert.ok(Option.isSome(loaded));
   assert.deepEqual(loaded.value, plan("second", "done"));
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, "plan-review", "plan.json"), "utf8")), { version: 2, plan: plan("second", "done") });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, "plan.json"), "utf8")), { version: 2, plan: plan("second", "done") });
   // The seam of F2: plan.md is what renderPlanMarkdown makes of what loadPlan returns.
-  assert.equal(fs.readFileSync(path.join(repo, "plan-review", "plan.md"), "utf8"), renderPlanMarkdown(loaded.value));
-  assert.doesNotMatch(fs.readFileSync(path.join(repo, "plan-review", "plan.md"), "utf8"), /first/);
+  assert.equal(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, "plan.md"), "utf8"), renderPlanMarkdown(loaded.value));
+  assert.doesNotMatch(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, "plan.md"), "utf8"), /first/);
 });
 
 test("a plan.json that does not decode is a typed error", async () => {
   const repo = tempRepo();
   const store = await storeOf(repo);
   await run(store.init("task"));
-  fs.writeFileSync(path.join(repo, "plan-review", "plan.json"), JSON.stringify({ version: 2, plan: { stages: [{ number: 1 }] } }));
+  fs.writeFileSync(path.join(repo, "plan-review", TEST_ROOT, "plan.json"), JSON.stringify({ version: 2, plan: { stages: [{ number: 1 }] } }));
   const failure = await run(Effect.flip(store.loadPlan()));
   assert.equal(failure._tag, "StateFileInvalid");
 });
@@ -211,7 +280,7 @@ test("observeFile gives the hash fileHash gives and the text of the same read", 
   await run(store.writeRequirements("# R\n\nline\n"));
   const observed = await run(store.observeFile("requirements"));
   assert.equal(observed.hash, await run(store.fileHash("requirements")));
-  assert.equal(observed.text, fs.readFileSync(path.join(repo, "plan-review", "requirements.md"), "utf8"));
+  assert.equal(observed.text, fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, "requirements.md"), "utf8"));
   // The work review is not measured (Q7): its hash is fileHash's, and it has no text.
   const work = await run(store.observeFile({ work: 1 }));
   assert.equal(work.hash, await run(store.fileHash({ work: 1 })));

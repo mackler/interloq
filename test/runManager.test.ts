@@ -14,7 +14,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { finished, scriptedPlan, scriptedTask, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry } from "./helpers.ts";
+import { finished, scriptedPlan, scriptedTask, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry, runDirOf } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -73,7 +73,7 @@ test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identica
   assert.equal(endCode(h, id), 0);
   assert.ok(events.some((e) => e._tag === "Said" && /finished after 1 implementation phase/.test(e.text)));
   assert.ok(events.some((e) => e._tag === "Notified" && e.event._tag === "PhaseBegan"));
-  const read = (r: string) => fs.readFileSync(path.join(r, "plan-review", "conversation.md"), "utf8");
+  const read = (r: string) => fs.readFileSync(path.join(runDirOf(r), "conversation.md"), "utf8");
   assert.equal(read(repo), read(direct));
   assert.equal(await run(h.manager.current), null);
 });
@@ -86,7 +86,7 @@ test("a question is answered through the manager, with the same text the scripte
   assert.equal(asked.kind, "decision");
   assert.equal(await run(h.manager.answer(h.manager.incarnation, id, asked.prompt, "PostgreSQL")), null);
   await ended(h, id);
-  assert.match(fs.readFileSync(path.join(repo, "plan-review", "user-decisions.md"), "utf8"), /Which database\?\nDecision: PostgreSQL/);
+  assert.match(fs.readFileSync(path.join(runDirOf(repo), "user-decisions.md"), "utf8"), /Which database\?\nDecision: PostgreSQL/);
 });
 
 test("start while a run is active is refused; a bad project path is refused with the reason", async () => {
@@ -129,7 +129,7 @@ test("stop interrupts the run like Ctrl+C; answers and stops naming an ended run
   await ended(h, first);
   assert.equal(endCode(h, first), 130);
   assert.ok(eventsOf(h, first).some((e) => e._tag === "Said" && /INTERRUPTED by the user\. State is preserved in/.test(e.text)));
-  assert.match(fs.readFileSync(path.join(repo, "plan-review", "conversation.md"), "utf8"), /\*\*Interrupted by the user\.\*\*/);
+  assert.match(fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8"), /\*\*Interrupted by the user\.\*\*/);
   assert.match(((await run(h.manager.answer(h.manager.incarnation, first, asked.prompt, "late"))) as Refusal).refused, /that run has ended/);
   assert.match(((await run(h.manager.stop(h.manager.incarnation, first))) as Refusal).refused, /that run has ended/);
 
@@ -183,7 +183,7 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
   await run(h.manager.answer(h.manager.incarnation, id, confirm.prompt, ""));
   await ended(h, id);
   assert.equal(endCode(h, id), 0);
-  assert.match(fs.readFileSync(path.join(repo, "plan-review", "conversation.md"), "utf8"), /\*\*User:\*\* 2\n/);
+  assert.match(fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8"), /\*\*User:\*\* 2\n/);
   assert.ok(eventsOf(h, id).some((e) => e._tag === "Answered" && e.text === "2"));
 });
 

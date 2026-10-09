@@ -53,11 +53,10 @@ test("the work review subject: directory, phase, log, reviewed file, baseline an
 });
 
 // Stage A (finding 1 of docs/gui-review.md): the records a read-only call must leave unchanged.
-test("guardedRecord exempts only the program's own writes during a call and the archives of earlier runs", () => {
+// Issue #120: the path is relative to the run's own records directory, which holds no archive.
+test("guardedRecord exempts only the program's own writes during a call", () => {
   const exempt: Artifact[] = [{ kind: "usage" }, { kind: "invalidReply", agent: "claude", n: 1 }, { kind: "invalidReply", agent: "codex", n: 12 }];
   for (const a of exempt) assert.equal(guardedRecord(pathOf(a)), false, pathOf(a));
-  assert.equal(guardedRecord("archive-2026-09-26T08-10-39-966Z/plan.md"), false);
-  assert.equal(guardedRecord("archive-2026-09-26T08-10-39-966Z-2/work-review-1/changes.diff"), false);
   // Every other kind of the catalog is guarded; a kind added later is guarded unless it is exempted by name.
   const guarded: Artifact[] = [
     { kind: "conversation" }, { kind: "decisions" }, { kind: "feedback" }, { kind: "questions" }, { kind: "requirements" }, { kind: "plan" }, { kind: "planFile" },

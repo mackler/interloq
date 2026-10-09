@@ -10,7 +10,7 @@ import type { RecordedPlan, StepStatus } from "../src/schema.ts";
 import { Store, type StoreShape, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { ScriptedUi, tempRepo } from "./helpers.ts";
+import { ScriptedUi, tempRepo , TEST_ROOT } from "./helpers.ts";
 
 // Issue #6 (Q2, Q3, Q8, G-R1-2; P1-R1-4): report_step records on the plan held since the execution phase began.
 
@@ -18,7 +18,7 @@ const plan = (statuses: Record<string, StepStatus> = {}): RecordedPlan => ({
   stages: [{ number: 1, title: "t", steps: ["S1", "S2"].map((id, i) => ({ id, number: i + 1, label: `l ${id}`, text: `x ${id}`, status: statuses[id] ?? "pending" })) }],
 });
 const setup = async (initial: RecordedPlan | null = plan()) => {
-  const store: StoreShape = await Effect.runPromise(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const store: StoreShape = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(store.init("task"));
   if (initial !== null) await Effect.runPromise(store.savePlan(initial));
   const ui = new ScriptedUi([]);

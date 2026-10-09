@@ -29,6 +29,8 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
     const inPhase = (phase: Phase) => <A, E, R>(body: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => Effect.provideService(body, Decider, decider.at(phase, phase.kind === "questions" ? phaseName(phase, 1) : label(phase.kind, phase.n))));
     yield* store.init(task);
+    // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120).
+    yield* store.writeBaseline();
     // The SDK does not report which model answered a Codex turn; the configured one is all that can be said.
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
     const withRequirements = config.questionPhase;

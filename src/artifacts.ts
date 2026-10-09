@@ -153,9 +153,9 @@ export const recordPath = (artifact: Artifact): string => `${RECORDS_DIR}/${path
 export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "questions", "terms", "requirements", { work: 1 }, { decision: 1 }];
 
 /**
- * Whether a path under plan-review/ is a record that a read-only call must leave unchanged (finding 1 of
- * docs/gui-review.md). Exempt: what the program itself writes during a call (usage.jsonl; invalid-replies/, written
- * before a repair turn) and the archives of earlier runs. Every other path is guarded, a kind added later included.
+ * Whether a path relative to a run's records directory is a record that a read-only call must leave unchanged (finding
+ * 1 of docs/gui-review.md). Exempt: what the program itself writes during a call (usage.jsonl; invalid-replies/,
+ * written before a repair turn). Every other path is guarded, a kind added later included. No archive lives inside a
+ * run's directory (issue #120).
  */
-export const guardedRecord = (relPath: string): boolean =>
-  relPath !== pathOf({ kind: "usage" }) && relPath !== "invalid-replies" && !relPath.startsWith("invalid-replies/") && !/^archive-[^/]+(\/|$)/.test(relPath);
+export const guardedRecord = (relPath: string): boolean => relPath !== pathOf({ kind: "usage" }) && relPath !== "invalid-replies" && !relPath.startsWith("invalid-replies/");

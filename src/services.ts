@@ -4,7 +4,7 @@
 import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
-import type { SubjectId } from "./artifacts.ts";
+import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { Config, DecisionAnalysis, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
@@ -113,11 +113,19 @@ export type RecordPath = Brand.Branded<string, "RecordPath">;
  */
 export interface StoreShape {
   readonly project: ProjectPath;
+  /** The run's records directory relative to plan-review/, as allocateRunRoot created it (issue #120). */
+  readonly root: RunRoot;
+  /** <project>/plan-review/<root>: the run's own records. */
   readonly dir: RecordPath;
   readonly plan: RecordPath;
   readonly questions: RecordPath;
   readonly requirements: RecordPath;
   init(task: string): Effect.Effect<void, StoreError>;
+  /**
+   * Writes baseline.json, the tree of the project as the run begins (Q7): an implementation run's alone, since only it has
+   * a work review (issue #120). Built through a temporary index in the git directory; see workingTree in src/store.ts.
+   */
+  writeBaseline(): Effect.Effect<void, StoreError>;
   /** Codex's raw reply of a round (`review-<n>.json`). */
   saveReview(subject: SubjectId, round: number, review: Review): Effect.Effect<void, StoreError>;
   /** Claude Code's raw response of a round (`cc-<n>.json`). */

@@ -15,7 +15,7 @@ import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/service
 import { makeStore } from "../src/store.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { countdownView } from "../web/src/state.ts";
-import { finished, issue, noDecider, respond, ScriptedUi, steppingClock, tempRepo, testLayer } from "./helpers.ts";
+import { finished, issue, noDecider, respond, ScriptedUi, steppingClock, tempRepo, testLayer , TEST_ROOT } from "./helpers.ts";
 import { run } from "../src/run.ts";
 import { para } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
@@ -40,7 +40,7 @@ const scripted = (script: Script) => {
 
 const setup = async (answers: string[], decider: DeciderShape = noDecider) => {
   const repo = tempRepo();
-  const store = await Effect.runPromise(makeStore(repo, []).pipe(Effect.provide(platformLayer)));
+  const store = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(store.init("task"));
   const ui = new ScriptedUi(answers);
   const config = { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 };
@@ -339,7 +339,7 @@ test("a read-only call's wait: the program's own writes pass the records guard, 
 });
 
 test("a read-only call's wait: an outside edit of conversation.md during it halts with RecordsChanged", async () => {
-  const { exit, probe } = workRunWithLimit((repo) => fs.appendFileSync(path.join(repo, "plan-review", "conversation.md"), "an outside edit\n"));
+  const { exit, probe } = workRunWithLimit((repo) => fs.appendFileSync(path.join(repo, "plan-review", TEST_ROOT, "conversation.md"), "an outside edit\n"));
   const error = errorOf(await exit);
   assert.equal(error._tag, "RecordsChanged");
   assert.equal(probe.planner.prompts.length, 2);

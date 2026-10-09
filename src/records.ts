@@ -122,7 +122,7 @@ const files = Effect.gen(function* () {
 
 /**
  * The checkpoint of a run directory, verified: the records the named transition implies exist and decode
- * (the five logs and baseline.json for `started`, question.json and analysis.json of a decision, review and round record from `reviewed` on, the response from
+ * (the logs for `started` — baseline.json is no longer written by init, issue #120 —, question.json and analysis.json of a decision, review and round record from `reviewed` on, the response from
  * `responded` on, the log for `logged` and `decided`, the execution result for `executed`); null when there is no checkpoint file.
  */
 export const readCheckpoint = (runDir: string): Effect.Effect<Checkpoint | null, RecordsError, Fs> =>
@@ -145,7 +145,6 @@ export const readCheckpoint = (runDir: string): Effect.Effect<Checkpoint | null,
     switch (checkpoint.stage) {
       case "started":
         for (const subject of LOG_SUBJECTS) yield* logDecodes(subject);
-        yield* required({ kind: "baseline" }, Baseline);
         break;
       case "executed":
         yield* required({ kind: "execution", phase: checkpoint.phase }, S.ExecOutcome);

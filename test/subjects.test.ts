@@ -8,7 +8,7 @@ import { Store, Ui } from "../src/services.ts";
 import { planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { ScriptedUi, tempRepo, entryOf, workExecution } from "./helpers.ts";
+import { ScriptedUi, tempRepo, entryOf, workExecution , TEST_ROOT } from "./helpers.ts";
 
 // Finding 12 of docs/functional-design-review.md: a subject's decoded output and its handler share one type.
 
@@ -31,7 +31,7 @@ test("the type of a subject's handler follows the type of its schema (compile-ti
 });
 
 test("the question subject's handlers receive the decoded list and write questions.json", async () => {
-  const store = await Effect.runPromise(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const store = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(store.init("task"));
   const subject = questionSubject("task");
   const withStore = <A, E>(effect: Effect.Effect<A, E, Store | Ui>): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Ui, new ScriptedUi([]))))));

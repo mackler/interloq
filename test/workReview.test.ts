@@ -8,7 +8,7 @@ import { limitNoProceedPrompt, execInputPrompt, planApplyDecisionsPrompt, withOf
 import { readCheckpoint } from "../src/records.ts";
 import type { ExecOutcome } from "../src/schema.ts";
 import type { StoreShape } from "../src/services.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects, TEST_ROOT } from "./helpers.ts";
 
 // Plan step 2.8: the work review after every execution phase (the task; decisions Q7, Q13, Q14, G-R1-1).
 const noQuestions = { questions_for_user: [] };
@@ -58,7 +58,7 @@ test("(a, g, h) a finished execution and a converged work review finish the run"
 
 test("(b) an accepted work issue leads to planning 2, execution 2 and a second work review", async () => {
   const repo = tempRepo();
-  const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
+  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
@@ -94,7 +94,7 @@ test("issue #117: the work response's prompt carries the summary the execution, 
 
 test("(b2) an accepted self-correction of an earlier work issue leaves for planning 2", async () => {
   const repo = tempRepo();
-  const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
+  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const self = { self_corrections: [{ id: "W1-R1-1", new_action: "accepted" as const, explanation: "the earlier issue is valid" }] };
   const { layer, probe } = testLayer(repo, {
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]], self) }, { ...planWrite("v2"), onCall: capture.onCall }],
@@ -122,7 +122,7 @@ test("(b3) changes.diff is rewritten for every round: an outside change after an
 
 test("(c) exit (iii): a decision on a reraised work issue leaves for planning 2 with a valid decided checkpoint", async () => {
   const repo = tempRepo();
-  const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
+  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     answers: ["act on it"],
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
@@ -138,7 +138,7 @@ test("(c) exit (iii): a decision on a reraised work issue leaves for planning 2 
 
 test("(c1) exit (i): a decision on a second clarification logs the round once with the decision and a valid logged checkpoint", async () => {
   const repo = tempRepo();
-  const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
+  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   const { layer, probe } = testLayer(repo, {
     answers: ["this is what I mean"],
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "clarification_requested"]]) }, { output: respond([["W1-R1-1", "clarification_requested"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
@@ -157,7 +157,7 @@ for (const [name, config, change, answers] of [
 ] as const) {
   test(`${name}: the decision leaves for planning 2; the log holds the round once and the decided checkpoint is valid`, async () => {
     const repo = tempRepo();
-    const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
+    const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
     const { layer, probe } = testLayer(repo, {
       answers: [...answers],
       config,
@@ -174,7 +174,7 @@ for (const [name, config, change, answers] of [
 
 test("(c3) exit (ii), identical content: a diff back to an earlier round's text, then a decision, leaves for planning 2", async () => {
   const repo = tempRepo();
-  const capture = checkpointAtCall(() => path.join(repo, "plan-review"));
+  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
   let saved = "";
   const change = (round: number) => {
     const file = path.join(repo, "a.txt");
@@ -358,7 +358,7 @@ const duringBackoff = (effect: () => void) => (s: StoreShape): StoreShape => ({
   ...s,
   converse: (markdown) => s.converse(markdown).pipe(Effect.tap(() => Effect.sync(() => (markdown.includes("connection lost, retry") ? effect() : undefined)))),
 });
-const conversation = (repo: string) => path.join(repo, "plan-review", "conversation.md");
+const conversation = (repo: string) => path.join(repo, "plan-review", TEST_ROOT, "conversation.md");
 
 test("(d, #26) changes.diff edited during the exhaustion pause, then Retry again: ReviewedFileChanged, and no further turn", async () => {
   const repo = tempRepo();
@@ -366,7 +366,7 @@ test("(d, #26) changes.diff edited during the exhaustion pause, then Retry again
     steps: [planWrite("v1")],
     reviews: [{ issues: [] }, { issues: [], fault }, { issues: [], fault }, { issues: [] }],
     execs: [finished],
-    answers: [{ text: prompts.TRANSPORT_ANSWERS.retry, before: () => fs.appendFileSync(path.join(repo, "plan-review", "work-review-1", "changes.diff"), "forged\n") }],
+    answers: [{ text: prompts.TRANSPORT_ANSWERS.retry, before: () => fs.appendFileSync(path.join(repo, "plan-review", TEST_ROOT, "work-review-1", "changes.diff"), "forged\n") }],
     config: quick,
   });
   await runFails(layer, "ReviewedFileChanged");

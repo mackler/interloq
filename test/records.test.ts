@@ -97,8 +97,8 @@ test("readCheckpoint gives null without a file, the checkpoint when its records 
   assert.equal(await read(), null);
 });
 
-// Plan step 2.2: the work review adds baseline.json (read for `started`) and the work-review-<k> subject directory.
-test("readCheckpoint requires baseline.json and the four logs for started, and reads a work-review checkpoint", async () => {
+// Plan step 2.2: the work-review-<k> subject directory. Issue #120: init writes no baseline.json, so started requires the logs alone.
+test("readCheckpoint requires the logs for started, not baseline.json, and reads a work-review checkpoint", async () => {
   const dir = fs.mkdtempSync(path.join(tempRepo(), "records-"));
   const put = (name: string, value: unknown) => {
     fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
@@ -112,14 +112,10 @@ test("readCheckpoint requires baseline.json and the four logs for started, and r
   };
   for (const log of ["issue-log.json", "questions-log.json", "terms-log.json", "requirements-log.json", "work-review-log.json", "decision-log.json"]) put(log, { version: 2, entries: [] });
   put("checkpoint.json", { version: 2, subject: "init", phase: 0, round: 0, stage: "started", time: "t" });
-  assert.match(await failure(), /baseline\.json/);
-  put("baseline.json", { version: 2, tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904", time: "t" });
   assert.equal((await read())._tag, "Success");
   fs.rmSync(path.join(dir, "work-review-log.json"));
   assert.match(await failure(), /work-review-log\.json/);
   put("work-review-log.json", { version: 2, entries: [] });
-  put("baseline.json", { version: 2, tree: "", time: "t" });
-  assert.match(await failure(), /at tree/);
 
   const reviewRecord = { issues: [] };
   put("work-review-1/review-1.json", reviewRecord);

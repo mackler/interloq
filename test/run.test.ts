@@ -232,20 +232,6 @@ test("a reversal and a disputed self-correction each produce a prompt and a deci
   assert.equal(log.filter((e) => e.id === "A" && e.superseded !== true).length, 1);
 });
 
-test("a second run archives the files of the first", async () => {
-  const repo = tempRepo();
-  const mk = () => testLayer(repo, { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
-  await runTask(mk().layer, "first");
-  fs.writeFileSync(path.join(repo, "plan-review", "config.json"), "{}");
-  execFileSync("git", ["-C", repo, "checkout", "-q", "a.txt"]);
-  const second = mk();
-  await runTask(second.layer, "second");
-  const names = fs.readdirSync(second.probe.dir);
-  assert.equal(names.filter((n) => n.startsWith("archive-")).length, 1);
-  assert.ok(names.includes("config.json"));
-  assert.match(fs.readFileSync(path.join(second.probe.dir, "conversation.md"), "utf8"), /Task: second/);
-});
-
 test("0 at the round limit stops with RoundLimitStop", async () => {
   const { layer } = testLayer(tempRepo(), {
     answers: ["0"],

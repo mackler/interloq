@@ -22,7 +22,7 @@ import type { RunError } from "../src/errors.ts";
 import { AgentUnreachable, ClaudeCallFailed, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
 import { type Task, taskOf, type Wiring } from "../src/program.ts";
-import { pathOf, type SubjectId } from "../src/artifacts.ts";
+import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifacts.ts";
 import { run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
 import type { Plan as SPlan, RecordedPlan, StepStatus } from "../src/schema.ts";
@@ -39,9 +39,20 @@ type Review = typeof S.Review.Type;
 type LogEntry = typeof S.LogEntry.Type;
 const { defaultConfig } = S;
 
-/** The paths a scripted agent writes to. */
-export type Paths = { readonly project: string; readonly plan: string; readonly planFile: string };
-export const pathsOf = (repo: string): Paths => ({ project: path.resolve(repo), plan: path.join(repo, "plan-review", "plan.md"), planFile: path.join(repo, "plan-review", "plan.json") });
+/** The records root of every run of testLayer, and of a store a test makes itself (issue #120). */
+export const TEST_ROOT: RunRoot = runRootOf("implementation", "1", "2026-01-01T00:00:00.000Z");
+/** The records directories of the runs of the program in a project, oldest first (issue #120: one per run, under plan-review/runs/). */
+export const runDirsOf = (repo: string): readonly string[] => {
+  const runs = path.join(path.resolve(repo), "plan-review", "runs");
+  return fs.existsSync(runs) ? fs.readdirSync(runs).sort().map((name) => path.join(runs, name)) : [];
+};
+/** The records directory of the latest run of the program in a project. */
+export const runDirOf = (repo: string): string => runDirsOf(repo).at(-1) ?? assert.fail(`no run's records directory in ${repo}`);
+/** The paths a scripted agent writes to: the project, and the run's records directory, read when it is needed (testWiring learns it from the run's store). */
+export type Paths = { readonly project: string; readonly records: () => string };
+export const pathsOf = (repo: string, records: () => string = () => path.join(path.resolve(repo), "plan-review", TEST_ROOT)): Paths => ({ project: path.resolve(repo), records });
+const planOf = (paths: Paths): string => path.join(paths.records(), "plan.md");
+const planFileOf = (paths: Paths): string => path.join(paths.records(), "plan.json");
 
 /** The plan a scripted step stands for (issue #6, F1): one stage with one step S1 whose text is the step's `plan`. */
 export const scriptedPlan = (text: string): SPlan => ({ stages: [{ number: 1, title: "Plan", steps: [{ id: "S1", number: 1, label: "Step", text }] }] });
@@ -324,7 +335,7 @@ export class ScriptedPlanner implements PlannerShape {
   readonly history = new Map<string, string[]>();
   /** A usage line of a call on this planner's session, as the adapter writes it. */
   private recordUsage(): void {
-    fs.appendFileSync(path.join(path.dirname(this.state.plan), "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", time: new Date(0).toISOString(), session: this.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
+    fs.appendFileSync(path.join(this.state.records(), "usage.jsonl"), JSON.stringify({ version: 2, agent: "claude", time: new Date(0).toISOString(), session: this.session, num_turns: 1, total_cost_usd: 0.1 }) + "\n");
   }
   private sent(prompt: string): void {
     const root = this.root;
@@ -348,7 +359,7 @@ export class ScriptedPlanner implements PlannerShape {
         this.contextPrompts.push(prompt);
         this.contextCapabilities.push(capability);
         const step = this.contexts.shift();
-        if (step?.editRecord !== undefined) fs.writeFileSync(path.join(path.dirname(this.state.plan), step.editRecord.file), step.editRecord.content ?? "");
+        if (step?.editRecord !== undefined) fs.writeFileSync(path.join(this.state.records(), step.editRecord.file), step.editRecord.content ?? "");
         if (step?.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
         if (step?.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
         return Effect.succeed({ output: step === undefined ? scriptedContextReply(prompt) : typeof step.output === "function" ? (step.output as (p: string) => unknown)(prompt) : step.output, resultText: "", costUsd: 0.01 });
@@ -369,7 +380,7 @@ export class ScriptedPlanner implements PlannerShape {
         });
       }
       if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
-      const records = path.dirname(this.state.plan);
+      const records = this.state.records();
       if (step.editRecord !== undefined) {
         const file = path.join(records, step.editRecord.file);
         if (step.editRecord.content === null) fs.rmSync(file, { force: true });
@@ -478,10 +489,10 @@ export class ScriptedReviewer implements ReviewerShape {
     const step = terms ? (this.termsReviews.shift() ?? { issues: [] }) : this.reviews.shift();
     if (!step) throw new Error("no scripted review");
     step.onCall?.();
-    if (step.plan !== undefined) fs.writeFileSync(this.state.planFile, step.plan);
+    if (step.plan !== undefined) fs.writeFileSync(planFileOf(this.state), step.plan);
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
-    if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.project, "plan-review", step.editRecord), "edited by the reviewer\n");
+    if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
     return { text: step.raw ?? JSON.stringify({ issues: step.issues }), fault: step.fault ?? null };
   }
 }
@@ -553,12 +564,12 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   const wrap = options.store ?? ((s: StoreShape) => s);
-  const store = Layer.effect(Store, makeStore(repo, config.ignorePaths).pipe(Effect.map(wrap))).pipe(Layer.provide(options.platform ?? platformLayer));
+  const store = Layer.effect(Store, makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.map(wrap))).pipe(Layer.provide(options.platform ?? platformLayer));
   const layer = withDecider(Layer.mergeAll(store, Layer.succeed(Ui, ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config)));
-  const dir = path.join(paths.project, "plan-review");
+  const dir = paths.records();
   const loadLog = (subject: SubjectId = { plan: 1 }): Promise<readonly LogEntry[]> =>
-    Effect.runPromise(makeStore(repo, config.ignorePaths).pipe(Effect.flatMap((s) => s.loadLog(subject)), Effect.provide(platformLayer)));
-  return { layer, probe: { dir, plan: paths.plan, requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config } };
+    Effect.runPromise(makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.flatMap((s) => s.loadLog(subject)), Effect.provide(platformLayer)));
+  return { layer, probe: { dir, plan: planOf(paths), requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config } };
 }
 
 /** Runs the procedure against a layer and returns the number of execution phases. */
@@ -588,7 +599,9 @@ export const scriptedTask: Task = Result.isSuccess(scripted) ? scripted.success 
  * plays no part; `options.config` is written to the project's plan-review/config.json.
  */
 export function testWiring(repo: string, options: TestOptions = {}): { wiring: Wiring; probe: WiringProbe } {
-  const paths = pathsOf(repo);
+  // Issue #120: the program allocates the run's records directory from its start; the agents learn it from the run's store.
+  let records: string | null = null;
+  const paths = pathsOf(repo, () => records ?? assert.fail("the run's records directory is not known before the run's store exists"));
   const dir = path.join(paths.project, "plan-review");
   const shared = path.join(tempDir("pr-shared-"), "config.json");
   fs.writeFileSync(shared, "{}");
@@ -611,6 +624,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
         Effect.gen(function* () {
           planner.callUi = yield* Ui;
           planner.callStore = yield* Store;
+          records = planner.callStore.dir;
           return planner;
         }),
       ),
@@ -618,7 +632,19 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
     ),
     sharedConfig: shared,
   };
-  return { wiring, probe: { ui, planner, reviewer, project: paths.project, dir } };
+  return {
+    wiring,
+    probe: {
+      ui,
+      planner,
+      reviewer,
+      project: paths.project,
+      /** The run's records directory once the run's store exists; plan-review/ before it. */
+      get dir() {
+        return records ?? dir;
+      },
+    },
+  };
 }
 
 // S37: Markdown read back with marked (a devDependency of the page), for the tests alone; the program reads no Markdown.

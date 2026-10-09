@@ -6,7 +6,7 @@ import { Effect, Layer, Result } from "effect";
 import { UserStopped } from "../src/errors.ts";
 import { decodeValidating, decodeWithRepair, planningCall, type Repair } from "../src/review.ts";
 import { Planner } from "../src/services.ts";
-import { noDecider, pathsOf, ScriptedPlanner, ScriptedUi, questionOf } from "./helpers.ts";
+import { noDecider, pathsOf, ScriptedPlanner, ScriptedUi, questionOf , TEST_ROOT } from "./helpers.ts";
 import * as S from "../src/schema.ts";
 import { Decider, RunConfig, Store, type StoreShape, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
@@ -14,7 +14,7 @@ import { makeStore } from "../src/store.ts";
 import { tempRepo } from "./helpers.ts";
 
 const store = async (): Promise<StoreShape> => {
-  const s = await Effect.runPromise(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const s = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(s.init("task"));
   return s;
 };
@@ -36,7 +36,7 @@ for (const [what, reply] of [["a BigInt", { questions_for_user: 1n }], ["a cycle
 // Plan step 3.4 (finding 25): the repair is reported in the result instead of being tracked in a mutable binding.
 test("planningCall reports whether a repair turn was needed", async () => {
   const repo = tempRepo();
-  const s = await Effect.runPromise(makeStore(repo, []).pipe(Effect.provide(platformLayer)));
+  const s = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(s.init("task"));
   const planner = new ScriptedPlanner(pathsOf(repo), [{ output: { questions_for_user: "x" } }, { output: { questions_for_user: [] } }, { output: { questions_for_user: [questionOf({ context: "c", question: "q", terms: [], options: [] })] } }], []);
   const layer = Layer.mergeAll(Layer.succeed(Store, s), Layer.succeed(Planner, planner), Layer.succeed(Decider, noDecider), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));

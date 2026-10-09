@@ -12,7 +12,7 @@ import { ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
-import { finished, type TestOptions, tempDir, tempRepo, testWiring, questionOf } from "./helpers.ts";
+import { finished, type TestOptions, tempDir, tempRepo, testWiring, questionOf, runDirOf } from "./helpers.ts";
 import { initialState, reduce } from "../web/src/state.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 
@@ -167,7 +167,7 @@ test("a client that connects mid-run gets the replay with the pending prompt and
     await until("the end", () => hasEnded(a, 1));
     await until("the refusal of the second answer", () => refusals(a).length > 0);
     assert.match(refusals(a)[0], /already been answered/);
-    assert.match(fs.readFileSync(path.join(repo, "plan-review", "user-decisions.md"), "utf8"), /Decision: PostgreSQL/);
+    assert.match(fs.readFileSync(path.join(runDirOf(repo), "user-decisions.md"), "utf8"), /Decision: PostgreSQL/);
     contiguous(a);
     contiguous(late);
     a.close();

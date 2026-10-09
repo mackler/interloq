@@ -12,7 +12,7 @@ import { Planner, Reviewer, RunConfig, Sdk, type Services, Store, Ui } from "../
 import { platformLayer } from "../src/platform.ts";
 import { storeLayer } from "../src/store.ts";
 import { FakeSdk, init, messages, success, turn, type Script } from "./fakeSdk.ts";
-import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, currentOf, questionEntry } from "./helpers.ts";
+import { finished, pathsOf, type PlanningStep, runFails, runTask, ScriptedPlanner, ScriptedReviewer, ScriptedUi, scriptedPlan, tempRepo, testLayer, withDecider, currentOf, questionEntry , TEST_ROOT } from "./helpers.ts";
 
 // Decision Q5: an invalid structured reply in a planning, interview or review call gets one repair
 // turn in the same session or thread; a second invalid reply stops the run, and both replies are kept.
@@ -84,8 +84,8 @@ test("an interview turn is validated the same way", async () => {
 
 /** Store, scripted Ui, config and the fake SDK for one repository. */
 const base = (repo: string, sdk: FakeSdk): Layer.Layer<Store | Ui | RunConfig | Sdk> =>
-  Layer.mergeAll(Layer.provide(storeLayer(repo, []), platformLayer), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, config), Layer.succeed(Sdk, sdk));
-const dirOf = (repo: string): string => path.join(repo, "plan-review");
+  Layer.mergeAll(Layer.provide(storeLayer(repo, TEST_ROOT, []), platformLayer), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, config), Layer.succeed(Sdk, sdk));
+const dirOf = (repo: string): string => path.join(repo, "plan-review", TEST_ROOT);
 
 /** The five services with a real Codex adapter over a fake SDK and a scripted planner. */
 const withCodex = (repo: string, sdk: FakeSdk, planner: ScriptedPlanner): Layer.Layer<Services> => {
@@ -129,7 +129,7 @@ const withClaude = (repo: string, sdk: FakeSdk, reviewer: ScriptedReviewer): Lay
 test("a Claude Code planning call without structured output gets one repair turn in the same session", async () => {
   const repo = tempRepo();
   const paths = pathsOf(repo);
-  const sdk = new FakeSdk([planWithoutOutput(paths.plan), messages(init("s-1"), success({ ...noQuestions, plan: scriptedPlan("v1") })), messages(init("s-1"), success(report))]);
+  const sdk = new FakeSdk([planWithoutOutput(path.join(paths.records(), "plan.md")), messages(init("s-1"), success({ ...noQuestions, plan: scriptedPlan("v1") })), messages(init("s-1"), success(report))]);
   const layer = withClaude(repo, sdk, new ScriptedReviewer(paths, [{ issues: [] }, { issues: [] }]));
   assert.equal(await runTask(layer), 1);
   assert.equal(sdk.calls.length, 3);
@@ -141,7 +141,7 @@ test("a Claude Code planning call without structured output gets one repair turn
 test("a Claude Code planning call without structured output twice fails with AgentReplyInvalid", async () => {
   const repo = tempRepo();
   const paths = pathsOf(repo);
-  const sdk = new FakeSdk([planWithoutOutput(paths.plan), messages(init("s-1"), success(null))]);
+  const sdk = new FakeSdk([planWithoutOutput(path.join(paths.records(), "plan.md")), messages(init("s-1"), success(null))]);
   const layer = withClaude(repo, sdk, new ScriptedReviewer(paths, []));
   await runFails(layer, "AgentReplyInvalid", /Claude Code/, /claude-1\.json/, /claude-2\.json/);
   assert.equal(sdk.calls.length, 2);

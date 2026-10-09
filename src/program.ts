@@ -1,7 +1,7 @@
 // The program: arguments, configuration, the live services, the run, and what is printed at the
 // end. The run manager runs it for the page (src/runManager.ts); the tests run it with scripted services.
 
-import { type Brand, Cause, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
+import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe } from "./errors.ts";
@@ -11,7 +11,8 @@ import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
 import { loadConfig } from "./config.ts";
 import type { Platform } from "./platform.ts";
-import { makeStore } from "./store.ts";
+import { allocateRunRoot, makeStore } from "./store.ts";
+import { type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
 import type { ItemId, TrackerItem } from "./tracker.ts";
@@ -77,9 +78,11 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
   Effect.gen(function* () {
     const { task } = start;
     const project = path.resolve(start.project);
-    const dir = path.join(project, "plan-review");
     const ui = yield* wiring.ui;
-    const store = (ignorePaths: readonly string[]) => makeStore(project, ignorePaths).pipe(Effect.provide(wiring.platform));
+    // Issue #120: the run's records directory, named by its start time, mode and item; allocated after the configuration
+    // is read, so that a run refused by its configuration leaves no directory. Until S5 the mode and item are fixed.
+    const planned = runRootOf("implementation", "task", new Date(yield* Clock.currentTimeMillis).toISOString());
+    const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.provide(wiring.platform));
 
     /** The last two lines of every ending. */
     const tail = (sessionId: string | null, records: StoreShape) =>
@@ -90,7 +93,7 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
       });
     const halted = (reason: string, sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
-        yield* ui.say(`\nHALTED: ${reason}\nState is preserved in ${dir}.`);
+        yield* ui.say(`\nHALTED: ${reason}\nState is preserved in ${records.dir}.`);
         yield* tail(sessionId, records);
         return 1;
       });
@@ -100,7 +103,7 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
     if (Exit.isFailure(configExit)) {
       const error = Cause.findErrorOption(configExit.cause);
       if (Option.isNone(error)) return yield* Effect.die(Cause.squash(configExit.cause));
-      return yield* halted(describe(error.value), null, yield* store([]));
+      return yield* halted(describe(error.value), null, yield* store(planned, []));
     }
     const config = configExit.value;
 
@@ -115,11 +118,17 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
     if (Exit.isFailure(formatExit)) {
       const error = Cause.findErrorOption(formatExit.cause);
       if (Option.isNone(error)) return yield* Effect.die(Cause.squash(formatExit.cause));
-      return yield* halted(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), null, yield* store([]));
+      return yield* halted(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), null, yield* store(planned, []));
     }
     const decisionFormat = formatExit.value;
 
-    const records = yield* store(config.ignorePaths);
+    const allocated = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
+    if (Exit.isFailure(allocated)) {
+      const error = Cause.findErrorOption(allocated.cause);
+      if (Option.isNone(error)) return yield* Effect.die(Cause.squash(allocated.cause));
+      return yield* halted(describe(error.value), null, yield* store(planned, []));
+    }
+    const records = yield* store(allocated.value, config.ignorePaths);
     const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(Sdk, wiring.sdk));
     // Built once, so that the planner whose session id is printed is the one the run used.
     // Decision support (D3): the Decider runs its loops over the same services as the run.
@@ -127,7 +136,7 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
     const sessionId = Context.get(context, Planner).sessionId;
 
     const interrupted = Effect.gen(function* () {
-      yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${dir}.`);
+      yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${records.dir}.`);
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
       yield* tail(yield* sessionId, records);
     });

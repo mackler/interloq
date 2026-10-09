@@ -18,7 +18,7 @@ import { Decider, type DeciderShape, Planner, type PlannerShape, RunConfig, Sdk,
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
-import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, plain, term } from "./helpers.ts";
+import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
 
@@ -27,7 +27,7 @@ const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape =
 
 /** A Claude Code planner over a fake SDK, a scripted Ui and a store on a temporary repository. */
 const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig> }> => {
-  const store = await run(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await run(store.init("task"));
   const ui = new ScriptedUi(answers);
   const sdk = new FakeSdk(scripts);
@@ -93,7 +93,7 @@ test("the planning hook denies an edit outside plan-review/ and permits one insi
   assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.dir, "notes.md") })), undefined);
   // Issue #6 (F1): plan.json and plan.md are the program's; Claude Code returns the plan and writes neither.
   assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.dir, "plan.md") })), "deny");
-  assert.equal(decision(await runHook(options, "Edit", { file_path: path.join("plan-review", "plan.json") })), "deny");
+  assert.equal(decision(await runHook(options, "Edit", { file_path: path.relative(fake.project, path.join(fake.dir, "plan.json")) })), "deny");
   assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.project, "src/x.ts") })), "deny");
   assert.equal(decision(await runHook(options, "Edit", { file_path: "../outside.txt" })), "deny");
 });
@@ -103,11 +103,11 @@ test("the planning hook denies an edit through a symlink that leaves plan-review
   const fake = await planner([messages(init(), success({}))]);
   await run(fake.planner.planning("write the plan", schema));
   fs.mkdirSync(path.join(fake.project, "src"), { recursive: true });
-  fs.symlinkSync(path.join("..", "src"), path.join(fake.dir, "out"));
+  fs.symlinkSync(path.relative(fake.dir, path.join(fake.project, "src")), path.join(fake.dir, "out"));
   const options = fake.sdk.calls[0].options;
   assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.dir, "out", "x.ts") })), "deny");
   assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.dir, "notes", "new.md") })), undefined, "a new file under plan-review/ must stay allowed");
-  assert.equal(decision(await runHook(options, "Write", { file_path: path.join("plan-review", "out", "y.ts") })), "deny", "a relative path through the link");
+  assert.equal(decision(await runHook(options, "Write", { file_path: path.relative(fake.project, path.join(fake.dir, "out", "y.ts")) })), "deny", "a relative path through the link");
 });
 
 test("planning canUseTool relays AskUserQuestion to the user and returns the answers", async () => {
@@ -714,7 +714,7 @@ test("during execution an edit of plan.json or plan.md is denied; other edits ar
   await run(fake.planner.executing("implement the plan", noReporter));
   const options = fake.sdk.calls[0].options;
   assert.equal(await runHooks(options, "Write", { file_path: path.join(fake.dir, "plan.json") }), "deny");
-  assert.equal(await runHooks(options, "Edit", { file_path: path.join("plan-review", "plan.md") }), "deny");
+  assert.equal(await runHooks(options, "Edit", { file_path: path.relative(fake.project, path.join(fake.dir, "plan.md")) }), "deny");
   assert.equal(await runHooks(options, "Edit", { file_path: path.join(fake.project, "src", "x.ts") }), undefined);
 });
 

@@ -8,7 +8,7 @@ import fc from "fast-check";
 import { compareSnapshots, decodeStatusV2, excluded, excludedIndexPaths, type Snapshot, type SnapshotEntry, type StatusRecord, type WorkingTreeEntry } from "../src/snapshot.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { tempRepo } from "./helpers.ts";
+import { tempRepo , TEST_ROOT } from "./helpers.ts";
 
 // Row 4 of the table in recommendation E of docs/functional-design-review.md.
 
@@ -159,7 +159,7 @@ test("property: generated file operations are detected between two snapshots exa
     fc.asyncProperty(arbOps, arbOps, async (first, second) => {
       const repo = tempRepo();
       apply(repo, first);
-      const s = await Effect.runPromise(makeStore(repo, []).pipe(Effect.provide(platformLayer)));
+      const s = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
       const before = await Effect.runPromise(s.projectSnapshot());
       const oracleBefore = oracle(repo);
       apply(repo, second);

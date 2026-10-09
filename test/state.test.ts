@@ -17,10 +17,10 @@ import { decodeRecord, parseJson } from "../src/state.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { renderUsage, summarizeUsage } from "../src/usage.ts";
-import { faultyPlatform, tempRepo, questionOf, entryOf } from "./helpers.ts";
+import { faultyPlatform, tempRepo, questionOf, entryOf , TEST_ROOT } from "./helpers.ts";
 
 /** The store of a repository, built on the live platform services. */
-const store = (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => Effect.runPromise(makeStore(repo, ignorePaths).pipe(Effect.provide(platformLayer)));
+const store = (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => Effect.runPromise(makeStore(repo, TEST_ROOT, ignorePaths).pipe(Effect.provide(platformLayer)));
 
 /** A store on a temporary repository with the records initialised. */
 const initialised = async (): Promise<StoreShape> => {
@@ -47,7 +47,7 @@ test("an unreadable issue log fails with StateFileInvalid naming the file", asyn
 test("git failure in the snapshot fails with GitError", async () => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), "pr-nogit-"));
   const s = await store(outside);
-  await fails(s.projectSnapshot(), "GitError", /git status/);
+  await fails(s.projectSnapshot(), "GitError", /git --no-optional-locks status/);
 });
 
 test("an unwritable plan-review directory fails with FileSystemError", async (t) => {
@@ -87,13 +87,15 @@ test("a usage.jsonl line that is not an object fails with StateFileInvalid", asy
   await fails(s.usageLines(), "StateFileInvalid", /usage\.jsonl/);
 });
 
-test("init archives an earlier run and keeps config.json; the records are written", async () => {
+// Issue #120: every run has its own records directory, so init moves nothing; plan-review/config.json stays where it is.
+test("init archives nothing and leaves plan-review/config.json alone; the records are written", async () => {
   const s = await initialised();
-  fs.writeFileSync(path.join(s.dir, "config.json"), "{}");
+  const config = path.join(path.dirname(path.dirname(s.dir)), "config.json");
+  fs.writeFileSync(config, "{}");
   await Effect.runPromise(s.init("second"));
-  const names = fs.readdirSync(s.dir);
-  assert.equal(names.filter((n) => n.startsWith("archive-")).length, 1);
-  assert.ok(names.includes("config.json"));
+  assert.deepEqual(fs.readdirSync(path.dirname(path.dirname(s.dir))).filter((n) => n.startsWith("archive-")), []);
+  assert.deepEqual(fs.readdirSync(s.dir).filter((n) => n.startsWith("archive-")), []);
+  assert.equal(fs.readFileSync(config, "utf8"), "{}");
   assert.match(fs.readFileSync(path.join(s.dir, "conversation.md"), "utf8"), /Task: second/);
   assert.deepEqual(await Effect.runPromise(s.loadLog({ plan: 1 })), []);
 });
@@ -125,8 +127,8 @@ test("the records: decisions, feedback, usage and the invalid-reply files", asyn
   assert.match(fs.readFileSync(path.join(s.dir, "conversation.md"), "utf8"), /\*\*User decision\*\* on issue A: keep it/);
   assert.match(fs.readFileSync(path.join(s.dir, "reviewer-feedback.md"), "utf8"), /## Planning phase 1, round 2\ntoo strict/);
   assert.match(renderUsage(summarizeUsage(await Effect.runPromise(s.usageLines()))), /Claude Code: 1 calls in 1 sessions, total_cost_usd = 1\.50 .* Codex: 1 turns, 10 input tokens, 5 output tokens/);
-  assert.equal(await Effect.runPromise(s.saveInvalidReply("codex", "x")), path.join("plan-review", "invalid-replies", "codex-1.json"));
-  assert.equal(await Effect.runPromise(s.saveInvalidReply("codex", "y")), path.join("plan-review", "invalid-replies", "codex-2.json"));
+  assert.equal(await Effect.runPromise(s.saveInvalidReply("codex", "x")), path.join("plan-review", TEST_ROOT, "invalid-replies", "codex-1.json"));
+  assert.equal(await Effect.runPromise(s.saveInvalidReply("codex", "y")), path.join("plan-review", TEST_ROOT, "invalid-replies", "codex-2.json"));
   assert.equal(fs.readFileSync(path.join(s.dir, "invalid-replies", "codex-2.json"), "utf8"), "y");
 });
 
@@ -273,7 +275,7 @@ test("the snapshot decodes git's porcelain v2 records and reads the working tree
   const repo = tempRepo();
   const { layer, commands } = recordingSpawner(() => v2([{ xy: ".M", name: "a.txt" }, { xy: ".M", name: "ignored.txt" }, { name: "plan-review/plan.md" }, { name: "gone.txt" }]));
   const platform = Layer.mergeAll(platformLayer, layer);
-  const s = await Effect.runPromise(makeStore(repo, ["ignored.txt"]).pipe(Effect.provide(platform)));
+  const s = await Effect.runPromise(makeStore(repo, TEST_ROOT, ["ignored.txt"]).pipe(Effect.provide(platform)));
   const snapshot = await Effect.runPromise(s.projectSnapshot());
   assert.deepEqual([...snapshot.entries.keys()].sort(), ["a.txt", "gone.txt"]);
   assert.deepEqual(snapshot.entries.get("a.txt")?.content, { type: "file", hash: createHash("sha256").update(fs.readFileSync(path.join(repo, "a.txt"))).digest("hex") });
@@ -319,7 +321,7 @@ test("a record value that cannot be serialized fails with FileSystemError (seria
 test("plan-review/ is excluded from the snapshot", async () => {
   const repo = tempRepo();
   const { layer } = recordingSpawner(() => v2([{ xy: ".M", name: "a.txt" }, { name: "plan-review/plan.md" }]));
-  const s = await Effect.runPromise(makeStore(repo, []).pipe(Effect.provide(Layer.mergeAll(platformLayer, layer))));
+  const s = await Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(Layer.mergeAll(platformLayer, layer))));
   const snapshot = await Effect.runPromise(s.projectSnapshot());
   assert.deepEqual([...snapshot.entries.keys()], ["a.txt"]);
 });
@@ -327,7 +329,7 @@ test("plan-review/ is excluded from the snapshot", async () => {
 test("names with tabs and quotes are the real names: matched against ignorePaths and kept as they are", async () => {
   const repo = tempRepo();
   const { layer } = recordingSpawner(() => v2([{ name: "tab\there.txt" }, { xy: ".M", name: 'q"uote.txt' }]));
-  const s = await Effect.runPromise(makeStore(repo, ["tab\there.txt"]).pipe(Effect.provide(Layer.mergeAll(platformLayer, layer))));
+  const s = await Effect.runPromise(makeStore(repo, TEST_ROOT, ["tab\there.txt"]).pipe(Effect.provide(Layer.mergeAll(platformLayer, layer))));
   const snapshot = await Effect.runPromise(s.projectSnapshot());
   assert.deepEqual([...snapshot.entries.keys()], ['q"uote.txt']);
 });
@@ -387,16 +389,6 @@ const fixedClock = (ms: number): Clock.Clock => ({
 const NOON = Date.UTC(2026, 8, 25, 12, 0, 0);
 const atNoon = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Clock.Clock, fixedClock(NOON))));
 
-test("two init calls at the same clock time archive the earlier run under distinct names", async () => {
-  const s = await store(tempRepo());
-  await atNoon(s.init("first"));
-  await atNoon(s.init("second"));
-  await atNoon(s.init("third"));
-  const archives = fs.readdirSync(s.dir).filter((n) => n.startsWith("archive-")).sort();
-  assert.deepEqual(archives, ["archive-2026-09-25T12-00-00-000Z", "archive-2026-09-25T12-00-00-000Z-2"]);
-  assert.match(fs.readFileSync(path.join(s.dir, "archive-2026-09-25T12-00-00-000Z-2", "conversation.md"), "utf8"), /Task: second/);
-});
-
 test("recordUsage takes its time from the Clock service", async () => {
   const s = await initialised();
   await atNoon(s.recordUsage({ agent: "codex", thread: "t", inputTokens: 1, outputTokens: 1 }));
@@ -413,13 +405,13 @@ test("a gap in the invalid-reply sequence never overwrites an existing file", as
   const saved = await Effect.runPromise(s.saveInvalidReply("codex", "new"));
   assert.equal(fs.readFileSync(path.join(dir, "codex-3.json"), "utf8"), "three", "an existing invalid-reply file was overwritten");
   assert.equal(fs.readFileSync(path.join(s.project, saved), "utf8"), "new");
-  assert.notEqual(saved, path.join("plan-review", "invalid-replies", "codex-3.json"));
+  assert.notEqual(saved, path.join("plan-review", TEST_ROOT, "invalid-replies", "codex-3.json"));
 });
 
 // Finding 16 / Q6: JSON records are written to a temporary name and renamed into place.
 test("a record is replaced atomically: a failure between the temporary file and the rename leaves the previous file intact, and the readers ignore the temporary file", async () => {
   let armed = false;
-  const s = await Effect.runPromise(makeStore(tempRepo(), []).pipe(Effect.provide(faultyPlatform((method) => method === "rename" && armed))));
+  const s = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(faultyPlatform((method) => method === "rename" && armed))));
   await Effect.runPromise(s.init("task"));
   const a = { id: "A" as IssueId, phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "l", problem: "p", evidence: "e", action: "accepted" as const, rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null };
   await Effect.runPromise(s.saveLog({ plan: 1 }, [a]));

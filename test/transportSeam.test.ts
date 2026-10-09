@@ -9,7 +9,7 @@ import { Decider, RunConfig, Sdk, Store, Ui } from "../src/services.ts";
 import { makeStore } from "../src/store.ts";
 import { NETWORK_CODES } from "../src/transport.ts";
 import { FakeSdk, init, rejecting, type Script } from "./fakeSdk.ts";
-import { noDecider, ScriptedUi, tempRepo } from "./helpers.ts";
+import { noDecider, ScriptedUi, tempRepo , TEST_ROOT } from "./helpers.ts";
 
 // W1-R1-2: the two adapters read a thrown value's code the same way. Every network code of src/transport.ts, thrown
 // without it in the message, makes a Codex turn and a Claude Code planning call fail alike with TransportFault.
@@ -17,7 +17,7 @@ const tagOf = (effect: Effect.Effect<unknown, unknown>): Promise<string> =>
   Effect.runPromise(Effect.result(effect)).then((r) => (r._tag === "Failure" ? (r.failure as { _tag: string })._tag : "success"));
 
 const setUp = async (sdk: FakeSdk) => {
-  const store = await Effect.runPromise(makeStore(tempRepo(), []).pipe(Effect.provide(platformLayer)));
+  const store = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(store.init("task"));
   return Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Sdk, sdk), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
 };

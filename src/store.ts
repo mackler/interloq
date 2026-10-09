@@ -5,7 +5,7 @@
 import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Ref, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
-import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, recordPath, reviewedFile, type SubjectId } from "./artifacts.ts";
+import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, runRecordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
 import { FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
@@ -17,15 +17,18 @@ import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type Recor
 import { decodeText } from "./state.ts";
 import type { LimitWait, UsageLine } from "./usage.ts";
 
-/** The store of one project. `ignorePaths` are the paths the change detection ignores (config). */
-export const makeStore = (projectDir: string, ignorePaths: readonly string[]): Effect.Effect<StoreShape, never, Platform> =>
+/**
+ * The store of one run of one project (issue #120): its records are under <project>/plan-review/<root>/, a root that
+ * allocateRunRoot created. `ignorePaths` are the paths the change detection ignores (config).
+ */
+export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readonly string[]): Effect.Effect<StoreShape, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
     const project = path.resolve(projectDir) as ProjectPath;
-    const dir = path.join(project, "plan-review") as RecordPath;
+    const dir = path.join(project, RECORDS_DIR, root) as RecordPath;
     const at = (artifact: Artifact): string => path.join(dir, pathOf(artifact));
     const plan = at({ kind: "plan" }) as RecordPath;
     const questions = at({ kind: "questions" }) as RecordPath;
@@ -54,7 +57,7 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
     };
     /** A guarded path's entry as recordsSnapshot gives it; null when it is absent. */
     const entryOf = (relative: string): Effect.Effect<string | null, FileSystemError> =>
-      inspect(path.join("plan-review", relative)).pipe(
+      inspect(path.relative(project, path.join(dir, relative))).pipe(
         Effect.map((entry) => (entry.type === "missing" ? null : entry.type === "file" ? `file:${entry.hash}` : entry.type === "link" ? `link:${entry.target}` : entry.type)),
       );
     /** Runs a write of `files`, and journals each guarded one it changed, with its entry before and after. */
@@ -73,7 +76,7 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
         }
         return result;
       });
-    /** The directory and its ancestors below plan-review/, outermost first: what a recursive creation may create. */
+    /** The directory and its ancestors below the run's records directory, outermost first: what a recursive creation may create. */
     const ancestors = (d: string): readonly string[] => (guardedPath(d) === null ? [] : [...ancestors(path.dirname(d)), d]);
     const writeText = (file: string, text: string) => journaled([file], io("write", file, fs.writeFileString(file, text)));
     const append = (file: string, text: string) => journaled([file], io("append to", file, fs.writeFileString(file, text, { flag: "a" })));
@@ -173,6 +176,11 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
      * the repository's index so that tracked files matching .gitignore stay in it (P1-R1-5), then
      * `git add -A`, then the removal of exactly the paths `excluded` selects, as literal pathspecs (P4-R1-1),
      * then `git write-tree`. The temporary files are removed on every exit.
+     *
+     * The hazard of two runs (issue #120): the temporary index is in the git directory, which every run in the project
+     * shares, and `git add -A` there reads the whole working tree. Two runs building a tree at once could collide. With one
+     * run per mode only the implementation run builds one (a refinement run writes no baseline and has no work review),
+     * so it cannot arise now; it would as soon as a second implementation run in one project is allowed.
      */
     const workingTree = (): Effect.Effect<string, StoreError> =>
       Effect.gen(function* () {
@@ -206,35 +214,28 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
 
     return {
       project,
+      root,
       dir,
       plan,
       questions,
       requirements,
 
-      /** Starts a new run. The files of an earlier run are moved to plan-review/archive-<time>/; config.json stays. */
+      /**
+       * Starts the run in its own records directory (issue #120): nothing of another run is moved or read, so archiving
+       * has no work left; the archives and loose files of runs before that change stay where they are.
+       */
       init: (task) =>
         Effect.gen(function* () {
           yield* mkdir(dir);
-          const earlier = (yield* list(dir)).filter((name) => name !== pathOf({ kind: "config" }) && !name.startsWith("archive-"));
-          if (earlier.length > 0) {
-            // A second run in the same clock instant gets a collision suffix (finding 23).
-            const base = path.join(dir, `archive-${(yield* now).replace(/[:.]/g, "-")}`);
-            let archive = base;
-            for (let k = 2; yield* exists(archive); k++) archive = `${base}-${k}`;
-            yield* io("create directory", archive, fs.makeDirectory(archive));
-            for (const name of earlier) {
-              const source = path.join(dir, name);
-              // A directory takes everything below it along; each of those paths is journaled too.
-              const below = (yield* io("stat", source, fs.stat(source))).type === "Directory" ? (yield* io("list", source, fs.readDirectory(source, { recursive: true }))).map((p) => path.join(source, p)) : [];
-              yield* journaled([source, ...below], io("move", source, fs.rename(source, path.join(archive, name))));
-            }
-          }
           for (const subject of LOG_SUBJECTS) yield* saveLog(subject, []);
-          yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), time: yield* now });
           yield* writeText(decisionsFile, "");
           yield* writeText(feedbackFile, "");
           yield* writeText(conversationFile, `# Conversation record\n\nTask: ${task}\n\n`);
           yield* checkpoint({ subject: "run", phase: 0, round: 0, stage: "started" });
+        }),
+      writeBaseline: () =>
+        Effect.gen(function* () {
+          yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), time: yield* now });
         }),
       saveReview: (subject, round, review) => saveRecord({ kind: "review", subject, round }, review),
       saveResponse: (subject, round, response) => saveRecord({ kind: "response", subject, round }, response),
@@ -343,7 +344,7 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
               Effect.map(() => true),
               Effect.catch((e) => (alreadyExists(e) ? Effect.succeed(false) : Effect.fail(new FileSystemError({ operation: "create", path: file, message: e.message })))),
             );
-            if (created) return recordPath(artifact);
+            if (created) return runRecordPath(root, artifact);
             n++;
           }
         }),
@@ -408,21 +409,26 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
         }),
       projectSnapshot: (): Effect.Effect<Snapshot, StoreError> =>
         Effect.gen(function* () {
-          const records = decodeStatusV2(yield* git(["status", "--porcelain=v2", "-z", "--untracked-files=all"])).filter((r) => !excluded(r.path, ignorePaths));
+          // --no-optional-locks (issue #120): a plain status may refresh .git/index under index.lock, and while it holds the lock
+          // a commit by Claude Code in the other run fails; a snapshot never writes to the git directory.
+          const records = decodeStatusV2(yield* git(["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=all"])).filter((r) => !excluded(r.path, ignorePaths));
           const entries = new Map<string, { record: (typeof records)[number]; content: WorkingTreeEntry }>();
           for (const record of records) entries.set(record.path, { record, content: yield* inspect(record.path) });
           return { entries };
         }),
       journalMark: Ref.get(journal).pipe(Effect.map((writes) => writes.length)),
       ownWritesSince: (mark) => Ref.get(journal).pipe(Effect.map((writes) => writes.slice(mark))),
-      /** Every guarded path under plan-review/ with what is there; the relative paths use "/" (guardedRecord). */
+      /**
+       * Every guarded path of the run's own records directory with what is there; the relative paths use "/"
+       * (guardedRecord). Another run's records are not listed, so that its writes never halt this run (issue #120).
+       */
       recordsSnapshot: (): Effect.Effect<RecordsSnapshot, StoreError> =>
         Effect.gen(function* () {
           if (!(yield* exists(dir))) return new Map();
           const listed = (yield* io("list", dir, fs.readDirectory(dir, { recursive: true }))).map((p) => p.split(path.sep).join("/")).filter(guardedRecord);
           const entries = new Map<string, string>();
           for (const relative of listed.sort()) {
-            const entry = yield* inspect(path.join("plan-review", relative));
+            const entry = yield* inspect(path.relative(project, path.join(dir, relative)));
             entries.set(relative, entry.type === "file" ? `file:${entry.hash}` : entry.type === "link" ? `link:${entry.target}` : entry.type);
           }
           return entries;
@@ -430,4 +436,26 @@ export const makeStore = (projectDir: string, ignorePaths: readonly string[]): E
     };
   });
 
-export const storeLayer = (project: string, ignorePaths: readonly string[]): Layer.Layer<Store, never, Platform> => Layer.effect(Store, makeStore(project, ignorePaths));
+export const storeLayer = (project: string, root: RunRoot, ignorePaths: readonly string[]): Layer.Layer<Store, never, Platform> => Layer.effect(Store, makeStore(project, root, ignorePaths));
+
+/**
+ * Creates the records directory of a run, <project>/plan-review/<root>, exclusively: `-2`, `-3`, … while the name
+ * exists (as openDecision allocates decision-<k>). Returns the root as created.
+ */
+export const allocateRunRoot = (projectDir: string, root: RunRoot): Effect.Effect<RunRoot, FileSystemError, Platform> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const records = path.join(path.resolve(projectDir), RECORDS_DIR);
+    const runs = path.join(records, RUNS_DIR);
+    yield* fs.makeDirectory(runs, { recursive: true }).pipe(Effect.mapError((e) => new FileSystemError({ operation: "create directory", path: runs, message: e.message })));
+    for (let k = 1; ; k++) {
+      const candidate = suffixedRoot(root, k);
+      const d = path.join(records, candidate);
+      const created = yield* fs.makeDirectory(d).pipe(
+        Effect.map(() => true),
+        Effect.catch((e) => (e.reason._tag === "AlreadyExists" ? Effect.succeed(false) : Effect.fail(new FileSystemError({ operation: "create directory", path: d, message: e.message })))),
+      );
+      if (created) return candidate;
+    }
+  });
