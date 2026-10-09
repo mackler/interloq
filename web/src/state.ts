@@ -701,9 +701,11 @@ const afterHello = (items: ItemsView): ItemsView => (items._tag === "Loading" ? 
 export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
   switch (message.type) {
     case "hello": {
-      // Another start of the server: its run numbers restart, so the views of the earlier server's runs are dropped.
+      // Another start of the server: its run numbers restart, so the views of the earlier server's runs are dropped, and so
+      // are its item lists, tracker notices and refusals, because a tracker id of one server names nothing in another,
+      // which may serve another project (W3-R1-1).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
-      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], ...(restarted ? { run: null, last: null } : {}), current: message.current[m], items: afterHello(state.modes[m].items) }])) as Record<RunMode, ModeView>;
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], ...(restarted ? { run: null, last: null, items: { _tag: "Unasked" }, refusal: null } : { items: afterHello(state.modes[m].items) }), current: message.current[m] }])) as Record<RunMode, ModeView>;
       return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false };
     }
     case "replay": {
