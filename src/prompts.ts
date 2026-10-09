@@ -1,26 +1,32 @@
 // Prompt texts. All paths are relative to the project directory.
 
-import { pathOf, recordPath } from "./artifacts.ts";
+import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { FILE_CHANGE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 
+/**
+ * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
+ * prompt that names a record takes the run's root, so that one run's agents read and write their own run's records.
+ */
+const runDir = (root: RunRoot): string => `${RECORDS_DIR}/${root}`;
+
 const SEVERITY = `Severity: blocking = the work cannot succeed with the file as written; major = the file as written will produce a defect or omits something required; minor = everything else.`;
 
 /** Rules for the use of an issue log. They are the same for every reviewed file. */
-function logRules(logFile: string, idPrefix: string, round: number): string {
-  return `plan-review/${logFile} is a JSON object whose 'entries' list every issue raised in earlier rounds with the planner's disposition and rationale, in order.
+function logRules(root: RunRoot, logFile: string, idPrefix: string, round: number): string {
+  return `${runDir(root)}/${logFile} is a JSON object whose 'entries' list every issue raised in earlier rounds with the planner's disposition and rationale, in order.
 Every entry has id, phase, round, source, problem, action, rationale and superseded. An entry with superseded = true has been replaced by a later entry with the same id; use the later entry.
 An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null.
 An entry with source 'self_correction' records a correction that the planner made to its own earlier work (action 'accepted', 'plan_error' or 'correction_disputed').
 Every entry with source 'review' or 'self_correction' also has ${FILE_CHANGE_FIELD}: what the program measured in the reviewed file during the planner's response in that round, for all of that round's entries together: changed (true or false), and the numbers of lines added and removed; null where nothing was measured. It is the program's measurement, not the planner's claim. If an 'accepted' or 'partially_accepted' entry's rationale describes amendments that ${FILE_CHANGE_FIELD} does not bear out, raise it as an issue.
 An entry with source 'user' (action 'decided_by_user') contains a decision of the user on that issue, which must be followed.
 The rationale of every entry is addressed to you; read it irrespective of the action.
-plan-review/reviewer-feedback.md contains feedback from the planner that concerns no single issue; take it into account.
+${runDir(root)}/reviewer-feedback.md contains feedback from the planner that concerns no single issue; take it into account.
 For an entry with action 'clarification_requested', the rationale contains a question to you: if the issue is valid, raise it again under the same id and answer the question in the evidence field; if the question shows the issue to be mistaken, omit the issue.
-plan-review/user-decisions.md contains input and decisions by the user, which must be followed; do not raise an issue that contradicts them.
+${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed; do not raise an issue that contradicts them.
 Do not repeat an issue whose action is 'accepted' unless the file still contains the defect.
 Do not repeat an issue whose action is 'rejected', 'no_change_needed', or 'partially_accepted', under the same or a different wording, unless you can state a specific error in the rationale; in that case reuse the original id and state the error in the evidence field.
 Do not raise an issue whose correction would undo the correction made for an accepted issue in the log; if you consider an accepted correction wrong, reuse the id of that issue and state the error in the evidence field.
@@ -29,9 +35,9 @@ Return an empty issues array when no issue is found.
 New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
 }
 
-function laterRound(file: string, logFile: string, idPrefix: string, round: number): string {
-  return `The planner has answered your issues; the answers are in plan-review/${logFile}, and plan-review/${file} may have been amended.
-Read both files again and review plan-review/${file} again under the same rules as before. New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
+function laterRound(root: RunRoot, file: string, logFile: string, idPrefix: string, round: number): string {
+  return `The planner has answered your issues; the answers are in ${runDir(root)}/${logFile}, and ${runDir(root)}/${file} may have been amended.
+Read both files again and review ${runDir(root)}/${file} again under the same rules as before. New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
 }
 
 /** The heading of the explanations of terms: in conversation.md (decision Q6) and in a relayed question's text (S13). */
@@ -284,7 +290,7 @@ const formatClauses = (ids: readonly string[]): string => QUESTION_FORMAT.filter
  * divides it into pieces (decision Q1), and a context call's literals, options and supplied references (decisions F1 and
  * G-R1-1). The repair prompt cites them by id like the rules.
  */
-export const KEEP_WORDING = "Keep the wording of each agreed question exactly: every field's words, joined in order, and its blocks, their kinds and list levels, must be what plan-review/questions.json holds; only the division into pieces and the references to explanations are yours.";
+export const KEEP_WORDING = "Keep the wording of each agreed question exactly: every field's words, joined in order, and its blocks, their kinds and list levels, must be what the agreed question list, questions.json, holds; only the division into pieces and the references to explanations are yours.";
 export const KEEP_LITERALS =
   "Keep every value of the details exactly as it is, in its order and in its form, and add none: every code block and every code piece (a text, a number, a name), and every phrase in parentheses that stands for a value (yes or no, none, an empty list, object or text, whitespace alone), each still code or still a phrase as it was given. Add no explanation to any of them.";
 export const KEEP_OPTIONS = "Keep every option, in its position: you may rephrase its label and description, but not add, remove or reorder options.";
@@ -374,7 +380,7 @@ export function questionProblemText(problem: QuestionProblem): string {
     case "bareNumber":
       return `${subject} is a number without the kind of thing it numbers before it`;
     case "unknownQuestion":
-      return `the explanations name ${subject}, which is not the id of a question of plan-review/questions.json`;
+      return `the explanations name ${subject}, which is not the id of a question of the agreed question list, questions.json`;
     case "wordingChanged":
       return `the words or blocks of its field ${subject} differ from the agreed question`;
     case "literalChanged":
@@ -478,8 +484,8 @@ ${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}`;
 
 /** Rules for Claude Code's answer to a review. 'amendment' names what an accepted issue requires. */
-function respondRules(amendment: string): string {
-  return `plan-review/user-decisions.md contains input and decisions by the user, which must be followed.
+function respondRules(root: RunRoot, amendment: string): string {
+  return `${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed.
 Evaluate each issue critically against the codebase; do not assume the reviewer is correct.
 Choose one action for each issue.
 'accepted': the issue is valid and ${amendment}.
@@ -538,21 +544,21 @@ Return an empty list if no question is needed. Do not modify any file. Do not us
 Task: ${task}`;
 }
 
-export function questionReviewPrompt(round: number): string {
-  if (round > 1) return `${laterRound(pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round)}\n${WORDING_DISPUTES}`;
-  return `Review the question list in plan-review/questions.json against the task text in the same file and against the codebase. Do not modify any file.
+export function questionReviewPrompt(root: RunRoot, round: number): string {
+  if (round > 1) return `${laterRound(root, pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round)}\n${WORDING_DISPUTES}`;
+  return `Review the question list in ${runDir(root)}/questions.json against the task text in the same file and against the codebase. Do not modify any file.
 The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
 Raise an issue when: a question whose answer the plan needs is missing; a question combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
 ${questionReviewCriteria()}
 These criteria apply to the question, its context, its reason, its proposed answers and its default alike. Any question in the list may be put to decision support, which works out the arguments for and against each proposed answer, so hold every proposed answer to that standard.
 Put the question id, or 'list' for an issue that concerns the list as a whole, in the location field.
-${logRules(pathOf({ kind: "log", subject: "questions" }), "Q", round)}
+${logRules(root, pathOf({ kind: "log", subject: "questions" }), "Q", round)}
 ${WORDING_DISPUTES}`;
 }
 
-export function questionRespondPrompt(round: number): string {
-  return `plan-review/question-review/review-${round}.json contains a review of the question list in plan-review/questions.json.
-${respondRules("you amend the question list for it")}
+export function questionRespondPrompt(root: RunRoot, round: number): string {
+  return `${runDir(root)}/question-review/review-${round}.json contains a review of the question list in ${runDir(root)}/questions.json.
+${respondRules(root, "you amend the question list for it")}
 ${WORDING_DISPUTES}
 Return in 'questions' the complete question list after your amendments, including the entries that did not change. Do not modify any file.`;
 }
@@ -565,8 +571,8 @@ const termsRule = (): string => QUESTION_RULES.find((r) => r.id === "terms")?.ru
  * The call that writes the explanations of the agreed questions' terms (S17, decision Q8): a fresh session, after the
  * question review has converged, against the final wording. The entry of each question lists its terms.
  */
-export function termsPrompt(task: string): string {
-  return `plan-review/questions.json contains the task and the question list that Claude Code and Codex have agreed. The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.
+export function termsPrompt(root: RunRoot, task: string): string {
+  return `${runDir(root)}/questions.json contains the task and the question list that Claude Code and Codex have agreed. The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.
 ${termsRule()}
 Return in 'entries' one entry per question of the list: its id; its explanations; and its context, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it. A term may occur in any of these fields; each question carries all of its own explanations, since each question is read on its own. The explanations are shown on the words themselves.
 ${KEEP_WORDING}
@@ -576,37 +582,37 @@ An entry whose question needs no explanation has an empty explanations list and 
 Task: ${task}`;
 }
 /** Codex's review of the explanations (S17): the criteria of every question, as they apply to the terms. */
-export function termsReviewPrompt(round: number): string {
-  if (round > 1) return `${laterRound(pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round)}\n${WORDING_DISPUTES}`;
-  return `Review the explanations of terms in plan-review/terms.json against the agreed question list in plan-review/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
+export function termsReviewPrompt(root: RunRoot, round: number): string {
+  if (round > 1) return `${laterRound(root, pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round)}\n${WORDING_DISPUTES}`;
+  return `Review the explanations of terms in ${runDir(root)}/terms.json against the agreed question list in ${runDir(root)}/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
 Each entry of terms.json names a question by its id and holds its explanations, each with its id, term and senses (one or more definitions, shown numbered where there are several), and the question's context, question, reason and proposed answers divided into pieces; a piece whose ref is an explanation's id is the words that explanation explains. The user reads each explanation on those words while he answers the question; he may never have seen this codebase. The wording of the question is agreed and cannot change; only its division into pieces and the explanations can.
 ${questionReviewCriteria()}
 Raise an issue about the explanations only: a word or phrase the reader may not know that has no explanation in a question in which it occurs, or a piece that uses it and does not refer to it; a sense that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
 ${TWO_SENSES}
 Put the question id, with the term, in the location field.
-${logRules(pathOf({ kind: "log", subject: "terms" }), "T", round)}
+${logRules(root, pathOf({ kind: "log", subject: "terms" }), "T", round)}
 ${WORDING_DISPUTES}`;
 }
-export function termsRespondPrompt(round: number): string {
-  return `${recordPath({ kind: "review", subject: "terms", round })} contains a review of the explanations of terms in plan-review/terms.json.
-${respondRules("you amend the explanations for it")}
+export function termsRespondPrompt(root: RunRoot, round: number): string {
+  return `${recordPath(root, { kind: "review", subject: "terms", round })} contains a review of the explanations of terms in ${runDir(root)}/terms.json.
+${respondRules(root, "you amend the explanations for it")}
 ${WORDING_DISPUTES}
 ${TWO_SENSES}
 Return in 'entries' the complete explanations after your amendments, including the entries that did not change, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
 ${KEEP_WORDING}`;
 }
-export const termsApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file.
-Return in 'entries' the complete explanations of plan-review/terms.json, amended where a decision requires it, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
+export const termsApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
+Return in 'entries' the complete explanations of ${runDir(root)}/terms.json, amended where a decision requires it, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
 ${KEEP_WORDING}`;
 
-export const questionApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file.
-Return in 'questions' the complete question list of plan-review/questions.json, amended where a decision requires it. Do not modify any file.`;
+export const questionApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
+Return in 'questions' the complete question list of ${runDir(root)}/questions.json, amended where a decision requires it. Do not modify any file.`;
 
 // ---- interview ----------------------------------------------------------------------------------
 
-const INTERVIEW_RULES = `Rules for the interview.
+const interviewRules = (root: RunRoot): string => `Rules for the interview.
 Each of your turns produces these output fields. message_to_user: what you say to the user in this turn, in plain text without Markdown tables: the record of his earlier answer, an answer to his question, a remark. The question you ask now is not repeated in it; the program shows that question below your message.
-current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of plan-review/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its text, its explanations and its options: the context paragraph as blocks, the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of ${runDir(root)}/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its text, its explanations and its options: the context paragraph as blocks, the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
 ${QUESTION_TEXT_FORMAT}
 asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that you assign to each follow-up question. answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far. complete: true only when every agreed question has been answered or the program has reported it skipped, and you need nothing further from the user. summary: an empty string while complete is false.
 When complete is true, summary contains the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
@@ -616,14 +622,14 @@ ${questionWritingRules()}
 You may ask any follow-up question that the conversation makes necessary. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
 Do not use the AskUserQuestion tool; the program relays the conversation. Do not modify any file. Do not write a plan.`;
 
-export const interviewOpenPrompt = `Conduct an interview with the user. plan-review/questions.json contains the task and the agreed questions. Cover every agreed question except those the program reports skipped, in the order of the list unless the conversation makes another order more useful.
-${INTERVIEW_RULES}
+export const interviewOpenPrompt = (root: RunRoot): string => `Conduct an interview with the user. ${runDir(root)}/questions.json contains the task and the agreed questions. Cover every agreed question except those the program reports skipped, in the order of the list unless the conversation makes another order more useful.
+${interviewRules(root)}
 Begin now with your first message to the user.`;
 
-export function interviewGapsPrompt(reviewFile: string, ids: string[]): string {
-  return `The reviewer has examined plan-review/requirements.md, the confirmed result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
-Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in plan-review/requirements.md.
-${INTERVIEW_RULES}
+export function interviewGapsPrompt(root: RunRoot, reviewFile: string, ids: string[]): string {
+  return `The reviewer has examined ${runDir(root)}/requirements.md, the confirmed result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
+Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in ${runDir(root)}/requirements.md.
+${interviewRules(root)}
 When complete is true, summary contains the complete revised requirements document, not only the changes.
 Begin now with your first message to the user.`;
 }
@@ -640,22 +646,22 @@ export function interviewNotConfirmed(text: string): string {
 
 // ---- requirements -------------------------------------------------------------------------------
 
-export function requirementsReviewPrompt(round: number): string {
-  if (round > 1) return laterRound(pathOf({ kind: "requirements" }), pathOf({ kind: "log", subject: "requirements" }), "G", round);
-  return `Review plan-review/requirements.md. It is the result of an interview between the planner and the user, confirmed by the user. plan-review/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
+export function requirementsReviewPrompt(root: RunRoot, round: number): string {
+  if (round > 1) return laterRound(root, pathOf({ kind: "requirements" }), pathOf({ kind: "log", subject: "requirements" }), "G", round);
+  return `Review ${runDir(root)}/requirements.md. It is the result of an interview between the planner and the user, confirmed by the user. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
 The planner will write an implementation plan from the task and this file.
 Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent. An agreed question listed under 'Skipped questions' was not put to the user because his answer to another question denied its premise; it is not an issue unless you name what in the task, the codebase or the file establishes that premise.
 Put the question id or the heading in the location field.
-${logRules(pathOf({ kind: "log", subject: "requirements" }), "G", round)}`;
+${logRules(root, pathOf({ kind: "log", subject: "requirements" }), "G", round)}`;
 }
 
-export function requirementsRespondPrompt(round: number): string {
-  return `plan-review/requirements-review/review-${round}.json contains a review of plan-review/requirements.md.
-${respondRules("the point must be put to the user; the program will conduct a second interview on the accepted issues, so do not amend the file yourself")}
+export function requirementsRespondPrompt(root: RunRoot, round: number): string {
+  return `${runDir(root)}/requirements-review/review-${round}.json contains a review of ${runDir(root)}/requirements.md.
+${respondRules(root, "the point must be put to the user; the program will conduct a second interview on the accepted issues, so do not amend the file yourself")}
 Do not modify any file.`;
 }
 
-export const requirementsApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file and amend plan-review/requirements.md where a decision requires it. Do not modify any other file.
+export const requirementsApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend ${runDir(root)}/requirements.md where a decision requires it. Do not modify any other file.
 Return an empty questions_for_user array.`;
 
 // ---- plan ---------------------------------------------------------------------------------------
@@ -677,73 +683,73 @@ export const COMMAND_CEILING_MS = 1_200_000;
  * Issue #117: each execution phase runs in a Claude Code session of its own, which has not seen the planning; the plan's
  * step texts carry what its implementer cannot recover from the files the execution prompt names and the codebase.
  */
-export const PLAN_STEP_SELF_CONTAINED_RULE = `Each execution phase begins a new Claude Code session, which carries out the phase's remaining steps having read only the task, plan-review/requirements.md, plan-review/user-decisions.md and plan-review/plan.json, and not this planning. So write each step's text to state the facts and the reasons its choices depend on (the files, the decided behavior, why an approach was chosen over another) wherever the implementer could not recover them from those files and the codebase.`;
+export const planStepSelfContainedRule = (root: RunRoot): string => `Each execution phase begins a new Claude Code session, which carries out the phase's remaining steps having read only the task, ${runDir(root)}/requirements.md, ${runDir(root)}/user-decisions.md and ${runDir(root)}/plan.json, and not this planning. So write each step's text to state the facts and the reasons its choices depend on (the files, the decided behavior, why an approach was chosen over another) wherever the implementer could not recover them from those files and the codebase.`;
 export const PLAN_STEP_DURATION_RULE = `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. No step may end with a command expected to run longer than that, such as a full test suite that may outlast it; a step's verification runs only the suites its change touches.`;
 /** The execution prompt's sentences on long commands (issue #78, requirements Q6). */
 export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. Start a command that may run longer than a few minutes, such as a full test suite, in the background with the Bash tool, and wait for it to end before you report the step done. While it runs, read and search, but do not edit any file: the suites read the working tree, and a result must belong to the files as they were when it started.`;
 
-export const PLAN_FORMAT = `Return the complete plan in the field 'plan': its stages in order, each with its number and a title, and in each stage its steps in order, each with an id, its number within the stage, a short label of one line, and its full text in Markdown. Return the whole plan every time, including the parts that did not change. The program writes plan-review/plan.json and plan-review/plan.md from it; do not write either file.`;
+export const planFormat = (root: RunRoot): string => `Return the complete plan in the field 'plan': its stages in order, each with its number and a title, and in each stage its steps in order, each with an id, its number within the stage, a short label of one line, and its full text in Markdown. Return the whole plan every time, including the parts that did not change. The program writes ${runDir(root)}/plan.json and ${runDir(root)}/plan.md from it; do not write either file.`;
 /** The rule of step identity (G-R1-1), which validatePlan in src/plan.ts enforces and the repair turn repeats. */
-export const PLAN_ID_RULE = `Every step has an id (S1, S2, …) that is unique across the plan. A step that stays in the plan keeps its id in every revision, and a new step gets an id not used before in this plan. A step whose status in plan-review/plan.json is 'done' stays in the plan, with its id, label and text unchanged; it may move to another stage. Stage and step numbers are for display only.`;
+export const planIdRule = (root: RunRoot): string => `Every step has an id (S1, S2, …) that is unique across the plan. A step that stays in the plan keeps its id in every revision, and a new step gets an id not used before in this plan. A step whose status in ${runDir(root)}/plan.json is 'done' stays in the plan, with its id, label and text unchanged; it may move to another stage. Stage and step numbers are for display only.`;
 /** The statuses of plan.json as the agents read them. */
-const PLAN_STATUSES = `Each step of plan-review/plan.json has a status that the program records: a step with status 'done' is implemented, a step with status 'unfinished' was begun and not completed, and a step with status 'pending' is not yet begun.`;
+const planStatuses = (root: RunRoot): string => `Each step of ${runDir(root)}/plan.json has a status that the program records: a step with status 'done' is implemented, a step with status 'unfinished' was begun and not completed, and a step with status 'pending' is not yet begun.`;
 
 /** The requirements as the prompts name them, where the question phase ran. */
-export const REQUIREMENTS_SENTENCE = "plan-review/requirements.md contains the user's confirmed answers and decisions from the interview. The plan must follow it.";
+export const requirementsSentence = (root: RunRoot): string => `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions from the interview. The plan must follow it.`;
 /** The user's decisions as an execution call is told of them; the file exists from the start of a run. */
-export const USER_DECISIONS_SENTENCE = "plan-review/user-decisions.md contains input and decisions by the user, which must be followed.";
+export const userDecisionsSentence = (root: RunRoot): string => `${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed.`;
 
-export function initialPlanPrompt(task: string, withRequirements: boolean): string {
-  const requirements = withRequirements ? `${REQUIREMENTS_SENTENCE}\n` : "";
+export function initialPlanPrompt(root: RunRoot, task: string, withRequirements: boolean): string {
+  const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
-${requirements}${PLAN_FORMAT}
+${requirements}${planFormat(root)}
 ${PLAN_STEP_DURATION_RULE}
-${PLAN_STEP_SELF_CONTAINED_RULE}
-${PLAN_ID_RULE}
+${planStepSelfContainedRule(root)}
+${planIdRule(root)}
 Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
 }
 
-export const revisePlanPrompt = `Execution has stopped. The last entry of plan-review/user-decisions.md contains the user's input for this stop.
-Revise the plan in plan-review/plan.json for the remaining work: keep the steps with status 'done', and change, add, or remove the other steps as the user's input and the current state of the codebase require.
-${PLAN_STATUSES}
-${PLAN_FORMAT}
+export const revisePlanPrompt = (root: RunRoot): string => `Execution has stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.
+Revise the plan in ${runDir(root)}/plan.json for the remaining work: keep the steps with status 'done', and change, add, or remove the other steps as the user's input and the current state of the codebase require.
+${planStatuses(root)}
+${planFormat(root)}
 ${PLAN_STEP_DURATION_RULE}
-${PLAN_STEP_SELF_CONTAINED_RULE}
-${PLAN_ID_RULE}
+${planStepSelfContainedRule(root)}
+${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}`;
 
-export const planApplyDecisionsPrompt = `plan-review/user-decisions.md has new entries. Read the file and amend the plan in plan-review/plan.json where a decision requires it.
-${PLAN_FORMAT}
+export const planApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend the plan in ${runDir(root)}/plan.json where a decision requires it.
+${planFormat(root)}
 ${PLAN_STEP_DURATION_RULE}
-${PLAN_STEP_SELF_CONTAINED_RULE}
-${PLAN_ID_RULE}
+${planStepSelfContainedRule(root)}
+${planIdRule(root)}
 Do not modify any file.
 Return an empty questions_for_user array.`;
 
-export function planReviewPrompt(phase: number, round: number, withRequirements: boolean): string {
+export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean): string {
   const prefix = `P${phase}`;
-  if (round > 1) return laterRound(pathOf({ kind: "planFile" }), pathOf({ kind: "log", subject: { plan: phase } }), prefix, round);
+  if (round > 1) return laterRound(root, pathOf({ kind: "planFile" }), pathOf({ kind: "log", subject: { plan: phase } }), prefix, round);
   const requirements = withRequirements
-    ? "plan-review/requirements.md contains the user's confirmed answers and decisions. It must be followed; raise an issue when a plan step contradicts it or omits something it requires.\n"
+    ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions. It must be followed; raise an issue when a plan step contradicts it or omits something it requires.\n`
     : "";
-  return `Review the implementation plan in plan-review/plan.json against the codebase. Do not modify any file.
-${requirements}${PLAN_STATUSES} Steps with status 'done' are already implemented in the codebase; review the remaining steps, and review whether the remaining steps are consistent with the implemented state.
+  return `Review the implementation plan in ${runDir(root)}/plan.json against the codebase. Do not modify any file.
+${requirements}${planStatuses(root)} Steps with status 'done' are already implemented in the codebase; review the remaining steps, and review whether the remaining steps are consistent with the implemented state.
 Put the step's id in the location field.
-${logRules(pathOf({ kind: "log", subject: { plan: phase } }), prefix, round)}`;
+${logRules(root, pathOf({ kind: "log", subject: { plan: phase } }), prefix, round)}`;
 }
 
-export function planRespondPrompt(phase: number, round: number): string {
-  return `plan-review/planning-${phase}/review-${round}.json contains a review of the plan in plan-review/plan.json.
-${respondRules("you amend the plan for it")}
-${PLAN_FORMAT}
+export function planRespondPrompt(root: RunRoot, phase: number, round: number): string {
+  return `${runDir(root)}/planning-${phase}/review-${round}.json contains a review of the plan in ${runDir(root)}/plan.json.
+${respondRules(root, "you amend the plan for it")}
+${planFormat(root)}
 ${PLAN_STEP_DURATION_RULE}
-${PLAN_STEP_SELF_CONTAINED_RULE}
-${PLAN_ID_RULE}
+${planStepSelfContainedRule(root)}
+${planIdRule(root)}
 Do not modify any file.`;
 }
 
@@ -753,7 +759,7 @@ export const REPORT_STEP_TOOL = "report_step";
 /** The name under which Claude Code calls the tool, and under which hooks and permissions see it. */
 export const REPORT_STEP_TOOL_NAME = `mcp__${REPORT_STEP_SERVER}__${REPORT_STEP_TOOL}`;
 export const REPORT_STEP_STATUSES = ["started", "done"] as const;
-export const REPORT_STEP_DESCRIPTION = `Report the progress of a step of the plan in plan-review/plan.json: call it with the step's id and ${REPORT_STEP_STATUSES.map((s) => `'${s}'`).join(" when you begin the step, and ")} when the step is complete and verified.`;
+export const REPORT_STEP_DESCRIPTION = `Report the progress of a step of the plan you are carrying out, which the program records in plan.json in the run's records directory: call it with the step's id and ${REPORT_STEP_STATUSES.map((s) => `'${s}'`).join(" when you begin the step, and ")} when the step is complete and verified.`;
 /** report_step's answers: the step recorded, or an id that is not in the plan (Q3: nothing changes, the run goes on). */
 export function stepRecordedText(id: string, status: string): string {
   return `Recorded: step ${id} is ${status}.`;
@@ -764,12 +770,19 @@ export function unknownStepText(id: string, ids: readonly string[]): string {
 /** report_step's answer when the report could not be written; the call is ended with the error. */
 export const STEP_NOT_RECORDED = "The report could not be recorded; the program ends this call.";
 /** The denial of an edit of plan.json or plan.md (issue #6, F1): the program writes both from the plan Claude Code returns. */
-export const PLAN_FILES_DENIED = "plan-review/plan.json and plan-review/plan.md are written by the program from the plan you return; do not edit them.";
+export const planFilesDenied = (root: RunRoot): string => `${runDir(root)}/plan.json and ${runDir(root)}/plan.md are written by the program from the plan you return; do not edit them.`;
+/** The denial of an edit outside the run's records directory during a planning call (behavior 3; issue #120: the run's own). */
+export const planningEditDenied = (root: RunRoot): string => `During a planning phase, only files under ${runDir(root)}/ may be written.`;
+/** The denial of any other tool during a planning call. */
+export const planningToolDenied = (root: RunRoot): string => `During a planning phase, only reading and writing under ${runDir(root)}/ are permitted.`;
+/** What Claude Code is told at a stop of an execution call (behavior 4), the answer recorded in the run's user-decisions.md. */
+export const stopRecordedText = (root: RunRoot): string =>
+  `The user's answer is recorded in ${recordPath(root, { kind: "decisions" })}. Do not continue the implementation. Make no tool call other than the final structured output, and end your turn with status 'needs_input', a summary, and the remaining work. The plan will be revised and reviewed before work continues.`;
 /** The validation repair turn of a plan (issue #6, G-R1-1): what was wrong, and the rule. */
-export function planRepairPrompt(problems: PlanProblems): string {
+export function planRepairPrompt(root: RunRoot, problems: PlanProblems): string {
   return `Your structured output matched the schema, but the program cannot accept the plan:
 ${planProblemLines(problems).join("\n")}
-${PLAN_ID_RULE}
+${planIdRule(root)}
 Return the complete output again, corrected. Do not modify any file.`;
 }
 
@@ -814,10 +827,10 @@ ${relayedQuestionText(RELAYED_EXAMPLE)}`;
  * The prompt of an execution call. Each execution phase runs in a Claude Code session of its own (issue #117), which has
  * not seen the planning, so the prompt names the task and the records it must follow.
  */
-export function executePrompt(task: string, withRequirements: boolean): string {
-  const requirements = withRequirements ? `${REQUIREMENTS_SENTENCE}\n` : "";
-  return `${requirements}${USER_DECISIONS_SENTENCE}\nThe plan in plan-review/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
-Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, call it with the step's id and the status '${REPORT_STEP_STATUSES[0]}'; when the step is complete and verified, call it with the step's id and the status '${REPORT_STEP_STATUSES[1]}'. ${resumeStepSentence} The program records the status in plan-review/plan.json; do not edit plan-review/plan.json or plan-review/plan.md, and do not change the plan.
+export function executePrompt(root: RunRoot, task: string, withRequirements: boolean): string {
+  const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
+  return `${requirements}${userDecisionsSentence(root)}\nThe plan in ${runDir(root)}/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
+Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, call it with the step's id and the status '${REPORT_STEP_STATUSES[0]}'; when the step is complete and verified, call it with the step's id and the status '${REPORT_STEP_STATUSES[1]}'. ${resumeStepSentence} The program records the status in ${runDir(root)}/plan.json; do not edit ${runDir(root)}/plan.json or ${runDir(root)}/plan.md, and do not change the plan.
 If you need information or a decision from the user, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.
 ${RELAYED_SHAPE}
 ${questionWritingRules()}
@@ -847,8 +860,8 @@ const correctableIds = (ids: readonly string[]): string => ids.join(", ");
  * The corrective turn (issue #30): a response accepted issues in full or in part, and the reviewed file did not change.
  * correctiveValidation in src/round.ts accepts exactly the changes this prompt allows.
  */
-export function correctivePrompt(fileLabel: string, round: number, acceptedIds: readonly string[]): string {
-  return `plan-review/${fileLabel} did not change during your response to the review of cycle ${round}, although you accepted ${correctableIds(acceptedIds)} in full or in part.
+export function correctivePrompt(root: RunRoot, fileLabel: string, round: number, acceptedIds: readonly string[]): string {
+  return `${runDir(root)}/${fileLabel} did not change during your response to the review of cycle ${round}, although you accepted ${correctableIds(acceptedIds)} in full or in part.
 Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale.
 Return the complete response again in the same form as before; where your response carries the plan, the question list or the analysis, return it whole, with the amendments applied.
 Only the action and the rationale of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
@@ -909,8 +922,8 @@ export function implementationEndedLine(label: string, status: string): string {
  * The end of a run names the run's main Claude Code session (issue #117): the planning, the interview and the responses to
  * reviews ran in it; each execution phase and each decision ran in a session of its own, which the usage line counts.
  */
-export function mainSessionLine(id: string | null): string {
-  return `Claude Code main session id: ${id ?? "none"} (the planning, the interview and the responses to reviews; each implementation phase and each decision ran in a session of its own, counted below and listed in plan-review/usage.jsonl)`;
+export function mainSessionLine(root: RunRoot, id: string | null): string {
+  return `Claude Code main session id: ${id ?? "none"} (the planning, the interview and the responses to reviews; each implementation phase and each decision ran in a session of its own, counted below and listed in ${runDir(root)}/usage.jsonl)`;
 }
 /** The start of a planning phase: the first plan, or a revision. */
 export function planningBeganLine(label: string, first: boolean): string {
@@ -1001,21 +1014,21 @@ export function cycleInvalidText(parts: readonly string[]): string {
 /** What the work review of phase k ended with: convergence, or leaving for a planning phase in a round. */
 export type WorkReviewEnd = "converged" | Readonly<{ revisedInRound: number }>;
 
-export function workReviewPrompt(phase: number, round: number, withRequirements: boolean): string {
+export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean): string {
   const prefix = `W${phase}`;
   const log = pathOf({ kind: "log", subject: { work: phase } });
   const changes = pathOf({ kind: "changes", phase });
   if (round > 1)
-    return `plan-review/${changes} has been rewritten from the current project for this round.
-${laterRound(changes, log, prefix, round)}`;
+    return `${runDir(root)}/${changes} has been rewritten from the current project for this round.
+${laterRound(root, changes, log, prefix, round)}`;
   const requirements = withRequirements
-    ? "plan-review/requirements.md contains the user's confirmed answers and decisions. Raise an issue when the work contradicts it or omits something it requires of a completed step.\n"
+    ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions. Raise an issue when the work contradicts it or omits something it requires of a completed step.\n`
     : "";
-  return `Review the work done in the project since the run began. plan-review/${changes} is the diff of the project against its state at the start of the run (new files in full, committed changes included); read it and the project itself. Do not modify any file.
-Review the work against the plan in plan-review/plan.json. ${PLAN_STATUSES} Steps with status 'done' are implemented; review their work against the plan. Missing work of a step with another status is not an issue.
+  return `Review the work done in the project since the run began. ${runDir(root)}/${changes} is the diff of the project against its state at the start of the run (new files in full, committed changes included); read it and the project itself. Do not modify any file.
+Review the work against the plan in ${runDir(root)}/plan.json. ${planStatuses(root)} Steps with status 'done' are implemented; review their work against the plan. Missing work of a step with another status is not an issue.
 ${requirements}Raise an issue for work that does not implement a completed step, contradicts the plan or the requirements, or introduces a defect.
 Put the file path, with a line number where it helps, in the location field.
-${logRules(log, prefix, round)}`;
+${logRules(root, log, prefix, round)}`;
 }
 
 /**
@@ -1035,21 +1048,21 @@ export type RespondContext = Readonly<{ review: Review; log: readonly LogEntry[]
  */
 export type WorkExecution = Readonly<{ outcome: ExecOutcome; plan: string }>;
 
-export function workRespondPrompt(phase: number, round: number, context: RespondContext, execution: WorkExecution): string {
+export function workRespondPrompt(root: RunRoot, phase: number, round: number, context: RespondContext, execution: WorkExecution): string {
   const entries = context.log.filter((e) => e.phase === phase);
-  return `plan-review/${pathOf({ kind: "review", subject: { work: phase }, round })} contains a review of the work done in the project (the diff in plan-review/${pathOf({ kind: "changes", phase })}).
+  return `${runDir(root)}/${pathOf({ kind: "review", subject: { work: phase }, round })} contains a review of the work done in the project (the diff in ${runDir(root)}/${pathOf({ kind: "changes", phase })}).
 You cannot use any tool in this response: the review, the earlier entries of this work review's log, the diff, the report of execution phase ${phase} and the plan with its steps' statuses are below. Execution phase ${phase} ran in a Claude Code session of its own, whose history is not in this one. Answer with the final structured output only.
-${respondRules("the correction will be made in a later execution phase after the plan has been revised; do not modify any file")}
+${respondRules(root, "the correction will be made in a later execution phase after the plan has been revised; do not modify any file")}
 Every correction, including one that a self-correction calls for, is made in a later execution phase; state in the rationale what the correction requires.
 Do not modify any file.
 
 The review (${pathOf({ kind: "review", subject: { work: phase }, round })}):
 ${JSON.stringify(context.review, null, 2)}
 
-The earlier entries of work review ${phase} in plan-review/${pathOf({ kind: "log", subject: { work: phase } })}:
+The earlier entries of work review ${phase} in ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })}:
 ${entries.length === 0 ? "(none)" : JSON.stringify(entries, null, 2)}
 
-The diff (plan-review/${pathOf({ kind: "changes", phase })}):
+The diff (${runDir(root)}/${pathOf({ kind: "changes", phase })}):
 ${context.changes ?? "(not available)"}
 
 The report of execution phase ${phase}:
@@ -1057,23 +1070,23 @@ Status: ${execution.outcome.status}
 Summary: ${execution.outcome.summary || "none"}
 Remaining work: ${execution.outcome.remainingWork || "not reported"}${execution.outcome.question === "" ? "" : `\nQuestion at the stop: ${execution.outcome.question}`}
 
-The plan as execution phase ${phase} ended (plan-review/plan.md):
+The plan as execution phase ${phase} ended (${runDir(root)}/plan.md):
 ${execution.plan}`;
 }
 
-export function revisePlanAfterExecutionPrompt(phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>): string {
-  const stop = end.stopped ? "\nExecution stopped. The last entry of plan-review/user-decisions.md contains the user's input for this stop." : "";
+export function revisePlanAfterExecutionPrompt(root: RunRoot, phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>): string {
+  const stop = end.stopped ? `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.` : "";
   const review =
     end.workReview === "converged"
       ? `\nWork review ${phase} found no issue in the work so far.`
-      : `\nWork review ${phase} ended in round ${end.workReview.revisedInRound} with accepted issues or a user decision: plan-review/${pathOf({ kind: "round", subject: { work: phase }, round: end.workReview.revisedInRound })}, plan-review/${pathOf({ kind: "log", subject: { work: phase } })} and the last entries of plan-review/user-decisions.md.`;
+      : `\nWork review ${phase} ended in round ${end.workReview.revisedInRound} with accepted issues or a user decision: ${runDir(root)}/${pathOf({ kind: "round", subject: { work: phase }, round: end.workReview.revisedInRound })}, ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })} and the last entries of ${runDir(root)}/user-decisions.md.`;
   return `Execution phase ${phase} has ended.${stop}${review}
-Revise the plan in plan-review/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
-${PLAN_STATUSES} An unfinished step counts as remaining.
-${PLAN_FORMAT}
+Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
+${planStatuses(root)} An unfinished step counts as remaining.
+${planFormat(root)}
 ${PLAN_STEP_DURATION_RULE}
-${PLAN_STEP_SELF_CONTAINED_RULE}
-${PLAN_ID_RULE}
+${planStepSelfContainedRule(root)}
+${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}`;
@@ -1451,10 +1464,10 @@ export function optionLine(i: number, option: Readonly<{ label: string; descript
 }
 
 /** The call that produces the analysis of a decision (a planning call: plan-review/ only, behavior 3). */
-export function decisionAnalysisPrompt(format: string, question: DecisionPromptQuestion, context: DecisionContext): string {
+export function decisionAnalysisPrompt(root: RunRoot, format: string, question: DecisionPromptQuestion, context: DecisionContext): string {
   const options = question.options.map((o, i) => optionLine(i, o)).join("\n");
-  const requirements = context.requirements === null ? "plan-review/requirements.md does not exist yet." : `plan-review/requirements.md:\n${context.requirements}`;
-  const plan = context.plan === null ? "plan-review/plan.md does not exist yet." : `plan-review/plan.md:\n${context.plan}`;
+  const requirements = context.requirements === null ? `${runDir(root)}/requirements.md does not exist yet.` : `${runDir(root)}/requirements.md:\n${context.requirements}`;
+  const plan = context.plan === null ? `${runDir(root)}/plan.md does not exist yet.` : `${runDir(root)}/plan.md:\n${context.plan}`;
   return `The user must answer a question that offers a choice between options, and has asked for a representation of the arguments for and against each option before choosing. Produce that representation as the structured output.
 You may read the project to understand the system; do not modify any file, and do not use the AskUserQuestion tool. Everything you reason from must be in the project or in this prompt; state any other information as unknown, as the instructions require.
 
@@ -1506,36 +1519,36 @@ Return the complete output again, corrected. Do not modify any file.`;
 }
 
 /** Codex's review of decision k's analysis, against the format and the question. */
-export function decisionReviewPrompt(format: string, k: number, round: number): string {
+export function decisionReviewPrompt(root: RunRoot, format: string, k: number, round: number): string {
   const prefix = `D${k}`;
   const analysis = pathOf({ kind: "analysis", decision: k });
   const log = pathOf({ kind: "log", subject: { decision: k } });
-  const own = `plan-review/${log} holds the issues of every decision of the run; the issues of this decision are the entries whose ids begin with ${prefix}-, and only those concern this review.`;
-  if (round > 1) return `${own}\n${laterRound(analysis, log, prefix, round)}`;
-  return `Review the representation of the arguments for and against the options of a decision in plan-review/${analysis} (its field 'analysis'). The question and its options are in plan-review/${pathOf({ kind: "decisionQuestion", decision: k })}. Do not modify any file.
+  const own = `${runDir(root)}/${log} holds the issues of every decision of the run; the issues of this decision are the entries whose ids begin with ${prefix}-, and only those concern this review.`;
+  if (round > 1) return `${own}\n${laterRound(root, analysis, log, prefix, round)}`;
+  return `Review the representation of the arguments for and against the options of a decision in ${runDir(root)}/${analysis} (its field 'analysis'). The question and its options are in ${runDir(root)}/${pathOf({ kind: "decisionQuestion", decision: k })}. Do not modify any file.
 The representation must follow the instructions below. The program renders it: it places the headings "Advantages:" and "Disadvantages:" and the labels of the entries ("Advantage 1:", "Disadvantage 1:"), offsets each counterargument from the element it disputes, and assigns the equivalence symbols from the field equivalent_to, which names the id of the equivalent entry; do not raise an issue about those. A column of kind "unclear" is how the representation states, in place of an option's arguments, what is unclear about the option and which readings are possible; review whether the option is in fact unclear in that sense and whether the statement says so. Counterarguments, defenses and counterarguments to a defense that stand together begin with "But,", "On the other hand," or "Then again," for the first and "Also," for each further one.
 
 ${DECISION_FORMAT_AUTHORITY}
 
 ${format}
 
-Raise an issue for every departure from these instructions, for example: an element absent or false in an entry; an entry whose effect on persons is not stated; an entry placed in a column contrary to the placement rules; an outcome listed that is the same under every option; a counterargument that disputes no element of its entry or is not placed at the element it disputes, or that does not begin with the required words; a reversal not listed in full as an entry; an argument equivalent to an entry that repeats its content instead of referring to it; a claim of a measurement, figure, source or property that is invented, or an unknown value assumed instead of stated as unknown; an argument, counterargument or defense that an informed person could make and that is missing; a column missing or not matching an option; a recommendation that is not supported by the comparison that "Recommendation" requires. The context of the run is in the project and under plan-review/.
+Raise an issue for every departure from these instructions, for example: an element absent or false in an entry; an entry whose effect on persons is not stated; an entry placed in a column contrary to the placement rules; an outcome listed that is the same under every option; a counterargument that disputes no element of its entry or is not placed at the element it disputes, or that does not begin with the required words; a reversal not listed in full as an entry; an argument equivalent to an entry that repeats its content instead of referring to it; a claim of a measurement, figure, source or property that is invented, or an unknown value assumed instead of stated as unknown; an argument, counterargument or defense that an informed person could make and that is missing; a column missing or not matching an option; a recommendation that is not supported by the comparison that "Recommendation" requires. The context of the run is in the project and under ${runDir(root)}/.
 Put the entry id or the argument id, with the column's option, in the location field.
 ${own}
-${logRules(log, prefix, round)}`;
+${logRules(root, log, prefix, round)}`;
 }
 
 /** Claude Code's response to a review of decision k: the dispositions and the complete amended analysis. */
-export function decisionRespondPrompt(k: number, round: number): string {
-  return `plan-review/${pathOf({ kind: "review", subject: { decision: k }, round })} contains a review of the representation in plan-review/${pathOf({ kind: "analysis", decision: k })}, which you produced under the instructions of docs/decision-making.md given earlier in this session.
-${respondRules("you amend the analysis for it")}
+export function decisionRespondPrompt(root: RunRoot, k: number, round: number): string {
+  return `${runDir(root)}/${pathOf({ kind: "review", subject: { decision: k }, round })} contains a review of the representation in ${runDir(root)}/${pathOf({ kind: "analysis", decision: k })}, which you produced under the instructions of docs/decision-making.md given earlier in this session.
+${respondRules(root, "you amend the analysis for it")}
 Return in 'analysis' the complete analysis after your amendments, including the parts that did not change; the program writes it. Do not modify any file.`;
 }
 
 /** The call that applies the user's decisions at a pause of decision k's review. */
-export function decisionApplyDecisionsPrompt(k: number): string {
-  return `plan-review/user-decisions.md has new entries. Read the file.
-Return in 'analysis' the complete analysis of plan-review/${pathOf({ kind: "analysis", decision: k })}, amended where a decision requires it; the program writes it. Do not modify any file.`;
+export function decisionApplyDecisionsPrompt(root: RunRoot, k: number): string {
+  return `${runDir(root)}/user-decisions.md has new entries. Read the file.
+Return in 'analysis' the complete analysis of ${runDir(root)}/${pathOf({ kind: "analysis", decision: k })}, amended where a decision requires it; the program writes it. Do not modify any file.`;
 }
 
 /**
@@ -2401,6 +2414,6 @@ export function transportFacts(agent: "claude" | "codex", what: string, attempts
 }
 
 /** The facts of a relayed question without the shape that a context call is given (S14, Q2): the plan being carried out. */
-export function relayedFacts(plan: string | null): string {
-  return `Claude Code asked this question while it carried out the plan, and waits for the answer; the plan is revised and reviewed with the answer before the work continues.\n${plan === null ? "plan-review/plan.md does not exist." : `The plan being carried out (plan-review/plan.md):\n${plan}`}`;
+export function relayedFacts(root: RunRoot, plan: string | null): string {
+  return `Claude Code asked this question while it carried out the plan, and waits for the answer; the plan is revised and reviewed with the answer before the work continues.\n${plan === null ? `${runDir(root)}/plan.md does not exist.` : `The plan being carried out (${runDir(root)}/plan.md):\n${plan}`}`;
 }

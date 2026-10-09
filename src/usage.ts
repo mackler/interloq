@@ -65,9 +65,10 @@ export const summarizeUsage = ({ calls: lines, waits }: UsageLines): UsageSummar
   };
 };
 
-export const renderUsage = (s: UsageSummary): string => {
+/** The summary as the end of a run says it; `details` is the run's usage.jsonl as the run names it (issue #120: the run's own). */
+export const renderUsage = (s: UsageSummary, details: string): string => {
   const unidentified = s.unidentifiedCalls > 0 ? `, ${s.unidentifiedCalls} calls without a session id` : "";
   const waited =
     s.limitWaits === 0 ? "" : ` Waited for Claude Code's usage limits: ${s.limitWaits} ${s.limitWaits === 1 ? "time" : "times"}, ${durationText(s.waitedMs)} in all${s.lastInterrupted ? " (the last interrupted)" : ""}.`;
-  return `Claude Code: ${s.claudeCalls} calls in ${s.claudeSessions} sessions${unidentified}, total_cost_usd = ${s.costUsd.toFixed(2)} (the sessions' last reported running totals, an estimate by the client). Codex: ${s.codexTurns} turns, ${s.inputTokens} input tokens, ${s.outputTokens} output tokens. Details: plan-review/usage.jsonl${waited}`;
+  return `Claude Code: ${s.claudeCalls} calls in ${s.claudeSessions} sessions${unidentified}, total_cost_usd = ${s.costUsd.toFixed(2)} (the sessions' last reported running totals, an estimate by the client). Codex: ${s.codexTurns} turns, ${s.inputTokens} input tokens, ${s.outputTokens} output tokens. Details: ${details}${waited}`;
 };

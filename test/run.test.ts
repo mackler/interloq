@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { Effect, Fiber } from "effect";
 import { run } from "../src/run.ts";
 import { countOfKind, foreseenPhases, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
-import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -102,7 +102,7 @@ test("issue #117: two execution phases run in two sessions of their own, each wi
   assert.equal(probe.planner.execSessions.length, 2);
   assert.notEqual(first, second);
   assert.ok(first !== "test-session" && second !== "test-session", probe.planner.execSessions.join(", "));
-  const expected = prompts.executePrompt(scriptedTask, false);
+  const expected = prompts.executePrompt(TEST_ROOT, scriptedTask, false);
   assert.deepEqual(probe.planner.execPrompts, [expected, expected]);
   assert.ok(expected.includes(scriptedTask));
   assert.deepEqual(probe.planner.history.get(second), [expected], "the second execution's session holds only its own prompt");
@@ -471,7 +471,7 @@ test("a plan that breaks the id rule gets one validation repair turn, and a seco
     execs: [finished],
   });
   assert.equal(await runTask(repaired.layer), 1);
-  assert.equal(repaired.probe.planner.prompts[1], planRepairPrompt({ duplicateIds: ["S1"], emptyIds: 0, removedDone: [], changedDone: [] }));
+  assert.equal(repaired.probe.planner.prompts[1], planRepairPrompt(TEST_ROOT, { duplicateIds: ["S1"], emptyIds: 0, removedDone: [], changedDone: [] }));
   const { layer } = testLayer(tempRepo(), { steps: [{ output: { ...noQuestions, plan: twice } }, { output: { ...noQuestions, plan: twice } }] });
   await runFails(layer, "PlanInvalid", /S1/);
 });

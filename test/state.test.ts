@@ -126,7 +126,7 @@ test("the records: decisions, feedback, usage and the invalid-reply files", asyn
   assert.match(fs.readFileSync(path.join(s.dir, "user-decisions.md"), "utf8"), /Subject: issue A\nDecision: keep it/);
   assert.match(fs.readFileSync(path.join(s.dir, "conversation.md"), "utf8"), /\*\*User decision\*\* on issue A: keep it/);
   assert.match(fs.readFileSync(path.join(s.dir, "reviewer-feedback.md"), "utf8"), /## Planning phase 1, round 2\ntoo strict/);
-  assert.match(renderUsage(summarizeUsage(await Effect.runPromise(s.usageLines()))), /Claude Code: 1 calls in 1 sessions, total_cost_usd = 1\.50 .* Codex: 1 turns, 10 input tokens, 5 output tokens/);
+  assert.match(renderUsage(summarizeUsage(await Effect.runPromise(s.usageLines())), "usage.jsonl"), /Claude Code: 1 calls in 1 sessions, total_cost_usd = 1\.50 .* Codex: 1 turns, 10 input tokens, 5 output tokens/);
   assert.equal(await Effect.runPromise(s.saveInvalidReply("codex", "x")), path.join("plan-review", TEST_ROOT, "invalid-replies", "codex-1.json"));
   assert.equal(await Effect.runPromise(s.saveInvalidReply("codex", "y")), path.join("plan-review", TEST_ROOT, "invalid-replies", "codex-2.json"));
   assert.equal(fs.readFileSync(path.join(s.dir, "invalid-replies", "codex-2.json"), "utf8"), "y");
@@ -292,7 +292,7 @@ test("usageSummary reports the running total of each Claude Code session, not th
   await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s-1", turns: 6, totalCostUsd: 0.5 }));
   await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s-1", turns: 4, totalCostUsd: 1.25 }));
   await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s-2", turns: 2, totalCostUsd: 0.25 }));
-  assert.match(renderUsage(summarizeUsage(await Effect.runPromise(s.usageLines()))), /Claude Code: 3 calls in 2 sessions, total_cost_usd = 1\.50 \(the sessions' last reported running totals, an estimate by the client\)/);
+  assert.match(renderUsage(summarizeUsage(await Effect.runPromise(s.usageLines())), "usage.jsonl"), /Claude Code: 3 calls in 2 sessions, total_cost_usd = 1\.50 \(the sessions' last reported running totals, an estimate by the client\)/);
 });
 
 // Finding 22 of docs/functional-design-review.md: the time was read and the JSON serialized when the

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
-import { workExecution } from "./helpers.ts";
+import { workExecution , TEST_ROOT } from "./helpers.ts";
 
 test("the context rule names the five points, in the words the reviewer checks", () => {
   const context = prompts.QUESTION_RULES.find((r) => r.id === "context")!;
@@ -14,14 +14,14 @@ test("the context rule names the five points, in the words the reviewer checks",
 
 test("every prompt that may return questions_for_user carries the writer's rendering", () => {
   const texts = [
-    prompts.planRespondPrompt(1, 1),
-    prompts.requirementsRespondPrompt(1),
-    prompts.questionRespondPrompt(1),
-    prompts.decisionRespondPrompt(1, 1),
-    prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
-    prompts.initialPlanPrompt("t", false),
-    prompts.revisePlanPrompt,
-    prompts.revisePlanAfterExecutionPrompt(1, { stopped: false, workReview: "converged" }),
+    prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+    prompts.requirementsRespondPrompt(TEST_ROOT, 1),
+    prompts.questionRespondPrompt(TEST_ROOT, 1),
+    prompts.decisionRespondPrompt(TEST_ROOT, 1, 1),
+    prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
+    prompts.initialPlanPrompt(TEST_ROOT, "t", false),
+    prompts.revisePlanPrompt(TEST_ROOT),
+    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: false, workReview: "converged" }),
   ];
   for (const text of texts) assert.ok(text.includes(prompts.questionWritingRules()), text.slice(0, 80));
 });
@@ -33,12 +33,12 @@ test("the question list prompt carries the writer's rules and asks for a context
   assert.ok(list.includes(prompts.questionWritingRules()));
   assert.match(list, /context: the context paragraph that precedes the question/);
   assert.match(list, /The rules apply to the question, its reason, its proposed answers and its default alike/);
-  const review = prompts.questionReviewPrompt(1);
+  const review = prompts.questionReviewPrompt(TEST_ROOT, 1);
   assert.ok(review.includes(prompts.questionReviewCriteria()));
   // The criteria the review had before stay; ambiguity is the criterion of determinateOptions since issue #96.
   assert.match(review, /a question combines several decisions/);
   assert.doesNotMatch(review, /a question is ambiguous or combines/);
-  const respond = prompts.questionRespondPrompt(1);
+  const respond = prompts.questionRespondPrompt(TEST_ROOT, 1);
   assert.ok(respond.includes(prompts.questionWritingRules()));
 });
 

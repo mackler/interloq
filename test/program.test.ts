@@ -5,7 +5,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Clock, Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
-import { finished, scriptedTask, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry } from "./helpers.ts";
+import { finished, scriptedTask, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT } from "./helpers.ts";
+import type { RunRoot } from "../src/artifacts.ts";
 import { mainSessionLine, workReviewBeganLine } from "../src/prompts.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
@@ -13,10 +14,16 @@ const noQuestions = { questions_for_user: [] };
 const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program({ task: scriptedTask, project: probe.project }, wiring)));
 const said = (probe: WiringProbe): string => probe.ui.said.join("\n");
 
+/** The run's root, as the program allocated it (issue #120): its records directory relative to plan-review/. */
+const rootOf = (probe: WiringProbe): RunRoot => path.relative(path.join(probe.project, "plan-review"), probe.dir).split(path.sep).join("/") as RunRoot;
+/** The session line of the run, naming its own usage.jsonl. */
+const sessionLine = (probe: WiringProbe, id: string | null): string => mainSessionLine(rootOf(probe), id);
+/** The session line of a run halted before its records directory was allocated: no session, whatever the path it names. */
+const NO_SESSION = /^Claude Code main session id: none \(/;
 /** The lines every ending prints last: the main Claude Code session id and the usage summary. */
 const assertTail = (probe: WiringProbe): void => {
   const lines = probe.ui.said.flatMap((text) => text.split("\n"));
-  assert.ok([mainSessionLine("test-session"), mainSessionLine(null)].includes(lines.at(-2) ?? ""), lines.at(-2));
+  assert.ok([sessionLine(probe, "test-session"), sessionLine(probe, null)].includes(lines.at(-2) ?? "") || NO_SESSION.test(lines.at(-2) ?? ""), lines.at(-2));
   assert.match(lines.at(-1) ?? "", /^Usage: /);
 };
 
@@ -25,7 +32,7 @@ test("a finished run prints the plan path and exits 0", async () => {
   assert.equal(await runProgram(probe, wiring), 0);
   assert.match(said(probe), /Claude Code reports that the task is finished after 1 implementation phase\(s\)\./);
   assert.match(said(probe), new RegExp(`Plan: ${path.join(probe.dir, "plan.md")}\\nConversation record: ${probe.dir}/conversation.md`));
-  assert.ok(said(probe).includes(mainSessionLine("test-session")));
+  assert.ok(said(probe).includes(sessionLine(probe, "test-session")));
   assertTail(probe);
 });
 
@@ -56,7 +63,7 @@ test("an invalid config prints HALTED with the file and field and exits 1, befor
   fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ maxRounds: "5" }));
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: Expected number \(at maxRounds\)/);
-  assert.ok(said(probe).includes(mainSessionLine(null)));
+  assert.ok(probe.ui.said.flatMap((t) => t.split("\n")).some((l) => NO_SESSION.test(l)));
   assertTail(probe);
   assert.deepEqual(probe.planner.prompts, []);
   assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialised");
@@ -200,7 +207,7 @@ test("issue #117: a run of two execution phases ends naming its main session as 
   });
   assert.equal(await runProgram(probe, wiring), 0);
   const lines = probe.ui.said.flatMap((text) => text.split("\n"));
-  assert.equal(lines.at(-2), mainSessionLine("test-session"));
-  assert.match(mainSessionLine("test-session"), /main session/);
+  assert.equal(lines.at(-2), sessionLine(probe, "test-session"));
+  assert.match(sessionLine(probe, "test-session"), /main session/);
   assert.match(lines.at(-1) ?? "", /Claude Code: 3 calls in 3 sessions/);
 });

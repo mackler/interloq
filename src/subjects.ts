@@ -1,7 +1,7 @@
 // The three subjects of the review procedure.
 
 import { Effect, Result } from "effect";
-import { phaseOf, recordPath, type SubjectId } from "./artifacts.ts";
+import { phaseOf, recordPath, type RunRoot, type SubjectId } from "./artifacts.ts";
 import { interview } from "./conversation.ts";
 import type { RunError } from "./errors.ts";
 import * as prompts from "./prompts.ts";
@@ -142,11 +142,13 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
     reviewPrompt: prompts.requirementsReviewPrompt,
     respond: { prompt: prompts.requirementsRespondPrompt, schema: S.PlannerResponse, after: null, capability: "records", validate: userQuestionsValidation() },
     applyDecisions: { prompt: prompts.requirementsApplyDecisionsPrompt, schema: S.PlanWriteResult, after: null, validate: userQuestionsValidation() },
-    amend: (_review, response, round) => {
-      const ids = response.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
-      if (ids.length === 0) return Effect.succeed(undefined);
-      return interview(prompts.interviewGapsPrompt(recordPath({ kind: "review", subject: id, round }), ids), "followUp", ids);
-    },
+    amend: (_review, response, round) =>
+      Effect.gen(function* () {
+        const ids = response.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
+        if (ids.length === 0) return;
+        const { root } = yield* Store;
+        yield* interview(prompts.interviewGapsPrompt(root, recordPath(root, { kind: "review", subject: id, round }), ids), "followUp", ids);
+      }),
     proceed: prompts.PROCEED_TO_PLANNING,
     leaveOnAcceptance: false,
     leaveOnDecision: false,
@@ -161,16 +163,16 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
  * program validates it against `previous`, the plan as it stood when the phase began (G-R1-1: its done steps and its
  * statuses do not change within a planning phase), and writes plan.json and plan.md.
  */
-export function planSubject(phase: number, withRequirements: boolean, previous: RecordedPlan | null): Subject<PlanResponse, PlanWrite> {
+export function planSubject(root: RunRoot, phase: number, withRequirements: boolean, previous: RecordedPlan | null): Subject<PlanResponse, PlanWrite> {
   const id = { plan: phase };
-  const validate = planValidation(previous);
+  const validate = planValidation(root, previous);
   return {
     id,
     phase: phaseOf(id),
     heading: subjectHeading(id),
     fileLabel: "plan.json",
-    reviewPrompt: (round) => prompts.planReviewPrompt(phase, round, withRequirements),
-    respond: { prompt: (round) => prompts.planRespondPrompt(phase, round), schema: S.PlanResponse, after: (output) => savePlan(phase, output.plan, previous), capability: "records", validate: bothValidations(planField<PlanResponse>(validate), userQuestionsValidation<PlanResponse>()) },
+    reviewPrompt: (root, round) => prompts.planReviewPrompt(root, phase, round, withRequirements),
+    respond: { prompt: (root, round) => prompts.planRespondPrompt(root, phase, round), schema: S.PlanResponse, after: (output) => savePlan(phase, output.plan, previous), capability: "records", validate: bothValidations(planField<PlanResponse>(validate), userQuestionsValidation<PlanResponse>()) },
     applyDecisions: { prompt: prompts.planApplyDecisionsPrompt, schema: S.PlanWrite, after: (output) => savePlan(phase, output.plan, previous), validate: bothValidations(planField<PlanWrite>(validate), userQuestionsValidation<PlanWrite>()) },
     amend: null,
     proceed: prompts.PROCEED_TO_IMPLEMENTATION,
@@ -184,10 +186,10 @@ export function planSubject(phase: number, withRequirements: boolean, previous: 
 
 /** The validation of a plan against the plan as the phase began (G-R1-1), with the repair turn's prompt. */
 export const planValidation =
-  (previous: RecordedPlan | null): Validation<Plan> =>
+  (root: RunRoot, previous: RecordedPlan | null): Validation<Plan> =>
   (plan) => {
     const validated = validatePlan(previous, plan);
-    return Result.isFailure(validated) ? Result.fail({ error: validated.failure, repair: prompts.planRepairPrompt(validated.failure) }) : Result.succeed({ value: plan, notes: validated.success.notes });
+    return Result.isFailure(validated) ? Result.fail({ error: validated.failure, repair: prompts.planRepairPrompt(root, validated.failure) }) : Result.succeed({ value: plan, notes: validated.success.notes });
   };
 /** A plan's validation for an output that carries the plan in its field `plan`. */
 export const planField =
@@ -228,9 +230,9 @@ export function decisionSubject(k: number, phase: number, format: string, valida
     phase,
     heading: subjectHeading(id),
     fileLabel: "analysis.json",
-    reviewPrompt: (round) => prompts.decisionReviewPrompt(format, k, round),
-    respond: { prompt: (round) => prompts.decisionRespondPrompt(k, round), schema: S.DecisionResponse, after: (output) => save(output.analysis), capability: "records", validate: bothValidations(validatingField<DecisionResponse>(validate), userQuestionsValidation<DecisionResponse>()) },
-    applyDecisions: { prompt: prompts.decisionApplyDecisionsPrompt(k), schema: S.DecisionApplied, after: (output) => save(output.analysis), validate: validatingField(validate) },
+    reviewPrompt: (root, round) => prompts.decisionReviewPrompt(root, format, k, round),
+    respond: { prompt: (root, round) => prompts.decisionRespondPrompt(root, k, round), schema: S.DecisionResponse, after: (output) => save(output.analysis), capability: "records", validate: bothValidations(validatingField<DecisionResponse>(validate), userQuestionsValidation<DecisionResponse>()) },
+    applyDecisions: { prompt: (root) => prompts.decisionApplyDecisionsPrompt(root, k), schema: S.DecisionApplied, after: (output) => save(output.analysis), validate: validatingField(validate) },
     amend: null,
     proceed: prompts.PROCEED_TO_CHOICE,
     leaveOnAcceptance: false,
@@ -253,8 +255,8 @@ export function workSubject(phase: number, withRequirements: boolean, execution:
     phase: phaseOf(id),
     heading: subjectHeading(id),
     fileLabel: "changes.diff",
-    reviewPrompt: (round) => prompts.workReviewPrompt(phase, round, withRequirements),
-    respond: { prompt: (round, context) => prompts.workRespondPrompt(phase, round, context, execution), schema: S.PlannerResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
+    reviewPrompt: (root, round) => prompts.workReviewPrompt(root, phase, round, withRequirements),
+    respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution), schema: S.PlannerResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
     // Never issued: leaveOnDecision ends the loop instead of a planning call (G-R1-1); typed as the plan's.
     applyDecisions: { prompt: prompts.planApplyDecisionsPrompt, schema: S.PlanWrite, after: null, validate: null },
     amend: null,

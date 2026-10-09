@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
-import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
@@ -454,5 +454,5 @@ test("issue #112: an issue of the question list raised again after a partial acc
   assert.match(conversation, new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* Question review: issue Q-R1-1, raised again`));
   assert.ok(probe.ui.said.some((line) => /issue Q-R1-1, raised again/.test(line)));
   assert.ok(!(await probe.loadLog("questions")).some((e) => e.action === "decided_by_user"));
-  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.questionReviewPrompt(3)));
+  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.questionReviewPrompt(TEST_ROOT, 3)));
 });

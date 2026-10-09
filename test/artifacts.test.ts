@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, phaseOf, recordPath, reviewedFile, subjectDir, subjectOf } from "../src/artifacts.ts";
+import { TEST_ROOT } from "./helpers.ts";
 
 // Finding 28: one catalog of the records; every path the program writes or names comes from `pathOf`.
 test("pathOf gives every record its path under plan-review/", () => {
@@ -26,7 +27,7 @@ test("pathOf gives every record its path under plan-review/", () => {
     [{ kind: "invalidReply", agent: "codex", n: 2 }, "invalid-replies/codex-2.json"],
   ];
   for (const [artifact, expected] of cases) assert.equal(pathOf(artifact), expected, JSON.stringify(artifact));
-  assert.equal(recordPath({ kind: "plan" }), "plan-review/plan.md");
+  assert.equal(recordPath(TEST_ROOT, { kind: "plan" }), `plan-review/${TEST_ROOT}/plan.md`);
 });
 
 test("subjects: directory names, phases, reviewed files, and the inverse of the directory name", () => {

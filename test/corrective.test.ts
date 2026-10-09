@@ -4,7 +4,7 @@ import { Result } from "effect";
 import { correctivePrompt, correctionRepairPrompt } from "../src/prompts.ts";
 import { correctiveValidation } from "../src/round.ts";
 import type { PlannerResponse } from "../src/schema.ts";
-import { respond, questionOf } from "./helpers.ts";
+import { respond, questionOf , TEST_ROOT } from "./helpers.ts";
 
 // Issue #30 (plan step S9): the corrective turn's prompt tells Claude Code which dispositions it may change, and the
 // validation accepts exactly those changes. One source (the previous response and its accepted ids) feeds both.
@@ -21,9 +21,9 @@ const withDisposition = (id: string, change: Partial<PlannerResponse["dispositio
 });
 
 test("the corrective prompt names the ids it allows to change, and the validation accepts changes of exactly those", () => {
-  const prompt = correctivePrompt("plan.json", 2, acceptedIds);
+  const prompt = correctivePrompt(TEST_ROOT, "plan.json", 2, acceptedIds);
   const validate = correctiveValidation<PlannerResponse>(previous, acceptedIds);
-  assert.match(prompt, /plan-review\/plan\.json/);
+  assert.match(prompt, /plan-review\/runs\/[^/\s]+\/plan\.json/);
   for (const d of previous.dispositions) {
     const allowed = acceptedIds.includes(d.id);
     assert.equal(prompt.includes(d.id), allowed, `the prompt ${allowed ? "omits" : "names"} ${d.id}`);

@@ -126,7 +126,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       }
     }
   };
-  /** True when the named target lies under plan-review/ on the file system, not only lexically. */
+  /** True when the named target lies under the run's own records directory, plan-review/<root>/, on the file system, not only lexically (issue #120). */
   const underRecords = async (named: string): Promise<boolean> => {
     const allowed = (await realLocation(store.dir)) + path.sep;
     return (await realLocation(path.resolve(store.project, named))).startsWith(allowed);
@@ -138,7 +138,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
     return [pathOf({ kind: "planFile" }), pathOf({ kind: "plan" })].some((file) => target === path.join(records, file));
   };
   const denyPlanFile = (pre: PreToolUseHookInput) => ({
-    hookSpecificOutput: { hookEventName: pre.hook_event_name, permissionDecision: "deny" as const, permissionDecisionReason: prompts.PLAN_FILES_DENIED },
+    hookSpecificOutput: { hookEventName: pre.hook_event_name, permissionDecision: "deny" as const, permissionDecisionReason: prompts.planFilesDenied(store.root) },
   });
 
   /** An ask with the offer of decision support (D2), run inside a callback: the services it needs are provided here. */
@@ -157,7 +157,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       const parsed = parseRelayedQuestion(q.question, q.options);
       if (parsed !== null) return { origin, context: { blocks: parsed.context, by: "agent" }, explanations: parsed.explanations, question: parsed.question, options: options.map((o, i) => ({ ...o, shown: parsed.options[i] ?? o.shown })), decision: null };
       const { plan } = yield* store.readContext();
-      return { origin, context: programContext(origin), explanations: [], question: plainPieces(q.question), options, explain: prompts.relayedFacts(plan), decision: null };
+      return { origin, context: programContext(origin), explanations: [], question: plainPieces(q.question), options, explain: prompts.relayedFacts(store.root, plan), decision: null };
     });
 
   /**
@@ -201,7 +201,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       hookSpecificOutput: {
         hookEventName: pre.hook_event_name,
         permissionDecision: "deny",
-        permissionDecisionReason: "During a planning phase, only files under plan-review/ may be written.",
+        permissionDecisionReason: prompts.planningEditDenied(store.root),
       },
     };
   };
@@ -249,7 +249,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
         );
       }
       if (EDIT_TOOLS.includes(toolName)) return { behavior: "allow", updatedInput: input };
-      return deny("During a planning phase, only reading and writing under plan-review/ are permitted.");
+      return deny(prompts.planningToolDenied(store.root));
     };
 
   const executionPermission =
@@ -271,7 +271,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
           undefined,
         );
         return deny(
-          "The user's answer is recorded in plan-review/user-decisions.md. Do not continue the implementation. Make no tool call other than the final structured output, and end your turn with status 'needs_input', a summary, and the remaining work. The plan will be revised and reviewed before work continues.",
+          prompts.stopRecordedText(store.root),
         );
       }
       const allowed = await inCallback(

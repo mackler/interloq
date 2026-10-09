@@ -46,7 +46,7 @@ export const runRootOf = (mode: RunMode, item: string, startedAtIso: string): Ru
 /** A root with the suffix that the store adds when the name exists: `-2` for k = 2. */
 export const suffixedRoot = (root: RunRoot, k: number): RunRoot => (k <= 1 ? root : (`${root}-${k}` as RunRoot));
 /** The path of an artifact of a run as messages and prompts name it, relative to the project: `plan-review/<root>/<path>`. */
-export const runRecordPath = (root: RunRoot, artifact: Artifact): string => `${RECORDS_DIR}/${root}/${pathOf(artifact)}`;
+export const recordPath = (root: RunRoot, artifact: Artifact): string => `${RECORDS_DIR}/${root}/${pathOf(artifact)}`;
 
 /** The phase recorded in a subject's log entries: 0 for the question list and the requirements. */
 export const phaseOf = (subject: PhasedSubject): number => (typeof subject !== "object" ? 0 : "plan" in subject ? subject.plan : subject.work);
@@ -147,8 +147,6 @@ export const pathOf = (artifact: Artifact): string => {
       return FIXED[artifact.kind];
   }
 };
-/** The path as messages and prompts name it: `plan-review/<path>`. */
-export const recordPath = (artifact: Artifact): string => `${RECORDS_DIR}/${pathOf(artifact)}`;
 /** The six issue logs (one subject of each). */
 export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "questions", "terms", "requirements", { work: 1 }, { decision: 1 }];
 

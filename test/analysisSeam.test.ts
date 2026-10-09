@@ -5,6 +5,7 @@ import { Result } from "effect";
 import { validateAnalysis } from "../src/analysis.ts";
 import * as prompts from "../src/prompts.ts";
 import type { DecisionAnalysis, Entry } from "../src/schema.ts";
+import { TEST_ROOT } from "./helpers.ts";
 
 // Issue #37: the prompt that tells Claude Code which option labels to return and the validation that checks them are
 // exercised together. The labels are taken from the prompt as Claude Code reads them, never from a literal of the test.
@@ -41,7 +42,7 @@ export const OPTION_SETS: readonly (readonly Readonly<{ label: string; descripti
 
 test("the option labels the analysis prompt presents are the labels the validation accepts, exactly", () => {
   for (const options of OPTION_SETS) {
-    const text = prompts.decisionAnalysisPrompt(FORMAT, { phase: { kind: "questions" }, label: "Gather Requirements", question: "Which?", options }, { task: "t", requirements: null, plan: null });
+    const text = prompts.decisionAnalysisPrompt(TEST_ROOT, FORMAT, { phase: { kind: "questions" }, label: "Gather Requirements", question: "Which?", options }, { task: "t", requirements: null, plan: null });
     const labels = labelsInPrompt(text);
     assert.deepEqual(labels.length, options.length, text.slice(-2000));
     for (const recommended of ["", ...labels]) {
@@ -51,7 +52,7 @@ test("the option labels the analysis prompt presents are the labels the validati
     }
   }
   // The prompt tells Claude Code to use the quoted text without its number.
-  assert.match(prompts.decisionAnalysisPrompt(FORMAT, { phase: { kind: "questions" }, label: "Gather Requirements", question: "Which?", options: OPTION_SETS[0] }, { task: "t", requirements: null, plan: null }), /the text inside the quotation marks[^\n]*without the number/);
+  assert.match(prompts.decisionAnalysisPrompt(TEST_ROOT, FORMAT, { phase: { kind: "questions" }, label: "Gather Requirements", question: "Which?", options: OPTION_SETS[0] }, { task: "t", requirements: null, plan: null }), /the text inside the quotation marks[^\n]*without the number/);
 });
 
 // The validation repair turn (decision Q1): the labels its prompt presents are the labels the validation accepts.

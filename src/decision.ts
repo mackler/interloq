@@ -48,7 +48,7 @@ export const decisionLoop = (format: string, task: string, question: DecisionQue
     const context = { task, ...(yield* store.readContext()) };
     const validate = analysisValidation(question.options);
     const loop = Effect.gen(function* () {
-      const written = yield* planningCall(decisionAnalysisPrompt(format, question, context), S.DecisionAnalysis, "planning", "records", validate);
+      const written = yield* planningCall(decisionAnalysisPrompt(store.root, format, question, context), S.DecisionAnalysis, "planning", "records", validate);
       yield* store.saveAnalysisWrite(k, written.reply);
       yield* store.saveAnalysis(k, written.output);
       return yield* reviewLoop({ ...decisionSubject(k, phaseNumber(question.phase), format, validate), question: number });

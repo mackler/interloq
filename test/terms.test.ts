@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT } from "./helpers.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { blocksText, piecesText } from "../src/pieces.ts";
@@ -55,10 +55,10 @@ test("the terms are written in a fresh session after the question review converg
   });
   await runTask(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")), { version: 2, entries: terms().entries });
-  assert.equal(probe.planner.termsPrompts[0], prompts.termsPrompt("task"));
+  assert.equal(probe.planner.termsPrompts[0], prompts.termsPrompt(TEST_ROOT, "task"));
   assert.ok(probe.planner.termsPrompts[0].includes(prompts.questionWritingRules()));
-  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.termsReviewPrompt(1)));
-  assert.ok(prompts.termsReviewPrompt(1).includes(prompts.questionReviewCriteria()));
+  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.termsReviewPrompt(TEST_ROOT, 1)));
+  assert.ok(prompts.termsReviewPrompt(TEST_ROOT, 1).includes(prompts.questionReviewCriteria()));
   assert.ok(fs.existsSync(path.join(probe.dir, "terms-review", "review-1.json")));
   assert.deepEqual(JSON.parse(read(probe.dir, "terms-log.json")), { version: 2, entries: [] });
   assert.match(read(probe.dir, "conversation.md"), /## Terms review, round 1/);
@@ -152,12 +152,12 @@ test("the interview presents the agreed question divided into pieces, every form
   const refs = [...(q.context.blocks[0].kind === "paragraph" ? q.context.blocks[0].pieces : []), ...q.question].filter((p) => p.ref === "z").map((p) => p.text);
   assert.deepEqual(refs, ["Zod", "zod"]);
   assert.equal(piecesText(q.question), piecesText(entry.question), "the wording is the agreed one");
-  assert.ok(prompts.termsPrompt("task").includes(prompts.KEEP_WORDING));
-  assert.ok(prompts.termsRespondPrompt(1).includes(prompts.KEEP_WORDING));
+  assert.ok(prompts.termsPrompt(TEST_ROOT, "task").includes(prompts.KEEP_WORDING));
+  assert.ok(prompts.termsRespondPrompt(TEST_ROOT, 1).includes(prompts.KEEP_WORDING));
 });
 
 test("the prompt that asks for the divided entries and termsValidation agree: an entry built as the prompt says passes", () => {
-  const prompt = prompts.termsPrompt("task");
+  const prompt = prompts.termsPrompt(TEST_ROOT, "task");
   for (const text of [prompts.QUESTION_TEXT_FORMAT, prompts.KEEP_WORDING]) assert.ok(prompt.includes(text));
   const validate = termsValidation<S.TermsWrite>([{ ...entry, default_answer: "Declare it" }]);
   assert.ok(Result.isSuccess(validate(terms())));

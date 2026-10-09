@@ -21,11 +21,11 @@ test("summarizeUsage: lines without a session id are their own sessions and are 
 });
 
 test("renderUsage: the known text, plus the unidentified calls when there are any", () => {
-  const known = renderUsage({ claudeCalls: 3, claudeSessions: 2, unidentifiedCalls: 0, costUsd: 1.5, codexTurns: 2, inputTokens: 30, outputTokens: 6, ...noWaits });
+  const known = renderUsage({ claudeCalls: 3, claudeSessions: 2, unidentifiedCalls: 0, costUsd: 1.5, codexTurns: 2, inputTokens: 30, outputTokens: 6, ...noWaits }, "plan-review/usage.jsonl");
   assert.equal(known, "Claude Code: 3 calls in 2 sessions, total_cost_usd = 1.50 (the sessions' last reported running totals, an estimate by the client). Codex: 2 turns, 30 input tokens, 6 output tokens. Details: plan-review/usage.jsonl");
-  const unknown = renderUsage({ claudeCalls: 3, claudeSessions: 1, unidentifiedCalls: 2, costUsd: 1.7, codexTurns: 0, inputTokens: 0, outputTokens: 0, ...noWaits });
+  const unknown = renderUsage({ claudeCalls: 3, claudeSessions: 1, unidentifiedCalls: 2, costUsd: 1.7, codexTurns: 0, inputTokens: 0, outputTokens: 0, ...noWaits }, "plan-review/usage.jsonl");
   assert.match(unknown, /Claude Code: 3 calls in 1 sessions, 2 calls without a session id, total_cost_usd = 1\.70/);
-  assert.equal(renderUsage(summarizeUsage(only([]))), "Claude Code: 0 calls in 0 sessions, total_cost_usd = 0.00 (the sessions' last reported running totals, an estimate by the client). Codex: 0 turns, 0 input tokens, 0 output tokens. Details: plan-review/usage.jsonl");
+  assert.equal(renderUsage(summarizeUsage(only([])), "plan-review/usage.jsonl"), "Claude Code: 0 calls in 0 sessions, total_cost_usd = 0.00 (the sessions' last reported running totals, an estimate by the client). Codex: 0 turns, 0 input tokens, 0 output tokens. Details: plan-review/usage.jsonl");
 });
 
 // Issue #68: the waits for a usage limit count as actually spent.
@@ -44,9 +44,9 @@ test("summarizeUsage: a late wakeup counts its actual duration, beyond the sched
 });
 
 test("renderUsage: the waits, only when there was one, with the last interrupted named", () => {
-  const plain = renderUsage(summarizeUsage(only([])));
-  const two = renderUsage(summarizeUsage({ calls: [], waits: [wait(0, 3_600_000, 3_600_000), wait(0, 1_800_000, 1_800_000)] }));
+  const plain = renderUsage(summarizeUsage(only([])), "plan-review/usage.jsonl");
+  const two = renderUsage(summarizeUsage({ calls: [], waits: [wait(0, 3_600_000, 3_600_000), wait(0, 1_800_000, 1_800_000)] }), "plan-review/usage.jsonl");
   assert.equal(two, `${plain} Waited for Claude Code's usage limits: 2 times, 1:30:00 in all.`);
-  const interrupted = renderUsage(summarizeUsage({ calls: [], waits: [wait(0, WEEK, 60_000, "interrupted")] }));
+  const interrupted = renderUsage(summarizeUsage({ calls: [], waits: [wait(0, WEEK, 60_000, "interrupted")] }), "plan-review/usage.jsonl");
   assert.equal(interrupted, `${plain} Waited for Claude Code's usage limits: 1 time, 1:00 in all (the last interrupted).`);
 });

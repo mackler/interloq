@@ -50,13 +50,13 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
     for (let k = 1; ; k++) {
       // The plan as this planning phase begins (issue #6, G-R1-1): its done steps and statuses do not change within the phase.
       const before = Option.getOrNull(yield* store.loadPlan());
-      const subject = planSubject(k, withRequirements, before);
+      const subject = planSubject(store.root, k, withRequirements, before);
       const reviewed = yield* Effect.gen(function* () {
         // Planning phase K: write or revise the plan, then review it.
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });
         yield* ui.say(planningBeganLine(label("planning", k), previous === null));
         // The reply is the plan (F1): validated, then written by the program as plan.json and plan.md.
-        const written = yield* planningCall(previous === null ? initialPlanPrompt(task, withRequirements) : revisePlanAfterExecutionPrompt(k - 1, previous), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(before)), userQuestionsValidation<S.PlanWrite>()));
+        const written = yield* planningCall(previous === null ? initialPlanPrompt(store.root, task, withRequirements) : revisePlanAfterExecutionPrompt(store.root, k - 1, previous), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
         yield* store.savePlanWrite(k, written.output);
         yield* savePlan(k, written.output.plan, before);
         yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: written.resultText });
@@ -82,7 +82,7 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
         // own, so that the run's main session does not grow by every execution's tool results; a transport retry and a
         // usage-limit wait resume this session, which the planner it is called on holds.
         const executor = yield* planner.fresh;
-        const outcome = yield* executor.executing(executePrompt(task, withRequirements), steps.report).pipe(
+        const outcome = yield* executor.executing(executePrompt(store.root, task, withRequirements), steps.report).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;

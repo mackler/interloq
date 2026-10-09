@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { type Artifact, RECORDS_DIR, runRecordPath, runRootOf, type SubjectId } from "../src/artifacts.ts";
+import { type Artifact, RECORDS_DIR, recordPath, runRootOf, type SubjectId } from "../src/artifacts.ts";
 import { RUN_MODES } from "../src/runMode.ts";
 
 // Issue #120 (issue #66): two runs may be in progress at once, so for any two distinct runs no record path either
@@ -32,10 +32,10 @@ test("property: two distinct runs' roots produce disjoint record paths, and neit
   fc.assert(
     fc.property(root, root, fc.array(artifact, { minLength: 1, maxLength: 8 }), fc.array(artifact, { minLength: 1, maxLength: 8 }), (a, b, as, bs) => {
       fc.pre(a !== b);
-      const pa = new Set(as.map((x) => runRecordPath(a, x)));
-      for (const x of bs) assert.ok(!pa.has(runRecordPath(b, x)));
+      const pa = new Set(as.map((x) => recordPath(a, x)));
+      for (const x of bs) assert.ok(!pa.has(recordPath(b, x)));
       assert.ok(!`${RECORDS_DIR}/${a}/`.startsWith(`${RECORDS_DIR}/${b}/`) && !`${RECORDS_DIR}/${b}/`.startsWith(`${RECORDS_DIR}/${a}/`));
-      for (const x of as) assert.ok(runRecordPath(a, x).startsWith(`${RECORDS_DIR}/${a}/`));
+      for (const x of as) assert.ok(recordPath(a, x).startsWith(`${RECORDS_DIR}/${a}/`));
     }),
     RUNS,
   );

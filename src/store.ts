@@ -5,7 +5,7 @@
 import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Ref, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
-import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, runRecordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
+import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
 import { FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
@@ -344,7 +344,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
               Effect.map(() => true),
               Effect.catch((e) => (alreadyExists(e) ? Effect.succeed(false) : Effect.fail(new FileSystemError({ operation: "create", path: file, message: e.message })))),
             );
-            if (created) return runRecordPath(root, artifact);
+            if (created) return recordPath(root, artifact);
             n++;
           }
         }),

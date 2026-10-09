@@ -67,7 +67,7 @@ test("(b) an accepted work issue leads to planning 2, execution 2 and a second w
   assert.equal(await runTask(layer), 2);
   assert.match(probe.planner.prompts[2], /Work review 1 ended in round 1/);
   assert.match(probe.planner.prompts[2], /work-review-1\/round-1\.json/);
-  assert.ok(!probe.planner.prompts.includes(planApplyDecisionsPrompt), "a work review applied decisions with a planning call");
+  assert.ok(!probe.planner.prompts.includes(planApplyDecisionsPrompt(TEST_ROOT)), "a work review applied decisions with a planning call");
   assert.deepEqual(workLog(probe.dir).map((e) => [e.id, e.action]), [["W1-R1-1", "accepted"]]);
   // Issue #31, Q7: the work review is not measured.
   assert.deepEqual(json(probe.dir, "work-review-log.json").entries.map((e: { file_change: unknown }) => e.file_change), [null]);

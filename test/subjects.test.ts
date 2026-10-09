@@ -49,12 +49,12 @@ test("the work subject: its id, file, prompts and policies", () => {
   assert.deepEqual(work.id, { work: 2 });
   assert.equal(work.heading, "Work review 2");
   assert.equal(work.fileLabel, "changes.diff");
-  assert.match(work.reviewPrompt(1), /work-review-2\/changes\.diff/);
-  assert.match(work.respond.prompt(1, { review: { issues: [] }, log: [], changes: "" }), /work-review-2\/review-1\.json/);
+  assert.match(work.reviewPrompt(TEST_ROOT, 1), /work-review-2\/changes\.diff/);
+  assert.match(work.respond.prompt(TEST_ROOT, 1, { review: { issues: [] }, log: [], changes: "" }), /work-review-2\/review-1\.json/);
   assert.deepEqual([work.proceed, work.leaveOnAcceptance, work.leaveOnDecision, work.amend], [null, true, true, null]);
   assert.notEqual(work.prepare, null);
   assert.equal(work.respond.capability, "readOnly", "a work response is read-only (finding 1 of docs/gui-review.md)");
-  for (const other of [planSubject(1, true, null), questionSubject("t"), requirementsSubject()]) {
+  for (const other of [planSubject(TEST_ROOT, 1, true, null), questionSubject("t"), requirementsSubject()]) {
     assert.equal(other.respond.capability, "records");
     assert.equal(typeof other.proceed, "string");
     assert.deepEqual([other.leaveOnAcceptance, other.leaveOnDecision, other.prepare], [false, false, null]);
@@ -65,10 +65,10 @@ test("the work subject: its id, file, prompts and policies", () => {
 test("the proceed choices name the clarification and implementation", () => {
   assert.equal(questionSubject("t").proceed, "proceed to the clarification with the question list as it is");
   assert.equal(requirementsSubject().proceed, "proceed to planning with the requirements as they are");
-  assert.equal(planSubject(1, false, null).proceed, "proceed to implementation with the plan as it is");
+  assert.equal(planSubject(TEST_ROOT, 1, false, null).proceed, "proceed to implementation with the plan as it is");
 });
 
 // Decision support, plan step 1.3: a subject carries the phase its loop records (a decision's is where it took place).
 test("every subject carries its phase", () => {
-  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(3, false, null).phase, workSubject(2, false, workExecution).phase], [0, 0, 3, 2]);
+  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(TEST_ROOT, 3, false, null).phase, workSubject(2, false, workExecution).phase], [0, 0, 3, 2]);
 });

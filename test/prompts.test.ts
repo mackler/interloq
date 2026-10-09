@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
-import { para, plain, workExecution } from "./helpers.ts";
+import { para, plain, workExecution , TEST_ROOT } from "./helpers.ts";
 /** A tool's input as conversation.md records it (S34): its blocks as Markdown, without the heading. */
 const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input).slice(1));
 import { appendRound } from "../src/issueLog.ts";
@@ -13,7 +13,7 @@ import * as S from "../src/schema.ts";
 
 // Decision Q5: the prompts describe the version-2 issue log (an object with entries; three sources; null references).
 test("the log rules name the entries list, the three sources and null references", () => {
-  for (const text of [planReviewPrompt(1, 1, false), questionReviewPrompt(1)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false), questionReviewPrompt(TEST_ROOT, 1)]) {
     assert.match(text, /'entries'/);
     assert.match(text, /source 'review'/);
     assert.match(text, /source 'self_correction'/);
@@ -27,7 +27,7 @@ test("the log rules name the entries list, the three sources and null references
 test("the log rules explain file_change with the keys the log entries carry", () => {
   const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e" }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
-  for (const text of [planReviewPrompt(1, 1, false), questionReviewPrompt(1), prompts.requirementsReviewPrompt(1), prompts.decisionReviewPrompt("f", 1, 1), prompts.workReviewPrompt(1, 1, true)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false), questionReviewPrompt(TEST_ROOT, 1), prompts.requirementsReviewPrompt(TEST_ROOT, 1), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true)]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
     for (const key of ["changed", "added", "removed"]) {
       assert.match(text, new RegExp(`\\b${key}\\b`));
@@ -39,10 +39,10 @@ test("the log rules explain file_change with the keys the log entries carry", ()
 // S16 and S18: the interview asks for a question's parts in current_question under the rules of every question; an
 // agreed question of questions.json is named by its id alone, since the program shows it as it was reviewed.
 test("the interview prompts ask for the current question's parts under the rules, and for an agreed question its id alone", () => {
-  const texts = [prompts.interviewOpenPrompt, prompts.interviewGapsPrompt("plan-review/requirements-review/review-1.json", ["G-R1-1"])];
+  const texts = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", ["G-R1-1"])];
   for (const text of texts) {
     assert.ok(text.includes(prompts.questionWritingRules()));
-    assert.match(text, /For an agreed question of plan-review\/questions\.json, give only its id/);
+    assert.match(text, /For an agreed question of plan-review\/runs\/[^/\s]+\/questions\.json, give only its id/);
     assert.match(text, /For any other question, give its context, its text, its explanations and its options/);
     assert.doesNotMatch(text, /show each proposed answer on its own line/);
   }
@@ -50,22 +50,22 @@ test("the interview prompts ask for the current question's parts under the rules
 
 // Plan step 2.6: the prompts of the work review and the revision of the plan after an execution phase.
 test("the work review prompt names the change record, the plan, the requirements, the log and the ids", () => {
-  const first = prompts.workReviewPrompt(2, 1, true);
-  assert.match(first, /plan-review\/work-review-2\/changes\.diff/);
-  assert.match(first, /plan-review\/plan\.json/);
-  assert.match(first, /plan-review\/requirements\.md/);
-  assert.match(first, /plan-review\/work-review-log\.json/);
+  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true);
+  assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-2\/changes\.diff/);
+  assert.match(first, /plan-review\/runs\/[^/\s]+\/plan\.json/);
+  assert.match(first, /plan-review\/runs\/[^/\s]+\/requirements\.md/);
+  assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.match(first, /W2-R1-1/);
   assert.match(first, /Missing work of a step with another status is not an issue/);
-  assert.doesNotMatch(prompts.workReviewPrompt(2, 1, false), /requirements\.md/);
-  const later = prompts.workReviewPrompt(2, 3, true);
+  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false), /requirements\.md/);
+  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true);
   assert.match(later, /W2-R3-1/);
   assert.match(later, /changes\.diff has been rewritten/);
 });
 
 test("the work response prompt forbids any file change and defers the corrections", () => {
-  const text = prompts.workRespondPrompt(2, 1, { review: { issues: [] }, log: [], changes: "" }, workExecution);
-  assert.match(text, /plan-review\/work-review-2\/review-1\.json/);
+  const text = prompts.workRespondPrompt(TEST_ROOT, 2, 1, { review: { issues: [] }, log: [], changes: "" }, workExecution);
+  assert.match(text, /plan-review\/runs\/[^/\s]+\/work-review-2\/review-1\.json/);
   assert.match(text, /later execution phase after the plan has been revised/);
   assert.match(text, /Do not modify any file\./);
 });
@@ -74,9 +74,9 @@ test("the work response prompt forbids any file change and defers the correction
 test("the work response prompt carries the review, the log entries of its phase only, and the diff verbatim", () => {
   const review = { issues: [{ id: "W2-R2-1", severity: "major" as const, location: "src/a.ts:3", problem: "the parser drops the last line", evidence: "a.ts reads lines.slice(0, -1)" }] };
   const entry = (phase: number, id: string) => ({ id, phase, round: 1, problem: `problem of ${id}`, rationale: `rationale of ${id}`, superseded: false, source: "review" as const, severity: "minor" as const, location: "x", evidence: "e", action: "rejected" as const, duplicate_of: null, reverses: null });
-  const log = [entry(1, "W1-R1-1"), entry(2, "W2-R1-1")] as unknown as Parameters<typeof prompts.workRespondPrompt>[2]["log"];
+  const log = [entry(1, "W1-R1-1"), entry(2, "W2-R1-1")] as unknown as Parameters<typeof prompts.workRespondPrompt>[3]["log"];
   const diff = "diff --git a/src/a.ts b/src/a.ts\n+const lines = text.split(\"\\n\");\n";
-  const text = prompts.workRespondPrompt(2, 2, { review, log, changes: diff }, workExecution);
+  const text = prompts.workRespondPrompt(TEST_ROOT, 2, 2, { review, log, changes: diff }, workExecution);
   assert.ok(text.includes("the parser drops the last line"), "the review");
   assert.ok(text.includes("rationale of W2-R1-1"), "the phase's log entry");
   assert.ok(!text.includes("W1-R1-1"), "another phase's log entry");
@@ -86,17 +86,17 @@ test("the work response prompt carries the review, the log entries of its phase 
 });
 
 test("the revision prompt after an execution phase names the stop and the work review's outcome", () => {
-  const stopOnly = prompts.revisePlanAfterExecutionPrompt(1, { stopped: true, workReview: "converged" });
+  const stopOnly = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: "converged" });
   assert.match(stopOnly, /^Execution phase 1 has ended\./);
-  assert.match(stopOnly, /last entry of plan-review\/user-decisions\.md/);
+  assert.match(stopOnly, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md/);
   assert.match(stopOnly, /Work review 1 found no issue in the work so far/);
-  const revise = prompts.revisePlanAfterExecutionPrompt(2, { stopped: false, workReview: { revisedInRound: 3 } });
-  assert.doesNotMatch(revise, /last entry of plan-review\/user-decisions\.md contains the user's input for this stop/);
+  const revise = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 2, { stopped: false, workReview: { revisedInRound: 3 } });
+  assert.doesNotMatch(revise, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md contains the user's input for this stop/);
   assert.match(revise, /Work review 2 ended in round 3/);
-  assert.match(revise, /plan-review\/work-review-2\/round-3\.json/);
-  assert.match(revise, /plan-review\/work-review-log\.json/);
-  assert.ok(revise.includes(prompts.PLAN_ID_RULE));
-  const both = prompts.revisePlanAfterExecutionPrompt(1, { stopped: true, workReview: { revisedInRound: 1 } });
+  assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-2\/round-3\.json/);
+  assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
+  assert.ok(revise.includes(prompts.planIdRule(TEST_ROOT)));
+  const both = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: { revisedInRound: 1 } });
   assert.match(both, /user's input for this stop/);
   assert.match(both, /Work review 1 ended in round 1/);
 });
@@ -216,11 +216,11 @@ test("a further question's origin line does not borrow \"more\"", () => {
 
 // Issue #21 (Q6 follow-up): Claude reports every question asked, follow-ups with ids of their own, and the answered ones.
 test("the interview rules define asked_ids with follow-up ids, and answered_ids over both", () => {
-  for (const text of [prompts.interviewOpenPrompt, prompts.interviewGapsPrompt("plan-review/requirements-review/review-1.json", ["G-R1-1"])]) {
+  for (const text of [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", ["G-R1-1"])]) {
     assert.match(text, /asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id F1, F2, … that you assign to each follow-up question/);
     assert.match(text, /answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far/);
   }
-  assert.match(prompts.interviewGapsPrompt("r.json", ["G-R1-1"]), /use the issue ids in asked_ids and answered_ids/);
+  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]), /use the issue ids in asked_ids and answered_ids/);
 });
 
 // W1-R1-1: the error texts the user reads at a halt are in src/prompts.ts too.
@@ -232,13 +232,13 @@ test("the texts of an invalid cycle and of the stop at the cycle limit", () => {
 // Decision Q1 of the decision-support task: every prompt that may put a question to the user says how to fill its options.
 test("every prompt that may return questions_for_user says how to fill a question's options", () => {
   const texts = [
-    prompts.planRespondPrompt(1, 1),
-    prompts.requirementsRespondPrompt(1),
-    prompts.questionRespondPrompt(1),
-    prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
-    prompts.initialPlanPrompt("t", false),
-    prompts.revisePlanPrompt,
-    prompts.revisePlanAfterExecutionPrompt(1, { stopped: false, workReview: "converged" }),
+    prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+    prompts.requirementsRespondPrompt(TEST_ROOT, 1),
+    prompts.questionRespondPrompt(TEST_ROOT, 1),
+    prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
+    prompts.initialPlanPrompt(TEST_ROOT, "t", false),
+    prompts.revisePlanPrompt(TEST_ROOT),
+    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: false, workReview: "converged" }),
   ];
   for (const text of texts) {
     assert.ok(text.includes(prompts.QUESTION_OPTIONS_RULE), text.slice(0, 80));
@@ -252,7 +252,7 @@ const FORMAT = fs.readFileSync(new URL("../docs/decision-making.md", import.meta
 const decisionQuestion = { phase: { kind: "planning" as const, n: 2 }, label: "Planning 2", question: "Which database?", options: [{ label: "SQLite", description: "one file" }, { label: "PostgreSQL", description: "a server" }] };
 
 test("the analysis prompt carries the format byte for byte, the binding sentence, the question, the options in order and the context", () => {
-  const text = prompts.decisionAnalysisPrompt(FORMAT, decisionQuestion, { task: "Build it.", requirements: "# R\nreq text", plan: null });
+  const text = prompts.decisionAnalysisPrompt(TEST_ROOT, FORMAT, decisionQuestion, { task: "Build it.", requirements: "# R\nreq text", plan: null });
   assert.ok(text.includes(FORMAT), "the format is not in the prompt verbatim");
   assert.ok(text.includes(prompts.DECISION_FORMAT_AUTHORITY));
   assert.match(prompts.DECISION_FORMAT_AUTHORITY, /authority for the content and layout/);
@@ -260,31 +260,31 @@ test("the analysis prompt carries the format byte for byte, the binding sentence
   assert.match(text, /Which database\?/);
   assert.match(text, /Build it\./);
   assert.match(text, /req text/);
-  assert.match(text, /plan-review\/plan\.md does not exist yet/);
+  assert.match(text, /plan-review\/runs\/[^/\s]+\/plan\.md does not exist yet/);
   assert.match(text, /Planning 2/);
   assert.match(text, /equivalent_to/);
   assert.match(text, /Disadvantages:/);
 });
 
 test("the decision review prompt carries the format in its first round, names the analysis and the question, and the ids D<k>-R<n>-<i>", () => {
-  const first = prompts.decisionReviewPrompt(FORMAT, 3, 1);
+  const first = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 1);
   assert.ok(first.includes(FORMAT), "the format is not in the first review prompt verbatim");
-  assert.match(first, /plan-review\/decision-3\/analysis\.json/);
-  assert.match(first, /plan-review\/decision-3\/question\.json/);
+  assert.match(first, /plan-review\/runs\/[^/\s]+\/decision-3\/analysis\.json/);
+  assert.match(first, /plan-review\/runs\/[^/\s]+\/decision-3\/question\.json/);
   assert.match(first, /D3-R1-1/);
   assert.match(first, /recommendation/);
   assert.match(first, /ids begin with D3-/);
-  const later = prompts.decisionReviewPrompt(FORMAT, 3, 2);
+  const later = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 2);
   assert.match(later, /D3-R2-1/);
-  assert.match(later, /plan-review\/decision-3\/analysis\.json/);
+  assert.match(later, /plan-review\/runs\/[^/\s]+\/decision-3\/analysis\.json/);
 });
 
 test("the decision respond and apply-decisions prompts ask for the complete analysis and forbid file changes", () => {
-  const respond = prompts.decisionRespondPrompt(3, 2);
-  assert.match(respond, /plan-review\/decision-3\/review-2\.json/);
+  const respond = prompts.decisionRespondPrompt(TEST_ROOT, 3, 2);
+  assert.match(respond, /plan-review\/runs\/[^/\s]+\/decision-3\/review-2\.json/);
   assert.match(respond, /complete analysis/);
   assert.match(respond, /Do not modify any file/);
-  const apply = prompts.decisionApplyDecisionsPrompt(3);
+  const apply = prompts.decisionApplyDecisionsPrompt(TEST_ROOT, 3);
   assert.match(apply, /user-decisions\.md/);
   assert.match(apply, /complete analysis/);
 });
@@ -300,7 +300,7 @@ test("the offer's label reads Help me decide, and the offer line carries that la
 test("the ids the prompts assign to agreed and follow-up questions", () => {
   const agreed = `${prompts.AGREED_QUESTION_PREFIX}1, ${prompts.AGREED_QUESTION_PREFIX}2, and so on`;
   assert.ok(prompts.questionListPrompt("t").includes(`id: ${agreed}`), "the question list prompt assigns other ids");
-  const rules = [prompts.interviewOpenPrompt, prompts.interviewGapsPrompt("f", ["G-R1-1"])];
+  const rules = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "f", ["G-R1-1"])];
   for (const text of rules) {
     assert.ok(text.includes(`${prompts.FOLLOW_UP_PREFIX}1, ${prompts.FOLLOW_UP_PREFIX}2, …`), "the interview rules assign other follow-up ids");
     assert.match(text, /current_question: the question this message asks the user to answer now/);
@@ -310,7 +310,7 @@ test("the ids the prompts assign to agreed and follow-up questions", () => {
 // Issue #35: the prompts of a decision follow the amended docs/decision-making.md ("Also,", both headings and the
 // labels placed by the program, the unclear option), and contradict it nowhere.
 test("the analysis prompt maps the amended format: Also, sequences, headings and labels left to the program, unclear columns", () => {
-  const text = prompts.decisionAnalysisPrompt(FORMAT, decisionQuestion, { task: "t", requirements: null, plan: null });
+  const text = prompts.decisionAnalysisPrompt(TEST_ROOT, FORMAT, decisionQuestion, { task: "t", requirements: null, plan: null });
   assert.match(text, /first counterargument at an element begins with "But," and each further one at that element with "Also,"/);
   assert.match(text, /first defense of a counterargument begins with "On the other hand," and each further one with "Also,"/);
   assert.match(text, /first counterargument to a defense begins with "Then again," and each further one with "Also,"/);
@@ -323,7 +323,7 @@ test("the analysis prompt maps the amended format: Also, sequences, headings and
 });
 
 test("the decision review prompt says the program places both headings and the labels, and how an unclear option is represented", () => {
-  const first = prompts.decisionReviewPrompt(FORMAT, 3, 1);
+  const first = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 1);
   assert.match(first, /places the headings "Advantages:" and "Disadvantages:" and the labels of the entries \("Advantage 1:", "Disadvantage 1:"\)/);
   assert.match(first, /kind "unclear"/);
   assert.match(first, /"Also,"/);
@@ -332,11 +332,11 @@ test("the decision review prompt says the program places both headings and the l
 // Issue #6 (F1, G-R1-1): every call that creates or changes the plan returns it whole in 'plan' and keeps the ids; the
 // prompt's rule and the validation that enforces it are tested together, and the repair turn repeats the rule.
 const planProducing = () => [
-  prompts.initialPlanPrompt("t", false),
-  prompts.revisePlanPrompt,
-  prompts.revisePlanAfterExecutionPrompt(1, { stopped: true, workReview: "converged" }),
-  prompts.planApplyDecisionsPrompt,
-  prompts.planRespondPrompt(1, 1),
+  prompts.initialPlanPrompt(TEST_ROOT, "t", false),
+  prompts.revisePlanPrompt(TEST_ROOT),
+  prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: "converged" }),
+  prompts.planApplyDecisionsPrompt(TEST_ROOT),
+  prompts.planRespondPrompt(TEST_ROOT, 1, 1),
 ];
 // Issue #78: no step of a plan may end with a command expected to outlast one shell command, whose ceiling every Claude
 // Code call carries; the execution prompt states the same ceiling and how to wait for a long suite.
@@ -344,21 +344,21 @@ test("every prompt that asks for the whole plan states the step duration rule, i
   const minutes = prompts.COMMAND_CEILING_MS / 60_000;
   assert.match(prompts.PLAN_STEP_DURATION_RULE, new RegExp(`\\b${minutes} minutes\\b`));
   for (const text of planProducing()) assert.ok(text.includes(prompts.PLAN_STEP_DURATION_RULE), text.slice(0, 80));
-  // Every prompt that carries PLAN_FORMAT carries the rule beside it, so that a sixth one added later is not missed.
+  // Every prompt that carries planFormat carries the rule beside it, so that a sixth one added later is not missed.
   const source = fs.readFileSync(new URL("../src/prompts.ts", import.meta.url), "utf8");
-  const uses = source.split("${PLAN_FORMAT}").length - 1;
+  const uses = source.split("${planFormat(root)}").length - 1;
   assert.ok(uses >= 5);
-  assert.equal(source.split("${PLAN_FORMAT}\n${PLAN_STEP_DURATION_RULE}").length - 1, uses, "a prompt carries PLAN_FORMAT without the step duration rule");
+  assert.equal(source.split("${planFormat(root)}\n${PLAN_STEP_DURATION_RULE}").length - 1, uses, "a prompt carries planFormat without the step duration rule");
   // Issue #117: the same prompts tell the plan writer that each execution phase begins a session that has not seen the planning.
-  for (const text of planProducing()) assert.ok(text.includes(prompts.PLAN_STEP_SELF_CONTAINED_RULE), text.slice(0, 80));
-  assert.equal(source.split("${PLAN_FORMAT}\n${PLAN_STEP_DURATION_RULE}\n${PLAN_STEP_SELF_CONTAINED_RULE}").length - 1, uses, "a prompt carries PLAN_FORMAT without the self-contained step rule");
+  for (const text of planProducing()) assert.ok(text.includes(prompts.planStepSelfContainedRule(TEST_ROOT)), text.slice(0, 80));
+  assert.equal(source.split("${planFormat(root)}\n${PLAN_STEP_DURATION_RULE}\n${planStepSelfContainedRule(root)}").length - 1, uses, "a prompt carries planFormat without the self-contained step rule");
   // The seam with the environment of every call: the same ceiling.
   const { claudeEnv } = await import("../src/claude.ts");
   assert.equal(claudeEnv({}, prompts.COMMAND_CEILING_MS).BASH_MAX_TIMEOUT_MS, String(prompts.COMMAND_CEILING_MS));
 });
 
 test("the execution prompt states the ceiling for a foreground command and says to wait for a long suite in the background without editing", () => {
-  assert.ok(prompts.executePrompt("t", true).includes(prompts.BACKGROUND_SUITE_SENTENCE));
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.BACKGROUND_SUITE_SENTENCE));
   assert.ok(prompts.BACKGROUND_SUITE_SENTENCE.includes(`timeout set to ${prompts.COMMAND_CEILING_MS}`), prompts.BACKGROUND_SUITE_SENTENCE);
   assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /in the background/);
   assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /do not edit/);
@@ -366,12 +366,12 @@ test("the execution prompt states the ceiling for a foreground command and says 
 
 test("every prompt that produces the plan asks for it whole as data and states the id rule", () => {
   for (const text of planProducing()) {
-    assert.ok(text.includes(prompts.PLAN_FORMAT), text.slice(0, 80));
-    assert.ok(text.includes(prompts.PLAN_ID_RULE), text.slice(0, 80));
-    assert.doesNotMatch(text, /(Write|amend|Revise) plan-review\/plan\.md/);
+    assert.ok(text.includes(prompts.planFormat(TEST_ROOT)), text.slice(0, 80));
+    assert.ok(text.includes(prompts.planIdRule(TEST_ROOT)), text.slice(0, 80));
+    assert.doesNotMatch(text, /(Write|amend|Revise) plan-review\/runs\/[^/\s]+\/plan\.md/);
   }
-  assert.match(prompts.PLAN_FORMAT, /'plan'/);
-  assert.match(prompts.PLAN_FORMAT, /do not write either file/);
+  assert.match(prompts.planFormat(TEST_ROOT), /'plan'/);
+  assert.match(prompts.planFormat(TEST_ROOT), /do not write either file/);
 });
 
 test("each clause of the id rule is enforced by validatePlan, and the repair prompt states the rule", async () => {
@@ -387,22 +387,22 @@ test("each clause of the id rule is enforced by validatePlan, and the repair pro
     [/with its id, label and text unchanged/, plan(step("S1", "rewritten"), step("S2"))],
   ];
   for (const [clause, reply] of clauses) {
-    assert.match(prompts.PLAN_ID_RULE, clause);
+    assert.match(prompts.planIdRule(TEST_ROOT), clause);
     const r = validatePlan(previous, reply);
     assert.ok(Result.isFailure(r), String(clause));
-    const repair = prompts.planRepairPrompt(r.failure);
-    assert.ok(repair.includes(prompts.PLAN_ID_RULE));
+    const repair = prompts.planRepairPrompt(TEST_ROOT, r.failure);
+    assert.ok(repair.includes(prompts.planIdRule(TEST_ROOT)));
     for (const line of prompts.planProblemLines(r.failure)) assert.ok(repair.includes(line));
   }
 });
 
 test("the plan review and the work review read plan.json with its statuses", () => {
-  for (const text of [prompts.planReviewPrompt(1, 1, false), prompts.workReviewPrompt(1, 1, false)]) {
-    assert.match(text, /plan-review\/plan\.json/);
+  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false)]) {
+    assert.match(text, /plan-review\/runs\/[^/\s]+\/plan\.json/);
     assert.match(text, /status 'done'/);
-    assert.doesNotMatch(text, /plan-review\/plan\.md/);
+    assert.doesNotMatch(text, /plan-review\/runs\/[^/\s]+\/plan\.md/);
   }
-  assert.match(prompts.planReviewPrompt(1, 2, false), /plan-review\/plan\.json/);
+  assert.match(prompts.planReviewPrompt(TEST_ROOT, 1, 2, false), /plan-review\/runs\/[^/\s]+\/plan\.json/);
 });
 
 // Issue #6 (numbering): a kind with one instance in the run carries no number; with two or more, every one does.
@@ -784,16 +784,16 @@ test("no prompt that asks for a question states an inclusion test of its own", (
   const own = [/only if its answer/, /only questions that/, /is unnecessary because/, /determines (it|the answer)/, /user alone can answer/];
   const texts: Readonly<Record<string, string>> = {
     questionListPrompt: prompts.questionListPrompt("t"),
-    questionReviewPrompt: prompts.questionReviewPrompt(1),
-    questionRespondPrompt: prompts.questionRespondPrompt(1),
-    initialPlanPrompt: prompts.initialPlanPrompt("t", true),
-    revisePlanPrompt: prompts.revisePlanPrompt,
-    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(1, { stopped: true, workReview: "converged" }),
-    planRespondPrompt: prompts.planRespondPrompt(1, 1),
-    interviewOpenPrompt: prompts.interviewOpenPrompt,
-    interviewGapsPrompt: prompts.interviewGapsPrompt("r.json", ["G-R1-1"]),
-    termsPrompt: prompts.termsPrompt("t"),
-    executePrompt: prompts.executePrompt("t", true),
+    questionReviewPrompt: prompts.questionReviewPrompt(TEST_ROOT, 1),
+    questionRespondPrompt: prompts.questionRespondPrompt(TEST_ROOT, 1),
+    initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true),
+    revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT),
+    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: "converged" }),
+    planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+    interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
+    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
+    termsPrompt: prompts.termsPrompt(TEST_ROOT, "t"),
+    executePrompt: prompts.executePrompt(TEST_ROOT, "t", true),
   };
   for (const [name, text] of Object.entries(texts)) {
     const outside = text.split(prompts.questionWritingRules()).join("").split(prompts.questionReviewCriteria()).join("");
@@ -805,8 +805,8 @@ test("no prompt that asks for a question states an inclusion test of its own", (
 // the user; the plan's do not, since its disputes stay the user's.
 test("issue #112: WORDING_DISPUTES reaches the question list's and the terms' review and response prompts, and not the plan's", () => {
   for (const round of [1, 2]) {
-    for (const p of [prompts.questionReviewPrompt(round), prompts.questionRespondPrompt(round), prompts.termsReviewPrompt(round), prompts.termsRespondPrompt(round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
-    for (const p of [prompts.planReviewPrompt(1, round, true), prompts.planRespondPrompt(1, round)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.questionReviewPrompt(TEST_ROOT, round), prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsReviewPrompt(TEST_ROOT, round), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true), prompts.planRespondPrompt(TEST_ROOT, 1, round)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
   }
   for (const reason of ["cannot judge", "same rules", "time"]) assert.ok(prompts.WORDING_DISPUTES.includes(reason), reason);
 });
@@ -835,23 +835,23 @@ test("issue #112: the explanations clause states the senses that questionProblem
 // task, the requirements where the question phase ran, and the user's decisions.
 test("issue #117: executePrompt names the task, the requirements where they exist, and user-decisions.md", async () => {
   const { scriptedTask } = await import("./helpers.ts");
-  const withRequirements = prompts.executePrompt(scriptedTask, true);
+  const withRequirements = prompts.executePrompt(TEST_ROOT, scriptedTask, true);
   assert.ok(withRequirements.includes(`Task: ${scriptedTask}`), withRequirements);
-  assert.ok(withRequirements.includes(prompts.REQUIREMENTS_SENTENCE));
-  assert.ok(prompts.initialPlanPrompt(scriptedTask, true).includes(prompts.REQUIREMENTS_SENTENCE), "the planning and the execution name the requirements alike");
-  assert.ok(withRequirements.includes(prompts.USER_DECISIONS_SENTENCE));
-  const without = prompts.executePrompt(scriptedTask, false);
+  assert.ok(withRequirements.includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, scriptedTask, true).includes(prompts.requirementsSentence(TEST_ROOT)), "the planning and the execution name the requirements alike");
+  assert.ok(withRequirements.includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  const without = prompts.executePrompt(TEST_ROOT, scriptedTask, false);
   assert.ok(without.includes(`Task: ${scriptedTask}`));
-  assert.ok(!without.includes(prompts.REQUIREMENTS_SENTENCE));
-  assert.ok(!prompts.initialPlanPrompt(scriptedTask, false).includes(prompts.REQUIREMENTS_SENTENCE));
-  assert.ok(without.includes(prompts.USER_DECISIONS_SENTENCE));
+  assert.ok(!without.includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(!prompts.initialPlanPrompt(TEST_ROOT, scriptedTask, false).includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(without.includes(prompts.userDecisionsSentence(TEST_ROOT)));
 });
 
 // Issue #117: the work response runs in the main session, the execution in a session of its own, so the response's
 // prompt carries the execution's report and the plan instead of saying they are in its context.
 test("issue #117: workRespondPrompt carries the execution's report and the plan, and does not say they are in its context", () => {
   const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B" }, plan: "# The plan\n\nS1 done\n" };
-  const text = prompts.workRespondPrompt(1, 1, { review: { issues: [] }, log: [], changes: null }, execution);
+  const text = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], changes: null }, execution);
   for (const part of [execution.outcome.summary, execution.outcome.remainingWork, execution.outcome.question, execution.outcome.status, execution.plan]) assert.ok(text.includes(part), part);
   assert.doesNotMatch(text, /in your context/);
 });

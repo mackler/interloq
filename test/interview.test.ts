@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
 import * as prompts from "../src/prompts.ts";
-import { finished, plain, questionEntry, questionText, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects } from "./helpers.ts";
+import { finished, plain, questionEntry, questionText, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
 // Step 4.6 (finding 8; Q4): the interview matches on turn variants, and the question list is normalised.
@@ -286,11 +286,11 @@ test("a free-text answer to the premise question skips nothing: the dependent qu
 });
 
 test("the interview's prompts exclude the skipped questions from completion and coverage", () => {
-  assert.match(prompts.interviewOpenPrompt, /Cover every agreed question except those the program reports skipped/);
-  assert.match(prompts.interviewOpenPrompt, /complete: true only when every agreed question has been answered or the program has reported it skipped/);
+  assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /Cover every agreed question except those the program reports skipped/);
+  assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /complete: true only when every agreed question has been answered or the program has reported it skipped/);
   assert.match(prompts.interviewDonePrompt, /skipped/);
-  assert.match(prompts.requirementsReviewPrompt(1), /Skipped questions/);
-  assert.match(prompts.interviewGapsPrompt("r.json", ["G-R1-1"]), /premise the user denied/);
+  assert.match(prompts.requirementsReviewPrompt(TEST_ROOT, 1), /Skipped questions/);
+  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]), /premise the user denied/);
 });
 
 // W1-R1-1: a summary that names Q20 does not name the skipped Q2; it gets the repair turn.

@@ -22,7 +22,7 @@ const explainTerms = (task: string, agreed: QuestionsFile["questions"]): Effect.
     const planner = yield* (yield* Planner).fresh;
     yield* Effect.gen(function* () {
       yield* ui.say(prompts.termsLine);
-      const written = yield* planningCall(prompts.termsPrompt(task), S.TermsWrite, "planning", "records", termsValidation<S.TermsWrite>(agreed));
+      const written = yield* planningCall(prompts.termsPrompt(store.root, task), S.TermsWrite, "planning", "records", termsValidation<S.TermsWrite>(agreed));
       yield* saveTerms(written.output.entries);
       yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${yield* Effect.fromResult(renderTerms(written.output.entries))}\n`);
       yield* reviewLoop(termsSubject(agreed));
@@ -55,7 +55,7 @@ export const questionPhase = (task: string): Effect.Effect<void, RunError, Servi
     // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
     yield* explainTerms(task, agreed);
     yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
-    yield* interview(prompts.interviewOpenPrompt, "clarification", agreed.map((q) => q.id));
+    yield* interview(prompts.interviewOpenPrompt(store.root), "clarification", agreed.map((q) => q.id));
 
     const reviewed = yield* reviewLoop(requirementsSubject());
     yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: reviewed.result });

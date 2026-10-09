@@ -485,7 +485,7 @@ export class ScriptedReviewer implements ReviewerShape {
   private turn(prompt: string, phase: number): { text: string; fault: string | null } {
     this.prompts.push(prompt);
     this.callPhases.push(phase);
-    const terms = prompt.includes(`plan-review/${pathOf({ kind: "terms" })}`);
+    const terms = prompt.includes(`/${pathOf({ kind: "terms" })}`);
     const step = terms ? (this.termsReviews.shift() ?? { issues: [] }) : this.reviews.shift();
     if (!step) throw new Error("no scripted review");
     step.onCall?.();

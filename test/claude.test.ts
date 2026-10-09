@@ -15,6 +15,7 @@ import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
 import { Decider, type DeciderShape, Planner, type PlannerShape, RunConfig, Sdk, Store, type StoreShape, Ui } from "../src/services.ts";
+import { runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
@@ -96,6 +97,21 @@ test("the planning hook denies an edit outside plan-review/ and permits one insi
   assert.equal(decision(await runHook(options, "Edit", { file_path: path.relative(fake.project, path.join(fake.dir, "plan.json")) })), "deny");
   assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.project, "src/x.ts") })), "deny");
   assert.equal(decision(await runHook(options, "Edit", { file_path: "../outside.txt" })), "deny");
+});
+
+// Issue #120, S4: two runs may be in progress at once; a planning call of one may write under its own run's records
+// directory alone, never under the other run's, and the denial names its own.
+test("the planning hook denies an edit under another run's records directory and permits one under its own", async () => {
+  const fake = await planner([messages(init(), success({}))]);
+  await run(fake.planner.planning("write the plan", schema));
+  const options = fake.sdk.calls[0].options;
+  const other = path.join(fake.project, "plan-review", runRootOf("refinement", "7", "2026-10-09T10:15:00.000Z"));
+  fs.mkdirSync(other, { recursive: true });
+  assert.equal(decision(await runHook(options, "Write", { file_path: path.join(other, "notes.md") })), "deny");
+  assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.project, "plan-review", "loose.md") })), "deny");
+  assert.equal(decision(await runHook(options, "Write", { file_path: path.join(fake.dir, "notes.md") })), undefined);
+  const denied = (await runHook(options, "Write", { file_path: path.join(other, "notes.md") })) as { hookSpecificOutput?: { permissionDecisionReason?: string } };
+  assert.ok(denied.hookSpecificOutput?.permissionDecisionReason?.includes(`plan-review/${TEST_ROOT}/`));
 });
 
 // Finding 21: the target is resolved on the file system, so a symlink under plan-review/ cannot lead outside it.
@@ -720,19 +736,19 @@ test("during execution an edit of plan.json or plan.md is denied; other edits ar
 
 // The seam of Q2: the prompt names the tool and the statuses exactly as the tool's constants define them.
 test("the execution prompt names report_step and its statuses as the tool defines them", () => {
-  assert.ok(prompts.executePrompt("t", true).includes(prompts.REPORT_STEP_TOOL));
-  for (const status of prompts.REPORT_STEP_STATUSES) assert.ok(prompts.executePrompt("t", true).includes(`'${status}'`), status);
-  assert.match(prompts.executePrompt("t", true), /plan-review\/plan\.json/);
-  assert.doesNotMatch(prompts.executePrompt("t", true), /marker/);
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.REPORT_STEP_TOOL));
+  for (const status of prompts.REPORT_STEP_STATUSES) assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(`'${status}'`), status);
+  assert.match(prompts.executePrompt(TEST_ROOT, "t", true), /plan-review\/runs\/[^/\s]+\/plan\.json/);
+  assert.doesNotMatch(prompts.executePrompt(TEST_ROOT, "t", true), /marker/);
 });
 
 // Issue #53 (Q1, G-R1-1): any order, one step open at a time, a resumed step reported started again; nothing is refused.
 test("the execution prompt allows any order with one step open at a time, and asks for a resumed step to be reported again", () => {
-  assert.doesNotMatch(prompts.executePrompt("t", true), /in order/);
-  assert.match(prompts.executePrompt("t", true), /in any order/);
-  assert.match(prompts.executePrompt("t", true), /one step open at a time/);
+  assert.doesNotMatch(prompts.executePrompt(TEST_ROOT, "t", true), /in order/);
+  assert.match(prompts.executePrompt(TEST_ROOT, "t", true), /in any order/);
+  assert.match(prompts.executePrompt(TEST_ROOT, "t", true), /one step open at a time/);
   assert.match(prompts.resumeStepSentence, new RegExp(`'${prompts.REPORT_STEP_STATUSES[0]}' again`));
-  assert.ok(prompts.executePrompt("t", true).includes(prompts.resumeStepSentence));
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.resumeStepSentence));
 });
 
 // Issue #26: a failed planning call is TransportFault when src/transport.ts says so, ClaudeCallFailed otherwise, and

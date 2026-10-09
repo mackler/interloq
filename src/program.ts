@@ -12,7 +12,7 @@ import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Ui, typ
 import { loadConfig } from "./config.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
-import { type RunRoot, runRootOf } from "./artifacts.ts";
+import { recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
 import type { ItemId, TrackerItem } from "./tracker.ts";
@@ -87,8 +87,8 @@ export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number,
     /** The last two lines of every ending. */
     const tail = (sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
-        yield* ui.say(mainSessionLine(sessionId));
-        const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map(renderUsage), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
+        yield* ui.say(mainSessionLine(records.root, sessionId));
+        const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map((s) => renderUsage(s, recordPath(records.root, { kind: "usage" }))), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);
       });
     const halted = (reason: string, sessionId: string | null, records: StoreShape) =>

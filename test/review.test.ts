@@ -160,7 +160,7 @@ test("(l) a corrective turn that faults and then succeeds: the loop continues, a
     config: quick,
   });
   assert.equal(await runTask(layer), 1);
-  assert.equal(probe.planner.prompts[2], prompts.correctivePrompt("plan.json", 1, ["P1-R1-1"]));
+  assert.equal(probe.planner.prompts[2], prompts.correctivePrompt(TEST_ROOT, "plan.json", 1, ["P1-R1-1"]));
   assert.equal(probe.planner.prompts[3], probe.planner.prompts[2], "the retry repeats the corrective turn");
   assert.deepEqual(probe.ui.asked, []);
 });

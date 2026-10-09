@@ -3,7 +3,7 @@
 // The procedure is applied to three subjects: the question list, the requirements, and the plan.
 
 import { Effect, Ref, Result, Schema } from "effect";
-import { type SubjectId, subjectDir } from "./artifacts.ts";
+import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
 import { pauseOriginOf, type Question, type QuestionOrigin, validateQuestions } from "./question.ts";
@@ -26,7 +26,8 @@ const ReviewText = Schema.fromJsonString(S.Review);
 
 /** One planning call of a subject: its prompt, the schema of its output, and what is done with the output. */
 export type Operation<T> = Readonly<{
-  prompt: (round: number, context: RespondContext) => string;
+  /** Its prompt, naming the run's own records (issue #120: the run's root). */
+  prompt: (root: RunRoot, round: number, context: RespondContext) => string;
   schema: Schema.Decoder<T>;
   /** Runs after every such call, for output that the program writes to the file; null when there is nothing to do. */
   after: ((output: T) => Effect.Effect<void, RunError, Store | Ui>) | null;
@@ -46,11 +47,12 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   heading: string;
   /** Name of the reviewed file as used in messages, for example "plan.md". */
   fileLabel: string;
-  reviewPrompt: (round: number) => string;
+  /** Codex's review prompt, naming the run's own records (issue #120: the run's root). */
+  reviewPrompt: (root: RunRoot, round: number) => string;
   /** Claude Code's response to a review. */
   respond: Operation<R>;
   /** The call that applies the user's decisions; its prompt does not depend on the round. */
-  applyDecisions: Readonly<{ prompt: string; schema: Schema.Decoder<D>; after: ((output: D) => Effect.Effect<void, RunError, Store | Ui>) | null; validate: Validation<D> | null }>;
+  applyDecisions: Readonly<{ prompt: (root: RunRoot) => string; schema: Schema.Decoder<D>; after: ((output: D) => Effect.Effect<void, RunError, Store | Ui>) | null; validate: Validation<D> | null }>;
   /** After the response of a round, an amendment that requires the user (the requirements); null otherwise. */
   amend: ((review: Review, response: R, round: number) => Effect.Effect<void, RunError, Services>) | null;
   /** Text of the "p" choice at the round limit; null: no such choice (the work review, Q13). */
@@ -271,7 +273,7 @@ export const bothValidations =
 
 export const applyDecisions = <R extends PlannerResponse, D>(subject: Subject<R, D>): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
-    const call = yield* planningCall(subject.applyDecisions.prompt, subject.applyDecisions.schema, "planning", "records", subject.applyDecisions.validate);
+    const call = yield* planningCall(subject.applyDecisions.prompt((yield* Store).root), subject.applyDecisions.schema, "planning", "records", subject.applyDecisions.validate);
     if (subject.applyDecisions.after !== null) yield* subject.applyDecisions.after(call.output);
   });
 
@@ -395,14 +397,14 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           case "CallReviewer": {
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
-            const review: Review = yield* decodeWithRepair("codex", ReviewText, yield* reviewCall(subject.reviewPrompt(command.round)), (r) => reviewCall(r.prompt));
+            const review: Review = yield* decodeWithRepair("codex", ReviewText, yield* reviewCall(subject.reviewPrompt(store.root, command.round)), (r) => reviewCall(r.prompt));
             return { kind: "ReviewDecoded", review };
           }
           case "CallPlanner": {
             // A read-only response cannot read the records, so they are in its prompt (decision Q1 of the stage-A task).
             const changes = typeof id === "object" && "work" in id && subject.respond.capability === "readOnly" ? yield* store.readChangeRecord(id.work) : null;
             const context: RespondContext = { review: state.current.review!, log: state.log, changes };
-            const call = yield* planningCall(subject.respond.prompt(command.round, context), subject.respond.schema, "planning", subject.respond.capability, subject.respond.validate);
+            const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, subject.respond.validate);
             return { kind: "ResponseDecoded", response: call.output, resultText: call.resultText, costUsd: call.costUsd };
           }
           case "CallCorrective": {
@@ -411,7 +413,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             const previous = state.current.response!;
             const acceptedIds = state.current.round!.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
             const validate = bothValidations(correctiveValidation<R>(previous, acceptedIds), subject.respond.validate);
-            const repair: Repair = { kind: "corrective", prompt: correctivePrompt(fileLabel, command.round, acceptedIds) };
+            const repair: Repair = { kind: "corrective", prompt: correctivePrompt(store.root, fileLabel, command.round, acceptedIds) };
             const call = yield* repairTurn(repair, subject.respond.schema, subject.respond.capability, validate);
             yield* store.saveCorrection(id, command.round, command.attempt, call.reply);
             if (subject.respond.after !== null) yield* subject.respond.after(call.output);
