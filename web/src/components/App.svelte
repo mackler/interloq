@@ -302,7 +302,10 @@
   {#if tab.refusal !== null}<p class="notice refusal m3-font-body-medium" role="alert">{tab.refusal}</p>{/if}
   {#if showList}
     <main class="list">
-      {#if !compact && latestNotice !== null && run === null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
+      <!-- W2-R1-2: the run's branch, which holds the other notices, is unmounted while the list shows, so the latest
+           notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
+           recover from errors; visibility of system status]. -->
+      {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
       <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} onStart={(item: ListedItem) => { noticesSeen = view.notices.length; send(startFrame(mode, item)); }} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}

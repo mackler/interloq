@@ -16,7 +16,7 @@ import ActivityLine from "./components/ActivityLine.svelte";
 import type { ServerMessage } from "../../src/protocol.ts";
 import { countOfKind, foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import type { Room } from "./layout.ts";
+import { EXPANDED_MIN_WIDTH, type Room } from "./layout.ts";
 import TopBar from "./components/TopBar.svelte";
 import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
@@ -679,6 +679,35 @@ describe("App and the draft", () => {
       one(root, "button[name=retry]").click();
       flushSync();
       expect(sentOf(ws).slice(before)).toEqual([{ type: "items", mode: "refinement" }]);
+    });
+
+    // W2-R1-2 of work review 2 (S20): a notice of no mode is shown in the list view at every width, and after Back to the
+    // list while the mode's ended run is still attached, exactly once.
+    const globalNotice = "not a message: a frame the server could not read";
+    const alertsWith = (root: HTMLElement, text: string) => [...root.querySelectorAll("[role=alert]")].filter((e) => e.textContent?.includes(text));
+    test("a notice of no mode shows once in the list view at a compact width", async () => {
+      const width = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: EXPANDED_MIN_WIDTH - 200 });
+      try {
+        const { root, ws } = await begin();
+        ws.receive({ type: "refused", mode: null, reason: globalNotice });
+        flushSync();
+        expect(root.querySelector("section.items")).not.toBe(null);
+        expect(alertsWith(root, globalNotice)).toHaveLength(1);
+      } finally {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      }
+    });
+
+    test("a notice of no mode shows once in the list view after Back to the list from an ended run", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), { _tag: "Ended", code: 0 }]) }] });
+      one(root, "button[name=new]").click();
+      flushSync();
+      expect(root.querySelector("section.items")).not.toBe(null);
+      ws.receive({ type: "refused", mode: null, reason: globalNotice });
+      flushSync();
+      expect(alertsWith(root, globalNotice)).toHaveLength(1);
     });
 
     test("a prompt waiting in the hidden tab marks the browser tab's title", async () => {
