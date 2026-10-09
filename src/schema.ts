@@ -310,17 +310,34 @@ export const LogEntry = Schema.Union([ReviewEntry, SelfCorrectionEntry, UserEntr
 
 /** A text with a character other than whitespace (a tracker's coordinate or label). */
 const NonBlankText = Schema.String.check(Schema.isPattern(/\S/u));
+/**
+ * Each of Interloq's five states mapped to a value of its own (a GitHub label, a Trello list): two states sharing one
+ * would make a listing return the same items for both. The issue is on the later state's path, naming the value.
+ */
+const perState = (value: typeof NonBlankText, noun: string) =>
+  Schema.Struct(Object.fromEntries(ITEM_STATES.map((state) => [state, value])) as Record<ItemState, typeof NonBlankText>).check(
+    Schema.makeFilter((values: Readonly<Record<ItemState, string>>) => {
+      const shared = ITEM_STATES.filter((state, i) => ITEM_STATES.findIndex((other) => values[other] === values[state]) < i);
+      return shared.length === 0 ? undefined : shared.map((state) => ({ path: [state], issue: `the ${noun} ${JSON.stringify(values[state])} of ${state} is another state's too: each state needs a ${noun} of its own` }));
+    }),
+  );
 /** Each of Interloq's five states mapped to a GitHub label name (issue #120, part 1). */
-export const GithubLabels = Schema.Struct(Object.fromEntries(ITEM_STATES.map((state) => [state, NonBlankText])) as Record<ItemState, typeof NonBlankText>).check(
-  Schema.makeFilter((labels: Readonly<Record<ItemState, string>>) => {
-    const shared = ITEM_STATES.filter((state, i) => ITEM_STATES.findIndex((other) => labels[other] === labels[state]) < i);
-    return shared.length === 0 ? undefined : shared.map((state) => ({ path: [state], issue: `the label ${JSON.stringify(labels[state])} of ${state} is another state's too: each state needs a label of its own` }));
-  }),
-);
+export const GithubLabels = perState(NonBlankText, "label");
 export type GithubLabels = typeof GithubLabels.Type;
 /** The project's GitHub tracker: the repository and the stage labels. No credential: it comes from the environment. */
 export const GithubTrackerConfig = Schema.Struct({ kind: Schema.Literal("github"), owner: NonBlankText, repo: NonBlankText, labels: GithubLabels });
 export type GithubTrackerConfig = typeof GithubTrackerConfig.Type;
+/** A Trello object's id: 24 lowercase hexadecimal characters, so a blank or malformed id is no value of the type. */
+export const TrelloId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{24}$/u));
+/** Each of Interloq's five states mapped to a Trello list id, not a list name, so that a column can be renamed freely. */
+export const TrelloLists = perState(TrelloId, "list");
+export type TrelloLists = typeof TrelloLists.Type;
+/**
+ * The project's Trello tracker: the board and the five lists. The board is carried so that a card of another board is
+ * refused as not found and a list of another board is found out; the developer has its id beside the lists' ids.
+ */
+export const TrelloTrackerConfig = Schema.Struct({ kind: Schema.Literal("trello"), board: TrelloId, lists: TrelloLists });
+export type TrelloTrackerConfig = typeof TrelloTrackerConfig.Type;
 /** The project's issue tracker, a union tagged by `kind`, so that the Trello tracker of a later task adds a member. */
 export const TrackerConfig = Schema.Union([GithubTrackerConfig]);
 export type TrackerConfig = typeof TrackerConfig.Type;
