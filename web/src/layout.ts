@@ -83,11 +83,35 @@ export const roomOf = (input: RoomInput): Room => {
 /** The part of the area's room left to the three regions `allot` divides, once `fixed` (heading, question, gaps, padding) is taken. */
 export const regionsRoom = (room: Room, fixed: number): Room => Math.max(0, room - fixed) as Room;
 
+/**
+ * The lowest window, in CSS pixels, in which the question and its first answer stay in view without the run scrolling:
+ * the developer's decision of 9 Oct 2026 at the stop of execution phase 1 of issue #120, when the tabs took 48 px of
+ * the window. The one source of the number, which the layout tests import.
+ */
+export const IN_VIEW_MIN_HEIGHT = 450;
+/**
+ * How far the analysis may yield, by the window's height (issue #120, the developer's decisions of 9 Oct 2026). `Room`:
+ * in a window `IN_VIEW_MIN_HEIGHT` high or taller the room wins, so the first answer stays in view, and with a notice
+ * line at 450 px the question's last line may be clipped (his decision at the stop of execution phase 2). `Question`:
+ * in a lower window the analysis keeps its heading, the question and its own padding (`height`) whole, and the run
+ * area scrolls to the first answer.
+ */
+export type QuestionFloor = Readonly<{ _tag: "Room" }> | Readonly<{ _tag: "Question"; height: number }>;
+/** The floor in a window `windowHeight` high, where the heading, the question and the analysis's padding take `question`. */
+export const questionFloorOf = (windowHeight: number, question: number): QuestionFloor =>
+  windowHeight >= IN_VIEW_MIN_HEIGHT ? { _tag: "Room" } : { _tag: "Question", height: Math.max(0, question) };
+
 declare const MinimumBrand: unique symbol;
-/** The least height the analysis needs, never more than the room. */
+/**
+ * The least height the analysis needs: never more than the room where the floor is `Room`, and never less than the
+ * question's height (nor more than the minimum or that height) where it is `Question`.
+ */
 export type AnalysisMinimum = number & { readonly [MinimumBrand]: true };
-/** The analysis's minimum total, bounded by the room. */
-export const boundedMinimum = (minimum: number, room: Room): AnalysisMinimum => Math.max(0, Math.min(minimum, room)) as AnalysisMinimum;
+/** The analysis's minimum total, bounded by the room, and in a window below `IN_VIEW_MIN_HEIGHT` by the question's floor. */
+export const boundedMinimum = (minimum: number, room: Room, floor: QuestionFloor): AnalysisMinimum => {
+  const bounded = Math.max(0, Math.min(minimum, room));
+  return (floor._tag === "Room" ? bounded : Math.max(bounded, Math.min(minimum, floor.height))) as AnalysisMinimum;
+};
 
 /** What the allotment is computed from: the room, the two texts' content heights, the columns' strip and each text's minimum. */
 export type AllotInput = Readonly<{ available: number; context: number; recommendation: number; strip: number; minContext: number; minRecommendation: number; room: Room }>;

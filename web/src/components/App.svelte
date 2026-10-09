@@ -78,6 +78,8 @@
   });
 
   let width = $state(typeof window === "undefined" ? EXPANDED_MIN_WIDTH : window.innerWidth);
+  // Issue #120: the window's height decides how far the analysis may yield (IN_VIEW_MIN_HEIGHT of web/src/layout.ts).
+  let windowHeight = $state(typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerHeight);
   const compact = $derived(width < EXPANDED_MIN_WIDTH);
   let layout = $state<Layout>(initialLayout);
   $effect(() => {
@@ -273,7 +275,7 @@
   });
 </script>
 
-<svelte:window bind:innerWidth={width} onresize={measureRoom} />
+<svelte:window bind:innerWidth={width} bind:innerHeight={windowHeight} onresize={measureRoom} />
 <div class="app">
   <TopBar {run} location={view.location} incarnation={view.incarnation} connection={view.connection} onStop={(incarnation, id) => send({ type: "stop", incarnation, run: id })} {preferences} {permission} onPreferences={choose} onRequestPermission={requestPermission} />
   <!-- A failed page says so for as long as it lasts, apart from the notices, which a new task marks as seen, and keeps
@@ -335,7 +337,7 @@
       {/if}
       {#if analysis !== null && deciding}
         <div class="decision-area" style:min-height={analysisMinimum !== null && analysisMinimum > 0 ? `${analysisMinimum}px` : null}>
-          <DecisionView {room} onMinimum={(h) => (analysisMinimum = h)} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
+          <DecisionView {room} {windowHeight} onMinimum={(h) => (analysisMinimum = h)} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
         <div class="decision-area back">

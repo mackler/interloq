@@ -21,17 +21,18 @@
   import { Button } from "m3-svelte";
   import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type EntryView, viewOf } from "../../../src/analysisView.ts";
-  import { allot, type Allotment, type AnalysisMinimum, boundedMinimum, closedHeightOf, regionsRoom, type Room, stripOf, UNBOUNDED_ROOM } from "../layout.ts";
+  import { allot, type Allotment, type AnalysisMinimum, boundedMinimum, closedHeightOf, questionFloorOf, regionsRoom, type Room, stripOf, UNBOUNDED_ROOM } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
 
   /** `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the change asked for. */
   /**
    * `onMinimum` (decision G-R1-2): the least height the analysis needs, for the layout to grow to, never more than
-   * `room`, the height the window has for the analysis beside the question and its first answer (unbounded if absent).
+   * `room`, the height the window has for the analysis beside the question and its first answer (unbounded if absent),
+   * except in a window lower than 450 px (`windowHeight`, issue #120), where it keeps the heading and the question whole.
    */
-  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void; onMinimum?: (px: AnalysisMinimum) => void; room?: Room };
-  let { event, narrow, open, onToggle, onShowConversation, onMinimum, room }: Props = $props();
+  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void; onMinimum?: (px: AnalysisMinimum) => void; room?: Room; windowHeight?: number };
+  let { event, narrow, open, onToggle, onShowConversation, onMinimum, room, windowHeight }: Props = $props();
   const view = $derived(viewOf(event.analysis));
   let row = $state<HTMLElement | null>(null);
   let overflowing = $state(false);
@@ -122,12 +123,16 @@
     const next = { ...allotted, columns: Math.max(0, allotted.columns - withHint) };
     if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5 || Math.abs(next.columns - heights.columns) > 0.5) heights = next;
     const minimum = fixed + paddingOf(section) + Math.min(next.context, minContext) + (recommendation === 0 ? 0 : Math.min(minRecommendation, recommendation)) + (narrow ? 0 : strip + withHint);
-    onMinimum?.(boundedMinimum(Math.ceil(minimum), room ?? UNBOUNDED_ROOM));
+    // Issue #120, the developer's decisions of 9 Oct 2026: below 450 px (IN_VIEW_MIN_HEIGHT) the minimum keeps the
+    // heading, the question and the section's padding whole, and the run area scrolls to the first answer; at 450 px and
+    // taller the room wins, and with a notice line the question's last line may be clipped.
+    onMinimum?.(boundedMinimum(Math.ceil(minimum), room ?? UNBOUNDED_ROOM, questionFloorOf(windowHeight ?? Number.POSITIVE_INFINITY, Math.ceil(fixed + paddingOf(section)))));
   };
   $effect(() => {
     void view;
     void narrow;
     void room;
+    void windowHeight;
     measureStrip();
     allotHeights();
   });

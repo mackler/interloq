@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import fc from "fast-check";
-import { allot, type AllotInput, analysisShown, boundedMinimum, closedHeightOf, floorTotal, initialLayout, observe, regionsRoom, type Room, ROOM_MARGIN, roomOf, type RoomInput, select, stripOf, UNBOUNDED_ROOM } from "./layout.ts";
+import { allot, type AllotInput, analysisShown, boundedMinimum, IN_VIEW_MIN_HEIGHT, questionFloorOf, closedHeightOf, floorTotal, initialLayout, observe, regionsRoom, type Room, ROOM_MARGIN, roomOf, type RoomInput, select, stripOf, UNBOUNDED_ROOM } from "./layout.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: selectable panels at compact widths.
 type Key = { incarnation: string; run: number; prompt: number };
@@ -254,16 +254,35 @@ describe("the room of a decision's analysis", () => {
     expect(roomOf({ _tag: "Stacked", height: 294, padding: 24, gap: 8, above: [40], firstAnswer: 68 })).toBe(122);
     expect(roomOf({ _tag: "Grid", height: 340, padding: 24, rowGap: 12, firstAnswer: 68 })).toBe(212);
   });
-  test("the bounded minimum never exceeds the room, and is the minimum wherever that fits", () => {
+  // Issue #120, the developer's decisions of 9 Oct 2026: in windows 450 px high and taller the room wins, so the first
+  // answer stays in view; in lower windows the analysis keeps its heading and question whole and the run scrolls.
+  const tall = fc.integer({ min: IN_VIEW_MIN_HEIGHT, max: 3000 });
+  const low = fc.integer({ min: 0, max: IN_VIEW_MIN_HEIGHT - 1 });
+  test("at 450 px high and taller the bounded minimum never exceeds the room, and is the minimum wherever that fits", () => {
     fc.assert(
-      fc.property(h, room, (m, r) => {
-        const b = boundedMinimum(m, r);
+      fc.property(h, room, tall, h, (m, r, w, q) => {
+        const b = boundedMinimum(m, r, questionFloorOf(w, q));
         expect(b).toBeLessThanOrEqual(r);
         expect(b).toBeGreaterThanOrEqual(0);
         if (m <= r) expect(b).toBe(m);
       }),
       RUNS,
     );
+  });
+  test("below 450 px the bounded minimum is at least the question's floor, even where the room is smaller, and never more than the minimum or that floor", () => {
+    fc.assert(
+      fc.property(h, room, low, h, (m, r, w, q) => {
+        const b = boundedMinimum(m, r, questionFloorOf(w, q));
+        expect(b).toBeGreaterThanOrEqual(Math.min(m, q));
+        expect(b).toBeLessThanOrEqual(Math.max(Math.min(m, r), Math.min(m, q)));
+        expect(b).toBeGreaterThanOrEqual(0);
+      }),
+      RUNS,
+    );
+  });
+  test("at 640 × 400 the question's 116 px stand though the room is 86 px; at 640 × 450 the room wins", () => {
+    expect(boundedMinimum(200, 86 as Room, questionFloorOf(400, 116))).toBe(116);
+    expect(boundedMinimum(200, 86 as Room, questionFloorOf(IN_VIEW_MIN_HEIGHT, 116))).toBe(86);
   });
   test("the regions' room is the area's room less the fixed parts, never negative", () => {
     fc.assert(
