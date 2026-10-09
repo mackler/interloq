@@ -90,6 +90,9 @@
   .tooltip {
     position: fixed;
     z-index: 10;
+    /* The height placed above is the whole box's, padding included (issue #120: the 48 px of the tabs moved a step near
+       the window's bottom, where a content-box tooltip ran 24 px past the room it was given). */
+    box-sizing: border-box;
     width: max-content;
     max-width: min(20rem, calc(100vw - 16px));
     max-height: 16rem;

@@ -180,6 +180,8 @@ export type ViewState = Readonly<{
   modes: Readonly<Record<RunMode, ModeView>>;
   /** The tab shown. */
   selected: RunMode;
+  /** Whether the user has chosen the tab; until then a replay shows the tab of a run in progress (issue #120). */
+  chosen: boolean;
   /** The mode of every run the page has seen, from its Started (issue #120): where a later event of the run belongs. */
   runModes: Readonly<Record<number, RunMode>>;
   /** A seq that did not follow: the page must reconnect to receive the replay. */
@@ -196,6 +198,7 @@ export const initialState: ViewState = {
   incarnation: null,
   modes: { refinement: emptyMode, implementation: emptyMode },
   selected: "refinement",
+  chosen: false,
   runModes: {},
   needsReconnect: false,
   notices: [],
@@ -205,7 +208,17 @@ export const initialState: ViewState = {
 /** The state with one mode's tab changed. */
 const withMode = (state: ViewState, mode: RunMode, change: (m: ModeView) => ModeView): ViewState => ({ ...state, modes: { ...state.modes, [mode]: change(state.modes[mode]) } });
 /** The tab the user shows (issue #120). */
-export const selectMode = (state: ViewState, mode: RunMode): ViewState => ({ ...state, selected: mode });
+export const selectMode = (state: ViewState, mode: RunMode): ViewState => ({ ...state, selected: mode, chosen: true });
+/**
+ * The tab a page shows before the user has chosen one [visibility of system status]: the tab whose run waits for an
+ * answer, else the tab of a run in progress, else the tab shown; once the user has chosen, his choice stands.
+ */
+const unchosenTab = (state: ViewState): RunMode => {
+  if (state.chosen) return state.selected;
+  const waiting = RUN_MODES.find((m) => state.modes[m].run?.pending != null && state.modes[m].run?.ended === null);
+  const running = RUN_MODES.find((m) => state.modes[m].run !== null && state.modes[m].run?.ended === null);
+  return waiting ?? running ?? state.selected;
+};
 /** A tab's items asked for: loading until the server's items frame. */
 export const itemsRequested = (state: ViewState, mode: RunMode): ViewState => withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" } }));
 /** The run a mode's tab shows, its newest, and the server's incarnation: what the draft and the notifications key by. */
@@ -694,7 +707,8 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const of = (mode: RunMode) => views.filter((v) => modeOfRun(v) === mode);
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], run: of(m).at(-1) ?? null, last: of(m).at(-2) ?? null }])) as Record<RunMode, ModeView>;
       const runModes = { ...state.runModes, ...Object.fromEntries(views.flatMap((v) => (v.mode === null ? [] : [[v.id, v.mode]]))) };
-      return { ...state, modes, runModes };
+      const replayed: ViewState = { ...state, modes, runModes };
+      return { ...replayed, selected: unchosenTab(replayed) };
     }
     case "items":
       return withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null }));

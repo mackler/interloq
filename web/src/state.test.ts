@@ -1781,3 +1781,15 @@ describe("two modes", () => {
     expect(s.modes.implementation.run?.pending).toBe(null);
   });
 });
+
+describe("the tab shown before the user chooses one", () => {
+  const startedIn = (mode: "refinement" | "implementation"): RunEvent => ({ ...started, mode, item: { id: "1", title: "t" } } as RunEvent);
+  const helloImpl: ServerMessage = { type: "hello", location: "/p", current: { refinement: null, implementation: 1 }, incarnation: "a" };
+  const replayOf = (mode: "refinement" | "implementation", more: readonly RunEvent[] = []): ServerMessage => ({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn(mode), ...more]) }] });
+
+  test("a replay shows the tab of a run in progress; a choice of the user stands", () => {
+    expect(fold([helloImpl, replayOf("implementation")]).selected).toBe("implementation");
+    expect(fold([helloImpl, replayOf("implementation", [{ _tag: "Ended", code: 0 }])]).selected).toBe("refinement");
+    expect(fold([replayOf("implementation")], selectMode(fold([helloImpl]), "refinement")).selected).toBe("refinement");
+  });
+});

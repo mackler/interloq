@@ -86,7 +86,7 @@ const modeOf = (s: State, id: number, which: readonly ("current" | "last")[]): R
 const withSlot = (s: State, mode: RunMode, slot: Slot): State => ({ ...s, runs: { ...s.runs, [mode]: slot } });
 
 /**
- * The manager over a wiring per run (the live one of src/web.ts with the run's web Ui). The state is one Ref: the
+ * The manager over a wiring per run (the live one of src/web.ts with the run's web Ui; the run's mode, so that a test may script each mode). The state is one Ref: the
  * next id (never reused while the process lives) and, per mode, the run in progress and the last finished one
  * (issue #120). An event is appended in one step with its seq and then broadcast, so a listener registered before a
  * snapshot sees every event that the snapshot does not hold (P1-R1-2). The time of an event (issue #1) is read from the
@@ -96,7 +96,7 @@ const withSlot = (s: State, mode: RunMode, slot: Slot): State => ({ ...s, runs: 
  * Issue #120 (the developer's answer to question Q1 of 9 Oct 2026): the project of both tabs is `cwd`, the directory the
  * server was started in. The tracker is reached through `access`: the configuration of `cwd` and the tracker it names.
  */
-export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, mounts: MountTable, incarnation: string, access: TrackerAccess): Effect.Effect<RunManager, never, Platform> =>
+export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd: string, mounts: MountTable, incarnation: string, access: TrackerAccess): Effect.Effect<RunManager, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -226,7 +226,7 @@ export const makeRunManager = (wiring: (ui: WebUi) => Wiring, cwd: string, mount
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program(runStart, wiring(ui)))),
+              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode)))),
               Effect.onExit((exit: Exit.Exit<number>) => Ref.get(idRef).pipe(Effect.flatMap((rid) => end(rid, exitCodeOf(exit))))),
               Effect.forkDetach({ startImmediately: true }),
             );

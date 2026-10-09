@@ -13,7 +13,7 @@
 // a second execution that reports a step and then waits until it is stopped.
 // PORT is the port.
 
-import { Effect } from "effect";
+import { Effect, Result } from "effect";
 import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -23,7 +23,10 @@ import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
 import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
-import { fakeTrackerOf, finished, issue, MANAGER_ITEMS, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, currentOf, entryOf } from "../test/helpers.ts";
+import { E2E_ITEMS } from "./ports.ts";
+import { NoTracker } from "../src/errors.ts";
+import type { RunMode } from "../src/runMode.ts";
+import { fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, currentOf, entryOf } from "../test/helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 // S39 (W2-R1-2): a context long enough to overflow its region beside the analysis.
@@ -84,10 +87,9 @@ export const SCENARIOS: Record<string, TestOptions> = {
       { output: asksQ1("The first question.") },
       { output: turn("Anything else?", false, "", ["Q1"], ["Q1"]) },
       { output: turn("That is all I need.", true, "# Requirements\n\nThe service uses PostgreSQL.", ["Q1"], ["Q1"]) },
-      { output: noQuestions, plan: "1. [ ] the step\n" },
     ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    // Issue #120: a refinement run, the question phase alone: the question review and the requirements review.
+    reviews: [{ issues: [] }, { issues: [] }],
   },
   // W3-R1-1: an empty message after the analysis is rejected and asked again; the analysis stays shown.
   decideBlank: {
@@ -96,16 +98,14 @@ export const SCENARIOS: Record<string, TestOptions> = {
       { output: asksQ1("The first question.") },
       { output: { ...DECIDE_ANALYSIS, columns: [{ ...DECIDE_ANALYSIS.columns[1], option: "PostgreSQL" }, { ...DECIDE_ANALYSIS.columns[0], option: "SQLite" }] } },
       { output: turn("That is all I need.", true, "# Requirements\n\nThe service uses PostgreSQL.", ["Q1"], ["Q1"]) },
-      { output: noQuestions, plan: "1. [ ] the step\n" },
     ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
-  },
-  // Issue #83: an empty agreed question list, which the review accepts; planning starts without a prompt.
-  emptyQuestions: {
-    steps: [{ output: { questions: [] } }, { output: noQuestions, plan: "1. [ ] the step\n" }],
+    // The question review, the analysis's review, the requirements review.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+  },
+  // Issue #83: an empty agreed question list, which the review accepts; issue #120: the refinement then ends at once.
+  emptyQuestions: {
+    steps: [{ output: { questions: [] } }],
+    reviews: [{ issues: [] }],
   },
   // Issue #12: the interview's numbered answers are paragraphs.
   longChoices: {
@@ -114,14 +114,12 @@ export const SCENARIOS: Record<string, TestOptions> = {
       { output: asksQ1("The first question.") },
       { output: turn("Anything else?", false, "") },
       { output: turn("That is all I need.", true, "# Requirements\n\nRelative time.") },
-      { output: noQuestions, plan: "1. [ ] the step\n" },
     ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    reviews: [{ issues: [] }, { issues: [] }],
   },
   // Defect A of docs/page-question-phase-defects.md: the question list, its review with one issue, Claude Code's
   // response with the amended list, a second round without an issue, one interview turn with numbered answers, the
-  // user's answer, a summary, the requirements review, then planning, execution and the work review.
+  // user's answer, a summary and the requirements review; issue #120: a refinement run ends there.
   questionReview: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
@@ -136,10 +134,8 @@ export const SCENARIOS: Record<string, TestOptions> = {
       },
       { output: asksQ1("The first question.") },
       { output: turn("That is all I need.", true, "# Requirements\n\nThe service uses PostgreSQL on port 8080.") },
-      { output: noQuestions, plan: "1. [ ] the step\n" },
     ],
-    reviews: [{ issues: [issue("Q-R1-1", "The list does not ask for the port.")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    reviews: [{ issues: [issue("Q-R1-1", "The list does not ask for the port.")] }, { issues: [] }, { issues: [] }],
   },
   // A work correction: work review 1 raises an issue that Claude Code accepts, so planning, execution and the work
   // review run a second time, and the second work review converges.
@@ -317,16 +313,28 @@ SCENARIOS.transportLong = {
   config: { maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 },
 };
 
-const scenario = SCENARIOS[process.env.SCENARIO ?? "converge"] ?? SCENARIOS.converge;
+// Issue #120: the server of two runs at once, a refinement run waiting on its first question and an implementation run
+// waiting on the plan writer's question, each mode with its own script.
+const BY_MODE: Partial<Record<string, Readonly<Record<RunMode, TestOptions>>>> = {
+  twoModes: { refinement: SCENARIOS.interview, implementation: SCENARIOS.decision },
+};
+// Issue #120: the server of a project whose tracker cannot be reached: no tracker is configured, so each tab shows a notice.
+SCENARIOS.noTracker = SCENARIOS.converge;
+const name = process.env.SCENARIO ?? "converge";
+const scenarioOf = (mode: RunMode): TestOptions => BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge;
 const port = Number(process.env.PORT ?? "8101");
 const repo = tempRepo();
 const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
 
-/** The project's tracker of the scenario (issue #120): the items both tabs list, in memory. */
-const tracker = fakeTrackerOf(MANAGER_ITEMS);
+/**
+ * The project's tracker of the scenario (issue #120), in memory: refined items for the implementation runs and unrefined
+ * ones for the refinement runs, enough for every test of a server, since each run moves its item on.
+ */
+const tracker = fakeTrackerOf(E2E_ITEMS);
+const access = name === "noTracker" ? { ...trackerAccessOf(tracker), tracker: () => Result.fail(new NoTracker()) } : trackerAccessOf(tracker);
 
 const main = Effect.gen(function* () {
-  const manager = yield* makeRunManager((ui) => ({ ...testWiring(repo, { ...scenario, tracker }).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${process.env.SCENARIO ?? "converge"}`, trackerAccessOf(tracker));
+  const manager = yield* makeRunManager((ui, mode) => ({ ...testWiring(repo, { ...scenarioOf(mode), tracker }).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${name}`, access);
   // As src/web.ts: the tabs are closed by a finalizer registered after serveEffect, so it runs first (finding 15).
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);

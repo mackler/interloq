@@ -1,8 +1,8 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, test } from "./fixtures.ts";
+import { expect, startFromTab, test } from "./fixtures.ts";
 import { clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
-import { layoutUrl } from "./ports.ts";
+import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both panels are side by side; below it, one panel at a time, chosen by its title, with a badge for the other's
@@ -21,39 +21,17 @@ const box = async (locator: Locator) => {
   if (b === null) throw new Error("the element is not visible");
   return b;
 };
-const startTask = async (page: Page, task: string, url = URL) => {
-  await page.goto(url);
-  await expect(page.getByText("connected", { exact: true })).toBeVisible();
-  // The form, an ended run, or a run left by an earlier test on the shared server, which is stopped first.
-  await expect(page.locator("textarea[name=task], button[name=new], button[name=stop]:not([disabled])").first()).toBeVisible();
-  const stop = page.locator("button[name=stop]");
-  const again = page.locator("button[name=new]");
-  const form = page.locator("textarea[name=task]");
-  // Retried as a whole: the left run can end between the check and the click (it did on a loaded machine), after
-  // which Stop stays disabled and a plain click would wait for the test's whole timeout.
-  await expect(async () => {
-    if (await form.isVisible()) return;
-    // S34: a confirmation an earlier attempt opened and did not confirm stays open and intercepts every click, Stop's
-    // included (end-to-end test 7a reproduces it); it is confirmed first, not reopened.
-    const dialog = page.locator("dialog[open]");
-    if (!(await dialog.isVisible()) && (await stop.isEnabled({ timeout: 1_000 }).catch(() => false))) await stop.click({ timeout: 2_000 });
-    if (await dialog.isVisible()) {
-      // S38: the confirmation closes without acting if the run ends before it is confirmed, which the check covers.
-      await dialog.locator("button[name=confirm-end]").click({ timeout: 5_000 }).catch(() => undefined);
-      await expect(dialog).toHaveCount(0, { timeout: 5_000 });
-    }
-    await again.click({ timeout: 5_000 });
-    await expect(form).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 60_000 });
-  await form.fill(task);
-  await page.locator("button[name=start]").click();
+/** Opens the page and starts a run from the first item of the scenario's mode's list (issue #120: there is no form). */
+const startTask = (page: Page, url = URL) => {
+  const scenario = (Object.keys(LAYOUT_PORTS) as LayoutScenario[]).find((k) => layoutUrl(k) === url) ?? "tabs";
+  return startFromTab(page, url, modeOf(scenario));
 };
 const FIRST = "Which database should the service use?";
 const SECOND = "Which cache should the service use?";
 
 /** The assertions of a compact window: no horizontal overflow, a usable panel and answer field, the panel switch. */
 const compactChecks = async (page: Page, context: import("@playwright/test").BrowserContext, minHeight: number) => {
-  await startTask(page, "Add a database in a narrow window");
+  await startTask(page);
   await expect(asking(page, FIRST)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
   // S27 and issue #20: the question the run waits on takes the column; the transcript is out of the way.
@@ -92,9 +70,9 @@ const toTop = (l: Locator) =>
   });
 const showPanel = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${name}`) }).click();
 /** The long run at its idle pause, with the conversation shown instead of the question (S27). */
-const longRunAtItsPrompt = async (page: Page, task: string) => {
+const longRunAtItsPrompt = async (page: Page) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await startTask(page, task, LONG_URL);
+  await startTask(page, LONG_URL);
   await expect(continueWithoutDeciding(page)).toBeVisible({ timeout: 180_000 });
   await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
 };
@@ -120,7 +98,7 @@ const questionAndNoticeInside = async (analysis: Locator) => {
   }
 };
 const openAnalysis = async (page: Page) => {
-  await startTask(page, "Add a database", DECIDE_URL);
+  await startTask(page, DECIDE_URL);
   await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
   const analysis = page.getByRole("region", { name: /^Decision 1: / });
   await expect(analysis).toBeVisible();
@@ -131,7 +109,7 @@ const openAnalysis = async (page: Page) => {
 // the analysis or each other and never clipped.
 const openLongAnalysis = async (page: Page, width: number, height: number) => {
   await page.setViewportSize({ width, height });
-  await startTask(page, "Add a database", layoutUrl("decideLong"));
+  await startTask(page, layoutUrl("decideLong"));
   await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
   const analysis = page.getByRole("region", { name: /^Decision 1: / });
   await expect(analysis).toBeVisible();
@@ -282,7 +260,7 @@ test.describe("the tests of the tabs server, in order", () => {
 
   test("(L3) a desktop window, 1280 × 800: the rail and both panels side by side", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, "Add a database in a wide window");
+    await startTask(page);
     await expect(asking(page, FIRST)).toBeVisible();
     const rail = await box(page.getByRole("navigation", { name: "Progress of the run" }));
     const left = await box(pane(page));
@@ -304,7 +282,7 @@ test.describe("the tests of the tabs server, in order", () => {
       ws.connectToServer();
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await startTask(page, "Watch the review");
+    await startTask(page);
     await expect(asking(page, FIRST)).toBeVisible();
     await showPanel(page, RIGHT);
     await expect(panel(page, RIGHT)).toBeVisible();
@@ -328,7 +306,7 @@ test.describe("the tests of the tabs server, in order", () => {
       ws.connectToServer();
     });
     await page.setViewportSize({ width: 390, height: 844 });
-    await startTask(page, "The first run");
+    await startTask(page);
     await expect(asking(page, FIRST)).toBeVisible();
     await showPanel(page, RIGHT);
     hold = true;
@@ -337,13 +315,11 @@ test.describe("the tests of the tabs server, in order", () => {
     await other.goto(URL);
     await other.locator("button[name=stop]").click();
     await confirmEnd(other);
-    await other.locator("button[name=new]").click();
-    await other.locator("textarea[name=task]").fill("The second run");
-    await other.locator("button[name=start]").click();
+    const second = await startFromTab(other, URL, "implementation");
     await expect(asking(other, FIRST)).toBeVisible();
     hold = false;
     await expect(page.getByText("connected", { exact: true })).toBeVisible();
-    await expect(page.getByText("The second run").first()).toBeVisible();
+    await expect(page.getByText(`Refined item ${second}`).first()).toBeVisible();
     await expect(pane(page)).toBeVisible();
     await expect(page.locator("[name=answer]")).toBeVisible();
     await other.close();
@@ -354,7 +330,7 @@ test.describe("the tests of the long server, in order", () => {
   test.describe.configure({ mode: "default" });
 
   test("(L4) a panel's reading position survives a switch of panels and a resize across 840 px", async ({ page }) => {
-    await longRunAtItsPrompt(page, "Keep my place");
+    await longRunAtItsPrompt(page);
     await toTop(list(page, LEFT));
     await showPanel(page, RIGHT);
     await showPanel(page, LEFT);
@@ -365,7 +341,7 @@ test.describe("the tests of the long server, in order", () => {
   });
 
   test("(L5) a hidden panel opens at its end, and follows the messages that arrived while it was hidden", async ({ page }) => {
-    await longRunAtItsPrompt(page, "Follow the review");
+    await longRunAtItsPrompt(page);
     await showPanel(page, RIGHT);
     await expect.poll(() => fromEnd(list(page, RIGHT)), { message: "hidden from the start" }).toBeLessThan(32);
     await showPanel(page, LEFT);
@@ -376,7 +352,7 @@ test.describe("the tests of the long server, in order", () => {
   });
 
   test("(L6) a panel scrolled up keeps its position while hidden, and its chip counts what arrived", async ({ page }) => {
-    await longRunAtItsPrompt(page, "Read the review from the start");
+    await longRunAtItsPrompt(page);
     await showPanel(page, RIGHT);
     await expect.poll(() => fromEnd(list(page, RIGHT))).toBeLessThan(32);
     await toTop(list(page, RIGHT));
@@ -398,7 +374,7 @@ test.describe("the tests of the longChoices server, in order", () => {
   ] as const) {
     test(`(L9) paragraph-length answers at ${width} × ${height}: each is a card that holds its text, chosen by keyboard`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, `Show the time at ${width}`, LONG_CHOICES_URL);
+      await startTask(page, LONG_CHOICES_URL);
       await expect(page.getByRole("button", { name: END_CLARIFICATION })).toBeVisible();
       // Issue #21: a narrow window's progress line names the step and its count.
       if (width < 840) await expect(page.locator("details.progress summary")).toHaveText(progressLine(stepOfPhase("Gather Requirements", stepLabel("clarification")), clarificationProgress(0, 1)));
@@ -759,7 +735,7 @@ test.describe("the tests of the planSteps server, in order", () => {
   for (const [width, height] of [[1280, 800], [390, 844]] as const) {
     test(`(L17) a long step text at ${width} × ${height}: the tooltip stays in the viewport and scrolls inside itself`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, "Build the rail", layoutUrl("planSteps"));
+      await startTask(page, layoutUrl("planSteps"));
       if (width < 840) {
         await page.locator("details.progress > summary, details.progress summary").first().click();
         await expect(page.locator("details.progress")).toHaveAttribute("open", "");
@@ -789,7 +765,7 @@ test.describe("the tests of the planSteps server, in order", () => {
   // W1-R1-1: with the mouse alone, a long step text can be read: the tooltip stays open while the pointer moves into it.
   test("(L18) a long step text at 1280 × 800: hovered, the tooltip stays open while the pointer moves into it and scrolls with the wheel", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, "Build the rail", layoutUrl("planSteps"));
+    await startTask(page, layoutUrl("planSteps"));
     // Issue #63: the stage that holds the step is collapsed until it is opened.
     await page.getByRole("navigation", { name: "Progress of the run" }).getByRole("button", { name: railToggleName(stageHeading(2, "the page"), RAIL_CONDITION_LABEL.notStarted, null, null), exact: true }).click();
     const button = page.locator("[data-plan-step] button", { hasText: "The long step" });
@@ -811,7 +787,7 @@ test.describe("the tests of the planSteps server, in order", () => {
   // the whole subtree as one group, so the tooltip's effective opacity is the product over it and its ancestors.
   test("(L30) at 1280 × 800: the tooltip of a done step and of the current step are drawn at full opacity", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, "Build the rail", layoutUrl("planSteps"));
+    await startTask(page, layoutUrl("planSteps"));
     const nav = page.getByRole("navigation", { name: "Progress of the run" });
     const entry = (label: string) => nav.locator("[data-state]", { has: page.locator("[data-label]", { hasText: new RegExp(`^${label}$`) }) });
     const cases = [
@@ -839,7 +815,7 @@ test.describe("the tests of the planSteps server, in order", () => {
   for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
     test(`(L31) the rail at ${width} × ${height}: a step deeper than its stage, a stage than its phase, every row inside the column, a long label unclipped`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, "Build the rail", layoutUrl("planSteps"));
+      await startTask(page, layoutUrl("planSteps"));
       if (width < 840) {
         await page.locator("details.progress > summary, details.progress summary").first().click();
         await expect(page.locator("details.progress")).toHaveAttribute("open", "");
@@ -892,7 +868,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
   for (const [width, height] of [[390, 844], [640, 400], [1280, 800]] as const) {
     test(`(L19) a long question at ${width} × ${height}: the question and its first option in view, each region scrolls on its own`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, `Choose a database at ${width}`, LONG_QUESTION_URL);
+      await startTask(page, LONG_QUESTION_URL);
       const question = pane(page).locator(".question-text");
       await expect(question).toBeInViewport();
       const first = pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
@@ -928,7 +904,7 @@ test.describe("the tests of the longContextShortAnswers server, in order", () =>
   // of the pane: with short answers, the whole context is shown, and no room stays empty below the answers.
   test("(L25) a long context with short answers at 1280 × 1700: the pane's content fits, and the context is whole", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 1700 });
-    await startTask(page, "Choose a database at 1700", layoutUrl("longContextShortAnswers"));
+    await startTask(page, layoutUrl("longContextShortAnswers"));
     await expect(pane(page).locator(".question-text")).toBeInViewport();
     const m = await pane(page).evaluate((el) => {
       const cs = getComputedStyle(el);
@@ -954,7 +930,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
   for (const [width, height] of [[390, 844], [640, 400]] as const) {
     test(`(L21) a permission request with a 40-line command at ${width} × ${height}: the question and the first option in view`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, `Prepare the build at ${width}`, PERMISSION_URL);
+      await startTask(page, PERMISSION_URL);
       const question = pane(page).locator(".question-text");
       await expect(question).toContainText("Do you want to allow it?");
       await expect(question).not.toContainText("echo");
@@ -992,7 +968,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
   // layout tests measure.
   test("(L28) the page renders in Liberation: body text, bold text and code, at the sizes it had", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, "Prepare the build in Liberation", PERMISSION_URL);
+    await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     const families = (fonts: readonly UsedFont[]) => [...new Set(fonts.map((f) => f.familyName))];
     expect(families(await usedFont(page, "section.pane .question-text")), "the question's text").toEqual(["Liberation Sans"]);
@@ -1013,7 +989,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
   for (const [width, height, cut] of [[640, 400, true], [390, 844, true], [1280, 800, false]] as const) {
     test(`(L29) the analysis's heading stays on one line beside its button at ${width} × ${height}`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, `Prepare the build with a one-line heading at ${width}`, PERMISSION_URL);
+      await startTask(page, PERMISSION_URL);
       await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
       await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
       const analysis = page.getByRole("region", { name: /^Decision 1: / });
@@ -1036,7 +1012,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
   }
   test("(L21a) a permission request at 640 × 400 beside the analysis: the question and the first answer in view with room to spare, the analysis within its own box", async ({ page }) => {
     await page.setViewportSize({ width: 640, height: 400 });
-    await startTask(page, "Prepare the build with room to spare", PERMISSION_URL);
+    await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
     const analysis = page.getByRole("region", { name: /^Decision 1: / });
@@ -1069,7 +1045,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
       toPage = (frame) => ws.send(frame);
     });
     await page.setViewportSize({ width: 640, height: 400 });
-    await startTask(page, "Prepare the build with a notice", PERMISSION_URL);
+    await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
     const analysis = page.getByRole("region", { name: /^Decision 1: / });
@@ -1090,7 +1066,7 @@ test.describe("the tests of the whitespace server, in order", () => {
 
   test("(L22) code in rendered Markdown keeps its whitespace: in the pane, beside an analysis and in the transcript", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, "Probe the whitespace", WHITESPACE_URL);
+    await startTask(page, WHITESPACE_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await distinctWidths("in the question pane", pane(page).locator(".top"));
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
@@ -1109,7 +1085,7 @@ test.describe("the tests of the transportLong server, in order", () => {
   for (const [width, height] of [[390, 844], [640, 400]] as const) {
     test(`(L23) the exhaustion pause after a long fault at ${width} × ${height}: the question and the first option in view`, async ({ page }) => {
       await page.setViewportSize({ width, height });
-      await startTask(page, `Reach Codex at ${width}`, TRANSPORT_LONG_URL);
+      await startTask(page, TRANSPORT_LONG_URL);
       const question = pane(page).locator(".question-text");
       await expect(question).toContainText("Do you want Interloq to retry again, or to stop the run?");
       await expect(question).not.toContainText("endpoint");
