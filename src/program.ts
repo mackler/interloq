@@ -4,9 +4,9 @@
 import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DecisionFormatUnreadable, describe, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
+import { DecisionFormatUnreadable, describe, type RunError, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
 import { blankItemText, itemStartedLine, mainSessionLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
-import { run } from "./run.ts";
+import { refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
 import type { Config } from "./schema.ts";
@@ -70,8 +70,12 @@ export type TaskStart = Readonly<{ task: Task; project: string }>;
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
 
+/** How a run ended when it finished: a refinement run, or an implementation run with its number of execution phases. */
+type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implementation"; phases: number }>;
 /** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
-type Started = Readonly<{ project: string; mode: RunMode; item: string; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Task, string>> }>;
+type Started = Readonly<{ project: string; mode: RunMode; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>> }>;
+/** What a run has read before its records exist: its task, and its tracker (none for a run started from a task). */
+type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null }>;
 
 /**
  * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
@@ -101,7 +105,10 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
           }
           const item = read.value;
           yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
-          return Result.mapError(taskTextOf(start.mode, item), (e) => (e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason)));
+          return Result.mapBoth(taskTextOf(start.mode, item), {
+            onFailure: (e) => (e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason)),
+            onSuccess: (task): Readied => ({ task, tracker: layer.success }),
+          });
         }),
     },
     wiring,
@@ -109,7 +116,7 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
-  programWith({ project: start.project, mode: "implementation", item: "task", task: () => Effect.succeed(Result.succeed(start.task)) }, wiring);
+  programWith({ project: start.project, mode: "implementation", item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null })) }, wiring);
 
 const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -161,7 +168,7 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
     // Issue #120: the item and its task text, read from the tracker before any agent exists and before the records exist.
     const taskRead = yield* start.task(config, ui);
     if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
-    const task = taskRead.success;
+    const { task, tracker } = taskRead.success;
 
     const allocated = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
     if (Exit.isFailure(allocated)) {
@@ -181,11 +188,20 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
       yield* tail(yield* sessionId, records);
     });
-    const exit = yield* run(task).pipe(Effect.provide(context), Effect.onInterrupt(() => interrupted), Effect.exit);
+    // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
+    const body: Effect.Effect<RunOutcome, RunError> =
+      start.mode === "refinement"
+        ? tracker === null
+          ? Effect.die(new Error("a refinement run is started from an item, with its tracker"))
+          : refinementRun(task, start.item).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
+        : run(task).pipe(Effect.provide(context), Effect.map((phases) => ({ mode: "implementation", phases }) as const));
+    const exit = yield* body.pipe(Effect.onInterrupt(() => interrupted), Effect.exit);
 
     if (Exit.isSuccess(exit)) {
-      yield* ui.say(taskFinishedLine(exit.value));
-      yield* ui.say(`Plan: ${records.plan}\nConversation record: ${records.dir}/conversation.md`);
+      if (exit.value.mode === "implementation") {
+        yield* ui.say(taskFinishedLine(exit.value.phases));
+        yield* ui.say(`Plan: ${records.plan}\nConversation record: ${records.dir}/conversation.md`);
+      } else yield* ui.say(`Requirements: ${records.requirements}\nConversation record: ${records.dir}/conversation.md`);
       yield* tail(yield* sessionId, records);
       return 0;
     }

@@ -954,6 +954,24 @@ describe("the whole run in the timeline", () => {
     expect(stepStates(skippedThenHalted)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
   });
 
+  // Issue #120, S6: a refinement run foresees Gather Requirements alone, so a finished refinement run leaves no phase not
+  // reached (which means a halt) and none ahead; the events are those of src/run.ts's refinementRun.
+  test("a finished refinement run: Gather Requirements alone, done, and no entry not reached or ahead", () => {
+    const events: RunEvent[] = [
+      started,
+      notified({ _tag: "PhasesForeseen", phases: foreseenPhases("refinement", 1) }),
+      began(q),
+      notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
+      notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
+      notified({ _tag: "PhaseEnded", phase: q, result: "converged" }),
+      { _tag: "Ended", code: 0 },
+    ];
+    for (const s of [fold(live(events)), replayed(events)]) {
+      expect(entries(s)).toEqual([["Gather Requirements", "done"]]);
+      expect(s.run?.timeline.some((e) => (e.state as string) === "notReached" || (e.state as string) === "ahead")).toBe(false);
+    }
+  });
+
   test("the plan hangs under the Implementation of its phase, and a revision moves it there (Q5, Q9)", () => {
     const first = [started, foreseen(false, 1), began({ kind: "planning", n: 1 }), notified({ _tag: "PlanChanged", phase: 1, plan: recorded("S1", "pending"), step: null })];
     const plans = (x: ViewState) => x.run?.timeline.map((e) => bare(e.plan));

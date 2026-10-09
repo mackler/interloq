@@ -1016,6 +1016,25 @@ export function blankItemText(id: string): string {
 export function sectionMalformedText(id: string, reason: string): string {
   return `the text of item ${id} cannot be read: ${reason}`;
 }
+/**
+ * What a refinement run records and says when the agreed question list was empty (issue #83): no failure. The agents
+ * agreed that no question needed the user's answer, so the refinement found nothing to settle (issue #120).
+ */
+export const NOTHING_TO_SETTLE =
+  "This refinement found nothing to settle: Claude Code and Codex agreed that no question needed your answer. The run ends successfully, and the item is written back and set to refined.";
+/** What a refinement run says when it has written its requirements back to the item. */
+export function refinementWrittenLine(item: string, requirements: string): string {
+  return `The requirements (${requirements}) were written to item ${item} as its section "Refined using Interloq", and the item was set to refined.`;
+}
+/** Why requirements.md cannot be written back: it is blank, or holds a line of the section's own. */
+export function refinementInvalidText(reason: "blank" | "markerLine" | "trailingCarriageReturn", requirements: string): string {
+  const why = { blank: "it is empty", markerLine: "it holds a line that marks the beginning or the end of the section", trailingCarriageReturn: "it ends with a carriage return" }[reason];
+  return `${requirements} cannot be written to the item, because ${why}`;
+}
+/** Where the requirements are, for a halt after they were written to the item. */
+export function requirementsKeptText(requirements: string): string {
+  return `The requirements are in ${requirements}.`;
+}
 /** The tracker's failures as the program says them; a variable's name, never a credential. */
 export const TRACKER_FAILURE_TEXTS = {
   noTracker: "no issue tracker is configured: set the key tracker in the shared config.json of Interloq or in plan-review/config.json of the project",

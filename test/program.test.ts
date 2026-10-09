@@ -225,14 +225,18 @@ for (const mode of ["refinement", "implementation"] as const) {
   test(`the task of a${mode === "implementation" ? "n" : ""} ${mode} run is its item's title and body, read from the tracker, ${mode === "refinement" ? "without" : "with"} the section`, async () => {
     const item = sectionedItem();
     const tracker = fakeTrackerOf([item]);
-    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker });
-    await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, mode, item.id), wiring)));
+    // A refinement run is the question phase alone (S6): an empty agreed list, which ends it successfully.
+    const script = mode === "refinement" ? { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }] } : converging;
+    const { wiring, probe } = testWiring(tempRepo(), { ...script, tracker });
+    assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, mode, item.id), wiring))), 0);
     const held = (await Effect.runPromise(tracker.items)).find((i) => i.id === item.id);
     assert.ok(held !== undefined);
     const body = mode === "refinement" ? Result.getOrThrow(withoutRefinement(held.body)) : held.body;
     assert.ok(probe.planner.prompts[0].includes(`Task: ${held.title}\n\n${body}`), probe.planner.prompts[0].slice(-300));
     assert.equal(probe.planner.prompts[0].includes("The confirmed requirements."), mode === "implementation");
     assert.ok(said(probe).includes(`of item ${item.id}: ${item.title}`));
+    // The program ran the mode's run: a refinement run sets its item refined; an implementation run, until S7, nothing.
+    assert.equal(held.state === "refined" && (await Effect.runPromise(tracker.items))[0].body !== item.body, mode === "refinement");
   });
 }
 

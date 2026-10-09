@@ -1,20 +1,60 @@
 // The complete run: planning phase K, execution phase K and work review K, until Claude Code reports
 // 'finished' and the work review converges.
 
-import { Effect, Exit, Option } from "effect";
-import { describe, type RunError } from "./errors.ts";
+import { Effect, Exit, Option, Result } from "effect";
+import { refinementOf } from "./refinement.ts";
+import { stateAtEnd } from "./runMode.ts";
+import type { ItemId } from "./tracker.ts";
+import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
+import { itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
 import type { QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
-import { Decider, Planner, RunConfig, type Services, Store, Ui } from "./services.ts";
+import { Decider, Planner, RunConfig, type Services, Store, Tracker, Ui } from "./services.ts";
 import { countOfKind, foreseenPhases as foreseen, type Phase, phaseName } from "./uiEvents.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
+
+/**
+ * A refinement run (issue #120, the developer's decision of 8 Oct 2026): the question phase and nothing after it. It sets no
+ * state when it starts; when the question phase has written requirements.md, it writes that text back to the item as its
+ * section Refined using Interloq and sets the item to refined. A tracker step that fails halts with TrackerStepFailed: the
+ * records stand, and no state that was not written is claimed. A halted or stopped refinement sets nothing, and the item
+ * stays unrefined.
+ */
+export const refinementRun = (task: string, item: ItemId): Effect.Effect<void, RunError, Services | Tracker> =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const ui = yield* Ui;
+    const config = yield* RunConfig;
+    const decider = yield* Decider;
+    const tracker = yield* Tracker;
+    const phase: Phase = { kind: "questions" };
+    yield* store.init(task);
+    yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
+    yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
+    yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", 1) });
+    yield* questionPhase(task).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
+    // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
+    if ((yield* store.loadQuestions()).questions.length === 0) {
+      yield* store.converse(`${NOTHING_TO_SETTLE}\n\n`);
+      yield* ui.say(NOTHING_TO_SETTLE);
+    }
+    const { requirements } = yield* store.readContext();
+    const failed = (step: TrackerStep, cause: string, done: string | null) => Effect.fail(new TrackerStepFailed({ item, step, cause, done }));
+    const refinement = refinementOf(requirements ?? "");
+    if (Result.isFailure(refinement)) return yield* failed("writeRefinement", refinementInvalidText(refinement.failure.reason, store.requirements), requirementsKeptText(store.requirements));
+    yield* tracker.writeRefinement(item, refinement.success).pipe(Effect.catch((e) => failed("writeRefinement", trackerFailureText(e), requirementsKeptText(store.requirements))));
+    yield* tracker.setState(item, stateAtEnd("refinement")).pipe(Effect.catch((e) => failed("setRefined", trackerFailureText(e), requirementsKeptText(store.requirements))));
+    yield* ui.say(refinementWrittenLine(item, store.requirements));
+  });
+
+/** The first line of a task: an item's title (taskTextOf puts it first). */
+const firstLine = (task: string): string => task.split("\n")[0] ?? "";
 
 /** The whole run. Succeeds with the number of execution phases when Claude Code reports 'finished' and the work review converges. */
 export const run = (task: string): Effect.Effect<number, RunError, Services> =>
