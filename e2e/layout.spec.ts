@@ -3,6 +3,7 @@ import { expect, startFromTab, test } from "./fixtures.ts";
 import { clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
+import { IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both panels are side by side; below it, one panel at a time, chosen by its title, with a badge for the other's
@@ -141,6 +142,19 @@ const questionWithFirstAnswer = async (page: Page, analysis: Locator, height: nu
   expect(question.y, "the question's top is above the window").toBeGreaterThanOrEqual(0);
   const first = await box(page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first());
   expect(first.y + first.height, "the first answer has less than 16 px below it").toBeLessThanOrEqual(height - 16);
+};
+/**
+ * The developer's decision of 9 Oct 2026 (issue #120): the question and its first answer stay in view without the run
+ * scrolling in windows 450 pixels high and taller; below that, the run area may scroll. So a window lower than 450 px
+ * asserts what still holds there: the page does not overflow sideways, the question is in view, and the first answer
+ * is reached by scrolling. The limit is `IN_VIEW_MIN_HEIGHT` of web/src/layout.ts, which the page's layout uses too.
+ */
+const belowTheLimit = async (page: Page, question: Locator) => {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
+  await expect(question).toBeInViewport();
+  const first = page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
+  await first.scrollIntoViewIfNeeded();
+  await expect(first).toBeInViewport();
 };
 /**
  * The order in which the analysis yields where the window is shorter than its floor (the task of L21): the columns give
@@ -865,8 +879,11 @@ test.describe("the tests of the planSteps server, in order", () => {
 test.describe("the tests of the longQuestion server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  for (const [width, height] of [[390, 844], [640, 400], [1280, 800]] as const) {
+  // The developer's decision of 9 Oct 2026: the in-view assertions hold at 450 px high and taller (IN_VIEW_MIN_HEIGHT);
+  // 640 × 400 keeps what still holds below that limit.
+  for (const [width, height] of [[390, 844], [640, 450], [1280, 800]] as const) {
     test(`(L19) a long question at ${width} × ${height}: the question and its first option in view, each region scrolls on its own`, async ({ page }) => {
+      expect(height).toBeGreaterThanOrEqual(IN_VIEW_MIN_HEIGHT);
       await page.setViewportSize({ width, height });
       await startTask(page, LONG_QUESTION_URL);
       const question = pane(page).locator(".question-text");
@@ -895,6 +912,14 @@ test.describe("the tests of the longQuestion server, in order", () => {
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
+  test("(L19) a long question at 640 × 400, below the 450 px limit: no sideways overflow, the question in view, the first option reached by scrolling", async ({ page }) => {
+    await page.setViewportSize({ width: 640, height: 400 });
+    await startTask(page, LONG_QUESTION_URL);
+    await belowTheLimit(page, pane(page).locator(".question-text"));
+    await page.mouse.move(0, 0);
+    await continueWithoutDeciding(page).click();
+    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  });
 });
 
 test.describe("the tests of the longContextShortAnswers server, in order", () => {
@@ -1010,15 +1035,20 @@ test.describe("the tests of the permissionLong server, in order", () => {
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
-  test("(L21a) a permission request at 640 × 400 beside the analysis: the question and the first answer in view with room to spare, the analysis within its own box", async ({ page }) => {
-    await page.setViewportSize({ width: 640, height: 400 });
+  // The developer's decision of 9 Oct 2026: the question and the first answer in view at 450 px high and taller
+  // (IN_VIEW_MIN_HEIGHT); at 640 × 400 the analysis still stays within its own box and the first answer is reached by
+  // scrolling.
+  for (const height of [450, 400] as const) test(`(L21a) a permission request at 640 × ${height} beside the analysis: ${height >= IN_VIEW_MIN_HEIGHT ? "the question and the first answer in view with room to spare" : "below the 450 px limit, the first answer reached by scrolling"}, the analysis within its own box`, async ({ page }) => {
+    await page.setViewportSize({ width: 640, height });
     await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
     const analysis = page.getByRole("region", { name: /^Decision 1: / });
     await expect(analysis).toBeVisible();
-    await questionWithFirstAnswer(page, analysis, 400);
-    await yieldOrder(analysis);
+    if (height >= IN_VIEW_MIN_HEIGHT) {
+      await questionWithFirstAnswer(page, analysis, height);
+      await yieldOrder(analysis);
+    }
     const m = await analysis.evaluate((el) => {
       const own = (s: string) => {
         const r = el.querySelector<HTMLElement>(s);
@@ -1031,6 +1061,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
       if (r === null) continue;
       expect(Math.abs(r.rendered - r.inline), `${name} renders at ${r.rendered} px, not its allotted ${r.inline} px`).toBeLessThanOrEqual(1);
     }
+    if (height < IN_VIEW_MIN_HEIGHT) await belowTheLimit(page, analysis.locator(".question-text"));
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
@@ -1038,24 +1069,30 @@ test.describe("the tests of the permissionLong server, in order", () => {
   // area, and the room is measured again, so the question and the first answer stay in view without a resize. The
   // server sends a refusal only to the tab whose action it refuses, so no action of another tab gives this tab a
   // notice; the test delivers the server's own `refused` frame to the page through Playwright's WebSocket routing.
-  test("(L21b) a notice that appears beside the analysis at 640 × 400: the question and the first answer stay in view", async ({ page }) => {
+  // The developer's decision of 9 Oct 2026 moved this check from 640 × 400 to 640 × 450, the lowest window in which the
+  // question and its first answer stay in view without the run scrolling (IN_VIEW_MIN_HEIGHT). The notice of W2-R1-1 is
+  // the page's own, which a refusal of no mode produces; a refusal of the run's mode is drawn in its tab above the run
+  // (issue #120), and the second case checks the room once that line takes height.
+  for (const mode of [null, modeOf("permissionLong")] as const) test(`(L21b) ${mode === null ? "a notice" : "a refusal of the run's tab"} that appears beside the analysis at 640 × 450: the question and the first answer stay in view`, async ({ page }) => {
     let toPage: ((frame: string) => void) | null = null;
     await page.routeWebSocket(/\/\/127\.0\.0\.1:\d+/, (ws) => {
       ws.connectToServer();
       toPage = (frame) => ws.send(frame);
     });
-    await page.setViewportSize({ width: 640, height: 400 });
+    await page.setViewportSize({ width: 640, height: IN_VIEW_MIN_HEIGHT });
     await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
     const analysis = page.getByRole("region", { name: /^Decision 1: / });
     await expect(analysis).toBeVisible();
-    await questionWithFirstAnswer(page, analysis, 400);
+    await questionWithFirstAnswer(page, analysis, IN_VIEW_MIN_HEIGHT);
     const reason = "a run is in progress; stop it or wait for its end";
     expect(toPage, "the page's WebSocket was not routed").not.toBeNull();
-    toPage!(JSON.stringify({ type: "refused", reason }));
+    toPage!(JSON.stringify({ type: "refused", mode, reason }));
     await expect(page.getByRole("alert").filter({ hasText: reason })).toBeVisible();
-    await questionWithFirstAnswer(page, analysis, 400);
+    // The room is measured again when the line appears (an observer of the run's children or of its size), and the
+    // analysis is laid out again after it; the layout settles within a few frames, so the check is retried until then.
+    await expect(async () => questionWithFirstAnswer(page, analysis, IN_VIEW_MIN_HEIGHT)).toPass({ timeout: 5_000 });
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
