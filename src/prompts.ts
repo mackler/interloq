@@ -1056,8 +1056,12 @@ export const itemHeadline = (id: string, title: string): string => `#${id} ${tit
 
 /** Why the run manager refuses to start a run (issue #120): no item id, a run of the mode in progress, an item that moved on. */
 export const ITEM_ID_EMPTY = "no item was chosen";
+const RUN_OF_MODE: Readonly<Record<"refinement" | "implementation", string>> = {
+  refinement: "a refinement run",
+  implementation: "an implementation run",
+};
 export function runInProgressText(mode: "refinement" | "implementation"): string {
-  return `a ${mode} run is in progress; stop it or wait for its end`;
+  return `${RUN_OF_MODE[mode]} is in progress; stop it or wait for its end`;
 }
 export function itemMovedText(id: string, expected: string, state: string): string {
   return `item ${id} is no longer ${expected}: it is ${state}; refresh the list`;

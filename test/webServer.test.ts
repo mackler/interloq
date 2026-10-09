@@ -16,6 +16,7 @@ import { fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, temp
 import type { FakeTracker } from "./fakeTracker.ts";
 import { itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
+import { runInProgressText } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 
@@ -367,7 +368,7 @@ test("a client that sends start and closes at once leaves the server in a state 
     }
     assert.ok(afterStarted(), `no run 'after' started; refusals: ${JSON.stringify(refusals(last))}`);
     assert.deepEqual(
-      refusals(last).filter((r) => r !== "a implementation run is in progress; stop it or wait for its end"),
+      refusals(last).filter((r) => r !== runInProgressText("implementation")),
       [],
       "a start was refused for another reason than a late run in progress",
     );

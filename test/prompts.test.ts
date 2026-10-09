@@ -855,3 +855,8 @@ test("issue #117: workRespondPrompt carries the execution's report and the plan,
   for (const part of [execution.outcome.summary, execution.outcome.remainingWork, execution.outcome.question, execution.outcome.status, execution.plan]) assert.ok(text.includes(part), part);
   assert.doesNotMatch(text, /in your context/);
 });
+
+test("runInProgressText: the article follows the mode (issue #120, S18)", () => {
+  assert.equal(prompts.runInProgressText("implementation"), "an implementation run is in progress; stop it or wait for its end");
+  assert.equal(prompts.runInProgressText("refinement"), "a refinement run is in progress; stop it or wait for its end");
+});

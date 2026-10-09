@@ -622,10 +622,10 @@ describe("App and the draft", () => {
 
     test("a refusal of one mode shows in that tab only", async () => {
       const { root, ws } = await begin();
-      ws.receive({ type: "refused", mode: "implementation", reason: "a implementation run is in progress; stop it or wait for its end" });
+      ws.receive({ type: "refused", mode: "implementation", reason: prompts.runInProgressText("implementation") });
       expect(root.querySelector(".refusal")).toBe(null);
       select(root, "implementation");
-      expect(one(root, ".refusal[role=alert]").textContent).toContain("a implementation run is in progress");
+      expect(one(root, ".refusal[role=alert]").textContent).toContain(prompts.runInProgressText("implementation"));
       select(root, "refinement");
       expect(root.querySelector(".refusal")).toBe(null);
     });

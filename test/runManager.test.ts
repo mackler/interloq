@@ -12,6 +12,7 @@ import { platformLayer } from "../src/platform.ts";
 import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
+import { runInProgressText } from "../src/prompts.ts";
 import { Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
@@ -115,7 +116,7 @@ test("a second start in a mode is refused with that mode while the other mode ac
   const id = await started(h, "implementation");
   await until("the hanging call", () => eventsOf(h, id).some((e) => e._tag === "Said" && /^Planning: requesting the initial plan/.test(e.text)));
   const refusedStart = (await run(h.manager.start("implementation", nextItem(h, "implementation")))) as Refusal;
-  assert.deepEqual(refusedStart, { refused: "a implementation run is in progress; stop it or wait for its end", mode: "implementation" });
+  assert.deepEqual(refusedStart, { refused: runInProgressText("implementation"), mode: "implementation" });
   const other = await started(h, "refinement");
   assert.deepEqual(await run(h.manager.current), { refinement: other, implementation: id });
   for (const r of [id, other]) {
