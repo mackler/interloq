@@ -1,5 +1,7 @@
 // The catalog of the program's records under <project>/plan-review/ (finding 28 of
 // docs/functional-design-review.md): typed identities and one `pathOf`, so that no workflow builds a path. Pure.
+import type { Brand } from "effect";
+import type { RunMode } from "./runMode.ts";
 
 /**
  * A reviewed subject: the question list, the requirements, the plan of one planning phase, the work of one execution
@@ -25,6 +27,26 @@ export type Artifact =
 
 /** The directory of the records, relative to the project. */
 export const RECORDS_DIR = "plan-review";
+
+/**
+ * The records directory of one run, relative to plan-review/ (issue #120): `runs/<start time>-<mode>-<item>`, built
+ * by runRootOf alone, or that name with the suffix the store adds on a clash (`-2`, `-3`, …). The mode separates the
+ * two runs that can be in progress at once, one per mode; the start time separates successive runs of one mode and
+ * orders a listing; the item says which item the records belong to; `runs/` keeps every run apart from
+ * plan-review/config.json and from the archives and loose files of runs before this change.
+ */
+export type RunRoot = Brand.Branded<string, "RunRoot">;
+/** The directory that holds every run's records directory, relative to plan-review/. */
+export const RUNS_DIR = "runs";
+/** The longest item id a root carries; a Trello id is opaque and may be long. */
+const ITEM_IN_ROOT = 40;
+/** A run's root: the time with `:` and `.` replaced by `-`, as the archive names had; an item id's characters outside [A-Za-z0-9] become `_`. Total. */
+export const runRootOf = (mode: RunMode, item: string, startedAtIso: string): RunRoot =>
+  `${RUNS_DIR}/${startedAtIso.replace(/[:.]/g, "-")}-${mode}-${item.replace(/[^A-Za-z0-9]/g, "_").slice(0, ITEM_IN_ROOT)}` as RunRoot;
+/** A root with the suffix that the store adds when the name exists: `-2` for k = 2. */
+export const suffixedRoot = (root: RunRoot, k: number): RunRoot => (k <= 1 ? root : (`${root}-${k}` as RunRoot));
+/** The path of an artifact of a run as messages and prompts name it, relative to the project: `plan-review/<root>/<path>`. */
+export const runRecordPath = (root: RunRoot, artifact: Artifact): string => `${RECORDS_DIR}/${root}/${pathOf(artifact)}`;
 
 /** The phase recorded in a subject's log entries: 0 for the question list and the requirements. */
 export const phaseOf = (subject: PhasedSubject): number => (typeof subject !== "object" ? 0 : "plan" in subject ? subject.plan : subject.work);

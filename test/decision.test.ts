@@ -433,7 +433,7 @@ test("a decision names its phase by the run's count: Planning in a run of one it
   const { finished } = await import("./helpers.ts");
   const noQuestions = { questions_for_user: [] };
   const asking = { questions_for_user: [userQuestion(question.question, question.options.map((o) => [o.label, o.description] as const))] };
-  const expected = (iterations: number, n: number) => `The run is in ${phaseName({ kind: "planning", n }, countOfKind(foreseenPhases(false, iterations), "planning"))}.`;
+  const expected = (iterations: number, n: number) => `The run is in ${phaseName({ kind: "planning", n }, countOfKind(foreseenPhases("implementation", iterations), "planning"))}.`;
   const analysisPrompt = (prompts: readonly string[]) => prompts.find((p) => p.includes(prompts_.DECISION_FORMAT_AUTHORITY)) ?? "";
   const prompts_ = prompts;
 

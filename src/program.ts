@@ -14,6 +14,9 @@ import type { Platform } from "./platform.ts";
 import { makeStore } from "./store.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
+import type { ItemId, TrackerItem } from "./tracker.ts";
+import type { RunMode } from "./runMode.ts";
+import { type SectionMalformed, withoutRefinement } from "./refinement.ts";
 
 /** What the program is wired to: the Ui, the platform, the SDKs and the agents. */
 export type Wiring = Readonly<{
@@ -37,8 +40,28 @@ export type Task = Brand.Branded<string, "Task">;
 export class BlankTask extends Data.TaggedError("BlankTask")<{}> {}
 /** The task, or BlankTask; the text is kept unchanged. */
 export const taskOf = (text: string): Result.Result<Task, BlankTask> => (text.trim() === "" ? Result.fail(new BlankTask()) : Result.succeed(text as Task));
-/** What a run starts with: its task and its project directory. */
-export type RunStart = Readonly<{ task: Task; project: string }>;
+/**
+ * What a run starts with (issue #120): its mode, the item of the project's tracker it is started from, and the project
+ * directory. A tagged union keyed by the mode, because what a run does turns on its mode at every point (its phases,
+ * the states it sets, the guard of Claude Code's planning calls, how its task text is made), and each of those is an
+ * exhaustive switch the type checker holds to both cases. The task text is not here: the program reads it from the
+ * tracker (taskTextOf).
+ */
+export type RunStart =
+  | Readonly<{ mode: "refinement"; item: ItemId; project: string }>
+  | Readonly<{ mode: "implementation"; item: ItemId; project: string }>;
+
+/**
+ * The task text of a run from its item: the title, a blank line, and the body. A refinement run takes the body without
+ * its `Refined using Interloq` section, since the run writes a new one; an implementation run takes the whole body,
+ * the section included. A malformed section is SectionMalformed; a blank text BlankTask.
+ */
+export const taskTextOf = (mode: RunMode, item: TrackerItem): Result.Result<Task, BlankTask | SectionMalformed> => {
+  const body = mode === "refinement" ? withoutRefinement(item.body) : Result.succeed(item.body);
+  return Result.flatMap(body, (text) => taskOf(`${item.title}\n\n${text}`));
+};
+/** What a run starts with until the program reads its item (S5 of issue #120 replaces it with RunStart). */
+export type TaskStart = Readonly<{ task: Task; project: string }>;
 
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
@@ -50,7 +73,7 @@ export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md
  * fiber interrupted; `exitCodeOf` turns that into 130. In every case the main Claude Code session id and the usage
  * summary are said last.
  */
-export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+export const program = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const { task } = start;
     const project = path.resolve(start.project);

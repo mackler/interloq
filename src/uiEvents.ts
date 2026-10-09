@@ -6,6 +6,7 @@ import type { PresentedQuestion } from "./question.ts";
 import type { TermsResponse } from "./schema.ts";
 import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
+import type { RunMode } from "./runMode.ts";
 
 /** A phase of the run as the progress display names it. */
 export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work"; n: number }>;
@@ -77,13 +78,17 @@ export const countOfKind = (phases: readonly Phase[], kind: Phase["kind"]): numb
 /** The name of a phase in test output: always numbered. */
 const numberedName = (phase: Phase): string => phaseName(phase, 2);
 /**
- * The phases known of a run (issue #6): Gather Requirements when the question phase is configured, then Planning,
- * Implementation and Code review of each iteration known so far.
+ * The phases known of a run (issue #6): a refinement run is Gather Requirements alone, whatever the count (issue #120);
+ * an implementation run is Planning, Implementation and Code review of each iteration known so far.
  */
-export const foreseenPhases = (questionPhase: boolean, iterations: number): readonly Phase[] => [
-  ...(questionPhase ? [{ kind: "questions" } as const] : []),
-  ...Array.from({ length: iterations }, (_, i) => i + 1).flatMap((n): Phase[] => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]),
-];
+export const foreseenPhases = (mode: RunMode, iterations: number): readonly Phase[] => {
+  switch (mode) {
+    case "refinement":
+      return [{ kind: "questions" }];
+    case "implementation":
+      return Array.from({ length: iterations }, (_, i) => i + 1).flatMap((n): Phase[] => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]);
+  }
+};
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** One line per event, for test output. Total over the variants. */

@@ -4,6 +4,8 @@ import { describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
 import { foreseenPhases, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
+/** The phases of a run of Gather Requirements followed by planning, as runs had them before issue #120 separated the modes. */
+const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [...(questions ? foreseenPhases("refinement", 1) : []), ...foreseenPhases("implementation", iterations)];
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
 import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
@@ -447,8 +449,8 @@ describe("runs, replay and gaps", () => {
       { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" },
       { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "a" },
       // Issue #6: the phases ahead, the plan, and nested calls.
-      { _tag: "PhasesForeseen", phases: foreseenPhases(true, 1) },
-      { _tag: "PhasesForeseen", phases: foreseenPhases(true, 2) },
+      { _tag: "PhasesForeseen", phases: phasesOf(true, 1) },
+      { _tag: "PhasesForeseen", phases: phasesOf(true, 2) },
       { _tag: "PlanChanged", phase: 1, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x", status: "started" }] }] }, step: null },
       { _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } },
       { _tag: "AgentCallEnded", agent: "claude", ok: true },
@@ -474,7 +476,7 @@ describe("runs, replay and gaps", () => {
         expect(incremental.last?.timeline.filter((e) => e.state !== "ahead").flatMap((e) => e.steps.filter((st) => st.state === "ahead"))).toEqual([]);
       }),
       // A phase that began and a step of it that never did, always among the cases rather than only when drawn.
-      { examples: [[[notified({ _tag: "PhasesForeseen", phases: foreseenPhases(true, 1) }), notified({ _tag: "PhaseBegan", phase: { kind: "questions" } })], [], Array(14).fill(0), Array(14).fill(0)]] },
+      { examples: [[[notified({ _tag: "PhasesForeseen", phases: phasesOf(true, 1) }), notified({ _tag: "PhaseBegan", phase: { kind: "questions" } })], [], Array(14).fill(0), Array(14).fill(0)]] },
     );
   });
 });
@@ -884,7 +886,7 @@ describe("the plan", () => {
 // Issue #6: the whole run in the timeline, numbered by the count of each kind, the plan under the Implementation that
 // carries it out, and the current step only while an execution call runs (G-R1-2), nested calls included (P1-R2-1).
 describe("the whole run in the timeline", () => {
-  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: foreseenPhases(questions, iterations) });
+  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: phasesOf(questions, iterations) });
   const began = (phase: Parameters<typeof phaseName>[0]) => notified({ _tag: "PhaseBegan", phase });
   const entries = (s: ViewState) => s.run?.timeline.map((e) => [e.label, e.state]) ?? [];
   const recorded = (id: string, status: "pending" | "started" | "done" | "unfinished") => ({ stages: [{ number: 1, title: "t", steps: [{ id, number: 1, label: "l", text: "x", status }] }] });
@@ -1075,7 +1077,7 @@ describe("the retry state after the retries are exhausted", () => {
 
 // Issue #50 (Q2): each phase's begin and end from its events' publication times, for the rail's duration.
 describe("phase times", () => {
-  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: foreseenPhases(questions, iterations) });
+  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: phasesOf(questions, iterations) });
   const planning = { kind: "planning" as const, n: 1 };
   const times = (s: ViewState) => s.run?.timeline.map((e) => [e.label, e.began, e.ended]) ?? [];
 
@@ -1104,7 +1106,7 @@ describe("phase times", () => {
 // Issue #53 (G-R1-1): at most one step of the plan is current, the one named by the latest 'started' report of the
 // running execution call while it is still started; nothing but a report makes a step current again.
 describe("the current step of the plan", () => {
-  const foreseen = notified({ _tag: "PhasesForeseen", phases: foreseenPhases(false, 1) });
+  const foreseen = notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 1) });
   const began = notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } });
   const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose });
   const callEnded = (ok = true) => notified({ _tag: "AgentCallEnded", agent: "claude", ok });
@@ -1210,7 +1212,7 @@ describe("the steps an Implementation acted on", () => {
 
   const implementation1: RunEvent[] = [
     started,
-    notified({ _tag: "PhasesForeseen", phases: foreseenPhases(false, 1) }),
+    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 1) }),
     begin("planning", 1),
     planChanged(1, v1()),
     end("planning", 1),
@@ -1225,7 +1227,7 @@ describe("the steps an Implementation acted on", () => {
     planChanged(1, v1({ S1: "unfinished", S3: "done", S4: "unfinished" })),
     end("execution", 1, "aborted"),
   ];
-  const revision: RunEvent[] = [begin("work", 1), end("work", 1), notified({ _tag: "PhasesForeseen", phases: foreseenPhases(false, 2) }), begin("planning", 2), planChanged(2, v2()), end("planning", 2)];
+  const revision: RunEvent[] = [begin("work", 1), end("work", 1), notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 2) }), begin("planning", 2), planChanged(2, v2()), end("planning", 2)];
   const implementation2: RunEvent[] = [begin("execution", 2), call, planChanged(2, v2({ S4: "started" }), { id: "S4", status: "started" }), planChanged(2, v2({ S4: "done" }), { id: "S4", status: "done" }), callEnded, end("execution", 2, "finished")];
 
   const entry = (s: ViewState, label: string) => s.run!.timeline.find((e) => e.label === label)!;
@@ -1437,7 +1439,7 @@ describe("a wait for a usage limit", () => {
 // choice wins over the automatic opening; a branch is held open while something inside it needs the user; a collapsed
 // row carries the running step's label, its condition in one word and its tally of steps.
 describe("the rail as a tree that collapses", () => {
-  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: foreseenPhases(questions, iterations) });
+  const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: phasesOf(questions, iterations) });
   const began = (phase: Phase) => notified({ _tag: "PhaseBegan", phase });
   const ended = (phase: Phase, result = "converged") => notified({ _tag: "PhaseEnded", phase, result } as UiEvent);
   const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose });

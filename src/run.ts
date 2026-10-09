@@ -13,7 +13,7 @@ import { askOffering, programContext } from "./offer.ts";
 import type { QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
 import { Decider, Planner, RunConfig, type Services, Store, Ui } from "./services.ts";
-import { countOfKind, foreseenPhases, type Phase, phaseName } from "./uiEvents.ts";
+import { countOfKind, foreseenPhases as foreseen, type Phase, phaseName } from "./uiEvents.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
 
 /** The whole run. Succeeds with the number of execution phases when Claude Code reports 'finished' and the work review converges. */
@@ -34,6 +34,8 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
     const withRequirements = config.questionPhase;
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
     let known = 1;
+    // Until the refinement run exists (S6 of issue #120), a run with the question phase foresees it before planning.
+    const foreseenPhases = (_: boolean, iterations: number): readonly Phase[] => [...(withRequirements ? foreseen("refinement", 1) : []), ...foreseen("implementation", iterations)];
     const foresee = (iterations: number) =>
       iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), ui.notify({ _tag: "PhasesForeseen", phases: foreseenPhases(withRequirements, iterations) })));
     yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseenPhases(withRequirements, known) });
