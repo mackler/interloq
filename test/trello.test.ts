@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Effect, Result } from "effect";
+import { Effect, Layer, Option, Result } from "effect";
+import { readRefinement, type Refinement, refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
+import { Tracker } from "../src/services.ts";
 import type { TrelloTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import { type ItemId, itemIdOf } from "../src/tracker.ts";
 import { type TrelloCredential, trelloCredential } from "../src/trackerConfig.ts";
-import { trelloTracker } from "../src/trello.ts";
-import { CARD_FIELDS } from "../src/trelloCards.ts";
+import { trelloTracker, trelloTrackerLayer } from "../src/trello.ts";
+import { CARD_FIELDS, TRELLO_DESC_LIMIT } from "../src/trelloCards.ts";
 import { BOARD, LISTS } from "./trelloLists.ts";
 import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stubHttp.ts";
 
@@ -33,7 +35,11 @@ const failure = async (stub: Stub, use: (tracker: TrackerShape) => Effect.Effect
   errors.push(error);
   return error;
 };
-const route = (table: Readonly<Record<string, Answer>>) => (r: SentRequest): Answer => table[`${r.method} ${r.url.origin}${r.url.pathname}`] ?? new Response("The requested resource was not found.", { status: 404 });
+/** Answers each request from a table; a Response is cloned, so that a route answers more than once. */
+const route = (table: Readonly<Record<string, Answer>>) => (r: SentRequest): Answer => {
+  const answer = table[`${r.method} ${r.url.origin}${r.url.pathname}`] ?? new Response("The requested resource was not found.", { status: 404 });
+  return answer instanceof Response ? answer.clone() : answer;
+};
 const ids = (items: readonly { id: string }[]): string[] => items.map((i) => i.id);
 const cardsOf = (state: keyof typeof LISTS): string => `GET ${API}/lists/${LISTS[state]}/cards`;
 const descending = (from: number, count: number): Record<string, unknown>[] => Array.from({ length: count }, (_, i) => card(hexId(from - i), LISTS.unrefined));
@@ -151,6 +157,103 @@ test("every request carries the credential in the Authorization header and in no
     assert.equal(r.headers.authorization, AUTHORIZATION);
     assert.ok(!r.url.toString().includes("KEYSECRET") && !r.url.toString().includes("TOKENSECRET"), r.url.toString());
   }
+});
+
+const refinement = (text: string): Refinement => Result.getOrThrow(refinementOf(text));
+const puts = (stub: Stub): readonly SentRequest[] => stub.sent().filter((r) => r.method === "PUT");
+const putBody = (r: SentRequest): Record<string, unknown> => JSON.parse(r.body ?? "null") as Record<string, unknown>;
+const C2 = hexId(0xc2);
+const cardRoute = (cardId: string, value: Record<string, unknown>, put: Answer = json({})): Record<string, Answer> => ({ [`GET ${API}/cards/${cardId}`]: json(value), [`PUT ${API}/cards/${cardId}`]: put });
+
+test("a refinement is PUT as the card's description after the developer's text, which stays intact, and reads back", async () => {
+  const developer = "What the developer wrote.\r\n\r\nTrailing spaces   ";
+  const stub = makeStub(route(cardRoute(C1, card(C1, LISTS.unrefined, { desc: developer }))));
+  const r = refinement("## Plan\n\n- one\n- two");
+  await withTracker(stub, (t) => t.writeRefinement(id(C1), r));
+  const [put] = puts(stub);
+  assert.equal(puts(stub).length, 1);
+  assert.equal(put.url.toString(), `${API}/cards/${C1}`);
+  assert.equal(put.headers.authorization, AUTHORIZATION);
+  assert.deepEqual(Object.keys(putBody(put)), ["desc"]);
+  const desc = String(putBody(put).desc);
+  assert.deepEqual(Result.getOrThrow(readRefinement(desc)), Option.some(r));
+  assert.equal(Result.getOrThrow(withoutRefinement(desc)), developer);
+});
+
+test("a second refinement replaces the first", async () => {
+  const first = Result.getOrThrow(withRefinement("text", refinement("first")));
+  const stub = makeStub(route(cardRoute(C1, card(C1, LISTS.unrefined, { desc: first }))));
+  await withTracker(stub, (t) => t.writeRefinement(id(C1), refinement("second")));
+  const desc = String(putBody(puts(stub)[0]).desc);
+  assert.deepEqual(Result.getOrThrow(readRefinement(desc)), Option.some(refinement("second")));
+  assert.equal(Result.getOrThrow(withoutRefinement(desc)), "text");
+});
+
+test("a description with a malformed section is TrackerBodyInvalid and nothing is PUT", async () => {
+  const stub = makeStub(route(cardRoute(C1, card(C1, LISTS.unrefined, { desc: "x\n\n## Refined using Interloq\nno end" }))));
+  assert.equal((await failure(stub, (t) => t.writeRefinement(id(C1), refinement("r"))))._tag, "TrackerBodyInvalid");
+  assert.equal(puts(stub).length, 0);
+});
+
+test("a refinement that would make the description longer than Trello's limit is TrackerBodyInvalid naming the limit, and nothing is PUT", async () => {
+  const stub = makeStub(route(cardRoute(C1, card(C1, LISTS.unrefined, { desc: "d".repeat(TRELLO_DESC_LIMIT - 10) }))));
+  const error = await failure(stub, (t) => t.writeRefinement(id(C1), refinement("Requirements of some length.")));
+  assert.equal(error._tag, "TrackerBodyInvalid");
+  assert.match(error.message, /16384/u);
+  assert.equal(puts(stub).length, 0);
+});
+
+test("a state change PUTs the new state's list id and nothing else", async () => {
+  const stub = makeStub(route({ ...cardRoute(C1, card(C1, LISTS.unrefined)), ...cardRoute(C2, card(C2, LISTS.refined)) }));
+  await withTracker(stub, (t) => Effect.andThen(t.setState(id(C1), "refined"), t.setState(id(C2), "implementing")));
+  assert.deepEqual(puts(stub).map((r) => r.url.toString()), [`${API}/cards/${C1}`, `${API}/cards/${C2}`]);
+  assert.deepEqual(puts(stub).map(putBody), [{ idList: LISTS.refined }, { idList: LISTS.implementing }]);
+  for (const r of puts(stub)) assert.equal(r.headers.authorization, AUTHORIZATION);
+});
+
+test("a refinement or a state change of an archived card, a card on an unmapped list or another board's card PUTs nothing", async () => {
+  for (const [more, tag] of [[{ closed: true }, "TrackerBodyInvalid"], [{ idList: UNMAPPED }, "TrackerBodyInvalid"], [{ idBoard: OTHER_BOARD }, "TrackerItemNotFound"]] as const) {
+    const stub = makeStub(route(cardRoute(C1, card(C1, LISTS.refined, more))));
+    assert.equal((await failure(stub, (t) => t.writeRefinement(id(C1), refinement("r"))))._tag, tag, JSON.stringify(more));
+    assert.equal((await failure(stub, (t) => t.setState(id(C1), "implementing")))._tag, tag, JSON.stringify(more));
+    assert.equal(puts(stub).length, 0);
+  }
+});
+
+test("a PUT refused for the credential is TrackerAuthRefused", async () => {
+  const stub = makeStub(route(cardRoute(C1, card(C1, LISTS.unrefined), new Response("unauthorized card permission requested", { status: 401 }))));
+  assert.equal((await failure(stub, (t) => t.setState(id(C1), "implementing")))._tag, "TrackerAuthRefused");
+  assert.equal((await failure(stub, (t) => t.writeRefinement(id(C1), refinement("r"))))._tag, "TrackerAuthRefused");
+});
+
+test("the four operations in sequence through Tracker, over one stub Trello", async () => {
+  const cards = new Map<string, Record<string, unknown>>([[C1, card(C1, LISTS.unrefined, { desc: "Do it." })], [C2, card(C2, LISTS.refined)]]);
+  const stub = makeStub((r) => {
+    const parts = r.url.pathname.split("/");
+    if (r.method === "GET" && parts.at(-1) === "cards") return json([...cards.values()].filter((c) => c.idList === parts.at(-2)).sort((a, b) => (String(b.id) < String(a.id) ? -1 : 1)));
+    const cardId = String(parts.at(-1));
+    if (!cards.has(cardId)) return new Response("The requested resource was not found.", { status: 404 });
+    if (r.method === "PUT") cards.set(cardId, { ...cards.get(cardId), ...putBody(r) });
+    return json(cards.get(cardId));
+  });
+  const layer = Layer.provide(trelloTrackerLayer(CONFIG, CREDENTIAL), stub.layer);
+  const program = Effect.gen(function* () {
+    const tracker = yield* Tracker;
+    const before = yield* tracker.list("unrefined");
+    const item = yield* tracker.read(before[0].id);
+    yield* tracker.writeRefinement(item.id, refinement("Refined."));
+    yield* tracker.setState(item.id, "refined");
+    return { before, after: yield* tracker.list("refined"), unrefined: yield* tracker.list("unrefined") };
+  });
+  const { before, after, unrefined } = await Effect.runPromise(Effect.provide(program, layer));
+  assert.deepEqual(ids(before), [C1]);
+  assert.deepEqual(ids(after), [C2, C1]);
+  assert.deepEqual(unrefined, []);
+  const refined = after.find((item) => item.id === C1);
+  assert.ok(refined !== undefined);
+  assert.deepEqual(Result.getOrThrow(readRefinement(refined.body)), Option.some(refinement("Refined.")));
+  assert.ok(refined.body.startsWith("Do it."));
+  for (const r of stub.sent()) assert.equal(r.headers.authorization, AUTHORIZATION);
 });
 
 test("neither credential is in any error the adapter produced", () => {

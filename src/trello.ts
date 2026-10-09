@@ -24,8 +24,8 @@ import type { TrelloTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { TrelloCredential } from "./trackerConfig.ts";
-import type { Refinement } from "./refinement.ts";
-import { authorizationOf, CARD_FIELDS, cardIdOf, itemOfCard, nextCursor, type NoCardState, pageProblem, TRELLO_PAGE_SIZE, TrelloCard, type TrelloTarget, targetName, trelloStatusFailure } from "./trelloCards.ts";
+import { OPENING_LINE, type Refinement } from "./refinement.ts";
+import { authorizationOf, CARD_FIELDS, cardIdOf, descTooLongText, itemOfCard, moveBody, refinedDesc, nextCursor, type NoCardState, pageProblem, TRELLO_PAGE_SIZE, TrelloCard, type TrelloTarget, targetName, trelloStatusFailure } from "./trelloCards.ts";
 
 const TRACKER = "Trello";
 const API = "https://api.trello.com/1";
@@ -119,8 +119,24 @@ export const trelloTracker = (config: TrelloTrackerConfig, credential: TrelloCre
 
     const read = (id: ItemId): Effect.Effect<TrackerItem, TrackerError> => Effect.map(itemCardOf(id), ({ item }) => item);
 
-    const writeRefinement = (id: ItemId, _refinement: Refinement): Effect.Effect<void, TrackerError> => Effect.fail(new TrackerUnreachable({ tracker: TRACKER, message: `not built: ${id}` }));
-    const setState = (id: ItemId, _state: ItemState): Effect.Effect<void, TrackerError> => Effect.fail(new TrackerUnreachable({ tracker: TRACKER, message: `not built: ${id}` }));
+    /** One PUT of a card's fields; the body is JSON, since a description of up to 16,384 characters does not belong in a URL. */
+    const put = (cardId: string, id: ItemId, body: Readonly<Record<string, unknown>>): Effect.Effect<void, TrackerError> =>
+      Effect.asVoid(send(HttpClientRequest.put(`${API}/cards/${cardId}`).pipe(HttpClientRequest.bodyJsonUnsafe(body)), { kind: "item", id }));
+
+    /**
+     * The developer's text is never replaced: withRefinement appends the section or replaces it alone. A description
+     * over Trello's limit is refused here, before the PUT, so the user reads the limit and not a status.
+     */
+    const writeRefinement = (id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemCardOf(id), ({ card }) =>
+        Result.match(refinedDesc(card.desc, refinement), {
+          onFailure: (failure) => Effect.fail(new TrackerBodyInvalid({ id, message: failure._tag === "DescTooLong" ? descTooLongText(failure) : `the card's section "${OPENING_LINE}" is malformed: ${failure.reason}` })),
+          onSuccess: (desc) => put(card.id, id, { desc }),
+        }),
+      );
+
+    /** One PUT of the state's list: a card is on one list, so the change cannot stop half done. */
+    const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> => Effect.flatMap(itemCardOf(id), ({ card }) => put(card.id, id, moveBody(config.lists, state)));
 
     const tracker: TrackerShape = { list, read, writeRefinement, setState };
     return tracker;
