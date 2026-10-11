@@ -39,6 +39,7 @@ const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCall
     case "limited":
       return new UsageLimited({ agent: "claude", message, resetsAtMs: kind.resetsAtMs, limitType: kind.limitType });
     case "permanent":
+    case "contextTooLong":
       return new ClaudeCallFailed({ message });
   }
 };

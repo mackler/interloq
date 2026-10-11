@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type ClaudeFailure, classifyClaude, classifyCodex, rejectionOf } from "../src/transport.ts";
+import { CONTEXT_TOO_LONG_PATTERN, type ClaudeFailure, classifyClaude, classifyCodex, rejectionOf } from "../src/transport.ts";
 
 const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
 
@@ -35,7 +35,7 @@ test("Codex: an exec exit is retried only when its stderr shows a transport faul
   assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; usage limit"), false);
 });
 
-const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null };
+const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null };
 const f = (over: Partial<ClaudeFailure>): ClaudeFailure => ({ ...none, ...over });
 
 test("Claude: no facts, or api_error without a status or other evidence, is not retried", () => {
@@ -126,4 +126,12 @@ test("Claude: other permanent evidence wins over a rejection with a reset; a net
   assert.deepEqual(classifyClaude(f({ apiStatus: 401, rejection: limitedAt(RESET_S) })), { kind: "permanent" });
   assert.equal(classifyClaude(f({ streamCode: "ECONNRESET", rejection: limitedAt(RESET_S) })).kind, "limited");
   assert.equal(classifyClaude(f({ apiStatus: 503, rejection: limitedAt(RESET_S) })).kind, "limited");
+});
+
+// Issue #122: a rejection because the session's history is too long is a kind of its own, checked first.
+test("Claude: an error result saying the prompt is too long is contextTooLong, with a 400 status or none", () => {
+  assert.deepEqual(classifyClaude(f({ resultText: "Prompt is too long", apiStatus: 400, terminalReason: "api_error", subtype: "success" })), { kind: "contextTooLong" });
+  assert.deepEqual(classifyClaude(f({ resultText: "Prompt is too long" })), { kind: "contextTooLong" });
+  assert.match("Prompt is too long", CONTEXT_TOO_LONG_PATTERN);
+  assert.deepEqual(classifyClaude(f({ resultText: "API Error: 400 bad request", apiStatus: 400 })), { kind: "permanent" });
 });

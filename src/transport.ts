@@ -15,6 +15,8 @@ export type ClaudeFailure = Readonly<{
   subtype: string | null;
   /** The latest usage-limit rejection the stream reported after the last sign of progress (issue #68), or null. */
   rejection: Rejection | null;
+  /** The text of the error result (issue #122), or null when the call had no error result (a stream failure, an abort). */
+  resultText: string | null;
 }>;
 
 /**
@@ -43,7 +45,14 @@ export const rejectionOf = (info: RateLimitInfo): Rejection | null => {
 export type FailureKind =
   | Readonly<{ kind: "permanent" }>
   | Readonly<{ kind: "transport" }>
-  | Readonly<{ kind: "limited"; resetsAtMs: number; limitType: string | null }>;
+  | Readonly<{ kind: "limited"; resetsAtMs: number; limitType: string | null }>
+  | Readonly<{ kind: "contextTooLong" }>;
+
+/**
+ * The text of a rejection because the session's history no longer fits Claude Code's context (issue #122). Inferred
+ * from the page's message of the run of issue #117, not observed in a record.
+ */
+export const CONTEXT_TOO_LONG_PATTERN = /prompt is too long/i;
 
 /** The error codes of Node.js that name a dropped, refused or timed-out connection. */
 export const NETWORK_CODES: readonly string[] = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "EAI_AGAIN"];
@@ -96,20 +105,22 @@ const is5xx = (s: number | null): boolean => s !== null && s >= 500 && s <= 599;
 
 const PERMANENT: FailureKind = { kind: "permanent" };
 const TRANSPORT: FailureKind = { kind: "transport" };
+const CONTEXT_TOO_LONG: FailureKind = { kind: "contextTooLong" };
 
 /** A rate limit's evidence: a 429, or the rate_limit error. Permanent unless a rejection states its reset (issue #68). */
 const isRateLimit = (status: number | null, error: string | null): boolean => status === 429 || error === "rate_limit";
 const isOtherPermanentError = (e: string | null): boolean => e !== null && e !== "rate_limit" && PERMANENT_ASSISTANT_ERRORS.includes(e);
 
 /**
- * What a failed Claude Code call is, by the facts kept of it. Permanent evidence other than the rate limit is checked
- * first; then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold;
+ * What a failed Claude Code call is, by the facts kept of it. A rejection because the session is too long is checked
+ * first (issue #122), since it usually carries a 4xx status as well; then permanent evidence other than the rate limit; then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold;
  * then the rate limit, or a rejection without a reset, is permanent; then the transport evidence. `terminalReason`
  * alone is never sufficient.
  */
 export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
   if (failure === null) return PERMANENT;
-  const { streamCode, apiStatus, assistantError, retrySeen, subtype, rejection } = failure;
+  const { streamCode, apiStatus, assistantError, retrySeen, subtype, rejection, resultText } = failure;
+  if (resultText !== null && CONTEXT_TOO_LONG_PATTERN.test(resultText)) return CONTEXT_TOO_LONG;
   const otherPermanent =
     (is4xx(apiStatus) && !isRateLimit(apiStatus, null)) ||
     isOtherPermanentError(assistantError) ||

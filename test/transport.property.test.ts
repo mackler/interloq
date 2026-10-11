@@ -24,6 +24,7 @@ const facts: fc.Arbitrary<ClaudeFailure> = fc.record({
   retrySeen: fc.option(fc.record({ status, error: fc.constantFrom(...PERMANENT_ASSISTANT_ERRORS, "server_error", "unknown") }), { nil: null }),
   subtype: fc.option(fc.constantFrom(...STOPPING, "success", "error_during_execution"), { nil: null }),
   rejection,
+  resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error", "Request too large for the model"), { nil: null }),
 });
 
 const is4xx = (s: number | null): boolean => s !== null && s >= 400 && s <= 499;
@@ -90,6 +91,26 @@ test("property: a rejection without a reset is never retried nor waited for", ()
       const without = { ...x, rejection: { kind: "withoutReset" as const, limitType: null } };
       assert.deepEqual(classifyClaude(without), { kind: "permanent" });
     }),
+    RUNS,
+  );
+});
+
+// Issue #122: the context-length rejection, recognized from the error result's text whatever the other facts.
+const randomCase = (text: string): fc.Arbitrary<string> =>
+  fc.array(fc.boolean(), { minLength: text.length, maxLength: text.length }).map((upper) => [...text].map((c, i) => (upper[i] ? c.toUpperCase() : c.toLowerCase())).join(""));
+
+test("property: an error result whose text says the prompt is too long, in any case, is contextTooLong", () => {
+  fc.assert(
+    fc.property(facts, fc.string(), randomCase("prompt is too long"), fc.string(), (x, before, phrase, after) => {
+      assert.deepEqual(classifyClaude({ ...x, resultText: `${before}${phrase}${after}` }), { kind: "contextTooLong" });
+    }),
+    RUNS,
+  );
+});
+
+test("property: a text without the phrase classifies as no text does, the classification before issue #122", () => {
+  fc.assert(
+    fc.property(facts, (x) => assert.deepEqual(classifyClaude(x), classifyClaude({ ...x, resultText: null }))),
     RUNS,
   );
 });

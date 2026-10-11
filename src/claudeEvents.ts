@@ -61,7 +61,7 @@ export const decodeToolTarget = (toolInput: unknown): string | null => {
 };
 
 const noResult = "the call produced no result message";
-const noFacts: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null };
+const noFacts: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null };
 
 /** Whether a message shows that the call made progress: an assistant message without error, a stream event, a tool result. */
 const isProgress = (message: SDKMessage): boolean => {
@@ -96,7 +96,7 @@ export const reduceMessages = (messages: readonly SDKMessage[], streamError: str
     if (message.subtype !== "success") return { out: { ...out, costUsd: message.total_cost_usd, error: message.subtype, partial: false }, facts: terminal };
     if (message.is_error) {
       const error = message.result === "" ? "api error" : message.result;
-      return { out: { ...out, costUsd: message.total_cost_usd, structured: null, resultText: message.result, error, partial: false }, facts: { ...terminal, apiStatus: message.api_error_status ?? null } };
+      return { out: { ...out, costUsd: message.total_cost_usd, structured: null, resultText: message.result, error, partial: false }, facts: { ...terminal, apiStatus: message.api_error_status ?? null, resultText: message.result } };
     }
     return { out: { ...out, costUsd: message.total_cost_usd, structured: message.structured_output, resultText: message.result, error: null, partial: false }, facts: terminal };
   }, start);
