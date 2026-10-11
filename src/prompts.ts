@@ -1208,8 +1208,12 @@ export function pagePromptText(kind: string, offeredText: string): string {
   }
 }
 
-/** The name the page gives the conversation in which the user answers the agreed questions, in the progress rail and above the conversation alike (issue #113). */
-export const USER_DECISIONS = "User Decisions";
+/**
+ * The name the page gives the conversation in which the user answers the agreed questions, in the progress rail and
+ * above the conversation alike (issue #113). The developer renamed it from "User Decisions" on 11 Oct 2026; the rail's
+ * step and the heading stay one name, which is issue #113's decision.
+ */
+export const USER_DECISIONS = "You Decide";
 /**
  * The name of a conversation with the user as the page shows it (issue #21, Q5 follow-up; issue #113: the rail's step and
  * this heading name one activity). "More" is used only where an intervening phase separates those questions from the
@@ -1221,7 +1225,7 @@ export function clarificationHeading(stage: InterviewStage): string {
     case "clarification":
       return USER_DECISIONS;
     case "followUp":
-      return "More user decisions";
+      return "More for you to decide";
   }
 }
 /**
@@ -1454,12 +1458,12 @@ export const RAIL_HELD_OPEN_LABEL = "Kept open: something inside needs your answ
 /** The accessible name of the plan's list under its Implementation entry. */
 export const PLAN_LIST_LABEL = "The steps of the plan";
 /**
- * The steps of Gather Requirements in the progress rail (issue #21, Q5 and Q7; issue #33: "Identify choices"). Issue #51:
+ * The steps of Gather Requirements in the progress rail (issue #21, Q5 and Q7; issue #33, renamed "Creating Questions" on 11 Oct 2026). Issue #51:
  * a follow-up clarification is part of the clarification's step. Issue #113: that step is "User Decisions", the name of
  * the heading above the conversation, and the terms step is "Define terms"; the records keep "clarification".
  */
 export function stepLabel(kind: "formulate" | "terms" | "clarification"): string {
-  return kind === "formulate" ? "Identify choices" : kind === "terms" ? "Define terms" : USER_DECISIONS;
+  return kind === "formulate" ? "Creating Questions" : kind === "terms" ? "Define terms" : USER_DECISIONS;
 }
 /** A clarification's count (issue #21, Q6): the total grows with the follow-ups Claude asks. */
 export function clarificationProgress(answered: number, total: number): string {
