@@ -13,7 +13,7 @@ common_setup() {
   export HOME="$T/home"
   mkdir -p "$HOME"
   export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
-  unset STUB_DOCKER_FAIL STUB_NPM_FAIL
+  unset STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH
 }
 
 # The expected log line of a stub call: the command, then each argument in brackets.

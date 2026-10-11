@@ -1,10 +1,30 @@
 #!/usr/bin/env bash
 # Stub of docker for test/cli: records its argument vector as one line of $STUB_LOG, each argument in brackets.
-# STUB_DOCKER_FAIL=up makes `docker compose -f <file> up …` print an error and exit 1.
+# It models the container and the two configuration hashes through these variables:
+# - STUB_CONTAINER_ID: `docker compose -f <file> ps …` prints it (nothing when unset: no container).
+# - STUB_RUNNING_HASH: `docker inspect …` prints it, the hash label of the container (empty when unset).
+# - STUB_CONFIG_HASH: `docker compose -f <file> config …` prints `cc <hash>`, as `config --hash cc` does
+#   (nothing when unset).
+# - STUB_DOCKER_FAIL names a subcommand that fails: `up` prints an error and exits 1; `ps`, `inspect` and
+#   `config` first print their normal output, then the error, and exit 1, so that a caller that reads the
+#   output without checking the exit status is caught.
 line=docker
 for a in "$@"; do line+=" [$a]"; done
 printf '%s\n' "$line" >> "$STUB_LOG"
-if [[ -n ${STUB_DOCKER_FAIL:-} && ${4:-} == "$STUB_DOCKER_FAIL" ]]; then
+
+if [[ ${1:-} == compose ]]; then
+  sub=${4:-}
+else
+  sub=${1:-}
+fi
+
+case $sub in
+  ps) [[ -n ${STUB_CONTAINER_ID:-} ]] && printf '%s\n' "$STUB_CONTAINER_ID" ;;
+  inspect) printf '%s\n' "${STUB_RUNNING_HASH:-}" ;;
+  config) [[ -n ${STUB_CONFIG_HASH:-} ]] && printf 'cc %s\n' "$STUB_CONFIG_HASH" ;;
+esac
+
+if [[ -n ${STUB_DOCKER_FAIL:-} && $sub == "$STUB_DOCKER_FAIL" ]]; then
   echo "stub: compose $STUB_DOCKER_FAIL failed" >&2
   exit 1
 fi
