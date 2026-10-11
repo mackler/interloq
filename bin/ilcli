@@ -15,7 +15,7 @@ version_command() {
 ilcli_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli\n\n"
-    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
+    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  run, shell and web create the container only when none exists and never\n  recreate a running one, so none of them stops a program another started. The\n  container keeps the configuration it was created with, the credential\n  variables of the shell that created it included; when compose.cc.yaml, or the\n  variables of the shell in use, resolve differently, these commands say so on\n  stderr and start in the container as it is. bin/ilcli down, then a start,\n  applies the new configuration, and down stops Claude Code and the web server\n  running in the container.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
   else
     printf "ilcli - Interloq's development container, and the route of a change to the installed copy.\n\n"
   fi
@@ -54,7 +54,7 @@ ilcli_usage() {
 ilcli_run_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli run\n\n"
-    printf "  Start the container if needed, then start Claude Code in it\n  \n  --help and -h show this usage; -- passes the rest on to claude unchanged, so\n  bin/ilcli run -- --help is Claude Code's own help.\n  \n  -c, --continue   continue the most recent session (passed to claude, not read\n  by ilcli)\n\n"
+    printf "  Start the container if needed, then start Claude Code in it\n  \n  An existing container is never recreated; if its configuration is older than\n  compose.cc.yaml gives in this shell, a note on stderr says so and that\n  bin/ilcli down, then a start, applies it.\n  \n  --help and -h show this usage; -- passes the rest on to claude unchanged, so\n  bin/ilcli run -- --help is Claude Code's own help.\n  \n  -c, --continue   continue the most recent session (passed to claude, not read\n  by ilcli)\n\n"
   else
     printf "ilcli run - Start the container if needed, then start Claude Code in it\n\n"
   fi
@@ -91,7 +91,12 @@ ilcli_run_usage() {
 }
 
 ilcli_shell_usage() {
-  printf "ilcli shell - Start the container if needed, then open a Bash shell in it\n\n"
+  if [[ -n $long_usage ]]; then
+    printf "ilcli shell\n\n"
+    printf "  Start the container if needed, then open a Bash shell in it\n  \n  An existing container is never recreated; if its configuration is older than\n  compose.cc.yaml gives in this shell, a note on stderr says so and that\n  bin/ilcli down, then a start, applies it.\n\n"
+  else
+    printf "ilcli shell - Start the container if needed, then open a Bash shell in it\n\n"
+  fi
 
   printf "%s\n" "Usage:"
   printf "  ilcli shell [--] [IGNORED...]\n"
@@ -118,7 +123,7 @@ ilcli_shell_usage() {
 ilcli_web_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli web\n\n"
-    printf "  Start the container if needed, then start Interloq's web server in it, in the\n  foreground; Ctrl+C ends it\n  \n  The port defaults to 8090, the one compose.cc.yaml publishes (8090:8090), at\n  http://localhost:8090/. A server on another port is not reachable from the\n  host until that ports line is changed and the container is recreated\n  (bin/ilcli down, then any docker command), not restarted. The server refuses\n  to start until the page is built: npm run build in the installed copy, which\n  bin/ilcli upgrade does. --help and -h show this usage.\n\n"
+    printf "  Start the container if needed, then start Interloq's web server in it, in the\n  foreground; Ctrl+C ends it\n  \n  The port defaults to 8090, the one compose.cc.yaml publishes (8090:8090), at\n  http://localhost:8090/. A server on another port is not reachable from the\n  host until that ports line is changed and the container is recreated\n  (bin/ilcli down, then bin/ilcli web), not restarted: an existing container is\n  never recreated by run, shell or web, which instead say on stderr that its\n  configuration is older than compose.cc.yaml gives in this shell. The server\n  refuses to start until the page is built: npm run build in the installed copy,\n  which bin/ilcli upgrade does. --help and -h show this usage.\n\n"
   else
     printf "ilcli web - Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it\n\n"
   fi
@@ -176,7 +181,12 @@ ilcli_build_usage() {
 }
 
 ilcli_down_usage() {
-  printf "ilcli down - Stop and remove the container (the volumes are kept)\n\n"
+  if [[ -n $long_usage ]]; then
+    printf "ilcli down\n\n"
+    printf "  Stop and remove the container (the volumes are kept)\n  \n  This stops Claude Code and the web server running in it. The next run, shell\n  or web creates the container again from compose.cc.yaml and the credential\n  variables of the shell it is started from.\n\n"
+  else
+    printf "ilcli down - Stop and remove the container (the volumes are kept)\n\n"
+  fi
 
   printf "%s\n" "Usage:"
   printf "  ilcli down [--] [IGNORED...]\n"

@@ -4,6 +4,8 @@ help: |-
 
   The docker commands (run, shell, web, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
 
+  run, shell and web create the container only when none exists and never recreate a running one, so none of them stops a program another started. The container keeps the configuration it was created with, the credential variables of the shell that created it included; when compose.cc.yaml, or the variables of the shell in use, resolve differently, these commands say so on stderr and start in the container as it is. bin/ilcli down, then a start, applies the new configuration, and down stops Claude Code and the web server running in the container.
+
   Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
 
   The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test on GitHub and advances the release branch only if it passes, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
@@ -14,6 +16,8 @@ commands:
   default: force
   help: |-
     Start the container if needed, then start Claude Code in it
+
+    An existing container is never recreated; if its configuration is older than compose.cc.yaml gives in this shell, a note on stderr says so and that bin/ilcli down, then a start, applies it.
 
     --help and -h show this usage; -- passes the rest on to claude unchanged, so bin/ilcli run -- --help is Claude Code's own help.
 
@@ -30,7 +34,10 @@ commands:
   - bin/ilcli run --help       this usage
 
 - name: shell
-  help: Start the container if needed, then open a Bash shell in it
+  help: |-
+    Start the container if needed, then open a Bash shell in it
+
+    An existing container is never recreated; if its configuration is older than compose.cc.yaml gives in this shell, a note on stderr says so and that bin/ilcli down, then a start, applies it.
   catch_all:
     label: ignored
     help: Accepted and ignored; --help and -h show this usage
@@ -39,7 +46,7 @@ commands:
   help: |-
     Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it
 
-    The port defaults to 8090, the one compose.cc.yaml publishes (8090:8090), at http://localhost:8090/. A server on another port is not reachable from the host until that ports line is changed and the container is recreated (bin/ilcli down, then any docker command), not restarted. The server refuses to start until the page is built: npm run build in the installed copy, which bin/ilcli upgrade does. --help and -h show this usage.
+    The port defaults to 8090, the one compose.cc.yaml publishes (8090:8090), at http://localhost:8090/. A server on another port is not reachable from the host until that ports line is changed and the container is recreated (bin/ilcli down, then bin/ilcli web), not restarted: an existing container is never recreated by run, shell or web, which instead say on stderr that its configuration is older than compose.cc.yaml gives in this shell. The server refuses to start until the page is built: npm run build in the installed copy, which bin/ilcli upgrade does. --help and -h show this usage.
   catch_all:
     label: port
     help: 'Passed to node /opt/interloq/src/web.ts unchanged: [port]'
@@ -54,7 +61,10 @@ commands:
     help: Accepted and ignored; --help and -h show this usage
 
 - name: down
-  help: Stop and remove the container (the volumes are kept)
+  help: |-
+    Stop and remove the container (the volumes are kept)
+
+    This stops Claude Code and the web server running in it. The next run, shell or web creates the container again from compose.cc.yaml and the credential variables of the shell it is started from.
   catch_all:
     label: ignored
     help: Accepted and ignored; --help and -h show this usage

@@ -18,6 +18,9 @@ services:
       - claude-config:/home/node/.claude
       - codex-config:/home/node/.codex
       - ${HOME}/work/interloq:/opt/interloq:ro
+    # Each bare name takes its value from the shell that creates the container, and only that shell's values
+    # reach it. bin/ilcli run, shell and web never recreate a running container; from a shell whose values
+    # differ they print a note on stderr and change nothing. bin/ilcli down, then a start, applies them.
     environment:
       - CLAUDE_CODE_OAUTH_TOKEN
       # Optional, passed through from the host: a fine-grained GitHub token limited to this repository
@@ -27,10 +30,11 @@ services:
       # The program's own tracker credential (issue #120): a fine-grained GitHub token limited to the
       # project's repository with Issues read and write, which src/trackerLive.ts reads and passes to the
       # adapter. Separate from INTERLOQ_ISSUES_TOKEN above, which is the assistant's and is scoped
-      # differently. A new entry here takes effect when the container is recreated.
+      # differently. A new entry here takes effect when the container is recreated: bin/ilcli down, then a start.
       - INTERLOQ_GITHUB_TOKEN
     # The web GUI (node /opt/interloq/src/web.ts, default port 8090), reached from the host's browser at
-    # http://localhost:8090/ without a token or login. A new ports line takes effect when the container is recreated.
+    # http://localhost:8090/ without a token or login. A new ports line takes effect when the container is recreated:
+    # bin/ilcli down, then a start.
     ports:
       - "8090:8090"
     # Keeps the container running between sessions; the image's own CMD would start
