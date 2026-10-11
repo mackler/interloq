@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { renderUsage, summarizeUsage, type LimitWait, type UsageLine, type UsageLines } from "../src/usage.ts";
+import { callCosts, costWarningOf, renderUsage, summarizeUsage, type LimitWait, type UsageLine, type UsageLines } from "../src/usage.ts";
 
 // Findings 9 and 27 of docs/functional-design-review.md; decision Q8 (unknown sessions counted separately).
 const claude = (session: string | null, totalCostUsd: number, turns = 1): UsageLine => ({ agent: "claude", session, turns, totalCostUsd });
@@ -49,4 +49,56 @@ test("renderUsage: the waits, only when there was one, with the last interrupted
   assert.equal(two, `${plain} Waited for Claude Code's usage limits: 2 times, 1:30:00 in all.`);
   const interrupted = renderUsage(summarizeUsage({ calls: [], waits: [wait(0, WEEK, 60_000, "interrupted")] }), "plan-review/usage.jsonl");
   assert.equal(interrupted, `${plain} Waited for Claude Code's usage limits: 1 time, 1:00 in all (the last interrupted).`);
+});
+
+// Issue #122: the cost of each Claude Code call, attributed to its session, and the warning it decides.
+// The main session of the run of 9 Oct 2026 (the task's table): each call's time and cost.
+const RUN_OF_9_OCT: readonly (readonly [string, number])[] = [
+  ["23:43:56", 1.08], ["23:46:58", 1.05], ["23:48:20", 0.2], ["23:49:36", 0.2], ["23:57:33", 1.15], ["00:16:20", 0.05], ["00:24:06", 2.55],
+  ["00:27:57", 2.08], ["08:16:28", 4.67], ["08:19:14", 5.48], ["08:23:31", 5.49], ["09:20:54", 6.8], ["09:24:04", 4.16], ["09:28:03", 4.71], ["09:56:59", 0],
+];
+/** The session's lines: running totals, as usage.jsonl records them, built from the table's costs. */
+const runningTotals = (session: string, costs: readonly number[]): readonly UsageLine[] =>
+  costs.reduce<{ total: number; lines: readonly UsageLine[] }>(({ total, lines }, c) => ({ total: total + c, lines: [...lines, claude(session, total + c)] }), { total: 0, lines: [] }).lines;
+const near = (a: number | null, b: number): void => assert.ok(a !== null && Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+
+test("callCosts: the run of 9 Oct 2026 gives back each call's cost", () => {
+  const costs = callCosts(runningTotals("main", RUN_OF_9_OCT.map(([, c]) => c)));
+  assert.equal(costs.length, RUN_OF_9_OCT.length);
+  costs.forEach((c, i) => {
+    assert.equal(c.session, "main");
+    near(c.costUsd, RUN_OF_9_OCT[i][1]);
+  });
+});
+
+test("costWarningOf with 5: the run of 9 Oct 2026 warns at 08:19:14, 08:23:31 and 09:20:54 and at no other call", () => {
+  const lines = runningTotals("main", RUN_OF_9_OCT.map(([, c]) => c));
+  const warned = RUN_OF_9_OCT.flatMap(([time], i) => (costWarningOf(lines.slice(0, i + 1), "main", 5) === null ? [] : [time]));
+  assert.deepEqual(warned, ["08:19:14", "08:23:31", "09:20:54"]);
+  near(costWarningOf(lines.slice(0, 12), "main", 5), 6.8);
+});
+
+test("callCosts: two interleaved sessions are measured apart; Codex lines are skipped", () => {
+  const costs = callCosts([claude("a", 1), codex(1, 1), claude("b", 2), claude("a", 4), claude("b", 2.5)]);
+  assert.deepEqual(costs.map((c) => c.session), ["a", "b", "a", "b"]);
+  [1, 2, 3, 0.5].forEach((expected, i) => near(costs[i].costUsd, expected));
+});
+
+test("costWarningOf reads the session's own last line, not the file's last line", () => {
+  const lines = [claude("main", 1), claude("main", 8), claude("fresh", 0.1)];
+  near(costWarningOf(lines, "main", 5), 7);
+  assert.equal(costWarningOf(lines, "fresh", 5), null);
+  assert.equal(costWarningOf(lines, "other", 5), null);
+  assert.equal(costWarningOf([claude("main", 5)], "main", 5), null, "a cost equal to the amount does not exceed it");
+});
+
+test("callCosts: a line without a session costs its total; a null total costs null and the next is measured from the last number", () => {
+  const nullTotal: UsageLine = { agent: "claude", session: "a", turns: 1, totalCostUsd: null };
+  const costs = callCosts([claude(null, 0.3), claude("a", 1), nullTotal, claude("a", 2.5)]);
+  assert.equal(costs[0].session, null);
+  near(costs[0].costUsd, 0.3);
+  near(costs[1].costUsd, 1);
+  assert.equal(costs[2].costUsd, null);
+  near(costs[3].costUsd, 1.5);
+  near(costWarningOf([claude(null, 6)], null, 5), 6);
 });

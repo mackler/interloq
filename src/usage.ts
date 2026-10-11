@@ -65,6 +65,36 @@ export const summarizeUsage = ({ calls: lines, waits }: UsageLines): UsageSummar
   };
 };
 
+/** The cost of one Claude Code call (issue #122): its session, and the growth of the session's running total it caused. */
+export type CallCost = Readonly<{ session: string | null; costUsd: number | null }>;
+
+/**
+ * The cost of each Claude Code call in order (issue #122), Codex's lines skipped. The Agent SDK's total is the running
+ * total of a session, so a call of an identified session costs its total less the session's previous numeric total (its
+ * whole total for the session's first). A call without a session is its own session (Q8) and costs its total. A call
+ * whose total is null costs null, and the session's next call is measured from its last number.
+ */
+export const callCosts = (lines: readonly UsageLine[]): readonly CallCost[] =>
+  lines.reduce<Readonly<{ last: ReadonlyMap<string, number>; costs: readonly CallCost[] }>>(
+    ({ last, costs }, line) => {
+      if (line.agent !== "claude") return { last, costs };
+      const { session, totalCostUsd: total } = line;
+      if (total === null) return { last, costs: [...costs, { session, costUsd: null }] };
+      if (session === null) return { last, costs: [...costs, { session, costUsd: total }] };
+      return { last: new Map([...last, [session, total]]), costs: [...costs, { session, costUsd: total - (last.get(session) ?? 0) }] };
+    },
+    { last: new Map(), costs: [] },
+  ).costs;
+
+/**
+ * The cost of the last call of `session` if it is more than `thresholdUsd`, else null (issue #122): the session's own
+ * last line, not the file's, since another session may append a line between the record and the read.
+ */
+export const costWarningOf = (lines: readonly UsageLine[], session: string | null, thresholdUsd: number): number | null => {
+  const cost = callCosts(lines).filter((c) => c.session === session).at(-1)?.costUsd ?? null;
+  return cost !== null && cost > thresholdUsd ? cost : null;
+};
+
 /** The summary as the end of a run says it; `details` is the run's usage.jsonl as the run names it (issue #120: the run's own). */
 export const renderUsage = (s: UsageSummary, details: string): string => {
   const unidentified = s.unidentifiedCalls > 0 ? `, ${s.unidentifiedCalls} calls without a session id` : "";

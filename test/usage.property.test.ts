@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { type LimitWait, summarizeUsage, type UsageLine } from "../src/usage.ts";
+import { callCosts, type LimitWait, summarizeUsage, type UsageLine } from "../src/usage.ts";
 
 // Row 7 of the table in recommendation E of docs/functional-design-review.md.
 const RUNS = { numRuns: 200, seed: 20260925 };
@@ -75,6 +75,32 @@ test("property: waitedMs is the sum of endedMs - fromMs over the waits, and limi
       assert.equal(summary.limitWaits, waits.length);
       assert.equal(summary.lastInterrupted, waits.at(-1)?.outcome === "interrupted");
     }),
+    RUNS,
+  );
+});
+
+// Issue #122: the cost of each call attributed to its session.
+test("property: with non-decreasing totals, a session's call costs sum to its last total, and none is negative", () => {
+  const steps = fc.array(fc.tuple(fc.constantFrom("s-1", "s-2", "s-3"), fc.double({ min: 0, max: 10, noNaN: true, noDefaultInfinity: true })), { maxLength: 15 });
+  fc.assert(
+    fc.property(steps, (increments) => {
+      const totals = new Map<string, number>();
+      const lines: UsageLine[] = increments.map(([session, inc]) => {
+        const total = (totals.get(session) ?? 0) + inc;
+        totals.set(session, total);
+        return { agent: "claude", session, turns: 1, totalCostUsd: total };
+      });
+      const costs = callCosts(lines);
+      for (const [session, last] of totals) close(costs.filter((c) => c.session === session).reduce((sum, c) => sum + (c.costUsd ?? 0), 0), last);
+      assert.ok(costs.every((c) => c.costUsd !== null && c.costUsd >= -1e-9));
+    }),
+    RUNS,
+  );
+});
+
+test("property (seam): the call costs of any lines sum to the summary's cost", () => {
+  fc.assert(
+    fc.property(arbLines, (lines) => close(callCosts(lines).reduce((sum, c) => sum + (c.costUsd ?? 0), 0), summarizeUsage({ calls: lines, waits: [] }).costUsd)),
     RUNS,
   );
 });
