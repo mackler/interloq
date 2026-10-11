@@ -45,12 +45,12 @@ test("the question subject's handlers receive the decoded list and write questio
 
 // Plan step 2.7: the work subject carries the work review's policies; the other subjects keep today's behaviour.
 test("the work subject: its id, file, prompts and policies", () => {
-  const work = workSubject(2, true, workExecution);
+  const work = workSubject("t", 2, true, workExecution);
   assert.deepEqual(work.id, { work: 2 });
   assert.equal(work.heading, "Work review 2");
   assert.equal(work.fileLabel, "changes.diff");
   assert.match(work.reviewPrompt(TEST_ROOT, 1), /work-review-2\/changes\.diff/);
-  assert.match(work.respond.prompt(TEST_ROOT, 1, { review: { issues: [] }, log: [], changes: "" }), /work-review-2\/review-1\.json/);
+  assert.match(work.respond.prompt(TEST_ROOT, 1, { review: { issues: [] }, log: [], records: { changes: "", requirements: null, decisions: "" } }), /work-review-2\/review-1\.json/);
   assert.deepEqual([work.proceed, work.leaveOnAcceptance, work.leaveOnDecision, work.amend], [null, true, true, null]);
   assert.notEqual(work.prepare, null);
   assert.equal(work.respond.capability, "readOnly", "a work response is read-only (finding 1 of docs/gui-review.md)");
@@ -70,5 +70,5 @@ test("the proceed choices name the clarification and implementation", () => {
 
 // Decision support, plan step 1.3: a subject carries the phase its loop records (a decision's is where it took place).
 test("every subject carries its phase", () => {
-  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(TEST_ROOT, 3, false, null).phase, workSubject(2, false, workExecution).phase], [0, 0, 3, 2]);
+  assert.deepEqual([questionSubject("t").phase, requirementsSubject().phase, planSubject(TEST_ROOT, 3, false, null).phase, workSubject("t", 2, false, workExecution).phase], [0, 0, 3, 2]);
 });

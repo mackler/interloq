@@ -412,8 +412,13 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           }
           case "CallPlanner": {
             // A read-only response cannot read the records, so they are in its prompt (decision Q1 of the stage-A task).
-            const changes = typeof id === "object" && "work" in id && subject.respond.capability === "readOnly" ? yield* store.readChangeRecord(id.work) : null;
-            const context: RespondContext = { review: state.current.review!, log: state.log, changes };
+            // Issue #122 (G-R1-1): with requirements.md and user-decisions.md, read every round, since a decision taken at
+            // a pause of the work review is appended between rounds.
+            const records =
+              typeof id === "object" && "work" in id && subject.respond.capability === "readOnly"
+                ? { changes: yield* store.readChangeRecord(id.work), requirements: (yield* store.readContext()).requirements, decisions: yield* store.readUserDecisions() }
+                : null;
+            const context: RespondContext = { review: state.current.review!, log: state.log, records };
             const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, subject.respond.validate);
             return { kind: "ResponseDecoded", response: call.output, resultText: call.resultText, costUsd: call.costUsd };
           }

@@ -1120,29 +1120,46 @@ ${logRules(root, log, prefix, round)}`;
 }
 
 /**
- * What a response to a review is given besides the round (decision Q1 of the stage-A task): the review of the round,
- * the subject's log entries, and the change record of a work review (null for the other subjects).
+ * The records a read-only work response is given in its prompt, since it can read no file (decision Q1 of the stage-A
+ * task; issue #122, G-R1-1): changes.diff, requirements.md where the run has one, and user-decisions.md. They come
+ * together or not at all.
  */
-export type RespondContext = Readonly<{ review: Review; log: readonly LogEntry[]; changes: string | null }>;
+export type WorkRecords = Readonly<{ changes: string; requirements: string | null; decisions: string }>;
 
 /**
- * A work response is read-only (finding 1 of docs/gui-review.md): it may call no tool, so the prompt carries the
- * review, the entries of this work review's phase in the work-review log, changes.diff verbatim, and (issue #117) the
- * report of the phase's execution and the plan as its end left it, since the execution ran in a session of its own.
+ * What a response to a review is given besides the round (decision Q1 of the stage-A task): the review of the round,
+ * the subject's log entries, and the records of a read-only work response (null for the other subjects).
  */
+export type RespondContext = Readonly<{ review: Review; log: readonly LogEntry[]; records: WorkRecords | null }>;
+
 /**
  * What a work response is given of its phase's execution (issue #117): the execution ran in a session of its own, so its
  * report and the plan as the execution's end left it (plan.md, with the steps' statuses) travel in the prompt.
  */
 export type WorkExecution = Readonly<{ outcome: ExecOutcome; plan: string }>;
 
-export function workRespondPrompt(root: RunRoot, phase: number, round: number, context: RespondContext, execution: WorkExecution): string {
+/**
+ * A work response is read-only (finding 1 of docs/gui-review.md): it may call no tool. Since issue #122 it runs in its
+ * work review's own session, which has seen no other phase, so the prompt carries the task, the review, the entries of
+ * this work review's phase in the work-review log, changes.diff, requirements.md where the run has one and
+ * user-decisions.md verbatim, and (issue #117) the report of the phase's execution and the plan as its end left it.
+ */
+export function workRespondPrompt(root: RunRoot, phase: number, round: number, context: RespondContext, execution: WorkExecution, task: string): string {
   const entries = context.log.filter((e) => e.phase === phase);
+  const records = context.records;
+  const requirementsText = records?.requirements ?? null;
+  const requirements = requirementsText === null ? "" : `\n\nThe requirements (${runDir(root)}/${pathOf({ kind: "requirements" })}):\n${requirementsText}`;
   return `${runDir(root)}/${pathOf({ kind: "review", subject: { work: phase }, round })} contains a review of the work done in the project (the diff in ${runDir(root)}/${pathOf({ kind: "changes", phase })}).
-You cannot use any tool in this response: the review, the earlier entries of this work review's log, the diff, the report of execution phase ${phase} and the plan with its steps' statuses are below. Execution phase ${phase} ran in a Claude Code session of its own, whose history is not in this one. Answer with the final structured output only.
+You cannot use any tool in this response: the task, the review, the earlier entries of this work review's log, the diff, ${requirementsText === null ? "" : "the requirements, "}the user's decisions, the report of execution phase ${phase} and the plan with its steps' statuses are below. This response runs in a Claude Code session of its own, which has not seen the planning or the execution: it has only what is below. Answer with the final structured output only.
 ${respondRules(root, "the correction will be made in a later execution phase after the plan has been revised; do not modify any file")}
 Every correction, including one that a self-correction calls for, is made in a later execution phase; state in the rationale what the correction requires.
 Do not modify any file.
+
+The task:
+${task}${requirements}
+
+The user's decisions (${runDir(root)}/${pathOf({ kind: "decisions" })}):
+${records === null || records.decisions.trim() === "" ? "(none)" : records.decisions}
 
 The review (${pathOf({ kind: "review", subject: { work: phase }, round })}):
 ${JSON.stringify(context.review, null, 2)}
@@ -1151,7 +1168,7 @@ The earlier entries of work review ${phase} in ${runDir(root)}/${pathOf({ kind: 
 ${entries.length === 0 ? "(none)" : JSON.stringify(entries, null, 2)}
 
 The diff (${runDir(root)}/${pathOf({ kind: "changes", phase })}):
-${context.changes ?? "(not available)"}
+${records?.changes ?? "(not available)"}
 
 The report of execution phase ${phase}:
 Status: ${execution.outcome.status}

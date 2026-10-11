@@ -180,7 +180,7 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
       const work = yield* Effect.gen(function* () {
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "work", n: k } });
         yield* ui.say(workReviewBeganLine(label("work", k)));
-        return yield* reviewLoop(workSubject(k, withRequirements, execution.work));
+        return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work));
       }).pipe(inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
       // The run is finished only when Claude Code reported finished and the work review converged.

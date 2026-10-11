@@ -318,6 +318,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const file = at({ kind: "changes", phase });
           return (yield* exists(file)) ? yield* readText(file) : "";
         }),
+      readUserDecisions: () => exists(decisionsFile).pipe(Effect.flatMap((present) => (present ? readText(decisionsFile) : Effect.succeed("")))),
       changeRecord: (phase) =>
         Effect.gen(function* () {
           const file = at({ kind: "changes", phase });

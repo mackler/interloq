@@ -19,7 +19,7 @@ const runDir = path.relative(store.project, store.dir).split(path.sep).join("/")
 const onDisk = (artifact: Artifact): string => path.join(store.project, recordPath(store.root, artifact));
 
 const question = { phase: { kind: "planning" as const, n: 1 }, label: "Planning", question: "Which?", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] };
-const context = { review: { issues: [] }, log: [], changes: "" };
+const context = { review: { issues: [] }, log: [], records: { changes: "", requirements: null, decisions: "" } };
 /** Every prompt that names a record, with the records it must name. */
 const cases: ReadonlyArray<readonly [string, string, readonly Artifact[]]> = [
   ["questionReviewPrompt", prompts.questionReviewPrompt(store.root, 1), [{ kind: "questions" }, { kind: "log", subject: "questions" }, { kind: "decisions" }, { kind: "feedback" }]],
@@ -45,7 +45,7 @@ const cases: ReadonlyArray<readonly [string, string, readonly Artifact[]]> = [
   ["correctivePrompt", prompts.correctivePrompt(store.root, "plan.json", 1, ["P1-R1-1"]), [{ kind: "planFile" }]],
   ["workReviewPrompt", prompts.workReviewPrompt(store.root, 1, 1, true), [{ kind: "changes", phase: 1 }, { kind: "planFile" }, { kind: "requirements" }, { kind: "log", subject: { work: 1 } }]],
   ["workReviewPrompt, a later round", prompts.workReviewPrompt(store.root, 1, 2, true), [{ kind: "changes", phase: 1 }, { kind: "log", subject: { work: 1 } }]],
-  ["workRespondPrompt", prompts.workRespondPrompt(store.root, 1, 1, context, workExecution), [{ kind: "review", subject: { work: 1 }, round: 1 }, { kind: "changes", phase: 1 }, { kind: "plan" }]],
+  ["workRespondPrompt", prompts.workRespondPrompt(store.root, 1, 1, context, workExecution, "t"), [{ kind: "review", subject: { work: 1 }, round: 1 }, { kind: "changes", phase: 1 }, { kind: "plan" }]],
   ["revisePlanAfterExecutionPrompt", prompts.revisePlanAfterExecutionPrompt(store.root, 1, { stopped: true, workReview: { revisedInRound: 2 } }), [{ kind: "decisions" }, { kind: "round", subject: { work: 1 }, round: 2 }, { kind: "planFile" }]],
   ["decisionAnalysisPrompt", prompts.decisionAnalysisPrompt(store.root, "format", question, { task: "t", requirements: null, plan: null }), [{ kind: "requirements" }, { kind: "plan" }]],
   ["decisionReviewPrompt", prompts.decisionReviewPrompt(store.root, "format", 3, 1), [{ kind: "analysis", decision: 3 }, { kind: "decisionQuestion", decision: 3 }, { kind: "log", subject: { decision: 3 } }]],

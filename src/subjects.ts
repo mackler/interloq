@@ -248,7 +248,7 @@ export function decisionSubject(k: number, phase: number, format: string, valida
  * issue or a user decision leaves for a planning phase; there is no proceed choice; changes.diff is rewritten before
  * every round's review.
  */
-export function workSubject(phase: number, withRequirements: boolean, execution: prompts.WorkExecution): Subject<PlannerResponse, PlanWrite> {
+export function workSubject(task: string, phase: number, withRequirements: boolean, execution: prompts.WorkExecution): Subject<PlannerResponse, PlanWrite> {
   const id = { work: phase };
   return {
     id,
@@ -256,7 +256,7 @@ export function workSubject(phase: number, withRequirements: boolean, execution:
     heading: subjectHeading(id),
     fileLabel: "changes.diff",
     reviewPrompt: (root, round) => prompts.workReviewPrompt(root, phase, round, withRequirements),
-    respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution), schema: S.PlannerResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
+    respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution, task), schema: S.PlannerResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
     // Never issued: leaveOnDecision ends the loop instead of a planning call (G-R1-1); typed as the plan's.
     applyDecisions: { prompt: prompts.planApplyDecisionsPrompt, schema: S.PlanWrite, after: null, validate: null },
     amend: null,

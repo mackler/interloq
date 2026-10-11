@@ -18,7 +18,7 @@ test("every prompt that may return questions_for_user carries the writer's rende
     prompts.requirementsRespondPrompt(TEST_ROOT, 1),
     prompts.questionRespondPrompt(TEST_ROOT, 1),
     prompts.decisionRespondPrompt(TEST_ROOT, 1, 1),
-    prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
+    prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
     prompts.initialPlanPrompt(TEST_ROOT, "t", false),
     prompts.revisePlanPrompt(TEST_ROOT),
     prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: false, workReview: "converged" }),

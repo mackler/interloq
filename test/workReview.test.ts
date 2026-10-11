@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Effect } from "effect";
+import { Effect, Result } from "effect";
 import { platformLayer } from "../src/platform.ts";
 import { limitNoProceedPrompt, execInputPrompt, planApplyDecisionsPrompt, withOffer } from "../src/prompts.ts";
 import { readCheckpoint } from "../src/records.ts";
 import type { ExecOutcome } from "../src/schema.ts";
 import type { StoreShape } from "../src/services.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects, TEST_ROOT } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects, TEST_ROOT, scriptedItem } from "./helpers.ts";
+import { implementationRun } from "../src/run.ts";
+import { refinementOf } from "../src/refinement.ts";
 
 // Plan step 2.8: the work review after every execution phase (the task; decisions Q7, Q13, Q14, G-R1-1).
 const noQuestions = { questions_for_user: [] };
@@ -422,4 +424,22 @@ test("(j, #26) an external edit of conversation.md during the exhaustion pause, 
   });
   await runFails(layer, "RecordsChanged", /conversation\.md/);
   assert.equal(probe.planner.prompts.length, 3);
+});
+
+// Issue #122 (G-R1-1): the work response, in a session of its own that can read no file, is given the task, the
+// requirements the run wrote and the user's decisions in its prompt.
+test("issue #122: the work response's prompt carries the task, the run's requirements and a decision taken at a stop", async () => {
+  const task = "The scripted task of item 1";
+  const requirements = Result.getOrThrow(refinementOf("# Requirements\n\nThe confirmed requirement R1."));
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "accepted"]]) }, planWrite("v2")],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [stop("needs_input", "PostgreSQL"), finished],
+  });
+  assert.equal(await Effect.runPromise(implementationRun(task, scriptedItem.id, requirements).pipe(Effect.provide(layer))), 2);
+  const response = probe.planner.prompts[1];
+  assert.match(response, /work-review-1\/review-1\.json/);
+  assert.ok(response.includes(task), "the task");
+  assert.ok(response.includes("The confirmed requirement R1."), "the requirements");
+  assert.ok(response.includes("PostgreSQL"), "the decision taken at the stop");
 });

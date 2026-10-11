@@ -64,7 +64,7 @@ test("the work review prompt names the change record, the plan, the requirements
 });
 
 test("the work response prompt forbids any file change and defers the corrections", () => {
-  const text = prompts.workRespondPrompt(TEST_ROOT, 2, 1, { review: { issues: [] }, log: [], changes: "" }, workExecution);
+  const text = prompts.workRespondPrompt(TEST_ROOT, 2, 1, { review: { issues: [] }, log: [], records: { changes: "", requirements: null, decisions: "" } }, workExecution, "t");
   assert.match(text, /plan-review\/runs\/[^/\s]+\/work-review-2\/review-1\.json/);
   assert.match(text, /later execution phase after the plan has been revised/);
   assert.match(text, /Do not modify any file\./);
@@ -76,7 +76,7 @@ test("the work response prompt carries the review, the log entries of its phase 
   const entry = (phase: number, id: string) => ({ id, phase, round: 1, problem: `problem of ${id}`, rationale: `rationale of ${id}`, superseded: false, source: "review" as const, severity: "minor" as const, location: "x", evidence: "e", action: "rejected" as const, duplicate_of: null, reverses: null });
   const log = [entry(1, "W1-R1-1"), entry(2, "W2-R1-1")] as unknown as Parameters<typeof prompts.workRespondPrompt>[3]["log"];
   const diff = "diff --git a/src/a.ts b/src/a.ts\n+const lines = text.split(\"\\n\");\n";
-  const text = prompts.workRespondPrompt(TEST_ROOT, 2, 2, { review, log, changes: diff }, workExecution);
+  const text = prompts.workRespondPrompt(TEST_ROOT, 2, 2, { review, log, records: { changes: diff, requirements: null, decisions: "" } }, workExecution, "t");
   assert.ok(text.includes("the parser drops the last line"), "the review");
   assert.ok(text.includes("rationale of W2-R1-1"), "the phase's log entry");
   assert.ok(!text.includes("W1-R1-1"), "another phase's log entry");
@@ -235,7 +235,7 @@ test("every prompt that may return questions_for_user says how to fill a questio
     prompts.planRespondPrompt(TEST_ROOT, 1, 1),
     prompts.requirementsRespondPrompt(TEST_ROOT, 1),
     prompts.questionRespondPrompt(TEST_ROOT, 1),
-    prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], changes: null }, workExecution),
+    prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
     prompts.initialPlanPrompt(TEST_ROOT, "t", false),
     prompts.revisePlanPrompt(TEST_ROOT),
     prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: false, workReview: "converged" }),
@@ -851,7 +851,7 @@ test("issue #117: executePrompt names the task, the requirements where they exis
 // prompt carries the execution's report and the plan instead of saying they are in its context.
 test("issue #117: workRespondPrompt carries the execution's report and the plan, and does not say they are in its context", () => {
   const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B" }, plan: "# The plan\n\nS1 done\n" };
-  const text = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], changes: null }, execution);
+  const text = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, execution, "t");
   for (const part of [execution.outcome.summary, execution.outcome.remainingWork, execution.outcome.question, execution.outcome.status, execution.plan]) assert.ok(text.includes(part), part);
   assert.doesNotMatch(text, /in your context/);
 });
@@ -859,4 +859,16 @@ test("issue #117: workRespondPrompt carries the execution's report and the plan,
 test("runInProgressText: the article follows the mode (issue #120, S18)", () => {
   assert.equal(prompts.runInProgressText("implementation"), "an implementation run is in progress; stop it or wait for its end");
   assert.equal(prompts.runInProgressText("refinement"), "a refinement run is in progress; stop it or wait for its end");
+});
+
+// Issue #122 (G-R1-1): the work response runs in its work review's own session and can read no file, so its prompt
+// carries the task, requirements.md where the run has one, and user-decisions.md.
+test("issue #122: workRespondPrompt embeds the task, the requirements and the user's decisions", () => {
+  const records = { changes: "the diff", requirements: "# Requirements\n\nThe confirmed requirement R1.", decisions: "## Stop in execution phase 1\n\nPostgreSQL" };
+  const text = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records }, workExecution, "The task text of item 1");
+  for (const part of ["The task text of item 1", records.requirements, records.decisions, records.changes]) assert.ok(text.includes(part), part);
+  assert.match(text, /requirements\.md/);
+  const without = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: { ...records, requirements: null } }, workExecution, "The task text of item 1");
+  assert.doesNotMatch(without, /requirements\.md/);
+  assert.ok(without.includes(records.decisions));
 });

@@ -173,6 +173,8 @@ export interface StoreShape {
   changeRecord(phase: number): Effect.Effect<void, StoreError>;
   /** The text of work-review-<phase>/changes.diff, for the prompt of a read-only work response ("" when it does not exist). */
   readChangeRecord(phase: number): Effect.Effect<string, StoreError>;
+  /** The text of user-decisions.md, for the prompt of a read-only work response (issue #122; "" when it does not exist). */
+  readUserDecisions(): Effect.Effect<string, StoreError>;
   saveInvalidReply(agent: "claude" | "codex", content: string): Effect.Effect<string, StoreError>;
   projectSnapshot(): Effect.Effect<Snapshot, StoreError>;
   /** The guarded records under plan-review/ (src/artifacts.ts guardedRecord): the second check of a read-only call. */
