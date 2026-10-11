@@ -674,3 +674,16 @@ test("issue #112: on the plan, an issue raised again after a partial acceptance 
   assert.match(presentedSubjects(probe.ui)[0], /issue A, raised again/);
   assert.doesNotMatch(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), new RegExp(prompts.WORDING_DISPUTE_HEADING));
 });
+
+// Issue #122: planning phase 2 starts a session of its own, so its prompt carries the task.
+test("issue #122: the second planning phase's prompt carries the task", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [{ status: "needs_input", summary: "partial", question: "Which database?", remainingWork: "the rest", userInput: "PostgreSQL" }, finished],
+  });
+  const task = "The scripted task of item 1";
+  assert.equal(await runTask(layer, task), 2);
+  assert.match(probe.planner.prompts[1], /^Execution phase 1 has ended\./);
+  assert.ok(probe.planner.prompts[1].includes(task), probe.planner.prompts[1]);
+});

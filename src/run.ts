@@ -122,7 +122,7 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });
         yield* ui.say(planningBeganLine(label("planning", k), previous === null));
         // The reply is the plan (F1): validated, then written by the program as plan.json and plan.md.
-        const written = yield* planningCall(previous === null ? initialPlanPrompt(store.root, task, withRequirements) : revisePlanAfterExecutionPrompt(store.root, k - 1, previous), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
+        const written = yield* planningCall(previous === null ? initialPlanPrompt(store.root, task, withRequirements) : revisePlanAfterExecutionPrompt(store.root, task, withRequirements, k - 1, previous), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
         yield* store.savePlanWrite(k, written.output);
         yield* savePlan(k, written.output.plan, before);
         yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: written.resultText });

@@ -702,7 +702,8 @@ export const userDecisionsSentence = (root: RunRoot): string => `${runDir(root)}
 export function initialPlanPrompt(root: RunRoot, task: string, withRequirements: boolean): string {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
-${requirements}${planFormat(root)}
+${requirements}${userDecisionsSentence(root)}
+${planFormat(root)}
 ${PLAN_STEP_DURATION_RULE}
 ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
@@ -1179,13 +1180,21 @@ The plan as execution phase ${phase} ended (${runDir(root)}/plan.md):
 ${execution.plan}`;
 }
 
-export function revisePlanAfterExecutionPrompt(root: RunRoot, phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>): string {
+/**
+ * The revision of the plan after execution phase `phase`, the first call of the next planning phase, which runs in a
+ * Claude Code session of its own (issue #122): so it names the task, requirements.md where the run has one, and
+ * user-decisions.md, which the run's one session used to carry.
+ */
+export function revisePlanAfterExecutionPrompt(root: RunRoot, task: string, withRequirements: boolean, phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>): string {
+  const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   const stop = end.stopped ? `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.` : "";
   const review =
     end.workReview === "converged"
       ? `\nWork review ${phase} found no issue in the work so far.`
       : `\nWork review ${phase} ended in round ${end.workReview.revisedInRound} with accepted issues or a user decision: ${runDir(root)}/${pathOf({ kind: "round", subject: { work: phase }, round: end.workReview.revisedInRound })}, ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })} and the last entries of ${runDir(root)}/user-decisions.md.`;
   return `Execution phase ${phase} has ended.${stop}${review}
+This request runs in a Claude Code session of its own, which has not seen the earlier phases: read the files named here.
+${requirements}${userDecisionsSentence(root)}
 Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
 ${planStatuses(root)} An unfinished step counts as remaining.
 ${planFormat(root)}
@@ -1194,7 +1203,8 @@ ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
-${QUESTION_OPTIONS_RULE}`;
+${QUESTION_OPTIONS_RULE}
+Task: ${task}`;
 }
 
 /**

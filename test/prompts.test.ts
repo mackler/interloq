@@ -86,17 +86,17 @@ test("the work response prompt carries the review, the log entries of its phase 
 });
 
 test("the revision prompt after an execution phase names the stop and the work review's outcome", () => {
-  const stopOnly = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: "converged" });
+  const stopOnly = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" });
   assert.match(stopOnly, /^Execution phase 1 has ended\./);
   assert.match(stopOnly, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md/);
   assert.match(stopOnly, /Work review 1 found no issue in the work so far/);
-  const revise = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 2, { stopped: false, workReview: { revisedInRound: 3 } });
+  const revise = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { stopped: false, workReview: { revisedInRound: 3 } });
   assert.doesNotMatch(revise, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md contains the user's input for this stop/);
   assert.match(revise, /Work review 2 ended in round 3/);
   assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-2\/round-3\.json/);
   assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.ok(revise.includes(prompts.planIdRule(TEST_ROOT)));
-  const both = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: { revisedInRound: 1 } });
+  const both = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: { revisedInRound: 1 } });
   assert.match(both, /user's input for this stop/);
   assert.match(both, /Work review 1 ended in round 1/);
 });
@@ -238,7 +238,7 @@ test("every prompt that may return questions_for_user says how to fill a questio
     prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
     prompts.initialPlanPrompt(TEST_ROOT, "t", false),
     prompts.revisePlanPrompt(TEST_ROOT),
-    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: false, workReview: "converged" }),
+    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: false, workReview: "converged" }),
   ];
   for (const text of texts) {
     assert.ok(text.includes(prompts.QUESTION_OPTIONS_RULE), text.slice(0, 80));
@@ -334,7 +334,7 @@ test("the decision review prompt says the program places both headings and the l
 const planProducing = () => [
   prompts.initialPlanPrompt(TEST_ROOT, "t", false),
   prompts.revisePlanPrompt(TEST_ROOT),
-  prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: "converged" }),
+  prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }),
   prompts.planApplyDecisionsPrompt(TEST_ROOT),
   prompts.planRespondPrompt(TEST_ROOT, 1, 1),
 ];
@@ -788,7 +788,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     questionRespondPrompt: prompts.questionRespondPrompt(TEST_ROOT, 1),
     initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true),
     revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT),
-    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, 1, { stopped: true, workReview: "converged" }),
+    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1),
     interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
     interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
@@ -871,4 +871,24 @@ test("issue #122: workRespondPrompt embeds the task, the requirements and the us
   const without = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: { ...records, requirements: null } }, workExecution, "The task text of item 1");
   assert.doesNotMatch(without, /requirements\.md/);
   assert.ok(without.includes(records.decisions));
+});
+
+// Issue #122: a planning phase runs in a session of its own, so the prompts that start one name what the main session
+// used to carry: the task, requirements.md where the run has one, and user-decisions.md.
+test("issue #122: the initial plan prompt names user-decisions.md", () => {
+  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, "t", false).includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, "t", true).includes(prompts.userDecisionsSentence(TEST_ROOT)));
+});
+
+test("issue #122: the revision prompt carries the task and names requirements.md, only with requirements, and user-decisions.md", () => {
+  const end = { stopped: false, workReview: "converged" } as const;
+  const withReq = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "The task text of item 1", true, 1, end);
+  assert.ok(withReq.includes("The task text of item 1"));
+  assert.ok(withReq.includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(withReq.includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  assert.match(withReq, /session of its own/);
+  const without = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "The task text of item 1", false, 1, end);
+  assert.ok(!without.includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(without.includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  assert.match(without, /^Execution phase 1 has ended\./);
 });
