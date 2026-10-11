@@ -113,8 +113,9 @@ const isOtherPermanentError = (e: string | null): boolean => e !== null && e !==
 
 /**
  * What a failed Claude Code call is, by the facts kept of it. A rejection because the session is too long is checked
- * first (issue #122), since it usually carries a 4xx status as well; then permanent evidence other than the rate limit; then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold;
- * then the rate limit, or a rejection without a reset, is permanent; then the transport evidence. `terminalReason`
+ * first (issue #122), since it usually carries a 4xx status as well; then permanent evidence other than the rate limit;
+ * then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold; then the
+ * rate limit, or a rejection without a reset, is permanent; then the transport evidence. `terminalReason`
  * alone is never sufficient.
  */
 export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {

@@ -59,8 +59,8 @@ export const programWritten = (request: ContextRequest): ContextWritten => ({ co
 
 /**
  * Writes a question's context in a fresh session, which may read the project and change nothing (S33): the agent's
- * paragraph and terms, or, when the call fails for any reason but the user's stop or a change the guards find, the
- * program's paragraph with a note in conversation.md, so that the question always reaches the user.
+ * paragraph and terms, or, when the call fails for any reason but the user's stop, a change the guards find, or a session
+ * too long for Claude Code to accept (issue #122), the program's paragraph with a note in conversation.md, so that the question always reaches the user.
  */
 export const writeContext = (task: string, request: ContextRequest): Effect.Effect<ContextWritten, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
   Effect.gen(function* () {
@@ -71,7 +71,7 @@ export const writeContext = (task: string, request: ContextRequest): Effect.Effe
     return { context: { blocks: reply.context, by: "agent" as const }, explanations: reply.explanations, question: reply.question, options: reply.options, details: reply.details };
   }).pipe(
     Effect.catch((error: RunError): Effect.Effect<ContextWritten, RunError, Store> =>
-      error._tag === "UserStopped" || error._tag === "Interrupted" || error._tag === "ProjectChanged" || error._tag === "RecordsChanged"
+      error._tag === "UserStopped" || error._tag === "Interrupted" || error._tag === "ProjectChanged" || error._tag === "RecordsChanged" || error._tag === "ClaudeSessionTooLong"
         ? Effect.fail(error)
         : Effect.gen(function* () {
             yield* (yield* Store).converse(contextFallbackNote(describe(error)));

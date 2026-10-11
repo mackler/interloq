@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ConfigInvalid, DecisionFormatUnreadable, decodeRunError, GitError, haltMessage, ProjectChanged, RecordsChanged, RoundInvalid, RoundLimitStop } from "../src/errors.ts";
+import { sessionTooLongText } from "../src/prompts.ts";
+import { ClaudeSessionTooLong, ConfigInvalid, DecisionFormatUnreadable, decodeRunError, GitError, haltMessage, ProjectChanged, RecordsChanged, RoundInvalid, RoundLimitStop } from "../src/errors.ts";
 
 test("haltMessage reports a typed error with its description", () => {
   const error = new ProjectChanged({ during: "planning", fileLabel: null, changes: [{ kind: "content_changed", path: "a.txt" }] });
@@ -56,4 +57,12 @@ test("DecisionFormatUnreadable names the file, round-trips through decodeRunErro
   const error = new DecisionFormatUnreadable({ file: "/opt/interloq/docs/decision-making.md", message: "ENOENT" });
   assert.equal(haltMessage(error), "HALTED: the decision-making format /opt/interloq/docs/decision-making.md could not be read: ENOENT");
   assert.equal(decodeRunError({ _tag: "DecisionFormatUnreadable", file: "f", message: "m" })?._tag, "DecisionFormatUnreadable");
+});
+
+// Issue #122: a session too long for Claude Code to accept is a halt of its own, naming its cause.
+test("ClaudeSessionTooLong names the cause, round-trips through decodeRunError and is rendered by haltMessage", () => {
+  const error = new ClaudeSessionTooLong({ message: "Prompt is too long" });
+  assert.equal(haltMessage(error), `HALTED: ${sessionTooLongText("Prompt is too long")}`);
+  assert.match(sessionTooLongText("Prompt is too long"), /session/);
+  assert.equal(decodeRunError({ _tag: "ClaudeSessionTooLong", message: "Prompt is too long" })?._tag, "ClaudeSessionTooLong");
 });

@@ -2160,6 +2160,14 @@ export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" 
   return `**User decision:** ${answer === "retry" ? "retry again" : "stop the run"} after ${agentName(agent)} could not be reached for ${what}.\n\n`;
 }
 /** The halt of AgentUnreachable. */
+/**
+ * The halt of a Claude Code request refused because its session's history no longer fits what Claude Code accepts
+ * (issue #122): the cause named, with Claude Code's own words.
+ */
+export function sessionTooLongText(message: string): string {
+  return `Claude Code refused the request because its session's history was too long for Claude Code to accept (${message})`;
+}
+
 export function agentUnreachableText(agent: "claude" | "codex", attempts: number, lastFault: string): string {
   return `${agentName(agent)} could not be reached after ${attempts} attempts: ${lastFault}. The records are preserved.`;
 }

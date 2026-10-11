@@ -10,7 +10,7 @@ import { refinementOf, withoutRefinement, withRefinement } from "../src/refineme
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { mainSessionLine, workReviewBeganLine } from "../src/prompts.ts";
+import { mainSessionLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -254,4 +254,21 @@ test("a project without a configured tracker halts the run with 1 before any age
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: no issue tracker is configured: set the key tracker in the shared config\.json of Interloq or in plan-review\/config\.json/);
   assert.deepEqual(probe.planner.prompts, []);
+});
+
+// Issue #122: a Claude Code request refused because its session is too long halts with 1 and names the cause.
+test("a plan write refused because the session is too long halts with 1, naming the session as the cause", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ sessionTooLong: "Prompt is too long" }] });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.ok(said(probe).includes(`HALTED: ${sessionTooLongText("Prompt is too long")}`), said(probe));
+  assert.doesNotMatch(said(probe), /Claude Code planning call failed/);
+  assertTail(probe);
+});
+
+test("an execution refused because the session is too long halts with 1, with no work review and no question", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }], execScripts: [{ sessionTooLong: "Prompt is too long" }] });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.ok(said(probe).includes(`HALTED: ${sessionTooLongText("Prompt is too long")}`), said(probe));
+  assert.equal(fs.existsSync(path.join(probe.dir, "work-review-1")), false);
+  assert.deepEqual(probe.ui.asked, []);
 });

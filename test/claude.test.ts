@@ -1115,3 +1115,23 @@ test("issue #117: an execution on a fresh planner retries a transport fault and 
     assert.equal(await run(fake.planner.sessionId), "main-1");
   }
 });
+
+// Issue #122: a rejection because the session is too long halts, from a planning call and from an execution call alike,
+// after one attempt: it is neither retried nor waited for.
+const tooLongResult = (): SDKMessage =>
+  ({ type: "result", subtype: "success", is_error: true, api_error_status: 400, terminal_reason: "api_error", result: "Prompt is too long", structured_output: null, total_cost_usd: 0.1, num_turns: 1 }) as unknown as SDKMessage;
+
+test("a planning call refused because the prompt is too long fails with ClaudeSessionTooLong, one call", async () => {
+  const fake = await planner([messages(init(), tooLongResult())]);
+  assert.equal(await failedTag(fake), "ClaudeSessionTooLong");
+  assert.equal(fake.sdk.calls.length, 1);
+});
+
+test("an execution call refused because the prompt is too long fails with ClaudeSessionTooLong after one attempt", async () => {
+  const fake = await planner([messages(init("session-exec"), tooLongResult())], [], quickRetry);
+  const result = await run(Effect.result(fake.planner.executing("implement the plan", noReporter)));
+  assert.ok(result._tag === "Failure", "the execution call did not fail");
+  assert.equal(tag(result.failure), "ClaudeSessionTooLong");
+  assert.equal(fake.sdk.calls.length, 1);
+  assert.ok(!fake.sdk.calls.some((c) => c.prompt === prompts.executionContinuePrompt));
+});

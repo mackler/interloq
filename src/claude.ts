@@ -7,7 +7,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
 import { type CallOutcome, decodeQuestions, decodeToolTarget, execReport, interpretExecution, type Question, reduceMessages, type Stop } from "./claudeEvents.ts";
-import { ClaudeCallFailed, type RunError, TransportFault, UsageLimited } from "./errors.ts";
+import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import type { ExecOutcome } from "./schema.ts";
@@ -29,17 +29,19 @@ const EDIT_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 type CallbackError = RunError;
 /**
  * A failed call: TransportFault when src/transport.ts identifies a transport fault (issue #26), UsageLimited for a usage
- * limit with a stated reset (issue #68), ClaudeCallFailed otherwise.
+ * limit with a stated reset (issue #68), ClaudeSessionTooLong for a session too long to accept (issue #122),
+ * ClaudeCallFailed otherwise.
  */
-const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | TransportFault | UsageLimited => {
+const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | ClaudeSessionTooLong | TransportFault | UsageLimited => {
   const kind = classifyClaude(failure);
   switch (kind.kind) {
     case "transport":
       return new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null });
     case "limited":
       return new UsageLimited({ agent: "claude", message, resetsAtMs: kind.resetsAtMs, limitType: kind.limitType });
-    case "permanent":
     case "contextTooLong":
+      return new ClaudeSessionTooLong({ message });
+    case "permanent":
       return new ClaudeCallFailed({ message });
   }
 };
@@ -412,7 +414,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
          * prompt, with the same hooks, stop and report_step server. It fails with TransportFault only for a transport fault
          * without a recorded stop and without a valid report; otherwise the outcome is interpreted.
          */
-        const attempt = (n: number): Effect.Effect<ExecOutcome, CallbackError | TransportFault | UsageLimited> =>
+        const attempt = (n: number): Effect.Effect<ExecOutcome, CallbackError | ClaudeSessionTooLong | TransportFault | UsageLimited> =>
           Effect.gen(function* () {
             const outcome = yield* call(
               session,
@@ -432,9 +434,12 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
               }),
             );
             const recorded = yield* Ref.get(stop);
+            const kind = outcome.error === null ? null : classifyClaude(outcome.failure).kind;
+            // Issue #122: a session too long to accept halts the run, whatever was recorded before it; never retried.
+            if (kind === "contextTooLong") return yield* Effect.fail(new ClaudeSessionTooLong({ message: outcome.error ?? "" }));
             // Issue #68: a usage limit with a stated reset is waited out like a transport fault is retried, under the
             // same conditions; a valid report before either stands.
-            const temporary = outcome.error !== null && classifyClaude(outcome.failure).kind !== "permanent";
+            const temporary = kind === "transport" || kind === "limited";
             if (temporary && recorded === null && execReport(outcome.structured) === null) {
               return yield* Effect.fail(callFailure(outcome.error ?? "", outcome.failure) as TransportFault | UsageLimited);
             }

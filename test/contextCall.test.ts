@@ -683,3 +683,11 @@ test("W7-R1-1 scenario (P8-R1-1): a plan writer's option label with a code piece
   assert.ok(record.includes("Separate with ` `"), record);
   assert.ok(!record.includes("`   `"), record);
 });
+
+// Issue #122: a context call refused because its session is too long halts the run; it does not fall back.
+test("a context call refused because its session is too long halts with ClaudeSessionTooLong; the fallback does not catch it", async () => {
+  const { probe, written } = run({ contexts: [{ sessionTooLong: "Prompt is too long" }] });
+  await assert.rejects(written(), (e: unknown) => (e as { _tag?: string })._tag === "ClaudeSessionTooLong");
+  assert.ok(!conversation(probe.dir).includes(prompts.contextFallbackNote(prompts.sessionTooLongText("Prompt is too long"))));
+  assert.doesNotMatch(conversation(probe.dir), /Context written by Interloq/);
+});
