@@ -283,9 +283,15 @@ ilcli_root() (
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 )
 
-# docker compose over compose.cc.yaml of that clone, as bin/dev-claude called it.
+# compose.cc.yaml of that clone.
+compose_file() {
+  printf '%s\n' "$(ilcli_root)/compose.cc.yaml"
+}
+
+# docker compose over compose_file, as bin/dev-claude called it. The commands that end in a program use
+# 'exec docker compose -f "$(compose_file)" ...' instead, since exec needs a program, not a function.
 ilcli_compose() {
-  docker compose -f "$(ilcli_root)/compose.cc.yaml" "$@"
+  docker compose -f "$(compose_file)" "$@"
 }
 
 # The hash docker compose records on a container it created: the hash of the service's configuration as resolved
@@ -364,14 +370,14 @@ ilcli_run_command() {
 
   ensure_running run
   forwarded_args run
-  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc claude "${forwarded[@]}"
+  exec docker compose -f "$(compose_file)" exec -it cc claude "${forwarded[@]}"
 
 }
 
 ilcli_shell_command() {
 
   ensure_running shell
-  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc bash
+  exec docker compose -f "$(compose_file)" exec -it cc bash
 
 }
 
@@ -379,19 +385,19 @@ ilcli_web_command() {
 
   ensure_running web
   forwarded_args web
-  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" exec -it cc node /opt/interloq/src/web.ts "${forwarded[@]}"
+  exec docker compose -f "$(compose_file)" exec -it cc node /opt/interloq/src/web.ts "${forwarded[@]}"
 
 }
 
 ilcli_build_command() {
 
-  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" build
+  exec docker compose -f "$(compose_file)" build
 
 }
 
 ilcli_down_command() {
 
-  exec docker compose -f "$(ilcli_root)/compose.cc.yaml" down
+  exec docker compose -f "$(compose_file)" down
 
 }
 

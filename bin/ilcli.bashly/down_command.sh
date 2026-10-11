@@ -1,1 +1,1 @@
-exec docker compose -f "$(ilcli_root)/compose.cc.yaml" down
+exec docker compose -f "$(compose_file)" down

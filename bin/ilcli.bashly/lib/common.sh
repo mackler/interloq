@@ -5,9 +5,15 @@ ilcli_root() (
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 )
 
-# docker compose over compose.cc.yaml of that clone, as bin/dev-claude called it.
+# compose.cc.yaml of that clone.
+compose_file() {
+  printf '%s\n' "$(ilcli_root)/compose.cc.yaml"
+}
+
+# docker compose over compose_file, as bin/dev-claude called it. The commands that end in a program use
+# 'exec docker compose -f "$(compose_file)" ...' instead, since exec needs a program, not a function.
 ilcli_compose() {
-  docker compose -f "$(ilcli_root)/compose.cc.yaml" "$@"
+  docker compose -f "$(compose_file)" "$@"
 }
 
 # The hash docker compose records on a container it created: the hash of the service's configuration as resolved
