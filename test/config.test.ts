@@ -209,3 +209,21 @@ test("the project's Trello tracker replaces a shared GitHub one whole", async ()
   fs.writeFileSync(projectFile, trackerText(TRELLO));
   assert.deepEqual((await load(project, shared)).tracker, TRELLO);
 });
+
+// Issue #122: the amount above which one Claude Code request's cost is warned about, validated under behavior 9.
+test("costWarningUsd defaults to 5, and the project's file overrides the shared one", async () => {
+  const { project, shared, projectFile } = setup();
+  assert.equal((await load(project, shared)).costWarningUsd, 5);
+  fs.writeFileSync(shared, JSON.stringify({ costWarningUsd: 8 }));
+  assert.equal((await load(project, shared)).costWarningUsd, 8);
+  fs.writeFileSync(projectFile, JSON.stringify({ costWarningUsd: 2.5 }));
+  assert.equal((await load(project, shared)).costWarningUsd, 2.5);
+});
+
+test("a costWarningUsd of 0, a negative number, a string or a non-finite number stops the program with ConfigInvalid", async () => {
+  for (const text of ['{"costWarningUsd": 0}', '{"costWarningUsd": -1}', '{"costWarningUsd": "5"}', '{"costWarningUsd": 1e999}']) {
+    const { project, shared, projectFile } = setup();
+    fs.writeFileSync(projectFile, text);
+    await failsWith(project, shared, "ConfigInvalid", /costWarningUsd/);
+  }
+});
