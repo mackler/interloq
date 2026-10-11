@@ -1135,3 +1135,31 @@ test("an execution call refused because the prompt is too long fails with Claude
   assert.equal(fake.sdk.calls.length, 1);
   assert.ok(!fake.sdk.calls.some((c) => c.prompt === prompts.executionContinuePrompt));
 });
+
+// Issue #122: a request whose cost (the growth of its session's running total) is more than costWarningUsd is warned
+// about, said on the page and written to conversation.md; the same function decides it as the records attribute it.
+const conversationOf = (dir: string): string => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
+const warnings = (said: readonly string[]): readonly string[] => said.filter((t) => t.startsWith(prompts.costWarningLine("x", 1, 1).split(" ")[0]));
+
+test("a planning call that costs more than costWarningUsd is warned about once, on the page and in conversation.md", async () => {
+  const fake = await planner([messages(init("s-main"), success({ questions_for_user: [] }, "", 1)), messages(init("s-main"), success({ questions_for_user: [] }, "", 7))], [], { costWarningUsd: 5 });
+  await run(fake.planner.planning("write the plan", schema));
+  await run(fake.planner.planning("revise the plan", schema));
+  const line = prompts.costWarningLine("s-main", 6, 5);
+  assert.deepEqual(warnings(fake.ui.said), [line]);
+  assert.equal(conversationOf(fake.dir).split(line).length - 1, 1);
+});
+
+test("with costWarningUsd 10 the same calls warn about nothing", async () => {
+  const fake = await planner([messages(init("s-main"), success({ questions_for_user: [] }, "", 1)), messages(init("s-main"), success({ questions_for_user: [] }, "", 7))], [], { costWarningUsd: 10 });
+  await run(fake.planner.planning("write the plan", schema));
+  await run(fake.planner.planning("revise the plan", schema));
+  assert.deepEqual(warnings(fake.ui.said), []);
+  assert.ok(!conversationOf(fake.dir).includes(prompts.costWarningLine("s-main", 6, 10)));
+});
+
+test("an execution call that costs more than costWarningUsd is warned about", async () => {
+  const fake = await planner([messages(init("s-exec"), success(report, "", 5.5))], [], { costWarningUsd: 5 });
+  await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(warnings(fake.ui.said), [prompts.costWarningLine("s-exec", 5.5, 5)]);
+});

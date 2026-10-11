@@ -10,6 +10,7 @@ import { type CallOutcome, decodeQuestions, decodeToolTarget, execReport, interp
 import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
+import { costWarningOf } from "./usage.ts";
 import type { ExecOutcome } from "./schema.ts";
 import { askOffering, numberedOptions, permissionDraft, programContext, type QuestionDraft } from "./offer.ts";
 import { plainPieces } from "./pieces.ts";
@@ -366,7 +367,15 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
             // Issue #26: the SDK's own retry of a failed request, invisible until now.
             yield* ui.notify({ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: message.attempt, of: message.max_retries, delayMs: message.retry_delay_ms, detail: prompts.apiRetryDetail(message.error_status, message.error) });
           } else if (message.type === "result") {
-            yield* store.recordUsage({ agent: "claude", session: yield* Ref.get(session), turns: message.num_turns, totalCostUsd: message.total_cost_usd });
+            const id = yield* Ref.get(session);
+            yield* store.recordUsage({ agent: "claude", session: id, turns: message.num_turns, totalCostUsd: message.total_cost_usd });
+            // Issue #122: a request whose cost is more than the amount set is warned about, as the records attribute it.
+            const cost = costWarningOf((yield* store.usageLines()).calls, id, config.costWarningUsd);
+            if (cost !== null) {
+              const line = prompts.costWarningLine(id, cost, config.costWarningUsd);
+              yield* ui.say(line);
+              yield* store.converse(`${line}\n\n`);
+            }
           }
         }
       });

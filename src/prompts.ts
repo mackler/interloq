@@ -2164,6 +2164,15 @@ export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" 
  * The halt of a Claude Code request refused because its session's history no longer fits what Claude Code accepts
  * (issue #122): the cause named, with Claude Code's own words.
  */
+/**
+ * The warning of a Claude Code request whose cost, the growth of its session's running total, is more than the amount
+ * set (issue #122). It is said and written to conversation.md; it asks nothing.
+ */
+export function costWarningLine(session: string | null, costUsd: number, thresholdUsd: number): string {
+  const which = session === null ? "a Claude Code request without a session id" : `one Claude Code request in session ${session}`;
+  return `Warning: ${which} cost $${costUsd.toFixed(2)}, more than the $${thresholdUsd.toFixed(2)} set by costWarningUsd. Each request re-sends its session's history, and Claude Code refuses a session that has grown too long.`;
+}
+
 export function sessionTooLongText(message: string): string {
   return `Claude Code refused the request because its session's history was too long for Claude Code to accept (${message})`;
 }
