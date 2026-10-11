@@ -123,18 +123,40 @@ test("a refinement whose state cannot be set keeps the section written, the stat
   assert.ok(Option.isSome(Result.getOrThrow(readRefinement(after.body))));
 });
 
-// Issue #120, S8 (the developer's decision of 8 Oct 2026): a refinement run drops the project snapshot of Claude Code's
-// planning calls, whose hook still denies a write outside the records before it happens; Codex's turns keep theirs, their
-// only guard. One run tests both sides, since a test of either alone would pass while they disagreed.
-test("a refinement run survives a project change during a Claude Code planning call, and a Codex turn in it still halts on one", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
+// Issue #120, S8 (the developer's decision of 8 Oct 2026), widened by his instruction of 11 Oct 2026: a refinement run
+// drops the project snapshot of Claude Code's planning calls AND of Codex's turns, because an implementation run beside
+// it commits to the project and halted a refinement mid-review. What Codex's turns keep is the reviewed file's own
+// bytes, which is what they are reviewing.
+test("a refinement run survives a project change during a Claude Code planning call and during a Codex turn", async () => {
+  const { exit, probe } = refine({
+    ...oneQuestion,
     mode: "refinement",
-    steps: [{ output: { questions: [q("Q1")] }, touchProject: true }],
+    steps: [{ output: { questions: [q("Q1")] }, touchProject: true }, ...oneQuestion.steps!.slice(1)],
+    reviews: [{ issues: [], touchProject: true }, { issues: [] }],
+  });
+  const ended = await exit;
+  assert.ok(Exit.isSuccess(ended), Exit.isFailure(ended) ? Cause.pretty(ended.cause) : "");
+  // The question list, the terms and the requirements are each reviewed; none of the three halted on the project change.
+  assert.equal(probe.reviewer.prompts.length, 3, "every review ran");
+});
+
+test("a refinement run still halts when the reviewed file changes during a Codex turn", async () => {
+  const { layer } = testLayer(tempRepo(), {
+    mode: "refinement",
+    steps: [{ output: { questions: [q("Q1")] } }],
+    reviews: [{ issues: [], editRecord: "questions.json" }],
+  });
+  await refinementFails(layer, "ReviewedFileChanged");
+});
+
+test("an implementation run still halts on a project change during a Codex turn", async () => {
+  const { layer } = testLayer(tempRepo(), {
+    mode: "implementation",
+    steps: [{ output: { questions_for_user: [] }, plan: "v1" }],
     reviews: [{ issues: [], touchProject: true }],
   });
-  const error = await refinementFails(layer, "ProjectChanged");
+  const error = await runFails(layer, "ProjectChanged");
   assert.equal(error._tag === "ProjectChanged" ? error.during : null, "review");
-  assert.equal(probe.reviewer.prompts.length, 1, "the run did not go on to the question review");
 });
 
 test("an implementation run still halts on a project change during a Claude Code planning call", async () => {

@@ -20,7 +20,7 @@ import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
 import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { withTransportRetry } from "./retry.ts";
-import { guardsPlanningProject } from "./runMode.ts";
+import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
 
 /** Codex's reply text, decoded as JSON and then as a review; text that is not JSON is a decode failure. */
 const ReviewText = Schema.fromJsonString(S.Review);
@@ -314,7 +314,10 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
     const session = yield* reviewer.startPhase;
 
     // Codex runs without a sandbox, so the project and the reviewed file are compared after every turn,
-    // including a repair turn.
+    // including a repair turn. A refinement run compares the reviewed file alone (the developer's instruction of
+    // 11 Oct 2026): an implementation run beside it commits to the project, and a commit landing during a Codex turn
+    // halted a refinement mid-review.
+    const reviewProjectGuarded = guardsReviewProject((yield* RunKind).mode);
     const reviewCall = (text: string) =>
       Effect.gen(function* () {
         const projectBefore = yield* store.projectSnapshot();
@@ -332,7 +335,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           const recordChanged = (yield* store.recordHash(id)) !== recordBefore;
           const fileChanged = recordChanged || ((yield* store.fileHash(id)) !== fileBefore && changes.length === 0);
           if (fileChanged) return yield* Effect.fail(new ReviewedFileChanged({ fileLabel, changes: [...changes, { kind: "content_changed", path: fileLabel }] }));
-          if (changes.length > 0) return yield* Effect.fail(new ProjectChanged({ during: "review", fileLabel, changes }));
+          if (reviewProjectGuarded && changes.length > 0) return yield* Effect.fail(new ProjectChanged({ during: "review", fileLabel, changes }));
         });
         const attempt = () =>
           Effect.gen(function* () {

@@ -52,6 +52,22 @@ export const guardsPlanningProject = (mode: RunMode): boolean => {
   }
 };
 
+/**
+ * Whether Codex's turns in a run of this mode take the project snapshot, the guard of behavior 5 (the developer's
+ * instruction of 11 Oct 2026). A refinement run drops it for the same reason it drops the planning guard: an
+ * implementation run beside it commits to the project, and a commit landing during a Codex turn halted a refinement
+ * mid-review on 11 Oct 2026. What the turn still compares is the reviewed file's own bytes, which is what Codex is
+ * reviewing; an implementation run keeps both.
+ */
+export const guardsReviewProject = (mode: RunMode): boolean => {
+  switch (mode) {
+    case "refinement":
+      return false;
+    case "implementation":
+      return true;
+  }
+};
+
 /** The longest excerpt of an item a tab shows (issue #120): enough to choose by. */
 export const EXCERPT_LENGTH = 200;
 /**
