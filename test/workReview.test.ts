@@ -6,6 +6,7 @@ import { Effect, Result } from "effect";
 import { platformLayer } from "../src/platform.ts";
 import { limitNoProceedPrompt, execInputPrompt, planApplyDecisionsPrompt, withOffer } from "../src/prompts.ts";
 import { readCheckpoint } from "../src/records.ts";
+import { subjectHeading } from "../src/render.ts";
 import type { ExecOutcome } from "../src/schema.ts";
 import type { StoreShape } from "../src/services.ts";
 import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, presentedQuestions, presentedSubjects, TEST_ROOT, scriptedItem } from "./helpers.ts";
@@ -444,3 +445,23 @@ test("issue #122: the work response's prompt carries the task, the run's require
   assert.ok(response.includes("The confirmed requirement R1."), "the requirements");
   assert.ok(response.includes("PostgreSQL"), "the decision taken at the stop");
 });
+
+// Issue #122: the signature that identified the halts of issues #117 and #122, pinned. A work response that fails
+// permanently leaves the review recorded, the round without a response, and no work-review section in conversation.md.
+for (const [failure, tag] of [[{ callFailed: "Claude Code returned an error result" }, "ClaudeCallFailed"], [{ sessionTooLong: "Prompt is too long" }, "ClaudeSessionTooLong"]] as const) {
+  test(`issue #122: a work response failing with ${tag} leaves round 1 without a response and no work-review section`, async () => {
+    const { layer, probe } = testLayer(tempRepo(), {
+      steps: [planWrite("v1"), failure],
+      reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }],
+      execs: [finished],
+    });
+    await runFails(layer, tag);
+    assert.deepEqual(json(probe.dir, "work-review-1/review-1.json"), { issues: [issue("W1-R1-1")] });
+    assert.equal(json(probe.dir, "work-review-1/round-1.json").kind, "no_response");
+    const checkpoint = json(probe.dir, "checkpoint.json");
+    assert.deepEqual([checkpoint.subject, checkpoint.phase, checkpoint.round, checkpoint.stage], ["work-review-1", 1, 1, "reviewed"]);
+    const conversation = read(probe.dir, "conversation.md");
+    assert.ok(!conversation.includes(`## ${subjectHeading({ work: 1 })}`), "a work-review section was written");
+    assert.ok(conversation.includes(`## ${subjectHeading({ plan: 1 })}`), "the planning phase's section is there");
+  });
+}
