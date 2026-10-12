@@ -55,6 +55,13 @@ const one = (root: ParentNode, selector: string): HTMLElement => {
   if (el === null) throw new Error(`no element matching ${selector}`);
   return el;
 };
+/** Issue #137: the question pane's section headed `heading`, a Disclosure, by its button's name. */
+const sectionToggle = (root: ParentNode, heading: string): HTMLButtonElement | undefined => [...root.querySelectorAll<HTMLButtonElement>(".pane button.toggle")].find((b) => b.textContent?.trim() === heading);
+/** Opens every collapsed section of the question pane, as the user does to read the context and the attached material. */
+const openSections = (root: ParentNode) => {
+  for (const b of root.querySelectorAll<HTMLButtonElement>(".pane button.toggle[aria-expanded=false]")) b.click();
+  flushSync();
+};
 const type = (el: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   el.value = text;
   el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1042,6 +1049,26 @@ describe("App and the draft", () => {
     expect(toggle("Planning").getAttribute("aria-expanded")).toBe("true");
   });
 
+  // Issue #137: which sections of the question pane are open is the tab's own state, not the run's shared state of
+  // issue #87, and a new pending prompt starts with them closed.
+  test("the question pane's sections start closed for each new prompt and send no ui frame", async () => {
+    const { root, ws } = await openPage();
+    const presented = (n: number) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: n, origin: { kind: "relayed" }, context: { blocks: plainBlocks(`context ${n}`), by: "agent" }, explanations: [], question: plainPieces(`Q${n}?`), options: [], attached: null, decision: null } } });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, presented(1), asked(1)]) }] });
+    ws.onopen?.({});
+    const sent = ws.sent.length;
+    sectionToggle(root, prompts.CONTEXT_HEADING)!.click();
+    flushSync();
+    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("true");
+    expect(ws.sent.length).toBe(sent);
+    ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: { _tag: "Answered", prompt: 1, text: "x" } });
+    ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: presented(2) });
+    ws.receive({ type: "event", run: 1, seq: 5, time: TIME, event: asked(2) });
+    expect(one(root, ".pane h2").textContent).toContain("Q2?");
+    expect(sectionToggle(root, prompts.CONTEXT_HEADING)!.getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector(".pane .context")).toBe(null);
+  });
+
   // S27 with decision support: beside an analysis, which shows the question, the pane keeps only its answers; the
   // analysis's "Show the conversation" shows the conversation itself.
   test("beside an analysis the pane shows only its answers; the analysis's Show the conversation shows the transcript", async () => {
@@ -1052,6 +1079,9 @@ describe("App and the draft", () => {
     expect(root.querySelector(".pane")).not.toBe(null);
     expect(root.querySelector(".pane .question-text")).toBe(null);
     expect(root.querySelector(".pane .top")).toBe(null);
+    // Issue #137: beside an analysis the pane has neither the heading nor the collapsible sections.
+    expect(root.querySelector(".pane h2")).toBe(null);
+    expect(root.querySelector(".pane button.toggle")).toBe(null);
     expect(root.querySelector(".pane input[name=answer]")).not.toBe(null);
     one(root, ".decision button[name=conversation]").click();
     flushSync();
@@ -1929,10 +1959,10 @@ describe("TimelineRail: where the indicator is", () => {
   });
 });
 
-// S27 (Q10): the question takes the left panel while its prompt is pending: the heading and origin, a top region that
-// scrolls on its own (context, details, terms), the question fixed below it, and a bottom region that scrolls on its own
-// (the options with their answers, the field, the buttons).
-describe("QuestionPane's regions", () => {
+// Issue #137 (the developer's instruction of 11 Oct 2026, which superseded S27): the question pane shows the question as
+// its heading, the origin under it, the choices, the field and Send, and then the context and the attached material as
+// collapsed sections that expand; no region of the pane scrolls on its own.
+describe("QuestionPane's order", () => {
   const question: PresentedQuestion = {
     number: 4,
     origin: { kind: "relayed" },
@@ -1948,25 +1978,69 @@ describe("QuestionPane's regions", () => {
   };
   const withQuestion = (q: PresentedQuestion = question, text = prompts.optionOrTextPrompt): Widget => ({ ...widget(text), question: q, presentedAt: null });
 
-  test("the heading, the origin line, the context, details and terms on top, the question fixed, the options below", () => {
+  test("the heading is the question's number and its text, not the origin line", () => {
     const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
-    expect(one(root, "h2").textContent?.trim()).toBe(prompts.questionTitle(4));
-    expect(one(root, ".origin").textContent?.trim()).toBe(prompts.originLine(question.origin, null));
-    const top = one(root, ".top");
-    expect(one(top, ".context").textContent).toContain("The service keeps its data in a database.");
-    expect(one(top, ".details").innerHTML).toContain("<strong>The facts</strong>");
-    // The explanation costs no space until it is asked for: no list of terms (task of issue #36).
-    expect(top.querySelector(".terms, dl")).toBe(null);
-    expect(top.textContent).not.toContain("The program this task builds.");
-    const asked = one(root, ".question-text");
-    expect(asked.textContent?.trim()).toBe("Which database should the service use?");
-    expect(asked.closest(".top, .bottom")).toBe(null);
-    const bottom = one(root, ".bottom");
-    const cards = [...bottom.querySelectorAll<HTMLButtonElement>(".options button")];
+    const heading = one(root, "h2");
+    expect(heading.classList.contains("m3-font-title-medium")).toBe(true);
+    expect(one(heading, ".number").textContent?.trim()).toBe(prompts.questionTitle(4));
+    expect(one(heading, ".question-text").textContent?.trim()).toBe("Which database should the service use?");
+    expect(heading.textContent).not.toContain(prompts.originLine(question.origin, null));
+    const origin = one(root, ".origin");
+    expect(origin.classList.contains("m3-font-body-small")).toBe(true);
+    expect(origin.textContent?.trim()).toBe(prompts.originLine(question.origin, null));
+  });
+
+  test("top to bottom: heading, origin, options, the hint, the choices, the field and Send, then the sections", () => {
+    const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
+    const order = [one(root, "h2"), one(root, ".origin"), one(root, "[role=group]"), one(root, ".asks"), one(root, ".choices"), one(root, "input[name=answer]"), one(root, "button[name=send]"), sectionToggle(root, prompts.CONTEXT_HEADING)!, sectionToggle(root, prompts.attachedHeading("reviewFacts"))!];
+    expect(one(root, "[role=group]").getAttribute("aria-label")).toBe(prompts.PROPOSED_ANSWERS_LABEL);
+    for (let k = 1; k < order.length; k++) expect(order[k - 1].compareDocumentPosition(order[k]) & Node.DOCUMENT_POSITION_FOLLOWING, `element ${k}`).toBeTruthy();
+    const cards = [...root.querySelectorAll<HTMLButtonElement>(".options button")];
     expect(cards[0].textContent).toContain("1.");
     expect(cards[0].textContent).toContain("SQLite");
-    expect(one(bottom, ".numeric").textContent).toContain(prompts.NUMERIC_OPTION_NOTE);
-    expect(bottom.querySelector("input[name=answer]")).not.toBe(null);
+    expect(one(root, ".numeric").textContent).toContain(prompts.NUMERIC_OPTION_NOTE);
+  });
+
+  test("the context and the attached material start closed and each expands to show its text", () => {
+    const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
+    const context = sectionToggle(root, prompts.CONTEXT_HEADING)!;
+    const attached = sectionToggle(root, prompts.attachedHeading("reviewFacts"))!;
+    for (const b of [context, attached]) {
+      expect(b.getAttribute("aria-expanded")).toBe("false");
+      expect(document.getElementById(b.getAttribute("aria-controls")!)).toBe(null);
+    }
+    expect(root.textContent).not.toContain("keeps its data in a database");
+    context.click();
+    flushSync();
+    expect(context.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(context.getAttribute("aria-controls")!)?.textContent).toContain("The service keeps its data in a database.");
+    attached.click();
+    flushSync();
+    expect(document.getElementById(attached.getAttribute("aria-controls")!)?.innerHTML).toContain("<strong>The facts</strong>");
+    // The explanation costs no space until it is asked for: no list of terms (task of issue #36).
+    expect(root.querySelector(".terms, dl")).toBe(null);
+    expect(root.textContent).not.toContain("The program this task builds.");
+  });
+
+  test("an agreed question's reason is under Why You're Being Asked This; a permission's input under its own heading; none without material", () => {
+    const reason = show(QuestionPane, { widget: withQuestion({ ...question, origin: { kind: "clarification", id: "Q1" }, attached: { kind: "reason", blocks: plainBlocks("the plan needs it") as [Block] } }), onAnswer: () => undefined });
+    expect(prompts.attachedHeading("reason")).toBe("Why You're Being Asked This");
+    expect(sectionToggle(reason, prompts.attachedHeading("reason"))?.getAttribute("aria-expanded")).toBe("false");
+    const request = show(QuestionPane, { widget: withQuestion({ ...question, attached: { kind: "request", blocks: prompts.toolInputBlocks({ command: "ls" }) as [Block] } }), onAnswer: () => undefined });
+    expect(sectionToggle(request, prompts.attachedHeading("request"))?.getAttribute("aria-expanded")).toBe("false");
+    const none = show(QuestionPane, { widget: withQuestion({ ...question, attached: null }), onAnswer: () => undefined });
+    expect(none.querySelectorAll(".pane button.toggle").length).toBe(1);
+  });
+
+  test("no region below the heading scrolls on its own", async () => {
+    const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
+    openSections(root);
+    expect(root.querySelector(".top, .bottom")).toBe(null);
+    // jsdom applies no component styles, so the rules are read from the component's source.
+    const source = (await import("./components/QuestionPane.svelte?raw")).default;
+    const css = source.slice(source.indexOf("<style>"));
+    const scrolling = [...css.matchAll(/\n\s*([^{}\n]+)\{([^}]*)\}/g)].filter((m) => /overflow-y: auto|max-height/.test(m[2])).map((m) => m[1].trim());
+    expect(scrolling).toEqual([".pane"]);
   });
 
   test("a card sends its answer; a numeric option is no button", () => {
@@ -1981,22 +2055,26 @@ describe("QuestionPane's regions", () => {
   test("a context the program wrote carries the note; the summary to confirm is inside the pane", () => {
     const summary: PresentedQuestion = { ...question, origin: { kind: "confirmSummary" }, context: { blocks: plainBlocks("Interloq asks."), by: "program" }, options: [], explanations: [], attached: { kind: "summary", blocks: [{ kind: "document", markdown: "# Requirements\n\nUse SQLite." }] }, question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION) };
     const root = show(QuestionPane, { widget: withQuestion(summary, prompts.confirmSummaryPrompt), onAnswer: () => undefined });
+    openSections(root);
     expect(one(root, ".context").textContent).toContain(prompts.PROGRAM_CONTEXT_NOTE);
-    expect(one(root, ".top .details").textContent).toContain("Use SQLite.");
+    expect(one(root, ".details").textContent).toContain("Use SQLite.");
+    expect(sectionToggle(root, prompts.attachedHeading("summary"))).not.toBe(undefined);
   });
 
   // S28: every occurrence of a term in the context, the details, the question and the options carries its explanation,
   // reachable by hover and by keyboard; Escape closes it.
   test("a term's occurrences open its tooltip on focus and on hover; Escape closes it", () => {
     const root = show(QuestionPane, { widget: withQuestion(), onAnswer: () => undefined });
+    // Issue #137: the question is the heading, and the context is read once its section is opened.
+    openSections(root);
     const marks = [...root.querySelectorAll<HTMLElement>(".term")];
-    expect(marks.map((m) => (m.closest(".context") !== null ? "context" : m.closest("p.question-text") !== null ? "question" : "?"))).toEqual(["context", "question"]);
-    marks[1].focus();
-    marks[1].dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    expect(marks.map((m) => (m.closest(".context") !== null ? "context" : m.closest("h2 .question-text") !== null ? "question" : "?"))).toEqual(["question", "context"]);
+    marks[0].focus();
+    marks[0].dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
     flushSync();
     expect(one(document.body, "[role=tooltip]").textContent).toContain("The program this task builds.");
-    expect(marks[1].getAttribute("aria-describedby")).toBe(one(document.body, "[role=tooltip]").id);
-    marks[1].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(marks[0].getAttribute("aria-describedby")).toBe(one(document.body, "[role=tooltip]").id);
+    marks[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     flushSync();
     expect(document.querySelector("[role=tooltip]")).toBe(null);
     marks[0].dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -2188,6 +2266,8 @@ describe("the shared rule for code in rendered Markdown", () => {
     const details = prompts.toolInputBlocks({ command: " a " });
     const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("Run `x`."), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: { kind: "request", blocks: details as [Block] }, decision: null };
     const pane = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
+    // Issue #137: the pane's attached material is read once its section is opened.
+    openSections(pane);
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
     const beside = one(show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined }), ".question-context");
@@ -2215,6 +2295,8 @@ describe("a word that refers to an explanation beside inline formatting in the c
   };
   test("in the question pane", () => {
     const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
+    // Issue #137: the context is read once its section is opened.
+    openSections(root);
     check(one(root, ".context"));
   });
   test("beside an analysis", async () => {

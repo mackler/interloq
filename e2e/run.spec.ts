@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { NOTHING_TO_SETTLE, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { NOTHING_TO_SETTLE, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -20,6 +20,16 @@ const DATABASE = "Which database should the service use?";
 const CACHE = "Which cache should the service use?";
 const option = (page: Page, name: string | RegExp) => pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button", { name });
 const continueWithoutDeciding = (page: Page) => pane(page).getByRole("button", { name: CONTINUE_WITHOUT_DECIDING, exact: true });
+/**
+ * Issue #137 (the developer's instruction of 11 Oct 2026): the question pane's context and attached material are
+ * sections that start closed; a test that reads one opens it first, by its heading.
+ */
+const openSection = async (page: Page, heading: string) => {
+  const toggle = pane(page).getByRole("button", { name: heading, exact: true });
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+};
 /** Confirms the ending of the run in the page's dialog (S25). */
 const confirmEnd = (page: Page) => page.locator("dialog[open] button[name=confirm-end]").click();
 
@@ -120,9 +130,11 @@ test.describe("the tests of the decision server, in order", () => {
   test("(2) a decision prompt with its buttons: Continue without deciding continues, and the answer is the user's message", async ({ page }) => {
     await startTask(page, "decision");
     await expect(asking(page, DATABASE)).toBeVisible();
-    // S27: while the question waits, it takes the left column; S6: it is the run's first question.
+    // S27: while the question waits, it takes the left column; S6: it is the run's first question. Issue #137: the
+    // heading is the question's number and its text.
     await expect(left(page)).toBeHidden();
-    await expect(pane(page).locator("h2")).toHaveText(questionTitle(1));
+    await expect(pane(page).locator("h2 .number")).toHaveText(questionTitle(1));
+    await expect(pane(page).locator("h2 .question-text")).toHaveText(DATABASE);
     await continueWithoutDeciding(page).click();
     await expect(left(page).locator("[data-author=user]").getByText(CONTINUE_WITHOUT_DECIDING)).toBeVisible();
     await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
@@ -269,6 +281,7 @@ test.describe("the tests of the interview server, in order", () => {
     await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "active");
     await expect(step(stepLabel("clarification")).locator("[data-count]")).toHaveText("0 of 1 answered");
     await option(page, /PostgreSQL/).click();
+    await openSection(page, CONTEXT_HEADING);
     await expect(pane(page).getByText("Anything else?")).toBeVisible();
     await expect(step(stepLabel("clarification")).locator("[data-count]")).toHaveText("1 of 1 answered");
     await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
@@ -286,6 +299,7 @@ test.describe("the tests of the interview server, in order", () => {
     expect(Math.abs(b.right - b.left - (c.right - c.left)), "the band is as wide as the list's content").toBeLessThanOrEqual(2);
     await page.getByRole("button", { name: SHOW_QUESTION }).click();
     await pane(page).getByRole("button", { name: END_CLARIFICATION }).click();
+    await openSection(page, attachedHeading("summary"));
     await expect(pane(page).getByText("The service uses PostgreSQL.")).toBeVisible();
     await pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true }).click();
     // Issue #120: a refinement run ends after the requirements review, its requirements written back to its item.
@@ -451,6 +465,7 @@ test.describe("the tests of the questionReview server, in order", () => {
     await expect(option(other, /1\. PostgreSQL/)).toBeVisible();
     await other.close();
     await option(page, /1\. PostgreSQL/).click();
+    await openSection(page, attachedHeading("summary"));
     await expect(pane(page).getByText("The service uses PostgreSQL on port 8080.")).toBeVisible();
     await pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true }).click();
     await expect(right(page).getByText(/Requirements review, cycle 1/)).toBeVisible();
@@ -689,6 +704,8 @@ test.describe("the tests of the longQuestion server, in order", () => {
     await expect(page.getByRole("tooltip")).toContainText("The database of this task");
     // Issue #36: a plural with a capital, "Databases", refers to the same explanation; exact words never explained it.
     await page.keyboard.press("Escape");
+    // Issue #137: the context starts closed, so the test opens it by its heading before it reads it.
+    await openSection(page, CONTEXT_HEADING);
     const plural = pane(page).locator(".context .term", { hasText: "Databases" });
     await plural.hover();
     await expect(page.getByRole("tooltip")).toContainText("The database of this task");
@@ -763,6 +780,7 @@ test.describe("the tests of the twoModes server, in order", () => {
     await tabOf(page, "refinement").click();
     await expect(asking(page, DATABASE)).toBeVisible();
     await option(page, /PostgreSQL/).click();
+    await openSection(page, CONTEXT_HEADING);
     await expect(pane(page).getByText("Anything else?")).toBeVisible();
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);

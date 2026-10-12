@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, startFromTab, test } from "./fixtures.ts";
-import { clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { attachedHeading, CONTEXT_HEADING, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -12,10 +12,24 @@ const URL = layoutUrl("tabs");
 const LEFT = "You and Interloq";
 const RIGHT = "Claude and Codex";
 const panel = (page: Page, name: string) => page.getByRole("region", { name });
-/** The question the run waits on, which takes the left column while it is pending (S27). */
+/** The question the run waits on, which takes the left column while it is pending (S27); its order is issue #137's. */
 const pane = (page: Page) => page.locator("section.pane");
 const asking = (page: Page, text: string) => pane(page).locator(".question-text", { hasText: text });
 const continueWithoutDeciding = (page: Page) => pane(page).getByRole("button", { name: CONTINUE_WITHOUT_DECIDING, exact: true });
+/** Issue #137: a section of the question pane, a disclosure named by its heading. */
+const sectionToggle = (page: Page, heading: string) => pane(page).getByRole("button", { name: heading, exact: true });
+/** The body a section's toggle controls, rendered only while it is open. */
+const sectionBody = async (page: Page, heading: string) => page.locator(`#${await sectionToggle(page, heading).getAttribute("aria-controls")}`);
+/** Issue #137: the section starts closed and expands on a click; returns its body. */
+const expandSection = async (page: Page, heading: string) => {
+  const toggle = sectionToggle(page, heading);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const body = await sectionBody(page, heading);
+  await expect(body).toBeVisible();
+  return body;
+};
 const confirmEnd = (page: Page) => page.locator("dialog[open] button[name=confirm-end]").click();
 const box = async (locator: Locator) => {
   const b = await locator.boundingBox();
@@ -256,7 +270,8 @@ const distinctWidths = async (what: string, scope: Locator) => {
   expect(edged, `${what}: " a " wider than "a"`).toBeGreaterThan(bare);
 };
 // (L23) S52 (W5-R1-1): the exhaustion pause after a fault of 2,500 characters. The question names the agent and the call
-// only; the attempts and the whole fault, <endpoint> included (shown literally, P6-R1-1), are in the details above it.
+// only; the attempts and the whole fault, <endpoint> included (shown literally, P6-R1-1), are in its attached material,
+// a collapsed section under the choices since issue #137.
 const TRANSPORT_LONG_URL = layoutUrl("transportLong");
 
 test.describe("the tests of the tabs server, in order", () => {
@@ -411,18 +426,57 @@ test.describe("the tests of the longChoices server, in order", () => {
         expect(b.x + b.width, `answer ${i + 1} ends inside the pane`).toBeLessThanOrEqual(prompt.x + prompt.width + 0.5);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
-      // The cards scroll within the pane's lower region, so the message field, Send and Finish clarification can be
-      // scrolled into the window, with the question still in view.
+      // Issue #137 (11 Oct 2026, superseding S27): the pane scrolls as one region, so the message field, Send and Finish
+      // clarification are reached by scrolling it; the question at its top may leave the window meanwhile.
       for (const name of ["[name=answer]", "button[name=send]", `button:has-text('${END_CLARIFICATION}')`]) {
         await page.locator(name).scrollIntoViewIfNeeded();
         await expect(page.locator(name)).toBeInViewport();
-        await expect(pane(page).locator(".question-text")).toBeInViewport();
       }
       await cards.nth(1).focus();
       await page.keyboard.press("Enter");
+      await sectionToggle(page, CONTEXT_HEADING).click();
       await expect(pane(page).getByText("Anything else?")).toBeVisible();
       await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
       await expect(panel(page, LEFT).locator("[data-author=user]").last()).toContainText("Relative time");
+      await page.locator("button[name=stop]").click();
+      await confirmEnd(page);
+    });
+  }
+
+  // Issue #137 (the developer's instruction of 11 Oct 2026, superseding S27): the heading is the question; every option
+  // is in view without a scrolled box, side by side where there is room; the context and the reason are collapsed and
+  // each expands. 640 × 400 is below the 450 px limit (IN_VIEW_MIN_HEIGHT), so there the first card may be reached by
+  // scrolling, as belowTheLimit checks.
+  for (const [width, height, sideBySide] of [[1280, 800, true], [640, 400, true], [390, 844, false]] as const) {
+    test(`(L32) the question first at ${width} × ${height}: the heading is the question, the options in view, the rest collapsed`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startTask(page, LONG_CHOICES_URL);
+      const heading = pane(page).locator("h2");
+      await expect(heading).toHaveText(/^Question 1\s+How should a message show its time\?$/);
+      const group = pane(page).getByRole("group", { name: "Proposed answers" });
+      const cards = group.getByRole("button");
+      await expect(cards).toHaveCount(3);
+      const unbounded = await group.evaluate((el) => {
+        const boxes: string[] = [];
+        const paneEl = el.closest("section.pane");
+        for (let e: Element | null = el; e !== null && e !== paneEl; e = e.parentElement) if (getComputedStyle(e).maxHeight !== "none") boxes.push(e.className);
+        return { fits: el.scrollHeight <= el.clientHeight + 1, boxes };
+      });
+      expect(unbounded.fits, "the options' group scrolls").toBe(true);
+      expect(unbounded.boxes, "a box between the options and the pane caps its height").toEqual([]);
+      if (height >= IN_VIEW_MIN_HEIGHT) {
+        await expect(heading).toBeInViewport();
+        await expect(cards.first()).toBeInViewport();
+      } else await belowTheLimit(page, heading);
+      for (let k = 0; k < 3; k++) {
+        await cards.nth(k).scrollIntoViewIfNeeded();
+        await expect(cards.nth(k), `card ${k + 1} wholly in the window`).toBeInViewport({ ratio: 1 });
+      }
+      const tops = await cards.evaluateAll((cs) => cs.map((c) => Math.round(c.getBoundingClientRect().top)));
+      if (sideBySide) expect(tops[0], "the first two cards share a row").toBe(tops[1]);
+      else expect(new Set(tops).size, "one card per row").toBe(3);
+      await expect(await expandSection(page, CONTEXT_HEADING)).toContainText("c");
+      await expect(await expandSection(page, attachedHeading("reason"))).toContainText("r");
       await page.locator("button[name=stop]").click();
       await confirmEnd(page);
     });
@@ -882,7 +936,8 @@ test.describe("the tests of the longQuestion server, in order", () => {
   // The developer's decision of 9 Oct 2026: the in-view assertions hold at 450 px high and taller (IN_VIEW_MIN_HEIGHT);
   // 640 × 400 keeps what still holds below that limit.
   for (const [width, height] of [[390, 844], [640, 450], [1280, 800]] as const) {
-    test(`(L19) a long question at ${width} × ${height}: the question and its first option in view, each region scrolls on its own`, async ({ page }) => {
+    // Issue #137 (11 Oct 2026, superseding S27): the pane scrolls as one region, the context collapsed under the choices.
+    test(`(L19) a long question at ${width} × ${height}: the question and its first option in view, the pane one scrolling region`, async ({ page }) => {
       expect(height).toBeGreaterThanOrEqual(IN_VIEW_MIN_HEIGHT);
       await page.setViewportSize({ width, height });
       await startTask(page, LONG_QUESTION_URL);
@@ -892,15 +947,10 @@ test.describe("the tests of the longQuestion server, in order", () => {
       await expect(first).toBeInViewport({ ratio: 0.1 });
       // The transcript is not what the user reads while the question waits (issue #20).
       await expect(panel(page, LEFT)).toBeHidden();
-      for (const region of [pane(page).locator(".top"), pane(page).locator(".bottom")]) {
-        const scrolls = await region.evaluate((el) => {
-          el.scrollTop = el.scrollHeight;
-          el.dispatchEvent(new Event("scroll"));
-          return el.scrollHeight > el.clientHeight;
-        });
-        expect(scrolls, "the region holds more than it shows").toBe(true);
-        await expect(question).toBeInViewport();
-      }
+      await expect(pane(page).locator(".top, .bottom")).toHaveCount(0);
+      expect(await pane(page).evaluate((el) => getComputedStyle(el).overflowY), "the pane is the scrolling region").toBe("auto");
+      await expect(sectionToggle(page, CONTEXT_HEADING)).toHaveAttribute("aria-expanded", "false");
+      await expect(await expandSection(page, CONTEXT_HEADING)).toContainText("Databases");
       for (const name of ["[name=answer]", "button[name=send]"]) {
         await page.locator(name).scrollIntoViewIfNeeded();
         await expect(page.locator(name)).toBeInViewport();
@@ -927,24 +977,17 @@ test.describe("the tests of the longContextShortAnswers server, in order", () =>
 
   // Issue #79 (P2-R1-1): in a tall window the question pane's context takes the room its answers leave, instead of 30 %
   // of the pane: with short answers, the whole context is shown, and no room stays empty below the answers.
+  // Issue #137 (11 Oct 2026, superseding S27): the context is a section that expands; opened, it is whole, with no scroll
+  // of its own, and the pane's content fits the window.
   test("(L25) a long context with short answers at 1280 × 1700: the pane's content fits, and the context is whole", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 1700 });
     await startTask(page, layoutUrl("longContextShortAnswers"));
     await expect(pane(page).locator(".question-text")).toBeInViewport();
-    const m = await pane(page).evaluate((el) => {
-      const cs = getComputedStyle(el);
-      const t = el.querySelector<HTMLElement>(".top")!;
-      const bottom = el.querySelector<HTMLElement>(".bottom")!;
-      const kids = [...el.children] as HTMLElement[];
-      const gaps = parseFloat(cs.rowGap || cs.gap) * (kids.length - 1);
-      const content = kids.reduce((n, k) => n + (k === t ? t.scrollHeight : k === bottom ? bottom.scrollHeight : k.getBoundingClientRect().height), 0);
-      const inner = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      const last = bottom.lastElementChild!.getBoundingClientRect().bottom;
-      return { content: content + gaps, inner, client: t.clientHeight, scroll: t.scrollHeight, free: el.getBoundingClientRect().bottom - parseFloat(cs.paddingBottom) - last };
-    });
-    expect(m.content, "the pane's content does not fit, so the test cannot show the context whole").toBeLessThanOrEqual(m.inner + 1);
-    expect(m.client, "the context is cut").toBeGreaterThanOrEqual(m.scroll - 1);
-    expect(m.client >= m.scroll - 1 || m.free <= 1, "the context is cut while empty room stays below the answers").toBe(true);
+    const context = await expandSection(page, CONTEXT_HEADING);
+    const own = await context.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+    expect(own.client, "the context scrolls on its own").toBeGreaterThanOrEqual(own.scroll - 1);
+    const whole = await pane(page).evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+    expect(whole.scroll, "the pane's content does not fit").toBeLessThanOrEqual(whole.client + 1);
     await continueWithoutDeciding(page).click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
@@ -952,7 +995,9 @@ test.describe("the tests of the longContextShortAnswers server, in order", () =>
 
 test.describe("the tests of the permissionLong server, in order", () => {
   test.describe.configure({ mode: "default" });
-  for (const [width, height] of [[390, 844], [640, 400]] as const) {
+  // Issue #137 (11 Oct 2026, superseding S27): the command is in the collapsed section "What Claude Code Would Do"
+  // under the choices; the question and the first option are checked together before it is opened.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
     test(`(L21) a permission request with a 40-line command at ${width} × ${height}: the question and the first option in view`, async ({ page }) => {
       await page.setViewportSize({ width, height });
       await startTask(page, PERMISSION_URL);
@@ -968,16 +1013,14 @@ test.describe("the tests of the permissionLong server, in order", () => {
           expect(b.y + b.height, `${what}: ${name} is below the window`).toBeLessThanOrEqual(height + 1);
         }
       };
-      await together("in the question pane", question);
-      // The whole command is in the details, reached by scrolling the region above the question.
-      const top = pane(page).locator(".top");
-      await expect(top).toContainText("line 40 of a long command");
-      // The command is one element among others in the details, and it is not the last of them: scrolling the region to
-      // its end shows what follows the command, not the command's last line. Bring the command's own end into view.
-      const command = top.locator("pre").filter({ hasText: "line 40 of a long command" });
+      if (height >= IN_VIEW_MIN_HEIGHT) await together("in the question pane", question);
+      else await belowTheLimit(page, question);
+      // The whole command is in its section, reached by scrolling the pane once the section is opened.
+      const request = await expandSection(page, attachedHeading("request"));
+      await expect(request).toContainText("line 40 of a long command");
+      const command = request.locator("pre").filter({ hasText: "line 40 of a long command" });
       await command.evaluate((el) => el.scrollIntoView({ block: "end" }));
       await expect(command).toBeInViewport();
-      await together("after scrolling the details", question);
       await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
       const analysis = page.getByRole("region", { name: /^Decision 1: / });
       await expect(analysis).toBeVisible();
@@ -995,12 +1038,14 @@ test.describe("the tests of the permissionLong server, in order", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
+    // Issue #137: the command is in the collapsed section of the request, opened before its code is read.
+    await expandSection(page, attachedHeading("request"));
     const families = (fonts: readonly UsedFont[]) => [...new Set(fonts.map((f) => f.familyName))];
     expect(families(await usedFont(page, "section.pane .question-text")), "the question's text").toEqual(["Liberation Sans"]);
     expect((await usedFont(page, "section.pane .option-label strong")).map((f) => f.postScriptName), "a bold option label").toEqual(["LiberationSans-Bold"]);
-    expect(families(await usedFont(page, "section.pane .top li > code")), "inline code").toEqual(["Liberation Mono"]);
-    expect(families(await usedFont(page, "section.pane .top pre > code")), "a code block").toEqual(["Liberation Mono"]);
-    const sizes = await pane(page).locator(".top").evaluate((top) =>
+    expect(families(await usedFont(page, "section.pane .details li > code")), "inline code").toEqual(["Liberation Mono"]);
+    expect(families(await usedFont(page, "section.pane .details pre > code")), "a code block").toEqual(["Liberation Mono"]);
+    const sizes = await pane(page).locator(".details").evaluate((top) =>
       [...top.querySelectorAll("li > code, li > pre")].map((el) => ({ tag: el.tagName, own: parseFloat(getComputedStyle(el).fontSize), parent: parseFloat(getComputedStyle(el.parentElement!).fontSize) })),
     );
     expect(sizes.length, "the details hold code").toBeGreaterThan(0);
@@ -1105,7 +1150,8 @@ test.describe("the tests of the whitespace server, in order", () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await startTask(page, WHITESPACE_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
-    await distinctWidths("in the question pane", pane(page).locator(".top"));
+    // Issue #137: the input is in the collapsed section of the request, opened before it is measured.
+    await distinctWidths("in the question pane", await expandSection(page, attachedHeading("request")));
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
     const analysis = page.getByRole("region", { name: /^Decision 1: / });
     await expect(analysis).toBeVisible();
@@ -1119,7 +1165,9 @@ test.describe("the tests of the whitespace server, in order", () => {
 test.describe("the tests of the transportLong server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  for (const [width, height] of [[390, 844], [640, 400]] as const) {
+  // Issue #137 (11 Oct 2026, superseding S27): the fault is in the collapsed section "Why the Agent Could Not Be
+  // Reached" under the choices; the question and the first option are checked together before it is opened.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
     test(`(L23) the exhaustion pause after a long fault at ${width} × ${height}: the question and the first option in view`, async ({ page }) => {
       await page.setViewportSize({ width, height });
       await startTask(page, TRANSPORT_LONG_URL);
@@ -1135,12 +1183,13 @@ test.describe("the tests of the transportLong server, in order", () => {
           expect(b.y + b.height, `${what}: ${name} is below the window`).toBeLessThanOrEqual(height + 1);
         }
       };
-      await together("at the pause");
-      const top = pane(page).locator(".top");
-      await expect(top.locator("code")).toContainText("<endpoint> refused the connection");
-      await top.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-      await expect(top.getByText(/END OF FAULT/)).toBeInViewport();
-      await together("after scrolling the details");
+      if (height >= IN_VIEW_MIN_HEIGHT) await together("at the pause");
+      else await belowTheLimit(page, question);
+      const fault = await expandSection(page, attachedHeading("fault"));
+      await expect(fault.locator("code")).toContainText("<endpoint> refused the connection");
+      const end = fault.getByText(/END OF FAULT/);
+      await end.scrollIntoViewIfNeeded();
+      await expect(end).toBeInViewport();
       await firstOption().click();
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });

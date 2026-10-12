@@ -1,22 +1,28 @@
 <script lang="ts">
-  // The question the run waits on (S27, decision Q10): it takes the left column while its prompt is pending, so that
-  // the question and its answers are never scrolled out of view by the conversation [visibility of system status;
-  // recognition rather than recall]. From top to bottom: the heading and where the question came from; a region that
-  // scrolls on its own with the context, what the question is about and the terms; the question itself, fixed and never
-  // inside a scrolled region; and a region that scrolls on its own with the options, the field and the buttons. The
-  // conversation is one click away and back [user control and freedom].
+  // The question the run waits on (decision Q10): it takes the left column while its prompt is pending, so that the
+  // question and its answers are never scrolled out of view by the conversation [visibility of system status;
+  // recognition rather than recall]. Issue #137 (the developer's instruction of 11 Oct 2026, which superseded S27): from
+  // top to bottom, the heading, which is the question itself with its number; where the question came from, in small
+  // type; the choices, side by side where there is room; the hint, the fixed choices, the field and Send; and then the
+  // context and the question's attached material as collapsed sections that expand (Disclosure.svelte, the control of
+  // DecisionView's entries). What is new when a question appears is the question and its choices, so they come first
+  // and largest; the context has usually been read already. The pane scrolls as one region, nothing in it on its own,
+  // so with the choices directly under the question the question and its first answer stay in view in windows 450 px
+  // high and taller (IN_VIEW_MIN_HEIGHT of ../layout.ts) by construction. Which sections are open is this tab's own
+  // state and closes for each new prompt. The conversation is one click away and back [user control and freedom].
   // The options are outlined cards with their full text and the answer that chooses them (issue #12, S8): an option can
   // run to a paragraph, which a button's fixed height cannot hold [error prevention]; every option looks alike, none
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { answerHint, attachedHeading, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import type { Widget } from "../state.ts";
   import type { DraftKey } from "../draft.ts";
   import { type Ending, endingOf } from "../../../src/input.ts";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
   import { blocksText, piecesText } from "../../../src/pieces.ts";
   import QuestionText from "./QuestionText.svelte";
+  import Disclosure from "./Disclosure.svelte";
 
   // The typed text is the page's draft of this prompt (../draft.ts, finding 5): App keeps it per (incarnation, run,
   // prompt) and withdraws it with a notice when another tab answers first [error prevention].
@@ -69,35 +75,35 @@
   const composing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
   const question = $derived(widget?.question ?? null);
   const hasText = (blocks: Parameters<typeof blocksText>[0]) => blocksText(blocks).join("").trim() !== "";
+  // Issue #137: the sections open for the prompt `key`, the pending prompt's identity; another prompt finds none open.
+  type Section = "context" | "attached";
+  let opened = $state<Readonly<{ key: string | null; open: readonly Section[] }>>({ key: null, open: [] });
+  const isOpen = (section: Section): boolean => opened.key === currentIdentity && opened.open.includes(section);
+  const setOpen = (section: Section, open: boolean) => {
+    const others = (opened.key === currentIdentity ? opened.open : []).filter((s) => s !== section);
+    opened = { key: currentIdentity, open: open ? [...others, section] : others };
+  };
+  // The bodies' ids, unique per prompt, so that two panes of the page never share one.
+  const sectionId = (section: Section): string => `question-${(currentIdentity ?? "none").replace(/[^A-Za-z0-9_-]+/g, "-")}-${section}`;
 </script>
 
 {#if widget !== null}
   <section class="pane" class:answers-only={answersOnly} aria-label={question === null ? "Your answer" : questionTitle(question.number)}>
     {#if !answersOnly}
     <div class="head">
-      {#if question !== null}
-        <div class="title"><h2 class="m3-font-title-small">{questionTitle(question.number)}</h2> <span class="origin m3-font-body-small">{originLine(question.origin, question.decision)}</span></div>
+      {#if question === null}
+        <p class="question-text m3-font-title-medium">{widget.hint}</p>
+      {:else}
+        <!-- Issue #137: the heading is the question, its number and its text in one typeface; the developer's two spaces
+             between them are one space and a margin, since HTML collapses spaces. -->
+        <h2 class="m3-font-title-medium"><span class="number">{questionTitle(question.number)}</span> <span class="question-text"><QuestionText class="markdown" pieces={question.question} explanations={question.explanations} /></span></h2>
       {/if}
       {#if onShowConversation !== undefined}
         <Button variant="text" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
       {/if}
     </div>
-    {#if question !== null && (hasText(question.context.blocks) || question.attached !== null)}
-      <div class="top">
-        {#if hasText(question.context.blocks)}
-          <div class="context m3-font-body-medium">
-            <QuestionText class="markdown" blocks={question.context.blocks} explanations={question.explanations} />
-            {#if question.context.by === "program"}<p class="by m3-font-body-small">{PROGRAM_CONTEXT_NOTE}</p>{/if}
-          </div>
-        {/if}
-        {#if question.attached !== null}
-          <div class="details m3-font-body-medium"><p class="attached-heading">{attachedHeading(question.attached.kind)}</p><QuestionText class="markdown" blocks={question.attached.blocks} explanations={question.explanations} /></div>
-        {/if}
-      </div>
+    {#if question !== null}<p class="origin m3-font-body-small">{originLine(question.origin, question.decision)}</p>{/if}
     {/if}
-    <p class="question-text m3-font-title-medium">{#if question === null}{widget.hint}{:else}<QuestionText class="markdown" pieces={question.question} explanations={question.explanations} />{/if}</p>
-    {/if}
-    <div class="bottom">
       {#if question !== null && question.options.length > 0}
         <!-- S14 (issue #59): each option's label in bold on its own line and its description below it, as separate
              elements, so that the options can be compared by their labels alone [recognition rather than recall]. -->
@@ -142,42 +148,55 @@
           <Button variant="filled" type="button" name="send" disabled={text === ""} onclick={() => send(text)}>Send</Button>
         </div>
       {/if}
-    </div>
+    {#if question !== null && !answersOnly}
+      {#if hasText(question.context.blocks)}
+        <div class="section">
+          <Disclosure expanded={isOpen("context")} controls={sectionId("context")} onToggle={(open) => setOpen("context", open)}>
+            {#snippet title()}<span class="section-title m3-font-title-small">{CONTEXT_HEADING}</span>{/snippet}
+            <div class="context m3-font-body-medium" id={sectionId("context")}>
+              <QuestionText class="markdown" blocks={question.context.blocks} explanations={question.explanations} />
+              {#if question.context.by === "program"}<p class="by m3-font-body-small">{PROGRAM_CONTEXT_NOTE}</p>{/if}
+            </div>
+          </Disclosure>
+        </div>
+      {/if}
+      {#if question.attached !== null}
+        {@const attached = question.attached}
+        <div class="section">
+          <Disclosure expanded={isOpen("attached")} controls={sectionId("attached")} onToggle={(open) => setOpen("attached", open)}>
+            {#snippet title()}<span class="section-title m3-font-title-small">{attachedHeading(attached.kind)}</span>{/snippet}
+            <div class="details m3-font-body-medium" id={sectionId("attached")}>
+              <QuestionText class="markdown" blocks={attached.blocks} explanations={question.explanations} />
+            </div>
+          </Disclosure>
+        </div>
+      {/if}
+    {/if}
   </section>
   <ConfirmEndDialog ending={confirming?.ending ?? null} onConfirm={confirm} onCancel={cancel} />
 {/if}
 
 <style>
-  /* The pane fills the left column; the two regions share its height and scroll on their own, and the question between
-     them never moves (S27). */
-  .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; background: var(--m3c-surface-container-low); border-radius: var(--m3-shape-medium); }
-  /* Beside an analysis the pane holds only the answers, sized by them; the options scroll within 15 % of the window's
-     height, at least one whole card of two lines (a label and a one-line description, S14) and at most 7rem, so that the
-     field, the buttons and the analysis itself stay in view. */
+  /* Issue #137: the pane fills the left column and is its one scrolling region; nothing inside it scrolls on its own. */
+  .pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; background: var(--m3c-surface-container-low); border-radius: var(--m3-shape-medium); }
+  /* Beside an analysis the pane holds only the answers, sized by them, the options side by side as everywhere. */
   .pane.answers-only { flex: 0 0 auto; padding: 0.5rem 0.75rem; }
-  .pane.answers-only .bottom { flex: 0 0 auto; min-height: 0; overflow: visible; }
-  .pane.answers-only .options { max-height: clamp(3.75rem, 15dvh, 7rem); overflow-y: auto; }
   .pane.answers-only .options > :global(button) { padding-block: 0.5rem; }
-  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
-  /* The heading and the origin share a line where they fit, so that a short window keeps room for the question. */
-  .title h2 { display: inline; margin: 0 0.25rem 0 0; }
-  .origin { color: var(--m3c-on-surface-variant); }
-  /* Issue #79, decision Q1: the context takes the room its answers leave. Both regions are sized by their content, and
-     where the pane is too short the context shrinks first (a far larger flex-shrink), down to its minimum, before the
-     answers do, so that the question's first option stays in view below it and no room stays empty while it scrolls. */
-  .top { flex: 0 1000 auto; min-height: 2.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
-  .context { padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
-  .context .by { margin: 0.25rem 0 0; font-style: italic; }
-  .top :global(.markdown pre) { overflow-x: auto; }
-  .question-text { margin: 0; flex-shrink: 0; overflow-wrap: anywhere; }
-  /* At least a card of three lines (its label on a line of its own, S14, and a description that wraps once) fits, so
-     that the first option can be seen whole in a short window (S52, L23 at 640 × 400). */
-  .bottom { flex: 0 1 auto; min-height: 6rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; }
-  /* One card per row at every width; a card grows with its text, and a long unbroken token (a path) wraps. */
-  .options { display: flex; flex-direction: column; gap: 0.5rem; }
+  /* Beside an analysis each card keeps its own height, not its row's tallest: the first answer is what the analysis's
+     room is measured to (App's room, the developer's decision of 9 Oct 2026), and a taller first card takes that room. */
+  .pane.answers-only .options { align-items: start; }
+  /* The button beside the heading where both fit, and on a line of its own after it where they do not. */
+  .head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+  .head > :global(button) { flex: none; }
+  /* M3's title-medium (16/24, weight 500) set here, since the m3-font-* classes are absent from the build. */
+  .head h2, .head > .question-text { flex: 1 1 16rem; min-width: 0; margin: 0; font-size: 1rem; line-height: 1.5rem; font-weight: 500; overflow-wrap: anywhere; }
+  .number { margin-inline-end: 0.75em; }
+  .origin { margin: 0; color: var(--m3c-on-surface-variant); }
+  /* Issue #137: side by side where there is room, one per row where there is not; a card grows with its text, and a
+     long unbroken token (a path) wraps. At 1280 and 640 px wide two cards share a row; at 390 px one fills it. */
+  .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: 0.5rem; align-items: stretch; }
   .options > :global(button) { width: 100%; min-width: 0; overflow-wrap: anywhere; text-align: start; }
-  /* S14: a card holds its label on a line of its own above the description; 12 dp above and below instead of the
-     card's 16 keep a card of three lines as tall as one of two lines was, so that the first option stays in view. */
+  /* S14: a card holds its label on a line of its own above the description, 12 dp above and below. */
   .options > :global(button) { padding-block: 0.75rem; }
   .token { font-weight: 600; }
   /* The text above the card's state layer, so that a term in it is reached by the pointer (S44). */
@@ -193,6 +212,10 @@
   /* The field has the full width in every window (finding 7); the hint and Send share the row below it. */
   .send-row { display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; }
   .hint { margin: 0; color: var(--m3c-on-surface-variant); }
-  /* Issue #137: the heading of a question's attached material, named by attachedHeading of src/prompts.ts. */
-  .attached-heading { font-weight: 700; margin: 0.5rem 0 0.25rem; }
+  /* Issue #137: the collapsed sections under the answers; flow-root keeps an open body's margins inside its section. */
+  .section { display: flow-root; flex-shrink: 0; }
+  .section-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .context, .details { margin: 0.25rem 0 0.5rem; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
+  .context .by { margin: 0.25rem 0 0; font-style: italic; }
+  .section :global(.markdown pre) { overflow-x: auto; }
 </style>
