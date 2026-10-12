@@ -23,6 +23,7 @@
   import { blocksText, piecesText } from "../../../src/pieces.ts";
   import QuestionText from "./QuestionText.svelte";
   import Disclosure from "./Disclosure.svelte";
+  import type { Snippet } from "svelte";
 
   // The typed text is the page's draft of this prompt (../draft.ts, finding 5): App keeps it per (incarnation, run,
   // prompt) and withdraws it with a notice when another tab answers first [error prevention].
@@ -87,6 +88,16 @@
   const sectionId = (section: Section): string => `question-${(currentIdentity ?? "none").replace(/[^A-Za-z0-9_-]+/g, "-")}-${section}`;
 </script>
 
+<!-- Issue #137: a collapsed section of the pane under its heading; its body carries the id sectionId(section). -->
+{#snippet sectionOf(section: Section, heading: string, body: Snippet)}
+  <div class="section">
+    <Disclosure expanded={isOpen(section)} controls={sectionId(section)} onToggle={(open) => setOpen(section, open)}>
+      {#snippet title()}<span class="section-title m3-font-title-small">{heading}</span>{/snippet}
+      {@render body()}
+    </Disclosure>
+  </div>
+{/snippet}
+
 {#if widget !== null}
   <section class="pane" class:answers-only={answersOnly} aria-label={question === null ? "Your answer" : questionTitle(question.number)}>
     {#if !answersOnly}
@@ -150,26 +161,22 @@
       {/if}
     {#if question !== null && !answersOnly}
       {#if hasText(question.context.blocks)}
-        <div class="section">
-          <Disclosure expanded={isOpen("context")} controls={sectionId("context")} onToggle={(open) => setOpen("context", open)}>
-            {#snippet title()}<span class="section-title m3-font-title-small">{CONTEXT_HEADING}</span>{/snippet}
-            <div class="context m3-font-body-medium" id={sectionId("context")}>
-              <QuestionText class="markdown" blocks={question.context.blocks} explanations={question.explanations} />
-              {#if question.context.by === "program"}<p class="by m3-font-body-small">{PROGRAM_CONTEXT_NOTE}</p>{/if}
-            </div>
-          </Disclosure>
-        </div>
+        {#snippet contextBody()}
+          <div class="context m3-font-body-medium" id={sectionId("context")}>
+            <QuestionText class="markdown" blocks={question.context.blocks} explanations={question.explanations} />
+            {#if question.context.by === "program"}<p class="by m3-font-body-small">{PROGRAM_CONTEXT_NOTE}</p>{/if}
+          </div>
+        {/snippet}
+        {@render sectionOf("context", CONTEXT_HEADING, contextBody)}
       {/if}
       {#if question.attached !== null}
         {@const attached = question.attached}
-        <div class="section">
-          <Disclosure expanded={isOpen("attached")} controls={sectionId("attached")} onToggle={(open) => setOpen("attached", open)}>
-            {#snippet title()}<span class="section-title m3-font-title-small">{attachedHeading(attached.kind)}</span>{/snippet}
-            <div class="details m3-font-body-medium" id={sectionId("attached")}>
-              <QuestionText class="markdown" blocks={attached.blocks} explanations={question.explanations} />
-            </div>
-          </Disclosure>
-        </div>
+        {#snippet attachedBody()}
+          <div class="details m3-font-body-medium" id={sectionId("attached")}>
+            <QuestionText class="markdown" blocks={attached.blocks} explanations={question.explanations} />
+          </div>
+        {/snippet}
+        {@render sectionOf("attached", attachedHeading(attached.kind), attachedBody)}
       {/if}
     {/if}
   </section>

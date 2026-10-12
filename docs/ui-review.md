@@ -124,17 +124,23 @@ match between the system and the real world]. A context the program wrote is mar
 status].
 
 **The question takes the left column** (decision Q10). While a prompt is pending, `QuestionPane` replaces the
-transcript in the left column. From top to bottom it has the heading and origin; a top region that scrolls on its own,
-with the context, the details and the terms; the question, fixed between the regions and never inside a scrolled one;
-and a bottom region that scrolls on its own, with the option cards, the field and the buttons. The question and its
-first option stay in view together at 390 × 844, 640 × 400 and 1280 × 800 (`e2e/layout.spec.ts`, L19), so a long
-transcript can no longer scroll the question out of view (issue #20) [recognition rather than recall; visibility of
-system status]. The context takes at most three tenths of the pane. The transcript is one click away ("Show the
-conversation") and back ("Back to the question"), and an answer gives the column back to the transcript [user control
-and freedom]. The question joins the transcript with its answer once it is answered. Beside a decision's analysis,
-which shows the question with its context and terms, the pane keeps only the answers, so the question is not shown
-twice [aesthetic and minimalist design]. What the question is about (a permission's input, a pause's facts, an
-agreed question's reason) follows the context in the same region (W3-R1-3), as the terminal prints it. There only the
+transcript in the left column. Since issue #137 (the developer's instruction of 11 Oct 2026, which superseded S27), from
+top to bottom it has the heading, which is the question itself with its number; where the question came from, in small
+type; the option cards, side by side where there is room; the hint, the fixed choices, the field and Send; and then the
+context and what the question is about (an agreed question's reason, a permission's input, a pause's facts, the summary
+to confirm) as collapsed sections, each under its heading, that expand on a click. What is new when a question appears
+is the question and its choices, so they come first and largest [visibility of system status]; the context has usually
+been read already, in the item the run started from or in the conversation, and it is one click away under a heading
+that names it [recognition rather than recall; aesthetic and minimalist design]. The sections are the disclosure of
+the decision page's entries, `Disclosure.svelte`, so the page has one control for opening and closing [consistency and
+standards]; which are open is the tab's own and closes for each new prompt. The pane scrolls as one region, so with the
+choices directly under the question, the question and its first option stay in view together in windows 450 px high
+and taller (`e2e/layout.spec.ts`, L19 and L32), and a long transcript cannot scroll the question out of view (issue
+#20). The transcript is one click away ("Show the conversation") and back ("Back to the question"), and an answer gives
+the column back to the transcript [user control and freedom]. The question joins the transcript with its answer once
+it is answered. Beside a decision's analysis, which shows the question with its context and terms, the pane keeps only
+the answers, side by side as elsewhere, so the question is not shown twice [aesthetic and minimalist design]. What the
+question is about follows the context in the analysis's context region (W3-R1-3), under the same heading. There only the
 context scrolls, in a region of its own about one and a half
 lines high (2.75rem), and the question text follows it outside any scrolled region, so a long context cannot push the question
 out of view while its answers are shown (W2-R1-2; L20 at 390 × 844 and 640 × 400).
