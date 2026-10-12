@@ -15,7 +15,9 @@ import {
   type Ambiguous,
   CLOSE_BODY,
   closedRefusalText,
+  connectionRefused,
   descriptionTooLongText,
+  GITLAB_CONNECT_ATTEMPTS,
   GITLAB_PAGE_SIZE,
   type GitlabIssue,
   GitlabIssue as GitlabIssueSchema,
@@ -76,10 +78,20 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
     const authorized = (request: HttpClientRequest.HttpClientRequest): HttpClientRequest.HttpClientRequest =>
       request.pipe(HttpClientRequest.setHeader("private-token", token), HttpClientRequest.setHeader("accept", "application/json"));
 
+    /**
+     * Executes a request, again while its connection is refused, up to GITLAB_CONNECT_ATTEMPTS in all and with no
+     * wait: a refused connection sent nothing. Any other failure, a reset or a timeout that may have reached GitLab
+     * included, is not tried again. Only the cause's codes are read.
+     */
+    const execute = (request: HttpClientRequest.HttpClientRequest, attempt: number): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> =>
+      Effect.catch(client.execute(request), (error) =>
+        error.reason._tag === "TransportError" && connectionRefused(error.reason.cause) && attempt < GITLAB_CONNECT_ATTEMPTS ? execute(request, attempt + 1) : Effect.fail(error),
+      );
+
     /** Sends a request and maps every failure once: the network, a refused token, a missing item, any other status, a body that is not JSON. */
     const send = (request: HttpClientRequest.HttpClientRequest, target: GitlabTarget): Effect.Effect<Answer, TrackerError> =>
       Effect.gen(function* () {
-        const response: HttpClientResponse.HttpClientResponse = yield* Effect.mapError(client.execute(authorized(request)), (error) => clientFailure(error, request.method, target));
+        const response: HttpClientResponse.HttpClientResponse = yield* Effect.mapError(execute(authorized(request), 1), (error) => clientFailure(error, request.method, target));
         const refused = gitlabStatusFailure(response.status, request.method, target);
         if (refused !== null) return yield* Effect.fail(refused);
         const json = yield* Effect.mapError(response.json, () => new TrackerBodyInvalid({ id: gitlabTargetName(target), message: "GitLab's answer is not JSON" }));

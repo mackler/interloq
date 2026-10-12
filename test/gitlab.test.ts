@@ -285,6 +285,39 @@ test("the four operations in sequence through Tracker, built from the config and
   for (const r of stub.sent()) assert.equal(r.headers["private-token"], SECRET);
 });
 
+
+// A refused connection sent nothing and is tried again, at most three attempts in all; any other transport failure
+// may have reached GitLab and is not.
+const refusedThen = (times: number, then: Answer): Stub => {
+  let left = times;
+  return makeStub(() => (left-- > 0 ? "refused" : then));
+};
+
+test("a GET refused twice and then answered succeeds after exactly three requests", async () => {
+  const stub = refusedThen(2, json(issue(1, ["Refined"])));
+  assert.equal((await withTracker(stub, (t) => t.read(id("1")))).state, "refined");
+  assert.equal(stub.sent().length, 3);
+});
+
+test("a PUT refused twice and then answered succeeds after exactly three PUTs", async () => {
+  let puts = 0;
+  const stub = makeStub((r) => (r.method === "GET" ? json(issue(1, ["Refined"])) : puts++ < 2 ? "refused" : json(issue(1, ["Implementing"]))));
+  await withTracker(stub, (t) => t.setState(id("1"), "implementing"));
+  assert.deepEqual(stub.sent().map((r) => r.method), ["GET", "PUT", "PUT", "PUT"]);
+});
+
+test("a request refused three times fails TrackerUnreachable after exactly three requests", async () => {
+  const stub = refusedThen(3, json(issue(1, ["Refined"])));
+  assert.equal((await failure(stub, (t) => t.read(id("1"))))._tag, "TrackerUnreachable");
+  assert.equal(stub.sent().length, 3);
+});
+
+test("a transport failure that is not a refused connection is not retried", async () => {
+  const stub = makeStub(() => "transport");
+  assert.equal((await failure(stub, (t) => t.read(id("1"))))._tag, "TrackerUnreachable");
+  assert.equal(stub.sent().length, 1);
+});
+
 test("the token is in no error the adapter produced", () => {
   assert.ok(errors.length >= 20);
   for (const error of errors) {

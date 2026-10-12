@@ -7,9 +7,13 @@ import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 export type SentRequest = Readonly<{ method: string; url: URL; headers: Readonly<Record<string, string>>; body: string | null }>;
 /**
  * The answer to a request: a web Response; a transport failure (no answer at all); or a failure of the client after an
- * answer, its body undecodable ("decode") or empty ("emptyBody"), as a client may report it (W1-R1-2).
+ * answer, its body undecodable ("decode") or empty ("emptyBody"), as a client may report it (W1-R1-2). "refused" is a
+ * connection refused before anything was sent, in the shape Effect's FetchHttpClient gives it: a TransportError whose
+ * cause is fetch's TypeError, whose own cause carries the system error's code ECONNREFUSED.
  */
-export type Answer = Response | "transport" | "decode" | "emptyBody";
+export type Answer = Response | "transport" | "refused" | "decode" | "emptyBody";
+
+const refusedCause = (): TypeError => new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 172.65.251.78:443"), { code: "ECONNREFUSED" }) });
 /** `filtered`: the client wrapped by HttpClient.filterStatusOk, which fails a non-2xx answer with a StatusCodeError. */
 export type StubOptions = Readonly<{ filtered: boolean }>;
 
@@ -25,6 +29,7 @@ export const makeStub = (handler: (request: SentRequest) => Answer, options: Stu
     sent.push(seen);
     const answer = handler(seen);
     if (answer === "transport") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description: "connection reset" }) }));
+    if (answer === "refused") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, cause: refusedCause() }) }));
     if (answer === "decode") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.DecodeError({ request, response: HttpClientResponse.fromWeb(request, new Response("<html>")), description: "not JSON" }) }));
     if (answer === "emptyBody") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.EmptyBodyError({ request, response: HttpClientResponse.fromWeb(request, new Response(null)), description: "empty body" }) }));
     return Effect.succeed(HttpClientResponse.fromWeb(request, answer));
