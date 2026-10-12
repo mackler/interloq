@@ -3,7 +3,7 @@
 
 import type { SubjectId } from "./artifacts.ts";
 import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, QUESTION_HISTORY_HEADING, questionTitle, TERMS_HEADING } from "./prompts.ts";
-import { type Block, blocksMarkdown, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
+import { type Block, blocksMarkdown, type ShownBlock, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
 import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
@@ -16,7 +16,7 @@ import type { InterviewStage } from "./uiEvents.ts";
 
 /** A question list as the agents exchange it or as the program records it (a recorded default may be null). */
 export type RenderableQuestions = Readonly<{
-  questions: readonly Readonly<{ id: string; question: readonly Piece[]; reason: readonly Block[]; proposed_answers: readonly PieceOption[]; default_answer: string | null; skip_if: Readonly<{ question: string; answer: string }> | null }>[];
+  questions: readonly Readonly<{ id: string; question: readonly Piece[]; history: readonly Block[]; reason: readonly Block[]; proposed_answers: readonly PieceOption[]; default_answer: string | null; skip_if: Readonly<{ question: string; answer: string }> | null }>[];
 }>;
 
 /** "Question review", "Requirements review", "Planning phase k": the heading of a subject's rounds. */
@@ -45,6 +45,20 @@ export const renderDecision = (event: DecisionEvent): Readonly<{ record: string;
 
 export const renderFeedback = (heading: string, round: number, text: string): string => `## ${heading}, round ${round}\n${text}\n\n`;
 
+/**
+ * A question's history under its heading as a block quote, each line indented by `indent` (issue #133); null when the
+ * history is empty. The one rendering of the history, shared by the question record, the question list and the terms.
+ */
+const historyLines = (history: readonly ShownBlock[], indent: string): string | null => {
+  const text = blocksMarkdown(history);
+  return text.trim() === "" ? null : [`**${QUESTION_HISTORY_HEADING}**`, "", ...text.split("\n").map((l) => `> ${l}`)].map((l) => `${indent}${l}`).join("\n");
+};
+/** The history inside an item of a list, after a line break; nothing when it is empty. */
+const historyInItem = (history: readonly ShownBlock[]): string => {
+  const lines = historyLines(history, "  ");
+  return lines === null ? "" : `\n${lines}`;
+};
+
 export function renderQuestions(list: RenderableQuestions): string {
   if (list.questions.length === 0) return "The list is empty.\n";
   return (
@@ -52,7 +66,7 @@ export function renderQuestions(list: RenderableQuestions): string {
       .map((q) => {
         const answers = q.proposed_answers.map((a) => `  - ${piecesMarkdown(a.label)}: ${piecesMarkdown(a.description)}${piecesText(a.label) === q.default_answer ? " (default)" : ""}`).join("\n");
         const condition = q.skip_if === null ? "" : `\n  ${words.skipIfLine(q.skip_if)}`;
-        return `- **[${q.id}]** ${piecesMarkdown(q.question)}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}${condition}`;
+        return `- **[${q.id}]** ${piecesMarkdown(q.question)}${historyInItem(q.history)}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}${condition}`;
       })
       .join("\n") + "\n"
   );
@@ -66,7 +80,10 @@ export function renderQuestions(list: RenderableQuestions): string {
 export const renderTerms = (entries: readonly TermsEntry[]): Result.Result<string, QuestionInvalid> =>
   Result.map(
     Result.all(entries.map((e) => shownExplanations(e.explanations, e.id))),
-    (shown) => shown.map((terms, i) => (terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n"))).join("\n") + "\n",
+    (shown) =>
+      shown
+        .map((terms, i) => `${terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n")}${historyInItem(entries[i].history)}`)
+        .join("\n") + "\n",
   );
 
 /** The lines said for an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
@@ -162,8 +179,8 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
   const contextText = blocksMarkdown(q.context.blocks);
   const context = contextText.trim() === "" ? "" : `${contextText.split("\n").map((l) => `> ${l}`).join("\n")}${q.context.by === "program" ? ` (${CONTEXT_BY_PROGRAM})` : ""}\n\n`;
   // Issue #133: the history, apart from the context, under a heading of its own; nothing when it is empty.
-  const historyText = blocksMarkdown(q.history);
-  const history = historyText.trim() === "" ? "" : `**${QUESTION_HISTORY_HEADING}**\n\n${historyText.split("\n").map((l) => `> ${l}`).join("\n")}\n\n`;
+  const historyBlock = historyLines(q.history, "");
+  const history = historyBlock === null ? "" : `${historyBlock}\n\n`;
   const attachedText = attachedMarkdown(q.attached);
   const attached = attachedText === "" ? "" : `${attachedText}\n\n`;
   return `### ${questionTitle(q.number)}${id === null ? "" : ` (${id})`}\n\n_${originLine(q.origin, q.decision)}_\n\n${context}${history}${attached}${terms}**${piecesMarkdown(q.question)}**\n\n${options}`;

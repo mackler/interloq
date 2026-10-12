@@ -264,3 +264,32 @@ test("renderQuestionRecord writes the attached material under its heading, befor
   assert.ok(record.includes(markdown), record);
   assert.ok(record.indexOf(markdown) < record.indexOf("**Which?**"));
 });
+
+// Issue #133, W1-R1-2: the question list's and the terms' records carry the history, under the one heading.
+const HISTORY_LINE = `**${prompts.QUESTION_HISTORY_HEADING}**`;
+
+test("W1-R1-2: renderQuestions writes an entry's history as a block quote under the history heading", () => {
+  const withHistory = questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." });
+  const rendered = renderQuestions({ questions: [withHistory, questionEntry("Q2", "C?", [["C", "c"]])] });
+  const [first, second] = rendered.split(/\n(?=- \*\*\[Q2\]\*\*)/u);
+  assert.ok(first.includes(`  ${HISTORY_LINE}\n  \n  > You chose B on 9 Oct.`), first);
+  assert.ok(!second.includes(HISTORY_LINE), second);
+});
+
+test("W1-R1-2: renderTerms writes an entry's history as a block quote under the history heading", () => {
+  const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: ["A number."] }], context: para("c"), history: para("You chose B on 9 Oct."), question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
+  const rendered = renderTerms([entry, { ...entry, id: "Q2", history: [] }]);
+  assert.ok(Result.isSuccess(rendered));
+  const [first, second] = rendered.success.split(/\n(?=- \*\*\[Q2\]\*\*)/u);
+  assert.ok(first.includes(`  ${HISTORY_LINE}\n  \n  > You chose B on 9 Oct.`), first);
+  assert.ok(!second.includes(HISTORY_LINE), second);
+});
+
+test("W1-R1-2: the three renderings write the same history heading line", () => {
+  const history = para("You chose B on 9 Oct.");
+  const record = recordOf({ number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, history, explanations: [], question: plain("Which?"), options: [], attached: null, decision: null });
+  const list = renderQuestions({ questions: [questionEntry("Q1", "A?", [["A", "a"]], { history: "You chose B on 9 Oct." })] });
+  const terms = renderTerms([{ id: "Q1", explanations: [], context: para("c"), history, question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
+  assert.ok(Result.isSuccess(terms));
+  for (const text of [record, list, terms.success]) assert.ok(text.split("\n").some((l) => l.trim() === HISTORY_LINE), text);
+});
