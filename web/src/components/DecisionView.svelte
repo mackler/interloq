@@ -5,9 +5,12 @@
   // headings of what the reader has already read (Technical Context, History, the question's attached material,
   // Recommendation), each closed when the page appears and opened one at a time [aesthetic and minimalist design: the
   // arguments are the one new thing, so they take the page; recognition rather than recall: the rest is one click
-  // away]. The question and the choices are at the top, so they are in view by construction, and the page does not
-  // scroll: an opened heading's text takes height from the columns, at most half, and scrolls inside itself
-  // (allotOpened of web/src/layout.ts) [visibility of system status].
+  // away]. The question and the choices are at the top, so they are in view when the page appears. Every control stays
+  // under the question, and where the window cannot hold the answers and the columns the run area scrolls, never
+  // clipping a control or a heading (the developer's decision of 12 Oct 2026, "Every control stays, windows scroll"):
+  // the columns are never lower than 15rem, ten lines, and an opened heading's text takes height from the columns, at
+  // most half where the window has room, and scrolls inside itself (allotWithFloor of web/src/layout.ts) [visibility
+  // of system status; user control and freedom].
   // One column per option, as docs/decision-making.md requires ("Layout and wording"), side by side at a minimum
   // readable width of 20rem (about 45 characters of body text) and scrolling sideways when they do not fit (decision
   // Q5) [aesthetic and minimalist design: nothing is squeezed to unreadable widths; match between the system and the
@@ -33,7 +36,7 @@
   import { type ArgumentView, type EntryView, viewOf } from "../../../src/analysisView.ts";
   import { blocksText, piecesText } from "../../../src/pieces.ts";
   import type { DecisionSection } from "../../../src/uiState.ts";
-  import { allotOpened } from "../layout.ts";
+  import { allotWithFloor, floorPx } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
   import Disclosure from "./Disclosure.svelte";
@@ -41,7 +44,8 @@
   /**
    * `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the
    * change asked for; `openSection` and `onSection` (issue #133): the one heading open in the shared state, and the
-   * change asked for; `answers`: the choices, rendered under the heading.
+   * change asked for; `answers`: the choices, rendered under the heading; `scroller`: the run area that scrolls, whose
+   * visible height the columns and an opened text are measured from (W1-R1-1), null where there is none.
    */
   type Props = {
     event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>;
@@ -52,8 +56,9 @@
     onSection: (section: DecisionSection, open: boolean) => void;
     onShowConversation: () => void;
     answers: Snippet;
+    scroller?: HTMLElement | null;
   };
-  let { event, narrow, open, onToggle, openSection, onSection, onShowConversation, answers }: Props = $props();
+  let { event, narrow, open, onToggle, openSection, onSection, onShowConversation, answers, scroller = null }: Props = $props();
   const view = $derived(viewOf(event.analysis));
   const presented = $derived(event.presented);
   const hasText = (blocks: Parameters<typeof blocksText>[0]) => blocksText(blocks).join("").trim() !== "";
@@ -80,41 +85,64 @@
     measure();
   });
 
-  // Decision Q2: the height the opened text and the columns share is the section's, less its padding, every child but
-  // the columns and the opened body, and the gaps between the children; neither of those two enters the sum, so the
-  // measurement never depends on the last allotment. The text takes its part (allotOpened), the columns the rest.
+  // W1-R1-1 (the developer's decision of 12 Oct 2026): the height the columns and an opened text share is the run
+  // area's visible height, less its padding, the run's other rows and gaps, and this page's fixed children (all but the
+  // columns and the opened body), gaps and padding; the body's own gap is counted while it is open. Neither the columns,
+  // nor the body, nor this section's own height enters the sum, since the section grows with the allotment: so the
+  // measurement never depends on the last allotment. The columns keep the floor, and the run scrolls where they must.
   let section = $state<HTMLElement | null>(null);
   let body = $state<HTMLElement | null>(null);
   let bodyInner = $state<HTMLElement | null>(null);
   let textHeight = $state<number | null>(null);
+  let columnsHeight = $state<number | null>(null);
   const px = (v: string) => parseFloat(v) || 0;
   const verticalPadding = (el: Element) => {
     const cs = getComputedStyle(el);
     return px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth);
   };
-  const allot = () => {
-    if (section === null || body === null || bodyInner === null) {
-      if (textHeight !== null) textHeight = null;
-      return;
+  const heightOf = (el: Element) => el.getBoundingClientRect().height;
+  const shown = (el: Element) => getComputedStyle(el).display !== "none";
+  /** The height the run's rows other than this page's take, with their gaps: in the grid, the row below it; in the column, every other child. */
+  const outsideOf = (run: HTMLElement, area: Element): number => {
+    const cs = getComputedStyle(run);
+    const others = ([...run.children] as HTMLElement[]).filter((k) => k !== area && !k.contains(area) && shown(k));
+    if (cs.display === "grid") {
+      const below = others.filter((k) => !k.classList.contains("rail")).reduce((n, k) => Math.max(n, heightOf(k)), 0);
+      return below + px(cs.rowGap);
     }
-    const kids = [...section.children] as HTMLElement[];
-    const fixed = kids.filter((k) => k !== row && k !== body).reduce((n, k) => n + k.getBoundingClientRect().height, 0);
+    return others.reduce((n, k) => n + heightOf(k), 0) + others.length * px(cs.rowGap);
+  };
+  const allot = () => {
+    if (section === null) return;
+    const kids = ([...section.children] as HTMLElement[]).filter(shown);
+    const fixed = kids.filter((k) => k !== row && k !== body).reduce((n, k) => n + heightOf(k), 0);
     const gaps = Math.max(0, kids.length - 1) * px(getComputedStyle(section).rowGap);
-    const shared = section.clientHeight - verticalPadding(section) - fixed - gaps;
-    const content = bodyInner.getBoundingClientRect().height + verticalPadding(body);
-    const next = allotOpened({ _tag: narrow ? "Alone" : "BesideColumns", shared, content }).text;
-    if (textHeight !== next) textHeight = next;
+    const run = scroller;
+    const area = run === null ? section : ([...run.children].find((k) => k.contains(section)) ?? section);
+    const room = run === null ? 0 : run.clientHeight - verticalPadding(run) - outsideOf(run, area);
+    const available = room - verticalPadding(section) - fixed - gaps;
+    const content = body === null || bodyInner === null ? 0 : heightOf(bodyInner) + verticalPadding(body);
+    const floor = floorPx(parseFloat(getComputedStyle(document.documentElement).fontSize));
+    const next = allotWithFloor({ _tag: narrow ? "Alone" : "BesideColumns", available, floor, content });
+    const text = body === null ? null : next.text;
+    if (textHeight !== text) textHeight = text;
+    if (columnsHeight !== next.columns) columnsHeight = next.columns;
   };
   $effect(() => {
     void shownSection;
     void narrow;
     void view;
+    void scroller;
+    void body;
     allot();
   });
   $effect(() => {
     if (section === null || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => allot());
-    observer.observe(section);
+    if (scroller !== null) {
+      observer.observe(scroller);
+      for (const k of scroller.children) if (!k.contains(section)) observer.observe(k);
+    }
     for (const k of section.children) if (k !== row && k !== body) observer.observe(k);
     if (bodyInner !== null) observer.observe(bodyInner);
     return () => observer.disconnect();
@@ -179,7 +207,7 @@
     {#if overflowing}<p class="hint m3-font-body-small">{SCROLL_SIDEWAYS_HINT}</p>{/if}
     <!-- Issue #81: the region scrolls sideways when the columns do not fit, and each column scrolls on its own inside it
          (the developer's instruction of 1 Oct 2026), so a short column stays in view while a long one is read. -->
-    <div class="sideways" bind:this={row}>
+    <div class="sideways" bind:this={row} style:height={columnsHeight === null ? null : `${columnsHeight}px`}>
       <div class="columns" style:grid-template-columns="repeat({view.columns.length}, minmax(20rem, 1fr))">
         {#each view.columns as column, i (i)}
           <article class="column m3-font-body-medium">
@@ -230,15 +258,16 @@
 </section>
 
 <style>
-  .decision { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
-  .decision > :not(.sideways) { flex: none; }
+  .decision { display: flex; flex-direction: column; gap: 0.5rem; flex: 1 0 auto; min-width: 0; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
+  .decision > * { flex: none; }
   .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
   /* M3's title-medium (16/24, weight 500) set here, since the m3-font-* classes are absent from the build. */
   .head h2 { margin: 0; flex: 1 1 16rem; min-width: 0; font-size: 1rem; line-height: 1.5rem; font-weight: 500; overflow-wrap: anywhere; }
   .head > :global(button) { flex-shrink: 0; }
   .hint, .narrow { margin: 0; color: var(--m3c-on-surface-variant); }
-  /* The columns take the height the other regions leave (decision Q2), and each column scrolls on its own inside it. */
-  .sideways { flex: 1 1 0; min-height: 0; overflow-x: auto; overflow-y: hidden; }
+  /* The columns take the height allotWithFloor gives them, never less than the floor (W1-R1-1), and each column scrolls
+     on its own inside it (the developer's instruction of 1 Oct 2026). */
+  .sideways { overflow-x: auto; overflow-y: hidden; }
   .columns { display: grid; gap: 0.75rem; height: 100%; min-height: 0; align-items: stretch; }
   .column { box-sizing: border-box; min-height: 0; max-height: 100%; overflow-y: auto; padding: 0 0.75rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container); user-select: text; }
   .column-content { display: flow-root; }
@@ -268,7 +297,7 @@
   .opposes { color: var(--m3c-error); }
   .sections { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
   .section-title { min-width: 0; }
-  /* An opened heading's text: its height from allotOpened, scrolling inside itself beyond it. */
+  /* An opened heading's text: its height from allotWithFloor, scrolling inside itself beyond it. */
   .body { box-sizing: border-box; overflow-y: auto; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
   .body .by { margin: 0.25rem 0 0; font-style: italic; }
   /* The task: the opened text in columns of 16rem, so two at 640 px wide (a body of about 570 px) and three at 1280 px

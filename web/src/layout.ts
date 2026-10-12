@@ -49,24 +49,34 @@ export const analysisShown = (hidden: AnalysisKey | null, key: AnalysisKey): boo
  */
 export const IN_VIEW_MIN_HEIGHT = 450;
 
-// ---- the decision page's opened heading (issue #133, decisions Q2 and G-R1-1) -------------------------------------------
+// ---- the decision page's opened heading and the columns' floor (issue #133, decision G-R1-1, W1-R1-1; the developer's
+// decision of 12 Oct 2026, "Every control stays, windows scroll") ---------------------------------------------------------
 
-/**
- * What the allotment of an opened heading's text is computed from: `shared`, the height left for the columns' region and
- * the opened text together, measured independently of the split; `content`, the text's full height with its padding.
- * Beside the columns (`BesideColumns`) the text takes at most half; below 390 px there are no columns (`Alone`).
- */
-export type OpenedInput = Readonly<{ _tag: "BesideColumns" | "Alone"; shared: number; content: number }>;
-/** The heights the opened text and the columns' region take, in whole pixels, together the shared height. */
+/** The heights the opened text and the columns' region take, in whole pixels. */
 export type OpenedHeights = Readonly<{ text: number; columns: number }>;
+
+/** The columns' region is never lower than 15rem, ten lines of 1.5rem. */
+export const COLUMNS_FLOOR_REM = 15;
+/** The floor in whole pixels, from the root element's font size; 16 px, the browser's default, where that is no finite positive number. */
+export const floorPx = (rootFontSizePx: number): number =>
+  Math.ceil(COLUMNS_FLOOR_REM * (Number.isFinite(rootFontSizePx) && rootFontSizePx > 0 ? rootFontSizePx : 16));
 /**
- * The height an opened heading's text takes from the columns (the open point's default: at most half the shared height,
- * the text scrolling inside itself beyond that; the columns keep the rest). The inputs are normalized first, the shared
- * height floored and the content ceiled, none below zero.
+ * What the allotment beside a floor is computed from: `available`, the height the visible run area leaves for the columns'
+ * region and an opened text together (0 or negative in a low window); `floor`, `floorPx` of the root font size; `content`,
+ * the opened text's full height, 0 when nothing is open. Below 390 px there are no columns (`Alone`).
  */
-export const allotOpened = (input: OpenedInput): OpenedHeights => {
-  const shared = Math.max(0, Math.floor(input.shared));
-  const content = Math.max(0, Math.ceil(input.content));
-  const text = Math.min(content, input._tag === "BesideColumns" ? Math.floor(shared / 2) : shared);
-  return { text, columns: shared - text };
+export type FloorInput = Readonly<{ _tag: "BesideColumns" | "Alone"; available: number; floor: number; content: number }>;
+/**
+ * The heights of an opened text and the columns' region, in whole pixels. Beside the columns, where the room suffices
+ * (`available - floor` at least the text's floor), the two fill it exactly and nothing scrolls, the text taking at most
+ * half; where it does not, the columns keep the floor and the text at least five lines (half the floor), and the run
+ * scrolls. Alone, the text takes up to the larger of the room and the floor.
+ */
+export const allotWithFloor = (input: FloorInput): OpenedHeights => {
+  const a = Math.max(0, Math.floor(input.available));
+  const c = Math.max(0, Math.ceil(input.content));
+  const f = Math.max(1, Math.ceil(input.floor));
+  if (input._tag === "Alone") return { text: Math.min(c, Math.max(a, f)), columns: 0 };
+  const text = Math.min(c, Math.max(Math.ceil(f / 2), Math.min(Math.floor(a / 2), a - f)));
+  return { text, columns: Math.max(f, a - text) };
 };

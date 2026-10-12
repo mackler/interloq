@@ -149,6 +149,9 @@
         </div>
       {/if}
       {#if question !== null && !answersOnly}<p class="asks m3-font-body-small">{widget.hint}</p>{/if}
+      <!-- Issue #133: beside an analysis the fixed choices, the field and Send share as few rows as fit, so that the columns
+           of the decision page keep their height; elsewhere this wrapper adds nothing to the layout. -->
+      <div class="controls">
       <div class="choices">
         {#each widget.choices as choice, i (i)}
           {#if endsRunLabel(choice.label, choice.sends)}
@@ -168,10 +171,11 @@
           <TextFieldOutlinedMultiline label="Your message" name="answer" rows={answersOnly ? 1 : 3} bind:value={text} onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !composing(e)) { e.preventDefault(); send(text); } }} />
         {/if}
         <div class="send-row">
-          <p class="hint m3-font-body-small">{answerHint(widget.asked.free === "line" ? "line" : "message")}</p>
+          {#if !answersOnly}<p class="hint m3-font-body-small">{answerHint(widget.asked.free === "line" ? "line" : "message")}</p>{/if}
           <Button variant="filled" type="button" name="send" disabled={text === ""} onclick={() => send(text)}>Send</Button>
         </div>
       {/if}
+      </div>
     {#if question !== null && !answersOnly}
       {#if hasText(question.context.blocks)}
         {#snippet contextBody()}
@@ -214,6 +218,10 @@
   /* Beside an analysis each card keeps its own height, not its row's tallest: the first answer is what the analysis's
      room is measured to (App's room, the developer's decision of 9 Oct 2026), and a taller first card takes that room. */
   .pane.answers-only .options { align-items: start; }
+  .controls { display: contents; }
+  .pane.answers-only .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  .pane.answers-only .controls > :global(*:not(.choices):not(.send-row)) { flex: 1 1 12rem; min-width: 0; }
+  .pane.answers-only .send-row { flex: none; }
   /* The button beside the heading where both fit, and on a line of its own after it where they do not. */
   .head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
   .head > :global(button) { flex: none; }

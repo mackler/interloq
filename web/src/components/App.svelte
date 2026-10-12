@@ -133,6 +133,15 @@
   const analysis = $derived(run?.analysis ?? null);
   const analysisKey = $derived(analysis === null || run === null ? null : { incarnation: view.incarnation ?? "", run: run.id, decision: analysis.event.decision });
   const deciding = $derived(analysisKey !== null && analysisShown(conversationFor, analysisKey));
+  /** The run area (issue #133, W1-R1-1): the decision page measures its room from it, and it scrolls in a low window. */
+  let runArea = $state<HTMLElement | null>(null);
+  // The decision page appears with the run at its top, so that the question and its choices are in view.
+  let topFor: string | null = null;
+  $effect(() => {
+    const key = deciding && analysisKey !== null ? JSON.stringify(analysisKey) : null;
+    if (key !== null && key !== topFor && runArea !== null) runArea.scrollTop = 0;
+    topFor = key;
+  });
   const NARROW_WIDTH = 390;
   // Issue #29: the tab's title names the server's project, so that a narrow tab strip tells two servers apart.
   // Issue #16: a pending prompt, or a watched run's end at a hidden tab, puts its marker in front of the title and a
@@ -255,7 +264,7 @@
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
          of panels or a resize across 840 px keeps each panel's reading position [user control and freedom]. -->
-    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding}>
+    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} bind:this={runArea}>
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
@@ -289,7 +298,7 @@
               onAnswer={(prompt, text) => send({ type: "answer", incarnation: view.incarnation ?? "", run: run.id, prompt, text })} />
           {/snippet}
           <!-- Issue #133: the answers are the decision page's own, under its heading; its open heading is the run's shared state. -->
-          <DecisionView {answers} openSection={openSectionOf(run.ui, analysis.event.decision)} onSection={(section, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionSection", decision: analysis.event.decision, section }, open } }); }} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
+          <DecisionView {answers} scroller={runArea} openSection={openSectionOf(run.ui, analysis.event.decision)} onSection={(section, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionSection", decision: analysis.event.decision, section }, open } }); }} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
         </div>
       {:else if analysis !== null}
         <div class="decision-area back">
@@ -343,11 +352,13 @@
   .left :global(.panel), .right :global(.panel) { flex: 1; }
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   /* The analysis spans both chat columns in the first row; the notice and the activity line stay below it. */
-  /* Issue #133 (decisions Q2 and G-R1-1): the decision page holds the question, its answers, the columns and the
-     headings, in that order, and the run does not scroll: the question and its answers are at the page's top, so they
-     are in view by construction, and the columns take the rest. */
-  .run.deciding { grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; }
-  .run.deciding > :global(.rail) { grid-row: 1 / 3; }
+  /* Issue #133: the decision page holds the question, its answers, the columns and the headings, in that order; the
+     question and its answers are at the page's top, in view when it appears. Every control stays, and where the window
+     cannot hold them and the columns the run scrolls (the developer's decision of 12 Oct 2026, "Every control stays,
+     windows scroll"): the decision row is at least its content and fills the window otherwise. The rail contributes no
+     height of its own (contain: size), so that its content never stretches the rows. */
+  .run.deciding { grid-template-rows: minmax(min-content, 1fr) auto; overflow-y: auto; }
+  .run.deciding > :global(.rail) { grid-row: 1 / 3; contain: size; }
   .decision-area { grid-column: 2 / 4; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .run.paused { grid-template-rows: auto minmax(0, 1fr); }
   .run.paused > :global(.rail) { grid-row: 1 / 3; }
@@ -360,10 +371,11 @@
   /* The shown column fills the window; its panel scrolls inside it and keeps at least 12.5rem, below which the page scrolls. */
   .run.compact .left, .run.compact .right { flex: 1 0 0; }
   .run.compact .left :global(.panel), .run.compact .right :global(.panel), .run.compact .left :global(.pane:not(.answers-only)) { min-height: 12.5rem; }
-  /* W4-R1-1; issue #133: while the analysis is shown, only the decision area flexes, never growing to its content, and
-     the run does not scroll; the columns below it hold the notice and the activity line, sized by their content. */
-  .run.compact.deciding { overflow: hidden; }
-  .run.compact.deciding > .decision-area { flex: 1 1 0; min-height: 0; }
+  /* W4-R1-1; issue #133: while the analysis is shown, only the decision area flexes, at least its content and filling
+     the window otherwise, and the run scrolls where it cannot hold it (the developer's decision of 12 Oct 2026); the
+     columns below it hold the notice and the activity line, sized by their content. */
+  .run.compact.deciding { overflow-y: auto; }
+  .run.compact.deciding > .decision-area { flex: 1 0 auto; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
   .progress :global(.rail) { max-height: 40vh; }

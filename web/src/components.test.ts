@@ -17,7 +17,7 @@ import type { ServerMessage } from "../../src/protocol.ts";
 import { countOfKind, foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import type { Block } from "../../src/schema.ts";
-import { EXPANDED_MIN_WIDTH } from "./layout.ts";
+import { EXPANDED_MIN_WIDTH, floorPx } from "./layout.ts";
 import TopBar from "./components/TopBar.svelte";
 import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
@@ -1474,6 +1474,43 @@ describe("DecisionView", () => {
     expect(root.querySelector(".column")).toBe(null);
     expect(one(root, "[role=alert]").textContent).toBe(prompts.ENLARGE_WINDOW_NOTICE);
     expect(prompts.ENLARGE_WINDOW_NOTICE).toMatch(/390/);
+  });
+
+  // Issue #133, W1-R1-1 (the developer's decision of 12 Oct 2026, "Every control stays, windows scroll"): where the run
+  // area leaves no room, the columns keep their floor and an opened text its share, and the run scrolls instead.
+  test("with no room left, the columns' region still receives the floor", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const scroller = document.createElement("main");
+    document.body.appendChild(scroller);
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, scroller });
+    expect(parseFloat(one(root, ".sideways").style.height)).toBeGreaterThanOrEqual(floorPx(16));
+  });
+
+  test("below 390 px, with no room left, an opened text receives its content up to the floor", async () => {
+    const content = 1000;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return { height: this.classList.contains("body-inner") ? content : 0, width: 0, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    try {
+      const { default: DecisionView } = await import("./components/DecisionView.svelte");
+      const scroller = document.createElement("main");
+      document.body.appendChild(scroller);
+      const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, openSection: "context", scroller });
+      expect(one(root, ".body").style.height).toBe(`${Math.min(content, floorPx(16))}px`);
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
+  // jsdom has no layout, so the rule is read from the component's source: while deciding, the run scrolls, never clips.
+  test("while deciding, the run container's rules scroll and clip nothing", async () => {
+    const source = (await import("./components/App.svelte?raw")).default;
+    const rules = [...source.matchAll(/([^{}]*\.deciding[^{}]*)\{([^}]*)\}/g)].filter(([, selector]) => /\.run[^,]*\.deciding\s*$/.test(selector.trim()));
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [, , body] of rules) expect(body).not.toMatch(/overflow:\s*hidden/);
+    expect(rules.some(([, , body]) => /overflow-y:\s*auto/.test(body))).toBe(true);
+    const decision = (await import("./components/DecisionView.svelte?raw")).default;
+    expect(decision).not.toMatch(/\.decision \{[^}]*overflow: hidden/);
   });
 });
 
