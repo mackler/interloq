@@ -15,7 +15,7 @@
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import type { Widget } from "../state.ts";
   import type { DraftKey } from "../draft.ts";
   import { type Ending, endingOf } from "../../../src/input.ts";
@@ -90,7 +90,7 @@
    * buttons sit under the question; four or more keep the grid that fills the row with columns at least 14rem wide.
    */
   const besideColumns = (count: number): string | null => (answersOnly && count >= 2 && count <= 3 ? `repeat(${count}, minmax(0, 1fr))` : null);
-  type Section = "context" | "attached";
+  type Section = "context" | "history" | "attached";
   let opened = $state<Readonly<{ key: string | null; open: readonly Section[] }>>({ key: null, open: [] });
   const isOpen = (section: Section): boolean => opened.key === currentIdentity && opened.open.includes(section);
   const setOpen = (section: Section, open: boolean) => {
@@ -181,6 +181,15 @@
           </div>
         {/snippet}
         {@render sectionOf("context", CONTEXT_HEADING, contextBody)}
+      {/if}
+      <!-- Issue #133, decision Q1: the history apart from the context, under a heading of its own, closed like the others. -->
+      {#if hasText(question.history)}
+        {#snippet historyBody()}
+          <div class="context m3-font-body-medium" id={sectionId("history")}>
+            <QuestionText class="markdown" blocks={question.history} explanations={question.explanations} />
+          </div>
+        {/snippet}
+        {@render sectionOf("history", QUESTION_HISTORY_HEADING, historyBody)}
       {/if}
       {#if question.attached !== null}
         {@const attached = question.attached}

@@ -1206,6 +1206,26 @@ describe("App and the draft", () => {
   });
 });
 
+// Issue #133, decision Q1 (S12): the question page shows a question's history under a heading of its own, after the
+// Technical Context, closed when it appears; a question without a history shows no such heading.
+describe("QuestionPane: the history", () => {
+  const presented = (history: readonly Block[]): PresentedQuestion => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("The service keeps its data."), by: "agent" }, history, explanations: [], question: plainPieces("Which database?"), options: [], attached: null, decision: null });
+  const headings = (root: ParentNode) => [...root.querySelectorAll<HTMLButtonElement>(".pane button.toggle")].map((b) => b.textContent?.trim());
+  test("a history is a closed section after the Technical Context, which opens to its text", () => {
+    const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented(plainBlocks("You chose SQLite on 9 Oct 2026.")), presentedAt: null }, onAnswer: () => undefined });
+    expect(headings(root)).toEqual([prompts.CONTEXT_HEADING, prompts.QUESTION_HISTORY_HEADING]);
+    const toggle = sectionToggle(root, prompts.QUESTION_HISTORY_HEADING)!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    toggle.click();
+    flushSync();
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)?.textContent).toContain("You chose SQLite on 9 Oct 2026.");
+  });
+  test("a question with an empty history shows no History heading", () => {
+    const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented([]), presentedAt: null }, onAnswer: () => undefined });
+    expect(headings(root)).toEqual([prompts.CONTEXT_HEADING]);
+  });
+});
+
 // Decision support, plan step 4.2: the analysis over both chat columns.
 describe("DecisionView", () => {
   const el = (text: string, counterarguments: unknown[] = []) => ({ text, counterarguments });
