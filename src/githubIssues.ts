@@ -2,7 +2,7 @@
 // a state change, the next page of a listing and an id's issue number. Pure; the edge is src/github.ts.
 import { Option, Result, Schema } from "effect";
 import type { GithubLabels } from "./schema.ts";
-import { ITEM_STATES, type ItemId, type ItemState, type TrackerItem } from "./tracker.ts";
+import { ITEM_STATES, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 /**
  * The fields of GitHub's issue object the adapter reads; the many others are ignored. A label is an object with a
@@ -65,7 +65,7 @@ export const nextPage = (link: string | undefined): Option.Option<string> =>
   );
 
 /** The GitHub issue number an id names: a positive decimal integer without leading zeros; anything else is not a GitHub id. */
-export const issueNumberOf = (id: ItemId): Option.Option<number> => (/^[1-9][0-9]*$/u.test(id) && Number.isSafeInteger(Number(id)) ? Option.some(Number(id)) : Option.none());
+export const issueNumberOf = (id: ItemId): Option.Option<number> => positiveDecimalOf(id);
 
 /** The full label set of a state change: every stage label removed, the new state's added, the others kept in order. */
 export const relabeled = (current: readonly string[], labels: GithubLabels, to: ItemState): readonly string[] => {

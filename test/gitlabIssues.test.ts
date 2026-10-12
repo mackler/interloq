@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Option, Result } from "effect";
-import { CLOSE_BODY, type GitlabIssue, closedRefusalText, iidOf, itemOfIssue, noStateLabelText, relabelBody, stateOfIssue } from "../src/gitlabIssues.ts";
+import { CLOSE_BODY, GITLAB_CONNECT_ATTEMPTS, GITLAB_DESCRIPTION_LIMIT, type GitlabIssue, closedRefusalText, connectionRefused, descriptionTooLongText, gitlabPageProblem, gitlabStatusFailure, iidOf, nextPageOf, itemOfIssue, noStateLabelText, relabelBody, stateOfIssue } from "../src/gitlabIssues.ts";
+import { TrackerAuthRefused, TrackerItemNotFound } from "../src/errors.ts";
 import { GITLAB_LABELED_STATES } from "../src/schema.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { GITLAB_LABELS } from "./gitlabLabels.ts";
@@ -71,4 +72,53 @@ test("the refusal texts name the issue and what was not done", () => {
   assert.equal(closedRefusalText(42, "its state was not set to refined"), "issue #42 is closed, and Interloq never reopens a closed issue, so its state was not set to refined");
   assert.match(noStateLabelText({ _tag: "NoStateLabel", labels: ["bug", "refined"] }, 7), /issue #7 .*"bug", "refined"/u);
   assert.match(noStateLabelText({ _tag: "NoStateLabel", labels: [] }, 7), /issue #7 .*no label/u);
+});
+
+test("nextPageOf reads X-Next-Page: absent, empty or not a positive integer is the last page", () => {
+  const cases: ReadonlyArray<[string | undefined, number | null]> = [["2", 2], ["17", 17], [undefined, null], ["", null], ["0", null], ["-1", null], ["x", null], ["2.5", null], ["02", null]];
+  for (const [header, expected] of cases) assert.deepEqual(Option.getOrNull(nextPageOf(header)), expected, String(header));
+});
+
+test("gitlabPageProblem finds a repeated issue and a next page not after the current one", () => {
+  const page = [{ iid: 3 }, { iid: 2 }];
+  assert.equal(gitlabPageProblem(1, Option.some(2), new Set(), page), null);
+  assert.equal(gitlabPageProblem(1, Option.none(), new Set(), page), null);
+  assert.match(gitlabPageProblem(2, Option.some(3), new Set([2]), page) ?? "", /issue #2 came twice/u);
+  assert.match(gitlabPageProblem(1, Option.some(2), new Set(), [{ iid: 5 }, { iid: 5 }]) ?? "", /issue #5 came twice/u);
+  assert.match(gitlabPageProblem(2, Option.some(2), new Set(), page) ?? "", /next page 2 .* page 2/u);
+  assert.match(gitlabPageProblem(3, Option.some(1), new Set(), page) ?? "", /next page 1 .* page 3/u);
+});
+
+test("the status of GitLab's answer maps to the tracker's errors", () => {
+  const item = { kind: "item", id: "42" as ItemId } as const;
+  const listing = { kind: "listing", what: "the refined issues" } as const;
+  assert.equal(gitlabStatusFailure(200, "GET", item), null);
+  assert.equal(gitlabStatusFailure(204, "PUT", item), null);
+  for (const status of [401, 403]) assert.deepEqual(gitlabStatusFailure(status, "GET", item), new TrackerAuthRefused({ tracker: "GitLab", status }));
+  assert.deepEqual(gitlabStatusFailure(404, "GET", item), new TrackerItemNotFound({ id: "42" }));
+  for (const [status, target] of [[404, listing], [410, item], [422, item], [500, listing]] as const) {
+    const failure = gitlabStatusFailure(status, "GET", target);
+    assert.equal(failure?._tag, "TrackerUnreachable", String(status));
+    assert.match(failure?._tag === "TrackerUnreachable" ? failure.message : "", new RegExp(`GitLab answered GET ${target.kind === "item" ? "42" : "the refined issues"} with status ${status}`, "u"));
+  }
+});
+
+test("connectionRefused recognizes ECONNREFUSED in the cause chain and in an aggregate of refused errors, and nothing else", () => {
+  const refused = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+  const reset = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+  const fetchFailed = (cause: unknown) => new TypeError("fetch failed", { cause });
+  assert.equal(connectionRefused(refused), true);
+  assert.equal(connectionRefused(fetchFailed(refused)), true);
+  assert.equal(connectionRefused(fetchFailed(new AggregateError([refused, refused]))), true);
+  assert.equal(connectionRefused(fetchFailed(new AggregateError([refused, reset]))), false);
+  assert.equal(connectionRefused(fetchFailed(new AggregateError([]))), false);
+  assert.equal(connectionRefused(reset), false);
+  assert.equal(connectionRefused(fetchFailed(reset)), false);
+  assert.equal(connectionRefused("ECONNREFUSED"), false);
+  assert.equal(connectionRefused(undefined), false);
+  assert.equal(GITLAB_CONNECT_ATTEMPTS, 3);
+});
+
+test("descriptionTooLongText names the length and the limit", () => {
+  assert.equal(descriptionTooLongText({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: 1_000_001 }), "the refinement would make the issue's description 1000001 characters long, more than GitLab's limit of 1000000");
 });

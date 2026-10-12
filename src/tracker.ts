@@ -1,6 +1,6 @@
 // The project's issue tracker as Interloq sees it (issue #120, part 1): the items and their states, common to every
 // tracker. Pure; the port is `Tracker` in src/services.ts, the GitHub adapter src/github.ts.
-import { type Brand, Result, Schema } from "effect";
+import { type Brand, Option, Result, Schema } from "effect";
 
 /** Interloq's own vocabulary of states, in their order (developer's decision, issue #120; refining removed by his decision of 9 Oct 2026: an item is refined or unrefined). The config maps each to a tracker's own. */
 export const ITEM_STATES = ["unrefined", "refined", "implementing", "implemented", "deployed"] as const;
@@ -21,3 +21,9 @@ export const itemIdOf = (text: string): Result.Result<ItemId, InvalidItemId> =>
 
 /** What every tracker's item has in common: its id, title, body (a GitHub body of null is "") and state. */
 export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState }>;
+
+/**
+ * A positive decimal integer without leading zeros that is a safe integer, or none: the one rule of a GitHub issue
+ * number, a GitLab issue number (iid) and GitLab's next page.
+ */
+export const positiveDecimalOf = (text: string): Option.Option<number> => (/^[1-9][0-9]*$/u.test(text) && Number.isSafeInteger(Number(text)) ? Option.some(Number(text)) : Option.none());
