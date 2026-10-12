@@ -4,7 +4,7 @@
 import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
 import type { UiEvent } from "./uiEvents.ts";
-import type { RunUiState, UiFlag } from "./uiState.ts";
+import { DECISION_SECTIONS, type RunUiState, type UiFlag } from "./uiState.ts";
 import type { Choice, PromptKind } from "./userPrompts.ts";
 import { RunMode } from "./runMode.ts";
 import { ATTACHED_KINDS } from "./question.ts";
@@ -174,7 +174,7 @@ export const RunEventSchema = Schema.Union([
 ]);
 export const StampedSchema = Schema.Struct({ time: Str, event: RunEventSchema });
 const RunRecordSchema = Schema.Struct({ id: Int, events: Schema.Array(StampedSchema) });
-const UiScopeSchema = Schema.Union([tagged("DecisionEntry", { decision: Int, entry: Str }), tagged("RailPhase", { phase: Str }), tagged("RailBranch", { phase: Str, branch: Str })]);
+const UiScopeSchema = Schema.Union([tagged("DecisionEntry", { decision: Int, entry: Str }), tagged("RailPhase", { phase: Str }), tagged("RailBranch", { phase: Str, branch: Str }), tagged("DecisionSection", { decision: Int, section: Schema.Literals(DECISION_SECTIONS) })]);
 const UiFlagSchema = Schema.Struct({ scope: UiScopeSchema, open: Schema.Boolean });
 const RunUiStateSchema = Schema.Struct({ version: Int, choices: Schema.Array(UiFlagSchema) });
 const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { choiceOf, emptyUiState, isOpen, newer, type RunUiState, scopeKey, type UiFlag, type UiScope, withFlag } from "../src/uiState.ts";
+import { choiceOf, DECISION_SECTIONS, type DecisionSection, emptyUiState, isOpen, newer, openSectionOf, type RunUiState, scopeKey, type UiFlag, type UiScope, withFlag } from "../src/uiState.ts";
 
 // Issue #87 (decision G-R1-1 of its task): the shared state of a run's page, keyed by decision and entry.
 const RUNS = { numRuns: 200, seed: 20261006 };
@@ -9,7 +9,9 @@ const decisionEntry: fc.Arbitrary<Extract<UiScope, { _tag: "DecisionEntry" }>> =
 // Issue #63: the progress rail's phases and branches, keyed by short strings so that collisions are tried.
 const railPhase: fc.Arbitrary<UiScope> = fc.record({ _tag: fc.constant("RailPhase" as const), phase: fc.string({ maxLength: 3 }) }, { noNullPrototype: true });
 const railBranch: fc.Arbitrary<UiScope> = fc.record({ _tag: fc.constant("RailBranch" as const), phase: fc.string({ maxLength: 3 }), branch: fc.string({ maxLength: 3 }) }, { noNullPrototype: true });
-const scope: fc.Arbitrary<UiScope> = fc.oneof(decisionEntry, railPhase, railBranch);
+// Issue #133: a decision page's collapsed headings.
+const decisionSection: fc.Arbitrary<Extract<UiScope, { _tag: "DecisionSection" }>> = fc.record({ _tag: fc.constant("DecisionSection" as const), decision: fc.nat({ max: 3 }), section: fc.constantFrom(...DECISION_SECTIONS) }, { noNullPrototype: true });
+const scope: fc.Arbitrary<UiScope> = fc.oneof(decisionEntry, railPhase, railBranch, decisionSection);
 const flag: fc.Arbitrary<UiFlag> = fc.record({ scope, open: fc.boolean() }, { noNullPrototype: true });
 /** A state reached from the empty one by flags, as the server reaches it. */
 const reached: fc.Arbitrary<RunUiState> = fc.array(flag, { maxLength: 8 }).map((flags) => flags.reduce(withFlag, emptyUiState));
@@ -120,4 +122,39 @@ test("scopeKey is injective over every variant", () => {
     RUNS,
   );
   assert.notEqual(scopeKey({ _tag: "RailBranch", phase: "a:b", branch: "c" }), scopeKey({ _tag: "RailBranch", phase: "a", branch: "b:c" }));
+});
+
+// Issue #133 (the open point "one heading at a time"): which heading of a decision's page is open.
+test("openSectionOf is the section of the decision's last section flag if it opened it, and null otherwise", () => {
+  fc.assert(
+    fc.property(fc.array(flag, { maxLength: 12 }), fc.nat({ max: 3 }), (flags, decision) => {
+      const state = flags.reduce(withFlag, emptyUiState);
+      const own = flags.filter((f): f is UiFlag & { scope: { _tag: "DecisionSection"; decision: number; section: DecisionSection } } => f.scope._tag === "DecisionSection" && f.scope.decision === decision);
+      const last = own[own.length - 1];
+      assert.equal(openSectionOf(state, decision), last !== undefined && last.open ? last.scope.section : null);
+    }),
+    RUNS,
+  );
+});
+
+test("flags of another decision and of entries never change the open section", () => {
+  fc.assert(
+    fc.property(reached, fc.nat({ max: 3 }), fc.oneof(decisionEntry, railPhase, railBranch, decisionSection), fc.boolean(), (s, decision, other, open) => {
+      fc.pre(!(other._tag === "DecisionSection" && other.decision === decision));
+      assert.equal(openSectionOf(withFlag(s, { scope: other, open }), decision), openSectionOf(s, decision));
+    }),
+    RUNS,
+  );
+  const opened = withFlag(withFlag(emptyUiState, { scope: { _tag: "DecisionSection", decision: 1, section: "history" }, open: true }), { scope: { _tag: "DecisionSection", decision: 1, section: "context" }, open: true });
+  assert.equal(openSectionOf(opened, 1), "context", "opening a second heading closes the first");
+  assert.equal(openSectionOf(withFlag(opened, { scope: { _tag: "DecisionSection", decision: 1, section: "context" }, open: false }), 1), null, "closing it reopens none");
+});
+
+test("scopeKey stays injective with the decision's sections", () => {
+  fc.assert(
+    fc.property(scope, scope, (a, b) => {
+      assert.equal(scopeKey(a) === scopeKey(b), JSON.stringify(a) === JSON.stringify(b));
+    }),
+    RUNS,
+  );
 });

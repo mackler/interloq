@@ -11,7 +11,7 @@ import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
 import { decisionSubject, planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
-import type { RunUiState, UiScope } from "../src/uiState.ts";
+import { DECISION_SECTIONS, type RunUiState, type UiScope } from "../src/uiState.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { entryOf, workExecution , TEST_ROOT } from "./helpers.ts";
@@ -145,6 +145,8 @@ const uiScope: fc.Arbitrary<UiScope> = fc.oneof(
   // Issue #63: the progress rail's phases and branches.
   fc.record({ _tag: fc.constant("RailPhase" as const), phase: text }),
   fc.record({ _tag: fc.constant("RailBranch" as const), phase: text, branch: text }),
+  // Issue #133: a collapsed heading of a decision's page.
+  fc.record({ _tag: fc.constant("DecisionSection" as const), decision: nat, section: fc.constantFrom(...DECISION_SECTIONS) }),
 );
 const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, choices: fc.array(fc.record({ scope: uiScope, open: fc.boolean() }), { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(
