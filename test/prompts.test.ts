@@ -919,3 +919,10 @@ test("the questions and facts that point at attached material name it by its hea
     assert.ok(!/\b(above|below)\b/.test(text), text);
   }
 });
+
+// Issue #133: the decision page's heading is the question after "Your Choice:", and an equivalence link says what it names.
+test("decisionRegionName is YOUR_CHOICE and the question; equivalenceLinkName names the mark and the entry", () => {
+  assert.equal(prompts.YOUR_CHOICE, "Your Choice:");
+  assert.equal(prompts.decisionRegionName("Which database should the service use?"), "Your Choice: Which database should the service use?");
+  assert.equal(prompts.equivalenceLinkName("†", "Advantage 2:", "One file."), "†: the same point as Advantage 2: One file.");
+});

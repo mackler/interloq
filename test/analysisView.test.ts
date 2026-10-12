@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type ArguedColumnView, type ColumnView, symbolFor, viewOf } from "../src/analysisView.ts";
+import { type ArguedColumnView, type ColumnView, type EntryView, entriesOf, symbolFor, viewOf } from "../src/analysisView.ts";
 import * as prompts from "../src/prompts.ts";
 import type { Argument, DecisionAnalysis, Entry } from "../src/schema.ts";
 
@@ -45,10 +45,10 @@ test("columns in order; each entry's elements in the document's order; arguments
   assert.equal(prompts.DISADVANTAGES_HEADING, "Disadvantages:");
   const e1 = argued(view.columns[0]).advantages[0];
   assert.deepEqual(e1.elements.map((x) => x.text), ["c E1", "s E1", "i E1", "t E1", "e E1", "r E1", "pp E1", "pa E1", "l E1", "w E1"]);
-  assert.deepEqual(e1.elements[0].arguments.map((a) => [a.id, a.level, a.symbol]), [["A1", 1, null], ["A2", 2, null], ["A3", 3, "†"]]);
+  assert.deepEqual(e1.elements[0].arguments.map((a) => [a.id, a.level, a.symbol?.mark ?? null]), [["A1", 1, null], ["A2", 2, null], ["A3", 3, "†"]]);
   // E2 (first referenced in column order) gets *, E3 gets †; unreferenced entries get none.
   assert.deepEqual(view.columns.map(argued).flatMap((c) => [...c.advantages, ...c.disadvantages]).map((e) => [e.id, e.symbol]), [["E1", null], ["E2", "*"], ["E3", "†"], ["E4", null]]);
-  assert.equal(argued(view.columns[1]).advantages[0].elements[0].arguments[0].symbol, "*");
+  assert.equal(argued(view.columns[1]).advantages[0].elements[0].arguments[0].symbol?.mark, "*");
   assert.equal(view.recommendation, null);
 });
 
@@ -120,4 +120,46 @@ test("issue #87: an entry with a counterargument is disputed, one without is not
   const column = argued(viewOf(analysis).columns[0]);
   assert.equal(column.advantages[0].disputed, true);
   assert.equal(column.disadvantages[0].disputed, false);
+});
+
+// Issue #133: an equivalence symbol is a link to the entry it names, which the page finds by the entry's position.
+const viewEntries = (analysis: DecisionAnalysis): readonly EntryView[] => viewOf(analysis).columns.flatMap((c) => (c.kind === "argued" ? [...c.advantages, ...c.disadvantages] : []));
+const linked: DecisionAnalysis = {
+  decision: "d",
+  columns: [
+    { kind: "argued", option: "A", advantages: [entry("E1", [arg("A1", "E4")])], disadvantages: [entry("E2", [arg("A2", "E3")])] },
+    { kind: "unclear", option: "U", unclear: "what U means" },
+    { kind: "argued", option: "B", advantages: [entry("E3")], disadvantages: [entry("E4", [arg("A3", "E1")])] },
+  ],
+  recommendation: { option: "", reason: "" },
+};
+
+test("every entry's index is its position in entriesOf, unique and dense", () => {
+  const entries = viewEntries(linked);
+  assert.deepEqual(entries.map((e) => e.index), entriesOf(linked).map((_, i) => i));
+  assert.deepEqual(entries.map((e) => e.id), entriesOf(linked).map((e) => e.id));
+});
+
+test("every argument's symbol names, by index, the entry whose own symbol has the same mark", () => {
+  const entries = viewEntries(linked);
+  const symbols = entries.flatMap((e) => e.elements.flatMap((el) => el.arguments.flatMap((a) => (a.symbol === null ? [] : [a.symbol]))));
+  assert.equal(symbols.length, 3);
+  for (const s of symbols) {
+    const target = entries.find((e) => e.index === s.entry);
+    assert.ok(target !== undefined);
+    assert.equal(target.symbol, s.mark);
+  }
+  // The marks are symbolFor's, in the order of the referenced entries in the columns.
+  assert.deepEqual(entries.filter((e) => e.symbol !== null).map((e) => e.symbol), [0, 1, 2].map(symbolFor));
+});
+
+test("entries whose ids differ only in characters a DOM id would lose get distinct indexes, and a symbol names the right one", () => {
+  const view = viewEntries({
+    decision: "d",
+    columns: [{ kind: "argued", option: "A", advantages: [entry("a.b"), entry("a/b")], disadvantages: [entry("E9", [arg("A9", "a/b")])] }],
+    recommendation: { option: "", reason: "" },
+  });
+  const [dot, slash, e9] = view;
+  assert.notEqual(dot.index, slash.index);
+  assert.equal(e9.elements[0].arguments[0].symbol?.entry, slash.index);
 });

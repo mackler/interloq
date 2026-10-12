@@ -170,7 +170,7 @@
             {#if element.arguments.length > 0}
               <ul class="arguments">
                 {#each element.arguments as argument (argument.id)}
-                  <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{marked(argument.text, argument.symbol)}</li>
+                  <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{marked(argument.text, argument.symbol?.mark ?? null)}</li>
                 {/each}
               </ul>
             {/if}

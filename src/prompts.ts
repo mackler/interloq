@@ -2075,6 +2075,12 @@ export function disadvantageLabel(n: number): string {
   return `Disadvantage ${n}:`;
 }
 /** The heading of a decision's analysis in the page (S22): the decision and the number of its question. */
+/** The start of a decision page's heading, before the question (issue #133, the developer's instruction of 11 Oct 2026). */
+export const YOUR_CHOICE = "Your Choice:";
+/** The accessible name of a decision's analysis: its heading, "Your Choice: " and the question (issue #133). */
+export const decisionRegionName = (question: string): string => `${YOUR_CHOICE} ${question}`;
+/** The accessible name of an equivalence symbol's link (issue #133): the mark, and the entry it names by its label and title. */
+export const equivalenceLinkName = (mark: string, label: string, title: string): string => `${mark}: the same point as ${label} ${title}`;
 export function decisionViewHeading(k: number, question: number): string {
   return `Decision ${k}: the analysis of ${questionTitle(question)}`;
 }

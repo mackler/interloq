@@ -9,11 +9,20 @@
 import { ADVANTAGES_HEADING, advantageLabel, DISADVANTAGES_HEADING, disadvantageLabel } from "./prompts.ts";
 import type { Argument, DecisionAnalysis, Element, Entry } from "./schema.ts";
 
+/**
+ * The equivalence symbol an argument carries (issue #133): its mark, and the `index` of the entry its `equivalent_to`
+ * names, so that the page links the mark to that entry. An entry's id cannot name it in the page (ids may hold any
+ * character, and no sanitizer of them is injective); its position can.
+ */
+export type SymbolView = Readonly<{ mark: string; entry: number }>;
 /** `opposes`: the text argues against the column's option (decision Q7 of issue #35). */
-export type ArgumentView = Readonly<{ id: string; text: string; level: number; symbol: string | null; opposes: boolean }>;
+export type ArgumentView = Readonly<{ id: string; text: string; level: number; symbol: SymbolView | null; opposes: boolean }>;
 export type ElementView = Readonly<{ text: string; opposes: boolean; arguments: readonly ArgumentView[] }>;
-/** `disputed` (issue #87): some element of the entry has a counterargument, so a text under it argues the other side. */
-export type EntryView = Readonly<{ id: string; label: string; title: string; symbol: string | null; opposes: boolean; disputed: boolean; elements: readonly ElementView[] }>;
+/**
+ * `disputed` (issue #87): some element of the entry has a counterargument, so a text under it argues the other side.
+ * `index` (issue #133): the entry's position in entriesOf, unique in the analysis; `symbol` is its own mark.
+ */
+export type EntryView = Readonly<{ id: string; index: number; label: string; title: string; symbol: string | null; opposes: boolean; disputed: boolean; elements: readonly ElementView[] }>;
 export type ArguedColumnView = Readonly<{ kind: "argued"; option: string; advantagesHeading: string; advantages: readonly EntryView[]; disadvantagesHeading: string; disadvantages: readonly EntryView[] }>;
 export type ColumnView = ArguedColumnView | Readonly<{ kind: "unclear"; option: string; unclear: string }>;
 export type AnalysisView = Readonly<{ decision: string; columns: readonly ColumnView[]; recommendation: Readonly<{ option: string; reason: string }> | null }>;
@@ -48,10 +57,18 @@ export const viewOf = (analysis: DecisionAnalysis): AnalysisView => {
   const entries = entriesOf(analysis);
   const referenced = new Set(entries.flatMap((e) => elementsOf(e).flatMap((el) => flatten(el.counterarguments).map((a) => a.equivalent_to))).filter((id) => id !== ""));
   const symbols = new Map(entries.filter((e) => referenced.has(e.id)).map((e, i) => [e.id, symbolFor(i)] as const));
+  // Issue #133: each entry's position in entriesOf, by which an argument's symbol names its target.
+  const indexes = new Map(entries.map((e, i) => [e.id, i] as const));
+  const symbolOf = (id: string): SymbolView | null => {
+    const mark = symbols.get(id);
+    const entry = indexes.get(id);
+    return mark === undefined || entry === undefined ? null : { mark, entry };
+  };
   // A disadvantage opposes the option; each level of reply turns the side: a counterargument (odd level) opposes what an
   // advantage says and supports what a disadvantage says, a defense (even level) the reverse.
   const entryView = (e: Entry, i: number, disadvantage: boolean): EntryView => ({
     id: e.id,
+    index: indexes.get(e.id) ?? 0,
     label: disadvantage ? disadvantageLabel(i + 1) : advantageLabel(i + 1),
     title: e.title,
     symbol: symbols.get(e.id) ?? null,
@@ -60,7 +77,7 @@ export const viewOf = (analysis: DecisionAnalysis): AnalysisView => {
     elements: elementsOf(e).map((el) => ({
       text: el.text,
       opposes: disadvantage,
-      arguments: flatten(el.counterarguments).map((a) => ({ id: a.id, text: a.text, level: a.level, symbol: symbols.get(a.equivalent_to) ?? null, opposes: disadvantage !== (a.level % 2 === 1) })),
+      arguments: flatten(el.counterarguments).map((a) => ({ id: a.id, text: a.text, level: a.level, symbol: symbolOf(a.equivalent_to), opposes: disadvantage !== (a.level % 2 === 1) })),
     })),
   });
   return {
