@@ -54,13 +54,15 @@ const historyLines = (history: readonly ShownBlock[], indent: string): string | 
   return text.trim() === "" ? null : [`**${QUESTION_HISTORY_HEADING}**`, "", ...text.split("\n").map((l) => `> ${l}`)].map((l) => `${indent}${l}`).join("\n");
 };
 /**
- * The history inside an item of a list, after a line break; nothing when it is empty. Where more of the item follows
- * (`"continues"`), the quote ends with an empty line, since a line right after it would continue the quoted paragraph
- * (W2-R1-2); where the item ends there (`"ends"`), the next item's list marker ends the quote.
+ * The history inside an item of a list, as a block of its own; nothing when it is empty. Two empty lines bound it:
+ * one before the heading, since a heading line right after the question's line or a nested term item would continue
+ * that paragraph, so the heading would join the question or the last term (W3-R1-1); and, where more of the item
+ * follows (`"continues"`), one after the quote, since a line right after it would continue the quoted paragraph
+ * (W2-R1-2). Where the item ends there (`"ends"`), the next item's list marker ends the quote.
  */
 const historyInItem = (history: readonly ShownBlock[], item: "continues" | "ends"): string => {
   const lines = historyLines(history, "  ");
-  return lines === null ? "" : `\n${lines}${item === "continues" ? "\n" : ""}`;
+  return lines === null ? "" : `\n\n${lines}${item === "continues" ? "\n" : ""}`;
 };
 
 export function renderQuestions(list: RenderableQuestions): string {

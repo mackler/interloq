@@ -320,3 +320,40 @@ test("W2-R1-2: an entry with an empty history renders as before", () => {
   const list = { questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]])] };
   assert.ok(renderQuestions(list).startsWith("- **[Q1]** A or B?\n  Reason: "), renderQuestions(list));
 });
+
+// Issue #133, W3-R1-1: the history heading starts a block of its own in the item, read back as Markdown.
+const STRONG_HISTORY = `<strong>${prompts.QUESTION_HISTORY_HEADING}</strong>`;
+const nestedListOf = (html: string): string => {
+  const start = html.indexOf("<ul>", html.indexOf("<ul>") + 1);
+  return html.slice(start, html.indexOf("</ul>", start) + "</ul>".length);
+};
+const termsEntryWith = (senses: readonly string[]) => ({ id: "Q1", explanations: [{ id: "a", term: "service", senses }], context: para("c"), history: para("You chose B on 9 Oct."), question: plain("Use the service?"), reason: para("r"), proposed_answers: [] });
+
+test("W3-R1-1: renderTerms puts the history heading in no term item, before its quote", () => {
+  const rendered = renderTerms([termsEntryWith(["A program."])]);
+  assert.ok(Result.isSuccess(rendered));
+  const html = marked.parse(rendered.success, { async: false });
+  const nested = nestedListOf(html);
+  assert.ok(nested.includes("A program."), html);
+  assert.ok(!nested.includes(STRONG_HISTORY), html);
+  assert.ok(html.indexOf(STRONG_HISTORY) > html.indexOf(nested) + nested.length, html);
+  assert.ok(html.indexOf("<blockquote>") > html.indexOf(STRONG_HISTORY), html);
+  assert.ok(html.lastIndexOf("</li>") > html.indexOf("</blockquote>"), html);
+});
+
+test("W3-R1-1: renderTerms puts the history heading in none of a term's numbered senses", () => {
+  const rendered = renderTerms([termsEntryWith(["A program.", "A favor done."])]);
+  assert.ok(Result.isSuccess(rendered));
+  const html = marked.parse(rendered.success, { async: false });
+  const ol = html.slice(html.indexOf("<ol>"), html.indexOf("</ol>") + "</ol>".length);
+  assert.ok(ol.includes("A favor done."), html);
+  assert.ok(!ol.includes(STRONG_HISTORY), html);
+  assert.ok(!nestedListOf(html).includes(STRONG_HISTORY), html);
+});
+
+test("W3-R1-1: renderQuestions keeps the history heading out of the question's paragraph", () => {
+  const rendered = renderQuestions({ questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." })] });
+  const html = marked.parse(rendered, { async: false });
+  const question = html.slice(html.indexOf("[Q1]"), html.indexOf(STRONG_HISTORY));
+  assert.ok(question.includes("</p>"), html);
+});
