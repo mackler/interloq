@@ -9,7 +9,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { platformLayer } from "../src/platform.ts";
 import type { ServerMessage } from "../src/protocol.ts";
 import { makeRunManager } from "../src/runManager.ts";
-import { Planner, Reviewer, type StepReporter, Ui } from "../src/services.ts";
+import { Planner, type PlannerShape, Reviewer, type StepReporter, Ui } from "../src/services.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeWebServer } from "../src/webServer.ts";
 import { fakeTrackerOf, finished, issue, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf } from "./helpers.ts";
@@ -46,8 +46,10 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
       Effect.gen(function* () {
         const runUi = yield* Ui;
         let first = true;
-        return {
+        // Issue #122: a planning phase runs on a fresh session, so the wrapper is its own fresh session too.
+        const wrapped: PlannerShape = {
           ...probe.planner,
+          fresh: Effect.sync(() => wrapped),
           sessionId: probe.planner.sessionId,
           executing: (prompt: string, reporter: StepReporter) => probe.planner.executing(prompt, reporter),
           planning: (prompt: string, schema: Parameters<typeof probe.planner.planning>[1]) =>
@@ -61,6 +63,7 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
               );
             }),
         };
+        return wrapped;
       }),
     );
     return { ...wiring, ui: Effect.succeed(ui), agents: Layer.mergeAll(planner, Layer.succeed(Reviewer, probe.reviewer)) };

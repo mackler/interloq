@@ -687,3 +687,58 @@ test("issue #122: the second planning phase's prompt carries the task", async ()
   assert.match(probe.planner.prompts[1], /^Execution phase 1 has ended\./);
   assert.ok(probe.planner.prompts[1].includes(task), probe.planner.prompts[1]);
 });
+
+// Issue #122 (Q1): each planning phase and each work review runs in a Claude Code session of its own, as each execution
+// phase does (issue #117); within a phase one session holds its calls, and no session outlives its phase.
+const sessionOf = (probe: ReturnType<typeof testLayer>["probe"], prompt: string): string => {
+  const found = [...probe.planner.history].filter(([, prompts]) => prompts.includes(prompt)).map(([session]) => session);
+  assert.equal(found.length, 1, `the prompt ran on ${found.length} sessions`);
+  return found[0];
+};
+const stopWith = (input: string) => ({ status: "needs_input" as const, summary: "partial", question: "Which database?", remainingWork: "the rest", userInput: input });
+
+test("issue #122: two iterations: each planning phase and each work review runs on a session of its own, carrying no other phase", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "accepted"]]) }, { output: noQuestions, plan: "v2" }, { output: respond([["W2-R1-1", "rejected"]]) }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [issue("W2-R1-1")] }, { issues: [] }],
+    execs: [stopWith("PostgreSQL"), finished],
+  });
+  assert.equal(await runTask(layer, "The scripted task of item 1"), 2);
+  const [write, work1, revise, work2] = probe.planner.prompts;
+  const sessions = [write, work1, revise, work2].map((p) => sessionOf(probe, p));
+  assert.equal(new Set(sessions).size, 4, `${sessions}`);
+  for (const s of sessions) {
+    assert.notEqual(s, "test-session");
+    assert.ok(!probe.planner.execSessions.includes(s), `${s} is an execution's session`);
+  }
+  assert.deepEqual(probe.planner.history.get("test-session") ?? [], [], "an implementation run never calls the run's own session");
+  assert.deepEqual(probe.planner.history.get(sessions[3]), [work2], "work review 2's session holds its own prompts alone");
+  assert.deepEqual(probe.planner.history.get(sessions[2]), [revise], "planning phase 2's session holds no prompt of planning phase 1");
+});
+
+test("issue #122: within a planning phase the write and the response to the plan review share one session", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  assert.equal(await runTask(layer), 1);
+  const [write, response] = probe.planner.prompts;
+  assert.equal(sessionOf(probe, write), sessionOf(probe, response));
+  assert.notEqual(sessionOf(probe, write), "test-session");
+});
+
+test("issue #122: within a work review both rounds' responses and a schema repair turn share one session", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: { not: "a response" } }, { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }, { issues: [] }],
+    execs: [finished],
+    config: { maxIdleRounds: 5 },
+  });
+  assert.equal(await runTask(layer), 1);
+  const [write, invalid, repaired, second] = probe.planner.prompts;
+  const work = sessionOf(probe, invalid);
+  assert.equal(sessionOf(probe, repaired), work, "the repair turn ran on the response's session");
+  assert.equal(sessionOf(probe, second), work, "round 2's response ran on round 1's session");
+  assert.notEqual(sessionOf(probe, write), work);
+});

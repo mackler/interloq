@@ -76,7 +76,7 @@ test("(b) an accepted work issue leads to planning 2, execution 2 and a second w
   assert.equal((await capture.verify())?.stage, "logged");
 });
 
-// Issue #117: the execution ran in a session of its own; the work response, in the main session, is given its report.
+// Issue #117: the execution ran in a session of its own; the work response, in another of its own (issue #122), is given its report.
 test("issue #117: the work response's prompt carries the summary the execution, in its own session, returned", async () => {
   const done: ExecOutcome = { ...finished, summary: "the scripted summary of execution 1", remainingWork: "nothing left" };
   const { layer, probe } = testLayer(tempRepo(), {
@@ -91,7 +91,8 @@ test("issue #117: the work response's prompt carries the summary the execution, 
   assert.ok(response.includes(done.summary), response);
   assert.ok(response.includes(done.remainingWork));
   assert.ok(response.includes("v1"), "the plan as the execution's end left it");
-  assert.deepEqual(probe.planner.history.get("test-session")?.at(-2), response, "the response ran on the main session");
+  const responseSession = [...probe.planner.history].find(([, prompts]) => prompts.includes(response))?.[0];
+  assert.ok(responseSession !== undefined && responseSession !== "test-session" && !probe.planner.execSessions.includes(responseSession), "the response ran on a session of its own, not the execution's");
 });
 
 test("(b2) an accepted self-correction of an earlier work issue leaves for planning 2", async () => {

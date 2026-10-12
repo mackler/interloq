@@ -99,6 +99,12 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
     // W1-R1-2: the Decider names the phase as its phase line does, by the phases known when the phase begins.
     const inPhase = (phase: Phase) => <A, E, R>(body: Effect.Effect<A, E, R>) =>
       Effect.suspend(() => Effect.provideService(body, Decider, decider.at(phase, phase.kind === "questions" ? phaseName(phase, 1) : label(phase.kind, phase.n))));
+    /**
+     * Issue #122 (Q1): a planning phase's or a work review's body on a Claude Code session of its own, which every call of
+     * the phase reaches through the Planner service (its repair and corrective turns included), and which ends with it.
+     */
+    const ownSession = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, Exclude<R, Planner>> =>
+      Effect.flatMap(planner.fresh, (session) => Effect.provideService(body, Planner, session));
     // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120).
     yield* store.writeBaseline();
     // The SDK does not report which model answered a Codex turn; the configured one is all that can be said.
@@ -134,7 +140,7 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
         if (answered) yield* applyDecisions(subject);
 
         return yield* reviewLoop(subject);
-      }).pipe(inPhase({ kind: "planning", n: k }));
+      }).pipe(ownSession, inPhase({ kind: "planning", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "planning", n: k }, result: reviewed.result });
 
       // Execution phase K.
@@ -145,8 +151,8 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
         // however it ends, a started step becomes unfinished and the held plan is written (G-R1-2, P1-R1-4).
         const steps = yield* executionSteps(k);
         // Issue #117 (the developer's decision of 8 Oct 2026): each execution phase runs in a Claude Code session of its
-        // own, so that the run's main session does not grow by every execution's tool results; a transport retry and a
-        // usage-limit wait resume this session, which the planner it is called on holds.
+        // own, as each planning phase and work review does since issue #122; a transport retry and a usage-limit wait
+        // resume this session, which the planner it is called on holds.
         const executor = yield* planner.fresh;
         const outcome = yield* executor.executing(executePrompt(store.root, task, withRequirements), steps.report).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
@@ -170,7 +176,7 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
           const question = outcome.question.replace(/\s+/g, " ");
           yield* store.appendDecision({ subject: `stop in execution phase ${k} (${outcome.status}): ${question}`, id: null, decision: input, phase: k, round: 0 });
         }
-        // Issue #117: the work response, in the main session, is given the execution's report and the plan as its end left it.
+        // Issue #117: the work response, in a session of its own (issue #122), is given the execution's report and the plan as its end left it.
         const ended = Option.getOrNull(yield* store.loadPlan());
         return { stopped, work: { outcome, plan: ended === null ? "(no plan recorded)" : renderPlanMarkdown(ended) } satisfies WorkExecution };
       }).pipe(inPhase({ kind: "execution", n: k }));
@@ -181,7 +187,7 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "work", n: k } });
         yield* ui.say(workReviewBeganLine(label("work", k)));
         return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work));
-      }).pipe(inPhase({ kind: "work", n: k }));
+      }).pipe(ownSession, inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
       // The run is finished only when Claude Code reported finished and the work review converged.
       if (!stopped && work.result === "converged") return k;
