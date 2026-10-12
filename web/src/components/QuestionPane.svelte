@@ -206,7 +206,8 @@
   /* M3's title-medium (16/24, weight 500) set here, since the m3-font-* classes are absent from the build. */
   .head h2, .head > .question-text { flex: 1 1 16rem; min-width: 0; margin: 0; font-size: 1rem; line-height: 1.5rem; font-weight: 500; overflow-wrap: anywhere; }
   .number { margin-inline-end: 0.75em; }
-  .origin { margin: 0; color: var(--m3c-on-surface-variant); }
+  /* W1-R1-2: M3's body-small (12/16, 0.4 px tracking) set here, as the heading's title-medium is above. */
+  .origin { margin: 0; font-size: 0.75rem; line-height: 1rem; letter-spacing: 0.025rem; color: var(--m3c-on-surface-variant); }
   /* Issue #137: side by side where there is room, one per row where there is not; a card grows with its text, and a
      long unbroken token (a path) wraps. At 1280 and 640 px wide two cards share a row; at 390 px one fills it. */
   .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: 0.5rem; align-items: stretch; }

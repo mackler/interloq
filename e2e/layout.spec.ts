@@ -453,6 +453,13 @@ test.describe("the tests of the longChoices server, in order", () => {
       await startTask(page, LONG_CHOICES_URL);
       const heading = pane(page).locator("h2");
       await expect(heading).toHaveText(/^Question 1\s+How should a message show its time\?$/);
+      // W1-R1-2 of work review 1, and requirements.md's open point: the origin line stays below the heading in M3's
+      // body-small style (12/16), smaller than the heading's title-medium.
+      const typeOf = (l: Locator) => l.evaluate((e) => { const s = getComputedStyle(e); return { size: s.fontSize, line: s.lineHeight }; });
+      const [origin, title] = [await typeOf(pane(page).locator(".origin")), await typeOf(heading)];
+      expect(origin.size).toBe("12px");
+      expect(parseFloat(origin.size)).toBeLessThan(parseFloat(title.size));
+      expect(origin.line).toBe("16px");
       const group = pane(page).getByRole("group", { name: "Proposed answers" });
       const cards = group.getByRole("button");
       await expect(cards).toHaveCount(3);
