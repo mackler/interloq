@@ -10,6 +10,7 @@ import { defaultConfig } from "../src/schema.ts";
 import { decodeConfigText, loadConfig } from "../src/config.ts";
 import { platformLayer } from "../src/platform.ts";
 import { tempRepo } from "./helpers.ts";
+import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
 import { BOARD, LISTS } from "./trelloLists.ts";
 
 /** A project with a plan-review/ directory and a shared config file outside it. Neither file exists yet. */
@@ -208,6 +209,43 @@ test("the project's Trello tracker replaces a shared GitHub one whole", async ()
   fs.writeFileSync(shared, trackerText(GITHUB));
   fs.writeFileSync(projectFile, trackerText(TRELLO));
   assert.deepEqual((await load(project, shared)).tracker, TRELLO);
+});
+
+// The GitLab tracker: the project's path and four state labels, deployed being a closed issue; refused before any call
+// when the project or a label is wrong, as behavior 9 refuses an invalid configuration.
+const GITLAB = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
+
+test("a configuration file with a GitLab tracker loads", async () => {
+  const { project, shared, projectFile } = setup();
+  fs.writeFileSync(projectFile, trackerText(GITLAB));
+  assert.deepEqual((await load(project, shared)).tracker, GITLAB);
+});
+
+test("a GitLab tracker with a bad project, a missing state, a deployed label, a bad or shared label or a token is ConfigInvalid under tracker", () => {
+  const { refined: _refined, ...threeLabels } = GITLAB_LABELS;
+  const cases: ReadonlyArray<[string, unknown]> = [
+    ["a missing project", { kind: "gitlab", labels: GITLAB_LABELS }],
+    ["a blank project", { ...GITLAB, project: " " }],
+    ["a project without a namespace", { ...GITLAB, project: "iou-notes" }],
+    ["a missing state", { ...GITLAB, labels: threeLabels }],
+    ["a label for deployed", { ...GITLAB, labels: { ...GITLAB_LABELS, deployed: "Deployed" } }],
+    ["a label with a comma", { ...GITLAB, labels: { ...GITLAB_LABELS, refined: "Ready,Next" } }],
+    ["two states with one label", { ...GITLAB, labels: { ...GITLAB_LABELS, refined: GITLAB_LABELS.implementing } }],
+    ["a credential in the config", { ...GITLAB, token: "glpat-secret" }],
+  ];
+  for (const [what, tracker] of cases) {
+    const decoded = decodeConfigText("/p/config.json", trackerText(tracker));
+    assert.ok(Result.isFailure(decoded), `${what} was accepted`);
+    assert.equal(decoded.failure._tag, "ConfigInvalid", what);
+    assert.match(decoded.failure.path, /^tracker/u, what);
+  }
+});
+
+test("the project's GitLab tracker replaces a shared GitHub one whole", async () => {
+  const { project, shared, projectFile } = setup();
+  fs.writeFileSync(shared, trackerText(GITHUB));
+  fs.writeFileSync(projectFile, trackerText(GITLAB));
+  assert.deepEqual((await load(project, shared)).tracker, GITLAB);
 });
 
 // Issue #122: the amount above which one Claude Code request's cost is warned about, validated under behavior 9.

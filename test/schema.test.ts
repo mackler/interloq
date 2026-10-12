@@ -59,6 +59,8 @@ const usage = { version: 2, agent: "claude", time: "2026-09-24T00:00:00.000Z", s
 type PerState = { unrefined: string; refined: string; implementing: string; implemented: string; deployed: string };
 type GithubTrackerShape = { kind: "github"; owner: string; repo: string; labels: PerState };
 type TrelloTrackerShape = { kind: "trello"; board: string; lists: PerState };
+/** The GitLab tracker: four labels, deployed being a closed issue. */
+type GitlabTrackerShape = { kind: "gitlab"; project: string; labels: { unrefined: string; refined: string; implementing: string; implemented: string } };
 const config: typeof S.Config.Type = { ignorePaths: ["a.txt"], maxRounds: 5, maxIdleRounds: 2, maxTransportRetries: 3, transportRetryDelaySeconds: 5, costWarningUsd: 5, countMinor: true, execPermissionMode: "auto", claudeModel: null, codexModel: null, tracker: null };
 
 test("each schema decodes a valid sample and its type matches the legacy type", () => {
@@ -99,7 +101,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<legacy.ExecReport>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<legacy.ExecOutcome>>>();
   // Issue #26, Q1: the transport retry budget.
-  sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<Omit<legacy.Config, "questionPhase"> & { maxTransportRetries: number; transportRetryDelaySeconds: number; costWarningUsd: number; tracker: GithubTrackerShape | TrelloTrackerShape | null }>>>();
+  sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<Omit<legacy.Config, "questionPhase"> & { maxTransportRetries: number; transportRetryDelaySeconds: number; costWarningUsd: number; tracker: GithubTrackerShape | TrelloTrackerShape | GitlabTrackerShape | null }>>>();
 });
 
 test("each schema rejects a wrong enum value, a missing field and a wrong type", () => {

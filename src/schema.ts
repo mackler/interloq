@@ -362,8 +362,8 @@ const GitlabProjectPath = Schema.String.check(Schema.isPattern(/^[^/\s]+(\/[^/\s
 /** The project's GitLab tracker on gitlab.com: the project's path and the state labels. No credential: it comes from the environment. */
 export const GitlabTrackerConfig = Schema.Struct({ kind: Schema.Literal("gitlab"), project: GitlabProjectPath, labels: GitlabLabels });
 export type GitlabTrackerConfig = typeof GitlabTrackerConfig.Type;
-/** The project's issue tracker, a union tagged by `kind`: GitHub Issues or a Trello board. */
-export const TrackerConfig = Schema.Union([GithubTrackerConfig, TrelloTrackerConfig]);
+/** The project's issue tracker, a union tagged by `kind`: GitHub Issues, a Trello board or a GitLab project's issues. */
+export const TrackerConfig = Schema.Union([GithubTrackerConfig, TrelloTrackerConfig, GitlabTrackerConfig]);
 export type TrackerConfig = typeof TrackerConfig.Type;
 
 export const Config = Schema.Struct({
