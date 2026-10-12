@@ -2074,22 +2074,18 @@ export function advantageLabel(n: number): string {
 export function disadvantageLabel(n: number): string {
   return `Disadvantage ${n}:`;
 }
-/** The heading of a decision's analysis in the page (S22): the decision and the number of its question. */
 /** The start of a decision page's heading, before the question (issue #133, the developer's instruction of 11 Oct 2026). */
 export const YOUR_CHOICE = "Your Choice:";
 /** The accessible name of a decision's analysis: its heading, "Your Choice: " and the question (issue #133). */
 export const decisionRegionName = (question: string): string => `${YOUR_CHOICE} ${question}`;
 /** The accessible name of an equivalence symbol's link (issue #133): the mark, and the entry it names by its label and title. */
 export const equivalenceLinkName = (mark: string, label: string, title: string): string => `${mark}: the same point as ${label} ${title}`;
-export function decisionViewHeading(k: number, question: number): string {
-  return `Decision ${k}: the analysis of ${questionTitle(question)}`;
-}
 export const RECOMMENDATION_HEADING = "Recommendation";
 export function recommendedOption(option: string): string {
   return `Recommended option: ${option}`;
 }
 /** Below 390 px the analysis is not laid out (decided 28 Sep 2026). */
-export const ENLARGE_WINDOW_NOTICE = "The analysis needs a window at least 390 pixels wide. Widen the window to read it; you can answer the question below without it.";
+export const ENLARGE_WINDOW_NOTICE = "The analysis needs a window at least 390 pixels wide. Widen the window to read it; you can answer the question above without it.";
 /** Shown when the columns do not fit side by side (decision Q5). */
 export const SCROLL_SIDEWAYS_HINT = "Scroll sideways to see every option.";
 /** Issue #87: the accessible name of the mark beside a collapsed entry that hides a contradicting position. */

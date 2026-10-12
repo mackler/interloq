@@ -1,5 +1,13 @@
 <script lang="ts">
-  // The analysis of a decision (decision support), over both chat columns until the question is answered.
+  // The analysis of a decision (decision support), over both chat columns until the question is answered. Issue #133
+  // (the developer's instruction of 11 Oct 2026, decisions Q2, G-R1-1 and G-R1-2 of its requirements): top to bottom,
+  // the question as the heading, the choices under it, the columns of advantages and disadvantages, and then the
+  // headings of what the reader has already read (Technical Context, History, the question's attached material,
+  // Recommendation), each closed when the page appears and opened one at a time [aesthetic and minimalist design: the
+  // arguments are the one new thing, so they take the page; recognition rather than recall: the rest is one click
+  // away]. The question and the choices are at the top, so they are in view by construction, and the page does not
+  // scroll: an opened heading's text takes height from the columns, at most half, and scrolls inside itself
+  // (allotOpened of web/src/layout.ts) [visibility of system status].
   // One column per option, as docs/decision-making.md requires ("Layout and wording"), side by side at a minimum
   // readable width of 20rem (about 45 characters of body text) and scrolling sideways when they do not fit (decision
   // Q5) [aesthetic and minimalist design: nothing is squeezed to unreadable widths; match between the system and the
@@ -14,27 +22,54 @@
   // its headings (decision Q8). Issue #87: every entry starts collapsed to its label and whole title, opened one at a
   // time by the reader [aesthetic and minimalist design: a column is first a list of outcomes]; an entry that hides a
   // contradicting position carries a mark, and one that does not carries none, so the reader can skip it knowing no
-  // reasoning disputes it [visibility of system status]; which entries are open is the run's shared state, the same in
-  // every tab [consistency and standards; user control and freedom]. Below 390 px nothing is laid out and a
-  // message asks for a wider window; the prompt below stays usable [help users recognize and recover]. The
-  // conversation is one click away and back [user control and freedom].
+  // reasoning disputes it [visibility of system status]; which entries are open, and which heading, is the run's shared
+  // state, the same in every tab [consistency and standards; user control and freedom]. An equivalence symbol is a link
+  // that moves the focus to the entry it names, whose name says what it is (issue #133) [recognition rather than recall].
+  // Below 390 px no column is laid out and a message asks for a wider window; the answers and the headings stay usable
+  // [help users recognize and recover]. The conversation is one click away and back [user control and freedom].
+  import type { Snippet } from "svelte";
   import { Button } from "m3-svelte";
-  import { attachedHeading, CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
-  import { type EntryView, viewOf } from "../../../src/analysisView.ts";
-  import { allot, type Allotment, type AnalysisMinimum, boundedMinimum, closedHeightOf, questionFloorOf, regionsRoom, type Room, stripOf, UNBOUNDED_ROOM } from "../layout.ts";
+  import { attachedHeading, CONTEXT_BY_PROGRAM, CONTEXT_HEADING, decisionRegionName, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, equivalenceLinkName, QUESTION_HISTORY_HEADING, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION, YOUR_CHOICE } from "../../../src/prompts.ts";
+  import { type ArgumentView, type EntryView, viewOf } from "../../../src/analysisView.ts";
+  import { blocksText, piecesText } from "../../../src/pieces.ts";
+  import type { DecisionSection } from "../../../src/uiState.ts";
+  import { allotOpened } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
   import Disclosure from "./Disclosure.svelte";
 
-  /** `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the change asked for. */
   /**
-   * `onMinimum` (decision G-R1-2): the least height the analysis needs, for the layout to grow to, never more than
-   * `room`, the height the window has for the analysis beside the question and its first answer (unbounded if absent),
-   * except in a window lower than 450 px (`windowHeight`, issue #120), where it keeps the heading and the question whole.
+   * `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the
+   * change asked for; `openSection` and `onSection` (issue #133): the one heading open in the shared state, and the
+   * change asked for; `answers`: the choices, rendered under the heading.
    */
-  type Props = { event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; narrow: boolean; open: (entry: string) => boolean; onToggle: (entry: string, open: boolean) => void; onShowConversation: () => void; onMinimum?: (px: AnalysisMinimum) => void; room?: Room; windowHeight?: number };
-  let { event, narrow, open, onToggle, onShowConversation, onMinimum, room, windowHeight }: Props = $props();
+  type Props = {
+    event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>;
+    narrow: boolean;
+    open: (entry: string) => boolean;
+    onToggle: (entry: string, open: boolean) => void;
+    openSection: DecisionSection | null;
+    onSection: (section: DecisionSection, open: boolean) => void;
+    onShowConversation: () => void;
+    answers: Snippet;
+  };
+  let { event, narrow, open, onToggle, openSection, onSection, onShowConversation, answers }: Props = $props();
   const view = $derived(viewOf(event.analysis));
+  const presented = $derived(event.presented);
+  const hasText = (blocks: Parameters<typeof blocksText>[0]) => blocksText(blocks).join("").trim() !== "";
+  /** The headings present, in order: each only with its text (the open point "a heading with no text"). */
+  const sections = $derived<readonly Readonly<{ section: DecisionSection; heading: string }>[]>([
+    { section: "context", heading: CONTEXT_HEADING },
+    ...(hasText(presented.history) ? [{ section: "history" as const, heading: QUESTION_HISTORY_HEADING }] : []),
+    ...(presented.attached === null ? [] : [{ section: "attached" as const, heading: attachedHeading(presented.attached.kind) }]),
+    ...(view.recommendation === null ? [] : [{ section: "recommendation" as const, heading: RECOMMENDATION_HEADING }]),
+  ]);
+  /** The open heading, if it is one this page shows. */
+  const shownSection = $derived(sections.some((s) => s.section === openSection) ? openSection : null);
+  const sectionId = (section: DecisionSection) => `decision-${event.decision}-section-${section}`;
+  const entryButtonId = (index: number) => `decision-${event.decision}-entry-${index}`;
+  const entries = $derived(view.columns.flatMap((c) => (c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages])));
+
   let row = $state<HTMLElement | null>(null);
   let overflowing = $state(false);
   const measure = () => {
@@ -45,109 +80,57 @@
     measure();
   });
 
-  // Issues #79 and #81, decisions Q1 and G-R1-2: the heights of the regions. The columns keep a strip, ten lines or
-  // their height with every entry closed if that is less, measured when the analysis appears and when the window is
-  // resized, never when an entry opens, so nothing above or below the columns moves while the reader opens entries; the
-  // context and the recommendation take the room the strip leaves (allot of web/src/layout.ts). The page grows to the
-  // minimum total in the compact layout (`onMinimum`, used by App).
+  // Decision Q2: the height the opened text and the columns share is the section's, less its padding, every child but
+  // the columns and the opened body, and the gaps between the children; neither of those two enters the sum, so the
+  // measurement never depends on the last allotment. The text takes its part (allotOpened), the columns the rest.
   let section = $state<HTMLElement | null>(null);
-  let contextBox = $state<HTMLElement | null>(null);
-  let contextInner = $state<HTMLElement | null>(null);
-  let recommendationBox = $state<HTMLElement | null>(null);
-  let recommendationInner = $state<HTMLElement | null>(null);
-  let strip = $state(0);
-  let heights = $state<Allotment | null>(null);
+  let body = $state<HTMLElement | null>(null);
+  let bodyInner = $state<HTMLElement | null>(null);
+  let textHeight = $state<number | null>(null);
   const px = (v: string) => parseFloat(v) || 0;
-  const lineOf = (el: Element) => {
-    const cs = getComputedStyle(el);
-    return px(cs.lineHeight) || 1.2 * px(cs.fontSize);
-  };
-  const paddingOf = (el: Element) => {
+  const verticalPadding = (el: Element) => {
     const cs = getComputedStyle(el);
     return px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth);
   };
-  /** The strip, from each column's content (its unconstrained wrapper, not its scroller) less its own open bodies. */
-  const measureStrip = () => {
-    if (row === null) return;
-    const columns = [...row.querySelectorAll<HTMLElement>(".column")].map((c) => {
-      const inner = c.querySelector<HTMLElement>(".column-content");
-      const openBodies = [...c.querySelectorAll<HTMLElement>(".elements")].map((b) => {
-        const cs = getComputedStyle(b);
-        return b.getBoundingClientRect().height + px(cs.marginTop) + px(cs.marginBottom);
-      });
-      return { content: (inner?.getBoundingClientRect().height ?? 0) + paddingOf(c), openBodies };
-    });
-    // Whole pixels, so that sub-pixel layout after a resize cannot move the regions above and below by a fraction.
-    strip = Math.round(stripOf(closedHeightOf(columns), 10 * lineOf(row)));
-  };
-  /** The heights of the context and the recommendation, from the room the section has for them and the columns. */
-  // The task of L21: a text allotted less than its own vertical padding renders without it (inline), so the padding is
-  // read from the CSS while no inline override is set, and kept, so that the allotment never feeds its own input.
-  let declaredPadding = new Map<HTMLElement, number>();
-  const declaredPaddingOf = (el: HTMLElement) => {
-    if (el.style.paddingTop === "" && el.style.paddingBottom === "") declaredPadding = new Map([...declaredPadding, [el, paddingOf(el)]]);
-    return declaredPadding.get(el) ?? paddingOf(el);
-  };
-  /** Whether a text's allotment is below its own vertical padding, which it then gives up. */
-  const unpadded = (el: HTMLElement | null, height: number | undefined) => el !== null && height !== undefined && height < declaredPaddingOf(el);
-  // The hint above the columns, and the gap before the columns, belong to them: they are allotted with the columns'
-  // strip, and where the columns are given no height the hint is hidden and the gap taken back, so that neither pushes
-  // the question's first answer down. The hint is measured while it is shown and kept, so that hiding it does not
-  // change the allotment.
-  let hintCost = 0;
-  const columnsHidden = $derived(heights !== null && heights.columns <= 0);
-  const allotHeights = () => {
-    // Below 390 px there are no columns (W2-R1-1 of work review 2): the context takes the room left, with no strip.
-    if (section === null || contextBox === null || contextInner === null) return;
+  const allot = () => {
+    if (section === null || body === null || bodyInner === null) {
+      if (textHeight !== null) textHeight = null;
+      return;
+    }
     const kids = [...section.children] as HTMLElement[];
-    const span = kids.length === 0 ? 0 : kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
-    const free = section.clientHeight - paddingOf(section) - span;
-    const regions = [contextBox, row, recommendationBox].reduce((n, el) => n + (el?.getBoundingClientRect().height ?? 0), 0);
-    const contextPadding = declaredPaddingOf(contextBox);
-    // W4-R1-1 of work review 4: each text's minimum is two of its own lines plus its own region's padding and borders;
-    // below 390 px there is no recommendation, and its minimum is 0. Rounded up to whole pixels, so that a minimum is
-    // never less than two lines and the allotment does not move with a sub-pixel change of the room.
-    const minContext = Math.ceil(2 * lineOf(contextBox) + contextPadding);
-    const minRecommendation = narrow || recommendationBox === null ? 0 : Math.ceil(2 * lineOf(recommendationBox) + declaredPaddingOf(recommendationBox));
-    const recommendation = recommendationBox === null || recommendationInner === null ? 0 : recommendationInner.offsetHeight + declaredPaddingOf(recommendationBox);
-    // Whole pixels, as the strip and the minimums are, so that a sub-pixel change of the room after a reload or a resize
-    // does not move the regions (W4-R1-1).
-    // The task of L21 (finding P1-R2-1): the regions share what the area's room leaves after the heading, the question,
-    // the gaps and the section's padding.
-    const hint = section.querySelector<HTMLElement>(".hint");
-    if (hint !== null) hintCost = hint.getBoundingClientRect().height + px(getComputedStyle(section).rowGap);
-    const gap = row === null || narrow ? 0 : px(getComputedStyle(section).rowGap);
-    const shown = (hint === null ? 0 : hintCost) + (columnsHidden ? 0 : gap);
-    const withHint = (overflowing && !narrow ? hintCost : 0) + gap;
-    const fixed = span - regions - shown;
-    const allotted = allot({ available: Math.round(regions + shown + free), context: contextInner.offsetHeight + contextPadding, recommendation: narrow ? 0 : recommendation, strip: narrow ? 0 : strip + withHint, minContext, minRecommendation, room: regionsRoom(room ?? UNBOUNDED_ROOM, fixed + paddingOf(section)) });
-    const next = { ...allotted, columns: Math.max(0, allotted.columns - withHint) };
-    if (heights === null || Math.abs(next.context - heights.context) > 0.5 || Math.abs(next.recommendation - heights.recommendation) > 0.5 || Math.abs(next.columns - heights.columns) > 0.5) heights = next;
-    const minimum = fixed + paddingOf(section) + Math.min(next.context, minContext) + (recommendation === 0 ? 0 : Math.min(minRecommendation, recommendation)) + (narrow ? 0 : strip + withHint);
-    // Issue #120, the developer's decisions of 9 Oct 2026: below 450 px (IN_VIEW_MIN_HEIGHT) the minimum keeps the
-    // heading, the question and the section's padding whole, and the run area scrolls to the first answer; at 450 px and
-    // taller the room wins, and with a notice line the question's last line may be clipped.
-    onMinimum?.(boundedMinimum(Math.ceil(minimum), room ?? UNBOUNDED_ROOM, questionFloorOf(windowHeight ?? Number.POSITIVE_INFINITY, Math.ceil(fixed + paddingOf(section)))));
+    const fixed = kids.filter((k) => k !== row && k !== body).reduce((n, k) => n + k.getBoundingClientRect().height, 0);
+    const gaps = Math.max(0, kids.length - 1) * px(getComputedStyle(section).rowGap);
+    const shared = section.clientHeight - verticalPadding(section) - fixed - gaps;
+    const content = bodyInner.getBoundingClientRect().height + verticalPadding(body);
+    const next = allotOpened({ _tag: narrow ? "Alone" : "BesideColumns", shared, content }).text;
+    if (textHeight !== next) textHeight = next;
   };
   $effect(() => {
-    void view;
+    void shownSection;
     void narrow;
-    void room;
-    void windowHeight;
-    measureStrip();
-    allotHeights();
+    void view;
+    allot();
   });
   $effect(() => {
     if (section === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => allotHeights());
-    for (const el of [section, contextInner, recommendationInner]) if (el !== null) observer.observe(el);
+    const observer = new ResizeObserver(() => allot());
+    observer.observe(section);
+    for (const k of section.children) if (k !== row && k !== body) observer.observe(k);
+    if (bodyInner !== null) observer.observe(bodyInner);
     return () => observer.disconnect();
   });
   const resized = () => {
     measure();
-    measureStrip();
-    allotHeights();
+    allot();
   };
+  /** An equivalence symbol's link (issue #133): the focus moves to the entry it names, scrolled into view within the columns alone. */
+  const follow = (e: MouseEvent, index: number) => {
+    e.preventDefault();
+    const target = document.getElementById(entryButtonId(index));
+    target?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    target?.focus();
+  };
+  const targetOf = (argument: ArgumentView) => (argument.symbol === null ? undefined : entries.find((x) => x.index === argument.symbol?.entry));
   const marked = (text: string, symbol: string | null) => (symbol === null ? text : `${text} ${symbol}`);
 </script>
 
@@ -158,7 +141,7 @@
     <!-- Issue #87: the row is the entry's label and whole title (decision Q2), a native button, so that Enter and Space
          open it [flexibility and efficiency of use]; its body is rendered only while it is open [aesthetic and
          minimalist design]. The mark says that a text inside argues the other side [visibility of system status]. -->
-    <Disclosure {expanded} controls={bodyId} name={entryToggleName(entry.label, entry.title, expanded)} onToggle={(o) => onToggle(entry.id, o)}>
+    <Disclosure {expanded} id={entryButtonId(entry.index)} controls={bodyId} name={entryToggleName(entry.label, entry.title, expanded)} onToggle={(o) => onToggle(entry.id, o)}>
       {#snippet title()}
         <span class="title m3-font-title-small" class:opposes={entry.opposes} data-opposes={entry.opposes}><span class="label">{entry.label}</span> {marked(entry.title, entry.symbol)}</span>
         {#if entry.disputed}<span class="disputed" role="img" aria-label={ENTRY_DISPUTED_LABEL}>⚠</span>{/if}
@@ -170,7 +153,8 @@
             {#if element.arguments.length > 0}
               <ul class="arguments">
                 {#each element.arguments as argument (argument.id)}
-                  <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{marked(argument.text, argument.symbol?.mark ?? null)}</li>
+                  {@const target = targetOf(argument)}
+                  <li class="argument" class:opposes={argument.opposes} data-opposes={argument.opposes} data-level={argument.level} style:margin-left="{(argument.level - 1) * 1.25}rem">{argument.text}{#if argument.symbol !== null && target !== undefined}{" "}<a class="equivalence" href="#{entryButtonId(target.index)}" aria-label={equivalenceLinkName(argument.symbol.mark, target.label, target.title)} onclick={(e) => follow(e, target.index)}>{argument.symbol.mark}</a>{/if}</li>
                 {/each}
               </ul>
             {/if}
@@ -181,43 +165,21 @@
   </div>
 {/snippet}
 
-<section class="decision" aria-label={decisionViewHeading(event.decision, event.presented.number)} bind:this={section} style:--strip="{heights === null ? strip : Math.min(strip, heights.columns)}px">
+<section class="decision" aria-label={decisionRegionName(piecesText(presented.question))} bind:this={section}>
   <div class="head">
-    <!-- The developer's decision at the stop of execution phase 1 of the task of L21: where the box is too short for its
-         heading and its question, the heading stays on one line beside its button, cut with an ellipsis where the line
-         is too narrow, so that the question and its first answer stay in view [visibility of system status]; its whole
-         text is its title, shown on hover, and the region's name [recognition rather than recall]. -->
-    <h2 class="m3-font-title-medium" title={decisionViewHeading(event.decision, event.presented.number)}>{decisionViewHeading(event.decision, event.presented.number)}</h2>
+    <!-- Issue #133: the heading is the question, after "Your Choice:", in title-medium; it wraps, so the whole question
+         is read [visibility of system status]. -->
+    <h2><span class="your-choice">{YOUR_CHOICE}</span> <QuestionText class="markdown" pieces={presented.question} explanations={presented.explanations} /></h2>
     <Button variant="tonal" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
   </div>
-  <!-- S22: the question the analysis is for, as the user was shown it: its context apart, then the question itself
-       [recognition rather than recall: what is being decided stays beside the arguments]. -->
-  <div class="question">
-    <!-- S28: the question's terms carry their explanations here too; the analysis text does not. -->
-    <!-- S46 (W3-R1-3): the details the question is about (a permission's input, a pause's facts, an agreed question's
-         reason) follow the context in the same scrolling region. -->
-    <!-- Issue #79: the context takes the room that is free (decision Q1), its height set by allot; it scrolls only when
-         there is none. -->
-    <!-- The task of L21: where the window is shorter than the analysis's floor, the context yields last, below its own
-         padding and down to nothing, so that the question and its first answer stay in view. -->
-    <div class="question-context m3-font-body-medium" bind:this={contextBox} style:height={heights === null ? null : `${heights.context}px`} style:padding-top={unpadded(contextBox, heights?.context) ? "0px" : null} style:padding-bottom={unpadded(contextBox, heights?.context) ? "0px" : null} style:visibility={heights !== null && heights.context <= 0 ? "hidden" : null} aria-hidden={heights !== null && heights.context <= 0 ? "true" : undefined}>
-      <div class="context-inner" bind:this={contextInner}>
-        <!-- S59 (P9-R2-1): the context is Markdown, as in QuestionPane and the transcript, so a term split by inline
-             markup is marked here too. -->
-        <QuestionText class="context-text markdown" blocks={event.presented.context.blocks} explanations={event.presented.explanations} />
-        {#if event.presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
-        {#if event.presented.attached !== null}<div class="details"><p class="attached-heading">{attachedHeading(event.presented.attached.kind)}</p><QuestionText class="markdown" blocks={event.presented.attached.blocks} explanations={event.presented.explanations} /></div>{/if}
-      </div>
-    </div>
-    <p class="question-text m3-font-title-small"><QuestionText class="markdown" pieces={event.presented.question} explanations={event.presented.explanations} /></p>
-  </div>
+  <div class="answers">{@render answers()}</div>
   {#if narrow}
     <p class="narrow m3-font-body-medium" role="alert">{ENLARGE_WINDOW_NOTICE}</p>
   {:else}
-    {#if overflowing && !columnsHidden}<p class="hint m3-font-body-small">{SCROLL_SIDEWAYS_HINT}</p>{/if}
+    {#if overflowing}<p class="hint m3-font-body-small">{SCROLL_SIDEWAYS_HINT}</p>{/if}
     <!-- Issue #81: the region scrolls sideways when the columns do not fit, and each column scrolls on its own inside it
          (the developer's instruction of 1 Oct 2026), so a short column stays in view while a long one is read. -->
-    <div class="sideways" class:taken={columnsHidden} bind:this={row} aria-hidden={columnsHidden ? "true" : undefined}>
+    <div class="sideways" bind:this={row}>
       <div class="columns" style:grid-template-columns="repeat({view.columns.length}, minmax(20rem, 1fr))">
         {#each view.columns as column, i (i)}
           <article class="column m3-font-body-medium">
@@ -236,39 +198,47 @@
         {/each}
       </div>
     </div>
-    <!-- Issue #81: the recommendation has a region of its own below the columns, outside their scrollers, bounded by
-         allot as the context is, so a long recommendation never squeezes the columns below their strip (W1-R1-3)
-         [aesthetic and minimalist design; visibility of system status: it is always in view, and all of it can be reached]. -->
-    {#if view.recommendation !== null}
-      <section class="recommendation m3-font-body-medium" aria-label={RECOMMENDATION_HEADING} bind:this={recommendationBox} style:height={heights === null ? null : `${heights.recommendation}px`} style:padding-top={unpadded(recommendationBox, heights?.recommendation) ? "0px" : null} style:padding-bottom={unpadded(recommendationBox, heights?.recommendation) ? "0px" : null} style:visibility={heights !== null && heights.recommendation <= 0 ? "hidden" : null} aria-hidden={heights !== null && heights.recommendation <= 0 ? "true" : undefined}>
-        <div class="recommendation-inner" bind:this={recommendationInner}>
-          <h3 class="m3-font-title-small">{recommendedOption(view.recommendation.option)}</h3>
-          {#each view.recommendation.reason.split(/\n\s*\n/) as paragraph, i (i)}<p>{paragraph}</p>{/each}
-        </div>
-      </section>
-    {/if}
+  {/if}
+  <!-- Issue #133, the open points' defaults: the headings side by side, wrapping onto as few rows as fit, one open at a
+       time; Disclosure (issue #137's control), sized to its content. -->
+  <div class="sections">
+    {#each sections as s (s.section)}
+      <Disclosure fit expanded={shownSection === s.section} controls={sectionId(s.section)} onToggle={(o) => onSection(s.section, o)}>
+        {#snippet title()}<span class="section-title m3-font-title-small">{s.heading}</span>{/snippet}
+      </Disclosure>
+    {/each}
+  </div>
+  {#if shownSection !== null}
+    <div class="body m3-font-body-medium" id={sectionId(shownSection)} bind:this={body} style:height={textHeight === null ? null : `${textHeight}px`}>
+      <div class="body-inner" bind:this={bodyInner}>
+        {#if shownSection === "context"}
+          <QuestionText class="markdown" blocks={presented.context.blocks} explanations={presented.explanations} />
+          {#if presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
+        {:else if shownSection === "history"}
+          <QuestionText class="markdown" blocks={presented.history} explanations={presented.explanations} />
+        {:else if shownSection === "attached" && presented.attached !== null}
+          <QuestionText class="markdown" blocks={presented.attached.blocks} explanations={presented.explanations} />
+        {:else if shownSection === "recommendation" && view.recommendation !== null}
+          <div class="recommendation">
+            <h3 class="m3-font-title-small">{recommendedOption(view.recommendation.option)}</h3>
+            {#each view.recommendation.reason.split(/\n\s*\n/) as paragraph, i (i)}<p>{paragraph}</p>{/each}
+          </div>
+        {/if}
+      </div>
+    </div>
   {/if}
 </section>
 
 <style>
-  /* The task of L21: columns given no height are hidden, and the gap before them is taken back. */
-  .sideways.taken { visibility: hidden; margin-top: calc(-1 * var(--decision-gap)); }
-  .decision { --decision-gap: 0.5rem; display: flex; flex-direction: column; gap: var(--decision-gap); flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
-  .head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: nowrap; }
-  .head h2 { margin: 0; flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .decision { display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-lowest); }
+  .decision > :not(.sideways) { flex: none; }
+  .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+  /* M3's title-medium (16/24, weight 500) set here, since the m3-font-* classes are absent from the build. */
+  .head h2 { margin: 0; flex: 1 1 16rem; min-width: 0; font-size: 1rem; line-height: 1.5rem; font-weight: 500; overflow-wrap: anywhere; }
   .head > :global(button) { flex-shrink: 0; }
-  /* The question beside its analysis (S39, W2-R1-2): only the context is bounded and scrolls on its own; the question
-     text follows it outside any scrolled region, as in QuestionPane, so a long context cannot push it out of view. */
-  .question { flex-shrink: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-  .question-context { margin: 0; box-sizing: border-box; overflow-y: auto; flex-shrink: 0; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
-  .question-context .by { margin: 0.25rem 0 0; font-style: italic; }
-  .question-context :global(.details) { margin-top: 0.5rem; white-space: normal; }
-  .question-context :global(.details pre) { overflow-x: auto; }
-  .question-text { margin: 0; }
   .hint, .narrow { margin: 0; color: var(--m3c-on-surface-variant); }
-  /* Issue #81: the sideways region keeps at least the strip; its height is definite (a flex item with a zero basis), so
-     each column, as tall as the region and no taller, scrolls on its own; nothing here is clipped at its full height. */
-  .sideways { flex: 1 1 0; min-height: var(--strip); overflow-x: auto; overflow-y: hidden; }
+  /* The columns take the height the other regions leave (decision Q2), and each column scrolls on its own inside it. */
+  .sideways { flex: 1 1 0; min-height: 0; overflow-x: auto; overflow-y: hidden; }
   .columns { display: grid; gap: 0.75rem; height: 100%; min-height: 0; align-items: stretch; }
   .column { box-sizing: border-box; min-height: 0; max-height: 100%; overflow-y: auto; padding: 0 0.75rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container); user-select: text; }
   .column-content { display: flow-root; }
@@ -292,12 +262,16 @@
   .element { margin-bottom: 0.25rem; }
   .arguments { list-style: none; margin: 0.25rem 0 0.25rem 0.5rem; padding: 0; }
   .argument { margin-top: 0.25rem; padding-left: 0.5rem; border-left: 2px solid var(--m3c-outline-variant); }
+  /* Issue #133: the symbol is a link to the entry it names, in the text's own color, underlined as a link. */
+  .equivalence { color: inherit; }
   /* Issue #35 (Q7): what argues against the column's option, in the scheme's error color; the rest keeps the text color. */
   .opposes { color: var(--m3c-error); }
-  .recommendation { padding: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--m3c-secondary-container); color: var(--m3c-on-secondary-container); }
-  .recommendation { box-sizing: border-box; flex: 0 0 auto; overflow-y: auto; }
+  .sections { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; }
+  .section-title { min-width: 0; }
+  /* An opened heading's text: its height from allotOpened, scrolling inside itself beyond it. */
+  .body { box-sizing: border-box; overflow-y: auto; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
+  .body .by { margin: 0.25rem 0 0; font-style: italic; }
+  .body :global(.markdown pre) { overflow-x: auto; }
   .recommendation h3 { margin: 0; }
   .recommendation p { margin: 0.5rem 0 0; }
-  /* Issue #137: the heading of a question's attached material, named by attachedHeading of src/prompts.ts. */
-  .attached-heading { font-weight: 700; margin: 0.5rem 0 0.25rem; }
 </style>

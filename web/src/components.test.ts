@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { runRootOf } from "../../src/artifacts.ts";
-import { type Component, flushSync, mount, unmount } from "svelte";
+import { type Component, createRawSnippet, flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { promptOf } from "../../src/userPrompts.ts";
@@ -17,7 +17,7 @@ import type { ServerMessage } from "../../src/protocol.ts";
 import { countOfKind, foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import type { Block } from "../../src/schema.ts";
-import { EXPANDED_MIN_WIDTH, type Room } from "./layout.ts";
+import { EXPANDED_MIN_WIDTH } from "./layout.ts";
 import TopBar from "./components/TopBar.svelte";
 import MessageView from "./components/Message.svelte";
 import ChatPanel from "./components/ChatPanel.svelte";
@@ -50,6 +50,8 @@ afterEach(() => {
   document.body.innerHTML = "";
   localStorage.clear();
 });
+/** The answers a DecisionView mounted on its own renders under its heading (issue #133): none. */
+const noAnswers = createRawSnippet(() => ({ render: () => "<div></div>" }));
 const one = (root: ParentNode, selector: string): HTMLElement => {
   const el = root.querySelector<HTMLElement>(selector);
   if (el === null) throw new Error(`no element matching ${selector}`);
@@ -997,13 +999,13 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
-    expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
+    expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
     one(root, "button[name=conversation]").click();
     flushSync();
-    expect(root.querySelector('section[aria-label^="Decision 1"]')).toBe(null);
+    expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
     ws.receive({ type: "hello", location: "/p", current: { refinement: 2, implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
-    expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
+    expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
   });
 
   // Issue #87: opening an entry in the page sends the change of the run's shared state, keyed by decision and entry.
@@ -1089,7 +1091,7 @@ describe("App and the draft", () => {
     expect(root.querySelector("button[name=question]")).not.toBe(null);
     one(root, "button[name=analysis]").click();
     flushSync();
-    expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
+    expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
   });
 
   test("the right panel is titled Claude and Codex (issue #5)", async () => {
@@ -1235,61 +1237,100 @@ describe("DecisionView", () => {
       recommendation: { option: "SQLite", reason: "It serves every user sooner." },
     },
   } as never;
+  // Issue #133: the props the reordered page takes beyond the analysis: the open heading, its change, and the answers.
+  const answers = createRawSnippet(() => ({ render: () => `<div class="answers-stub">the answers</div>` }));
+  const newProps = { openSection: null, onSection: () => undefined, answers };
+  const withPresented = (p: object) => ({ ...(event as object), presented: { ...presented, ...p } }) as never;
+  const sectionButtons = (root: ParentNode) => [...root.querySelectorAll<HTMLButtonElement>(".sections button.toggle")];
+  const headingsOf = (root: ParentNode) => sectionButtons(root).map((b) => b.textContent?.trim());
 
-  // S22: the question beside its analysis, as the user was shown it: its number in the heading, its context and itself.
-  test("the view's heading names the decision and the question's number; the context and the question follow it", async () => {
+  // Issue #133 (the developer's instruction of 11 Oct 2026, requirements item 1): the heading is the question.
+  test("the heading reads Your Choice: and the question, and names the region; the old heading is gone", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    expect(root.querySelector("h2")?.textContent?.trim()).toBe(prompts.decisionViewHeading(2, 4));
-    expect(root.querySelector(".question-context")?.textContent).toMatch(/keeps its data in a database/);
-    expect(root.querySelector(".question-text")?.textContent?.trim()).toBe("Which database?");
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    expect(one(root, "h2").textContent?.replace(/\s+/g, " ").trim()).toBe(`${prompts.YOUR_CHOICE} Which database?`);
+    expect(one(root, "section.decision").getAttribute("aria-label")).toBe(prompts.decisionRegionName("Which database?"));
+    expect(root.textContent).not.toContain("the analysis of Question");
   });
 
-  // The developer's decision at the stop of execution phase 1 of the task of L21: the heading stays on one line beside its
-  // button, cut with an ellipsis where the line is too narrow, its whole text shown on hover.
-  test("the heading carries its whole text as its title, for the hover where it is cut", async () => {
+  // Requirements items 2 to 4: the choices under the heading, the columns under them, the headings after the columns.
+  test("in the DOM the answers follow the heading, the columns the answers, and the row of headings the columns", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    expect(root.querySelector("h2")?.getAttribute("title")).toBe(prompts.decisionViewHeading(2, 4));
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    const order = [".head", ".answers-stub", ".sideways", ".sections"].map((sel) => one(root, sel));
+    for (let i = 1; i < order.length; i++) expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING, `${i}`).toBeTruthy();
   });
 
-  // S39 (W2-R1-2): only the context scrolls; the question text is in no scrolled region of the view.
-  test("the question text is outside the scrolled context region, and only the context scrolls", async () => {
+  // Requirements item 4, decision G-R1-2 and the open point "a heading with no text": each heading present only with its text.
+  test("the headings: Technical Context always, History with a history, the attached material's with it, Recommendation with one", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    const context = one(root, ".question-context");
-    const asked = one(root, ".question-text");
-    expect(asked.closest(".question-context")).toBe(null);
-    expect(context.contains(asked)).toBe(false);
-    // jsdom applies no component styles, so the rules are read from the component's source: the context region scrolls,
-    // and no element between the question text and the view does.
-    const source = (await import("./components/DecisionView.svelte?raw")).default;
-    const rule = (selector: string) => source.match(new RegExp(`\\n\\s*${selector.replace(".", "\\.")} \\{([^}]*)\\}`))?.[1] ?? "";
-    expect(rule(".question-context")).toMatch(/overflow-y: auto/);
-    const section = one(root, "section.decision");
-    for (let el = asked.parentElement; el !== null && el !== section; el = el.parentElement) {
-      for (const cls of el.classList) if (!cls.startsWith("svelte-")) expect(rule(`.${cls}`), `.${cls} scrolls`).not.toMatch(/overflow/);
-    }
+    const full = show(DecisionView, { event: withPresented({ history: plainBlocks("You chose SQLite on 9 Oct 2026."), attached: { kind: "request", blocks: plainBlocks("rm -rf build") } }), narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    expect(headingsOf(full)).toEqual([prompts.CONTEXT_HEADING, prompts.QUESTION_HISTORY_HEADING, prompts.attachedHeading("request"), prompts.RECOMMENDATION_HEADING]);
+    const none = { ...(event as object), analysis: { ...(event as { analysis: object }).analysis, recommendation: { option: "", reason: "" } } } as never;
+    const bare = show(DecisionView, { event: none, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    expect(headingsOf(bare)).toEqual([prompts.CONTEXT_HEADING]);
+    const agreed = show(DecisionView, { event: withPresented({ origin: { kind: "clarification", id: "Q1" }, attached: { kind: "reason", blocks: plainBlocks("The plan depends on it.") } }), narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    expect(headingsOf(agreed)).toContain(prompts.attachedHeading("reason"));
+    expect(headingsOf(agreed)).not.toContain(prompts.attachedHeading("request"));
+    expect(headingsOf(full)).not.toContain(prompts.attachedHeading("reason"));
   });
 
-  // S46 (W3-R1-3): the question's details are shown with its context beside the analysis.
-  test("the question's details are shown in the context region, their pieces marked, the question outside", async () => {
+  test("every heading starts closed and fits its content; a click asks to open it; only the open section's body is rendered", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const details = [...prompts.toolInputBlocks({ command: "rm -rf build" }), { kind: "paragraph" as const, pieces: [...plainPieces("The **build** directory holds the "), ref("bundle", "b"), ...plainPieces(".")] }];
-    const withDetails = { ...presented, attached: { kind: "request" as const, blocks: details }, explanations: [{ id: "b", term: "bundle", senses: ["The built page."] }] };
-    const root = show(DecisionView, { event: { ...(event as object), presented: withDetails } as never, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    const context = one(root, ".question-context");
-    expect(context.textContent).toContain(prompts.attachedHeading("request"));
-    expect(context.querySelector("code")?.textContent).toBe("rm -rf build");
-    expect(context.querySelector("strong")?.textContent).toBe("build");
-    expect([...context.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["bundle"]);
-    expect(one(root, ".question-text").closest(".question-context")).toBe(null);
+    const asked: [string, boolean][] = [];
+    const event2 = withPresented({ history: plainBlocks("You chose SQLite on 9 Oct 2026.") });
+    const root = show(DecisionView, { event: event2, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, onSection: (section: string, open: boolean) => void asked.push([section, open]) });
+    const buttons = sectionButtons(root);
+    expect(buttons.map((b) => b.getAttribute("aria-expanded"))).toEqual(buttons.map(() => "false"));
+    for (const b of buttons) expect(b.classList.contains("fit")).toBe(true);
+    for (const b of buttons) expect(document.getElementById(b.getAttribute("aria-controls")!)).toBe(null);
+    buttons[1].click();
+    expect(asked).toEqual([["history", true]]);
+    const opened = show(DecisionView, { event: event2, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, openSection: "history" });
+    const [context, history] = sectionButtons(opened);
+    expect(history.getAttribute("aria-expanded")).toBe("true");
+    expect(document.getElementById(history.getAttribute("aria-controls")!)?.textContent).toContain("You chose SQLite on 9 Oct 2026.");
+    expect(document.getElementById(context.getAttribute("aria-controls")!)).toBe(null);
+  });
+
+  // The task: an equivalence symbol is a link to the entry it names, and the target says what it is when reached.
+  test("an equivalence symbol is a link to the entry it names, which takes the focus and says what it is", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const { symbolFor } = await import("../../src/analysisView.ts");
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    const view = viewOf((event as { analysis: Parameters<typeof viewOf>[0] }).analysis);
+    const target = view.columns.flatMap((c) => (c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages])).find((e) => e.symbol === symbolFor(0))!;
+    const link = [...root.querySelectorAll<HTMLAnchorElement>(".argument a")].find((a) => a.textContent === symbolFor(0))!;
+    expect(link).toBeTruthy();
+    const button = document.getElementById(link.getAttribute("href")!.slice(1))!;
+    expect(button.tagName).toBe("BUTTON");
+    expect(button.getAttribute("aria-label")).toBe(prompts.entryToggleName(target.label, target.title, true));
+    expect(link.getAttribute("aria-label")).toBe(prompts.equivalenceLinkName(symbolFor(0), target.label, target.title));
+    link.click();
+    expect(document.activeElement).toBe(button);
+  });
+
+  test("an equivalence link names the right one of two entries whose ids a DOM id would confuse", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const confusable = { ...(event as object), analysis: { decision: "d", columns: [{ kind: "argued", option: "SQLite", advantages: [entry("a.b"), entry("a/b")], disadvantages: [entry("E9", [arg("A9", "a/b")])] }, { kind: "argued", option: "PostgreSQL", advantages: [], disadvantages: [] }], recommendation: { option: "", reason: "" } } } as never;
+    const root = show(DecisionView, { event: confusable, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
+    const link = one(root, ".argument a");
+    const button = document.getElementById(link.getAttribute("href")!.slice(1))!;
+    expect(button.getAttribute("aria-label")).toBe(prompts.entryToggleName(prompts.advantageLabel(2), "Title a/b.", true));
+  });
+
+  // Issue #133 (S6): the answers beside the analysis carry no Help me decide, and two options share a row at every width.
+  test("beside an analysis the answers offer no Help me decide, and two options are two columns", () => {
+    const options = [{ label: "SQLite", sends: "1" }, { label: "PostgreSQL", sends: "2" }];
+    const root = show(QuestionPane, { widget: widget(prompts.optionOrTextPrompt, options), answersOnly: true, onAnswer: () => undefined });
+    expect([...root.querySelectorAll("button")].some((b) => b.textContent?.trim() === prompts.HELP_ME_DECIDE)).toBe(false);
+    expect(one(root, ".options").style.gridTemplateColumns).toBe("repeat(2, minmax(0, 1fr))");
   });
 
   test("one column per option in order, the heading Disadvantages: in each, arguments offset by level, symbols, the recommendation", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const shown: string[] = [];
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => void shown.push("conversation") });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => void shown.push("conversation"), ...newProps, openSection: "recommendation" });
     const columns = [...root.querySelectorAll<HTMLElement>(".column")];
     expect(columns.map((c) => c.querySelector("h3")?.textContent?.trim())).toEqual(["SQLite", "PostgreSQL"]);
     expect(columns.map((c) => c.querySelector(".disadvantages-heading")?.textContent?.trim())).toEqual(["Disadvantages:", "Disadvantages:"]);
@@ -1306,7 +1347,7 @@ describe("DecisionView", () => {
   // Issue #35: both headings, and the entries labeled within each heading.
   test("each column has the headings Advantages: and Disadvantages:, and each entry its label", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
     const columns = [...root.querySelectorAll<HTMLElement>(".column")];
     expect(columns.map((c) => c.querySelector(".advantages-heading")?.textContent?.trim())).toEqual([prompts.ADVANTAGES_HEADING, prompts.ADVANTAGES_HEADING]);
     expect(columns.map((c) => [...c.querySelectorAll(".entry .label")].map((l) => l.textContent?.trim()))).toEqual([[prompts.advantageLabel(1)], [prompts.disadvantageLabel(1)]]);
@@ -1315,7 +1356,7 @@ describe("DecisionView", () => {
   // Issue #35, decision Q7: exactly the texts the view says oppose the option are marked, and only those are colored.
   test("the texts marked as opposing the option are exactly those the view model says oppose it", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
     const view = viewOf((event as { analysis: Parameters<typeof viewOf>[0] }).analysis);
     const expected = view.columns.flatMap((c) =>
       c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages].flatMap((e) => [e.opposes, ...e.elements.flatMap((el) => [el.opposes, ...el.arguments.map((a) => a.opposes)])]),
@@ -1332,42 +1373,11 @@ describe("DecisionView", () => {
   test("an unclear column shows its statement and no headings", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const unclear = { ...(event as object), analysis: { decision: "d", columns: [{ kind: "argued", option: "SQLite", advantages: [entry("E1")], disadvantages: [] }, { kind: "unclear", option: "PostgreSQL", unclear: "It could mean a server or a hosted service." }], recommendation: { option: "", reason: "" } } } as never;
-    const root = show(DecisionView, { event: unclear, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event: unclear, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
     const column = [...root.querySelectorAll<HTMLElement>(".column")][1];
     expect(column.querySelector("h3")?.textContent?.trim()).toBe("PostgreSQL");
     expect(column.querySelector(".unclear")?.textContent?.trim()).toBe("It could mean a server or a hosted service.");
     expect(column.querySelector(".advantages-heading, .disadvantages-heading, .entry")).toBe(null);
-  });
-
-  // Issue #81 (W1-R1-3 kept): the recommendation has a region of its own below the columns, outside their scrollers.
-  test("the recommendation is a region of its own below the sideways region, outside the columns' scrollers", async () => {
-    const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    const sideways = one(root, ".sideways");
-    const recommendation = one(root, ".recommendation");
-    expect(sideways.contains(recommendation)).toBe(false);
-    expect(recommendation.closest(".column")).toBe(null);
-    expect(sideways.compareDocumentPosition(recommendation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(sideways.querySelectorAll(".column > .column-content").length).toBe(2);
-  });
-
-  // Decision Q1 (P1-R2-3): the strip is measured from each column's content wrapper, never from its scroller, whose
-  // scrollHeight is at least its own height.
-  test("the strip follows the columns' content wrappers, less their open bodies, not the scrollers", async () => {
-    const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: false, open: (id: string) => id === "E1", onToggle: () => undefined, onShowConversation: () => undefined });
-    const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
-    one(root, ".sideways").style.lineHeight = "100px";
-    const [first, second] = [...root.querySelectorAll<HTMLElement>(".column")];
-    for (const c of [first, second]) for (const name of ["scrollHeight", "clientHeight", "offsetHeight"]) define(c, name, 600);
-    const rect = (height: number) => () => ({ height, width: 0, x: 0, y: 0, top: 0, left: 0, bottom: height, right: 0, toJSON: () => ({}) }) as DOMRect;
-    first.querySelector<HTMLElement>(".column-content")!.getBoundingClientRect = rect(400);
-    second.querySelector<HTMLElement>(".column-content")!.getBoundingClientRect = rect(150);
-    const body = first.querySelector<HTMLElement>(".elements")!;
-    body.getBoundingClientRect = rect(300);
-    window.dispatchEvent(new Event("resize"));
-    flushSync();
-    expect(one(root, "section.decision").style.getPropertyValue("--strip")).toBe("150px");
   });
 
   // Issue #87: every entry starts collapsed, its row the label and the whole title; a disputed entry carries the mark.
@@ -1376,7 +1386,7 @@ describe("DecisionView", () => {
     const entries = view.columns.flatMap((c) => (c.kind === "unclear" ? [] : [...c.advantages, ...c.disadvantages]));
     const closed = async (toggled: [string, boolean][] = []) => {
       const { default: DecisionView } = await import("./components/DecisionView.svelte");
-      return show(DecisionView, { event, narrow: false, open: () => false, onToggle: (entry: string, open: boolean) => void toggled.push([entry, open]), onShowConversation: () => undefined });
+      return show(DecisionView, { event, narrow: false, open: () => false, onToggle: (entry: string, open: boolean) => void toggled.push([entry, open]), onShowConversation: () => undefined, ...newProps });
     };
     test("each entry is a collapsed button with its label and whole title; its elements, arguments and referents are absent", async () => {
       const root = await closed();
@@ -1390,9 +1400,8 @@ describe("DecisionView", () => {
       }
       expect(root.querySelector(".element, .argument, .elements")).toBe(null);
       expect(root.textContent).not.toContain("But A1.");
-      // Decision Q2 of the task: the whole title, wrapped, never cut. The analysis's own heading is the one text cut, by
-      // the developer's decision in the task of L21; its rule is removed before the check.
-      const source = (await import("./components/DecisionView.svelte?raw")).default.replace(/^\s*\.head h2 \{[^}]*\}$/m, "");
+      // Decision Q2 of the task: the whole title, wrapped, never cut; since issue #133 the analysis's heading wraps too.
+      const source = (await import("./components/DecisionView.svelte?raw")).default;
       expect(source).not.toMatch(/text-overflow:\s*ellipsis|line-clamp/);
     });
     test("the mark is on exactly the disputed entries, named for what it means", async () => {
@@ -1416,7 +1425,7 @@ describe("DecisionView", () => {
     test("an open entry shows its body, controlled by its button, and asks to close", async () => {
       const toggled: [string, boolean][] = [];
       const { default: DecisionView } = await import("./components/DecisionView.svelte");
-      const root = show(DecisionView, { event, narrow: false, open: (id: string) => id === entries[0].id, onToggle: (entry: string, open: boolean) => void toggled.push([entry, open]), onShowConversation: () => undefined });
+      const root = show(DecisionView, { event, narrow: false, open: (id: string) => id === entries[0].id, onToggle: (entry: string, open: boolean) => void toggled.push([entry, open]), onShowConversation: () => undefined, ...newProps });
       const first = one(root, ".entry > button.toggle");
       expect(first.getAttribute("aria-expanded")).toBe("true");
       expect(first.getAttribute("aria-label")).toBe(prompts.entryToggleName(entries[0].label, entries[0].title, true));
@@ -1426,148 +1435,15 @@ describe("DecisionView", () => {
     });
   });
 
-  // W2-R1-2 of work review 2 (W2-R1-1): below 390 px the context is bounded by the room the section leaves, as allot gives it
-  // with no strip and no recommendation, so a long context cannot push the question and the notice out of the view.
-  test("below 390 px the context takes the room the section leaves, by allot with no strip", async () => {
-    const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const { allot, UNBOUNDED_ROOM } = await import("./layout.ts");
-    const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
-    define(one(root, "section.decision"), "clientHeight", 300);
-    define(one(root, ".context-inner"), "offsetHeight", 1000);
-    window.dispatchEvent(new Event("resize"));
-    flushSync();
-    const expected = allot({ available: 300, context: 1000, recommendation: 0, strip: 0, minContext: 0, minRecommendation: 0, room: UNBOUNDED_ROOM }).context;
-    expect(one(root, ".question-context").style.height).toBe(`${expected}px`);
-  });
-
-  // W4-R1-1 of work review 4: each text's two-line minimum counts its own region's padding. jsdom applies no component
-  // styles, so the computed style is stubbed: lines of 15 px, the context's padding 8 + 8 px, the recommendation's 12 + 12.
-  test("cut to their minimums, the recommendation keeps two lines plus its own padding, and the minimum total includes it", async () => {
-    const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const minimums: number[] = [];
-    const root = show(DecisionView, { event, narrow: false, open: () => false, onToggle: () => undefined, onShowConversation: () => undefined, onMinimum: (px: number) => void minimums.push(px) });
-    const [contextBox, recommendationBox] = [one(root, ".question-context"), one(root, ".recommendation")];
-    const padding = new Map<Element, number>([[contextBox, 8], [recommendationBox, 12]]);
-    const original = window.getComputedStyle.bind(window);
-    const spy = vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element) => {
-      const p = `${padding.get(el) ?? 0}px`;
-      return { ...original(el), lineHeight: "15px", fontSize: "12.5px", paddingTop: p, paddingBottom: p, borderTopWidth: "0px", borderBottomWidth: "0px", marginTop: "0px", marginBottom: "0px" } as CSSStyleDeclaration;
-    });
-    try {
-      const define = (el: Element, name: string, value: number) => Object.defineProperty(el, name, { configurable: true, get: () => value });
-      define(one(root, "section.decision"), "clientHeight", 10);
-      define(one(root, ".context-inner"), "offsetHeight", 1000);
-      define(one(root, ".recommendation-inner"), "offsetHeight", 1000);
-      window.dispatchEvent(new Event("resize"));
-      flushSync();
-      const [minContext, minRecommendation] = [2 * 15 + 16, 2 * 15 + 24];
-      expect(parseFloat(recommendationBox.style.height), "the recommendation shows less than two lines").toBeGreaterThanOrEqual(minRecommendation);
-      expect(parseFloat(contextBox.style.height)).toBeGreaterThanOrEqual(minContext);
-      expect(minimums.at(-1), "the minimum total leaves out the recommendation's padding").toBe(minContext + minRecommendation);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  // The task of L21, by the developer's decision at the stop of execution phase 1: the analysis's minimum is bounded by
-  // the room the window has beside the question and its first answer, and where the floor exceeds that room, the
-  // columns yield first, then the recommendation, then the context, each down to 0 and below its own padding. jsdom
-  // applies no component styles and lays nothing out, so the computed style and the boxes are stubbed: lines of 15 px,
-  // the context's padding 8 + 8 px, the recommendation's 12 + 12, both texts 1,000 px of content, and the strip from
-  // the closed columns' content (ten lines being 150 px).
-  describe("the minimum bounded by the room", () => {
-    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
-    const laidOut = async (props: { room?: Room; columns: number; fixed: number }) => {
-      const { default: DecisionView } = await import("./components/DecisionView.svelte");
-      const minimums: number[] = [];
-      const root = show(DecisionView, { event, narrow: false, open: () => false, onToggle: () => undefined, onShowConversation: () => undefined, onMinimum: (px: number) => void minimums.push(px), ...(props.room === undefined ? {} : { room: props.room }) });
-      const section = one(root, "section.decision");
-      const [contextBox, recommendationBox] = [one(root, ".question-context"), one(root, ".recommendation")];
-      const padding = new Map<Element, number>([[contextBox, 8], [recommendationBox, 12]]);
-      const original = window.getComputedStyle.bind(window);
-      const spy = vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element) => {
-        const p = `${padding.get(el) ?? 0}px`;
-        return { ...original(el), lineHeight: "15px", fontSize: "12.5px", paddingTop: p, paddingBottom: p, borderTopWidth: "0px", borderBottomWidth: "0px", marginTop: "0px", marginBottom: "0px" } as CSSStyleDeclaration;
-      });
-      const define = (el: Element, name: string, value: unknown) => Object.defineProperty(el, name, { configurable: true, get: () => value });
-      // The heading and the question before the regions: the section's first child at 0, its last (the recommendation,
-      // laid out at no height) ending at `fixed`, so the section's children span `fixed` and the regions none of it.
-      const kids = [...section.children];
-      define(kids[0], "getBoundingClientRect", () => rect(0, 0));
-      define(kids[kids.length - 1], "getBoundingClientRect", () => rect(props.fixed, 0));
-      for (const c of root.querySelectorAll(".column-content")) define(c, "getBoundingClientRect", () => rect(0, props.columns));
-      define(section, "clientHeight", 10);
-      define(one(root, ".context-inner"), "offsetHeight", 1000);
-      define(one(root, ".recommendation-inner"), "offsetHeight", 1000);
-      window.dispatchEvent(new Event("resize"));
-      flushSync();
-      return { section, contextBox, recommendationBox, minimums, restore: () => spy.mockRestore() };
-    };
-    const [minContext, minRecommendation] = [2 * 15 + 16, 2 * 15 + 24];
-    test("a room smaller than the minimum: the minimum reported is the room, and the columns yield first", async () => {
-      const v = await laidOut({ room: 150 as Room, columns: 100, fixed: 0 });
-      try {
-        expect(v.minimums.at(-1)).toBe(150);
-        expect(parseFloat(v.section.style.getPropertyValue("--strip")), "the columns keep their strip").toBeLessThan(100);
-        expect(parseFloat(v.contextBox.style.height)).toBe(minContext);
-        expect(parseFloat(v.recommendationBox.style.height)).toBe(minRecommendation);
-      } finally {
-        v.restore();
-      }
-    });
-    test("with a heading and a question of 100 px, the regions share what the room leaves after them", async () => {
-      const v = await laidOut({ room: 300 as Room, columns: 170, fixed: 100 });
-      try {
-        const total = parseFloat(v.contextBox.style.height) + parseFloat(v.recommendationBox.style.height) + parseFloat(v.section.style.getPropertyValue("--strip"));
-        expect(total, "the regions take more than the room leaves").toBeLessThanOrEqual(200);
-        expect(v.minimums.at(-1)).toBe(300);
-      } finally {
-        v.restore();
-      }
-    });
-    test("a text allotted less than its own padding loses the padding, and a text allotted nothing is hidden", async () => {
-      const v = await laidOut({ room: 10 as Room, columns: 100, fixed: 0 });
-      try {
-        expect(v.recommendationBox.style.height).toBe("0px");
-        expect(v.recommendationBox.style.paddingTop).toBe("0px");
-        expect(v.recommendationBox.style.paddingBottom).toBe("0px");
-        expect(v.recommendationBox.style.visibility).toBe("hidden");
-        expect(v.recommendationBox.getAttribute("aria-hidden")).toBe("true");
-        expect(v.contextBox.style.height).toBe("10px");
-        expect(v.contextBox.style.paddingTop).toBe("0px");
-        expect(v.contextBox.style.paddingBottom).toBe("0px");
-        expect(v.contextBox.getAttribute("aria-hidden")).toBe(null);
-      } finally {
-        v.restore();
-      }
-    });
-    test("a room larger than the minimum: the minimum is reported whole, and no padding is taken away", async () => {
-      const v = await laidOut({ room: 1000 as Room, columns: 100, fixed: 0 });
-      try {
-        expect(v.minimums.at(-1)).toBe(minContext + minRecommendation + 100);
-        expect(v.section.style.getPropertyValue("--strip")).toBe("100px");
-        for (const box of [v.contextBox, v.recommendationBox]) {
-          expect(box.style.paddingTop).toBe("");
-          expect(box.style.visibility).toBe("");
-        }
-      } finally {
-        v.restore();
-      }
-    });
-  });
-
   test("below 390 px the analysis is not laid out; a message asks for a wider window", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
-    const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
+    const root = show(DecisionView, { event, narrow: true, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps });
     expect(root.querySelector(".column")).toBe(null);
     expect(one(root, "[role=alert]").textContent).toBe(prompts.ENLARGE_WINDOW_NOTICE);
     expect(prompts.ENLARGE_WINDOW_NOTICE).toMatch(/390/);
   });
 });
 
-// Issue #6: the whole run in the rail, the plan's stages and steps under its Implementation, and each step's full text
-// in a hand-built rich tooltip reachable by hover and by keyboard.
 describe("TimelineRail: the plan", () => {
   const recorded = (text = "Add the **schema**.") => ({
     stages: [
@@ -2234,8 +2110,9 @@ test("an answered question in the transcript marks its words; the question besid
   const { default: DecisionView } = await import("./components/DecisionView.svelte");
   const presented = asked;
   const analyzed = { _tag: "DecisionAnalyzed", decision: 1, question: "Use zod?", presented, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } as never;
-  const view = show(DecisionView, { event: analyzed, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-  expect([...view.querySelectorAll(".question .term")].length).toBe(2);
+  // Issue #133: the question is the heading; its context is under Technical Context, opened here.
+  const view = show(DecisionView, { event: analyzed, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, openSection: "context", onSection: () => undefined, answers: noAnswers });
+  expect([...view.querySelectorAll(".head .term, .body .term")].length).toBe(2);
 });
 
 // S51 (W3-R1-2 of work review 5): code in rendered Markdown keeps its whitespace in the pane, beside an analysis and in
@@ -2272,7 +2149,8 @@ describe("the shared rule for code in rendered Markdown", () => {
     openSections(pane);
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
-    const beside = one(show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined }), ".question-context");
+    // Issue #133: beside an analysis the attached material is read once its heading is opened.
+    const beside = one(show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, openSection: "attached", onSection: () => undefined, answers: noAnswers }), ".body");
     const message = show(MessageView, { message: { key: "1-1", author: "program", heading: "", body: "Q?", format: "text", time: "2026-09-30T10:00:00.000Z", showTime: false, band: null, question: presented } });
     for (const [what, root] of [["the pane", pane], ["beside an analysis", beside], ["the transcript", message]] as const) {
       const codes = [...root.querySelectorAll("code")].filter((c) => c.textContent === " a ");
@@ -2304,8 +2182,9 @@ describe("a word that refers to an explanation beside inline formatting in the c
   test("beside an analysis", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
-    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined });
-    check(one(root, ".question-context"));
+    // Issue #133: the context is under Technical Context, opened here.
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, openSection: "context", onSection: () => undefined, answers: noAnswers });
+    check(one(root, ".body"));
   });
 });
 

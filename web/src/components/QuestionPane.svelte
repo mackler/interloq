@@ -85,6 +85,11 @@
   const question = $derived(widget?.question ?? null);
   const hasText = (blocks: Parameters<typeof blocksText>[0]) => blocksText(blocks).join("").trim() !== "";
   // Issue #137: the sections open for the prompt `key`, the pending prompt's identity; another prompt finds none open.
+  /**
+   * Issue #133: beside a decision's analysis two or three options share one row at every width, so that both choice
+   * buttons sit under the question; four or more keep the grid that fills the row with columns at least 14rem wide.
+   */
+  const besideColumns = (count: number): string | null => (answersOnly && count >= 2 && count <= 3 ? `repeat(${count}, minmax(0, 1fr))` : null);
   type Section = "context" | "attached";
   let opened = $state<Readonly<{ key: string | null; open: readonly Section[] }>>({ key: null, open: [] });
   const isOpen = (section: Section): boolean => opened.key === currentIdentity && opened.open.includes(section);
@@ -126,7 +131,7 @@
       {#if question !== null && question.options.length > 0}
         <!-- S14 (issue #59): each option's label in bold on its own line and its description below it, as separate
              elements, so that the options can be compared by their labels alone [recognition rather than recall]. -->
-        <div class="options m3-font-body-medium" role="group" aria-label={PROPOSED_ANSWERS_LABEL}>
+        <div class="options m3-font-body-medium" role="group" aria-label={PROPOSED_ANSWERS_LABEL} style:grid-template-columns={besideColumns(question.options.length)}>
           {#each question.options as option, i (i)}
             {#if "token" in option.answer}
               {@const token = option.answer.token}
@@ -137,7 +142,7 @@
           {/each}
         </div>
       {:else if widget.options.length > 0}
-        <div class="options m3-font-body-medium" role="group" aria-label={PROPOSED_ANSWERS_LABEL}>
+        <div class="options m3-font-body-medium" role="group" aria-label={PROPOSED_ANSWERS_LABEL} style:grid-template-columns={besideColumns(widget.options.length)}>
           {#each widget.options as option, i (i)}
             <Card variant="outlined" onclick={() => send(option.sends)}>{option.label}</Card>
           {/each}
@@ -160,7 +165,7 @@
         {#if widget.asked.free === "line"}
           <TextFieldOutlined label="Your answer" name="answer" bind:value={text} onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter" && !composing(e)) { e.preventDefault(); send(text); } }} />
         {:else}
-          <TextFieldOutlinedMultiline label="Your message" name="answer" rows={3} bind:value={text} onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !composing(e)) { e.preventDefault(); send(text); } }} />
+          <TextFieldOutlinedMultiline label="Your message" name="answer" rows={answersOnly ? 1 : 3} bind:value={text} onkeydown={(e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !composing(e)) { e.preventDefault(); send(text); } }} />
         {/if}
         <div class="send-row">
           <p class="hint m3-font-body-small">{answerHint(widget.asked.free === "line" ? "line" : "message")}</p>
