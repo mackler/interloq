@@ -104,6 +104,8 @@ test("S11: a pause reaches the user as prose: no line said and no question shown
   assert.match(detailsText(pause), new RegExp(`^${prompts.pauseLead({ pause: "reraised", id: "P1-R1-1" })}`));
   assert.match(detailsText(pause), /Codex says: p\n\ne/);
   assert.equal(pause.attached?.kind, "reviewFacts");
+  // W2-R1-1: S2 requires the record to carry the heading the user reads above the pause's facts.
+  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("reviewFacts")}**`));
   const shown = [...probe.ui.said, ...presentedQuestions(probe.ui).flatMap((q) => [contextText(q), detailsText(q), questionText(q), ...q.options.map((o) => piecesText(o.description))])];
   for (const text of shown) for (const forbidden of ["{\n", '"duplicate_of"', "duplicate_of:", "superseded", "\\n"]) assert.ok(!text.includes(forbidden), `${forbidden} in: ${text}`);
 });

@@ -641,8 +641,9 @@ test("an execution that ends in AgentUnreachable halts the run, and a started st
   assert.equal(plan.stages[0].steps[0].status, "unfinished");
 });
 
-// S52 (W5-R1-1): at an execution stop without a question, Claude Code's description is in the details, not the question.
-test("a stop without a question presents Claude Code's description in the details", async () => {
+// S52 (W5-R1-1): at an execution stop without a question, Claude Code's description is in the question's attached
+// material, not the question.
+test("a stop without a question presents Claude Code's description in its attached material", async () => {
   const description = `The migration failed: ${"m".repeat(2500)}`;
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["retry with smaller steps"],
@@ -654,6 +655,8 @@ test("a stop without a question presents Claude Code's description in the detail
   const [q] = presentedQuestions(probe.ui).filter((p) => p.origin.kind === "execStop");
   assert.equal(piecesText(q.question), prompts.execStopQuestion());
   assert.deepEqual(q.attached, { kind: "stopReport", blocks: [{ kind: "document", markdown: description }] });
+  // W2-R1-1: S2 requires the record to carry the heading the user reads above Claude Code's description.
+  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("stopReport")}**`));
   assert.deepEqual(prompts.execStopDetails("  "), [{ kind: "paragraph", pieces: [{ text: prompts.EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] }]);
 });
 
