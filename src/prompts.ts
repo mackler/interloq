@@ -6,6 +6,7 @@ import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
+import type { RunMode } from "./runMode.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -920,11 +921,17 @@ export function implementationEndedLine(label: string, status: string): string {
   return `\n${label} ended with status: ${status}`;
 }
 /**
- * The end of a run names the run's main Claude Code session (issue #117): the planning, the interview and the responses to
- * reviews ran in it; each execution phase and each decision ran in a session of its own, which the usage line counts.
+ * The end of a run names its Claude Code sessions (issue #117, issue #122). A refinement run keeps one session for its
+ * question phase, which the line names; an implementation run gives every phase a session of its own and calls the
+ * run's own session never, so its line names none. The usage line after it counts them all.
  */
-export function mainSessionLine(root: RunRoot, id: string | null): string {
-  return `Claude Code main session id: ${id ?? "none"} (the planning, the interview and the responses to reviews; each implementation phase and each decision ran in a session of its own, counted below and listed in ${runDir(root)}/usage.jsonl)`;
+export function sessionsLine(root: RunRoot, mode: RunMode, mainId: string | null): string {
+  switch (mode) {
+    case "refinement":
+      return `Claude Code main session id: ${mainId ?? "none"} (the question phase; the terms, each question's context and each decision ran in a session of its own, counted below and listed in ${runDir(root)}/usage.jsonl)`;
+    case "implementation":
+      return `Claude Code sessions: each planning phase, implementation phase, work review and decision ran in a session of its own, counted below and listed with their costs in ${runDir(root)}/usage.jsonl`;
+  }
 }
 /** The start of a planning phase: the first plan, or a revision. */
 export function planningBeganLine(label: string, first: boolean): string {

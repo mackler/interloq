@@ -10,7 +10,8 @@ import { refinementOf, withoutRefinement, withRefinement } from "../src/refineme
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { mainSessionLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import type { RunMode } from "../src/runMode.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -19,14 +20,14 @@ const said = (probe: WiringProbe): string => probe.ui.said.join("\n");
 
 /** The run's root, as the program allocated it (issue #120): its records directory relative to plan-review/. */
 const rootOf = (probe: WiringProbe): RunRoot => path.relative(path.join(probe.project, "plan-review"), probe.dir).split(path.sep).join("/") as RunRoot;
-/** The session line of the run, naming its own usage.jsonl. */
-const sessionLine = (probe: WiringProbe, id: string | null): string => mainSessionLine(rootOf(probe), id);
-/** The session line of a run halted before its records directory was allocated: no session, whatever the path it names. */
-const NO_SESSION = /^Claude Code main session id: none \(/;
-/** The lines every ending prints last: the main Claude Code session id and the usage summary. */
-const assertTail = (probe: WiringProbe): void => {
+/** The session line of the run, naming its own usage.jsonl (issue #122: by the run's mode). */
+const sessionLine = (probe: WiringProbe, id: string | null, mode: RunMode = "implementation"): string => sessionsLine(rootOf(probe), mode, id);
+/** The session line of a run halted before its records directory was allocated: its words before the path it names. */
+const noSession = (line: string): boolean => (["implementation", "refinement"] as const).some((mode) => line.startsWith(sessionsLine("unallocated" as RunRoot, mode, null).split("plan-review/")[0]));
+/** The lines every ending prints last: the Claude Code sessions and the usage summary. */
+const assertTail = (probe: WiringProbe, mode: RunMode = "implementation"): void => {
   const lines = probe.ui.said.flatMap((text) => text.split("\n"));
-  assert.ok([sessionLine(probe, "test-session"), sessionLine(probe, null)].includes(lines.at(-2) ?? "") || NO_SESSION.test(lines.at(-2) ?? ""), lines.at(-2));
+  assert.ok([sessionLine(probe, "test-session", mode), sessionLine(probe, null, mode)].includes(lines.at(-2) ?? "") || noSession(lines.at(-2) ?? ""), lines.at(-2));
   assert.match(lines.at(-1) ?? "", /^Usage: /);
 };
 
@@ -66,7 +67,7 @@ test("an invalid config prints HALTED with the file and field and exits 1, befor
   fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ maxRounds: "5" }));
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: Expected number \(at maxRounds\)/);
-  assert.ok(probe.ui.said.flatMap((t) => t.split("\n")).some((l) => NO_SESSION.test(l)));
+  assert.ok(probe.ui.said.flatMap((t) => t.split("\n")).some(noSession));
   assertTail(probe);
   assert.deepEqual(probe.planner.prompts, []);
   assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialised");
@@ -199,20 +200,29 @@ test("interrupt one minute into a weekly usage-limit wait: the summary printed r
   assert.match(text, /Waited for Claude Code's usage limits: 1 time, 1:00 in all \(the last interrupted\)\./);
 });
 
-// Issue #117: with a session per execution phase the end names the run's main session as the main one, and the usage line
-// counts every session.
-test("issue #117: a run of two execution phases ends naming its main session as such, and the usage counts three sessions", async () => {
+// Issue #122: every phase of an implementation run has a session of its own, so its end names no main session; the
+// usage line counts each phase's session. A refinement run keeps one session, which its end names.
+test("issue #122: a run of two iterations ends with the implementation's sessions line, and the usage counts each phase's session", async () => {
   const { wiring, probe } = testWiring(tempRepo(), {
-    steps: [{ output: noQuestions, plan: "v1", usage: true }, { output: noQuestions, plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1", usage: true }, { output: noQuestions, plan: "v2", usage: true }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [{ status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "B" }, finished],
     execScripts: [{ usage: true }, { usage: true }],
   });
   assert.equal(await runProgram(probe, wiring), 0);
   const lines = probe.ui.said.flatMap((text) => text.split("\n"));
-  assert.equal(lines.at(-2), sessionLine(probe, "test-session"));
-  assert.match(sessionLine(probe, "test-session"), /main session/);
-  assert.match(lines.at(-1) ?? "", /Claude Code: 3 calls in 3 sessions/);
+  assert.equal(lines.at(-2), sessionLine(probe, null, "implementation"));
+  assert.doesNotMatch(lines.at(-2) ?? "", /main session/);
+  assert.match(lines.at(-1) ?? "", /Claude Code: 4 calls in 4 sessions/);
+});
+
+test("issue #122: a refinement run ends naming its one session", async () => {
+  const tracker = fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }], tracker, mode: "refinement" });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "refinement"), wiring))), 0);
+  const lines = probe.ui.said.flatMap((text) => text.split("\n"));
+  assert.equal(lines.at(-2), sessionLine(probe, "test-session", "refinement"));
+  assertTail(probe, "refinement");
 });
 
 // Issue #120, S5: a run is started from an item; the program reads it from the tracker and its task is the item's. The

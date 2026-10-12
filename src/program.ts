@@ -5,7 +5,7 @@ import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Laye
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe, type RunError, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
-import { blankItemText, itemStartedLine, mainSessionLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { blankItemText, itemStartedLine, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
@@ -133,7 +133,7 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
     /** The last two lines of every ending. */
     const tail = (sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
-        yield* ui.say(mainSessionLine(records.root, sessionId));
+        yield* ui.say(sessionsLine(records.root, start.mode, sessionId));
         const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map((s) => renderUsage(s, recordPath(records.root, { kind: "usage" }))), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);
       });

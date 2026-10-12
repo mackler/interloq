@@ -54,7 +54,8 @@ const cases: ReadonlyArray<readonly [string, string, readonly Artifact[]]> = [
   ["relayedFacts", prompts.relayedFacts(store.root, null), [{ kind: "plan" }]],
   ["planFilesDenied", prompts.planFilesDenied(store.root), [{ kind: "planFile" }, { kind: "plan" }]],
   ["stopRecordedText", prompts.stopRecordedText(store.root), [{ kind: "decisions" }]],
-  ["mainSessionLine", prompts.mainSessionLine(store.root, "s"), [{ kind: "usage" }]],
+  ["sessionsLine, refinement", prompts.sessionsLine(store.root, "refinement", "s"), [{ kind: "usage" }]],
+  ["sessionsLine, implementation", prompts.sessionsLine(store.root, "implementation", null), [{ kind: "usage" }]],
 ];
 
 test("every prompt that names a record names it in the run's own records directory, as the store writes it", () => {
