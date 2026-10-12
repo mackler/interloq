@@ -77,13 +77,25 @@ const bareNumbers = (text: string): readonly string[] =>
     return kind !== null && !NOT_A_KIND.has(kind[1].toLowerCase()) ? [] : [m[0]];
   });
 
-/** Every piece of a question that the reader is shown: the context's, the question's, the details' and every option's. */
-export const questionPieces = (q: Question): readonly Piece[] => [
-  ...blockPieces(q.context),
-  ...q.question,
-  ...blockPieces(q.details ?? []),
-  ...q.options.flatMap((o) => [...o.label, ...o.description]),
+/**
+ * The parts of a question written as blocks, each named (issue #133): the context, the history and the details. Every
+ * check of a question reads its blocks from this one list, so that a part added here is checked everywhere.
+ */
+const blockPartsOf = (q: Question): readonly Readonly<{ part: string; blocks: readonly ShownBlock[] }>[] => [
+  { part: "context", blocks: q.context },
+  { part: "history", blocks: q.history },
+  { part: "details", blocks: q.details ?? [] },
 ];
+/** The parts of a question written as one sequence of pieces, each named: the question, each option's label and description. */
+const piecePartsOf = (q: Question): readonly Readonly<{ part: string; pieces: readonly Piece[] }>[] => [
+  { part: "question", pieces: q.question },
+  ...q.options.flatMap((o, i) => [
+    { part: `option ${i + 1} label`, pieces: o.label },
+    { part: `option ${i + 1} description`, pieces: o.description },
+  ]),
+];
+/** Every piece of a question that the reader is shown: its blocks' and its sequences'. */
+export const questionPieces = (q: Question): readonly Piece[] => partsOf(q).flatMap((p) => p.pieces);
 /**
  * The plain runs of blocks (plainRuns of src/pieces.ts; W1-R1-2): a code piece is a literal value, never a bare number,
  * and it separates the words on either side of it. Each paragraph's and list item's runs, a document's Markdown whole; a
@@ -92,12 +104,12 @@ export const questionPieces = (q: Question): readonly Piece[] => [
 const blockRuns = (blocks: readonly ShownBlock[]): readonly string[] =>
   blocks.flatMap((b) => (b.kind === "paragraph" ? plainRuns(b.pieces) : b.kind === "list" ? b.items.flatMap((i) => plainRuns(i.pieces)) : b.kind === "document" ? [b.markdown] : []));
 /**
- * Every sequence of pieces of a question, each read on its own (S33): the question, each paragraph and list item of the
- * context and the details, each option's label and description. A document block has none.
+ * Every sequence of pieces of a question, each read on its own (S33): each paragraph and list item of its blocks, the
+ * question, each option's label and description. A document block has none.
  */
 const sequencesOf = (q: Question): readonly (readonly Piece[])[] => {
   const ofBlocks = (blocks: readonly ShownBlock[]) => blocks.flatMap((b) => (b.kind === "paragraph" ? [b.pieces] : b.kind === "list" ? b.items.map((i) => i.pieces) : []));
-  return [...ofBlocks(q.context), q.question, ...ofBlocks(q.details ?? []), ...q.options.flatMap((o) => [o.label, o.description])];
+  return [...blockPartsOf(q).flatMap((p) => ofBlocks(p.blocks)), ...piecePartsOf(q).map((p) => p.pieces)];
 };
 /**
  * The code pieces that stand right after another in one sequence (W5-R1-1, P6-R1-1): an empty plain piece writes nothing
@@ -114,15 +126,10 @@ const codeRefKey = (p: Piece): string => JSON.stringify([p.text, p.ref]);
  * exception to "no ref on a code piece" holds in that part alone, and as many times as it was supplied (P5-R1-1).
  */
 export type SuppliedRef = Readonly<{ part: string; piece: Piece }>;
-/** The parts of a question, each with its pieces, in the order of questionPieces. */
+/** The parts of a question, each with its pieces: its block parts, then its sequences. */
 export const partsOf = (q: Question): readonly Readonly<{ part: string; pieces: readonly Piece[] }>[] => [
-  { part: "context", pieces: blockPieces(q.context) },
-  { part: "question", pieces: q.question },
-  { part: "details", pieces: blockPieces(q.details ?? []) },
-  ...q.options.flatMap((o, i) => [
-    { part: `option ${i + 1} label`, pieces: o.label },
-    { part: `option ${i + 1} description`, pieces: o.description },
-  ]),
+  ...blockPartsOf(q).map(({ part, blocks }) => ({ part, pieces: blockPieces(blocks) })),
+  ...piecePartsOf(q),
 ];
 /** Every supplied code piece of a question (its code pieces with a ref), with its part. */
 export const suppliedOf = (q: Question): readonly SuppliedRef[] => partsOf(q).flatMap(({ part, pieces }) => pieces.filter((p) => p.code && p.ref !== "").map((piece) => ({ part, piece })));
@@ -152,7 +159,7 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
   const pieces = questionPieces(q);
   const ids = q.explanations.map((e) => e.id);
   const refs = new Set(pieces.filter((p) => p.ref !== "").map((p) => p.ref));
-  const plainWords = [...blockRuns(q.context), ...plainRuns(q.question), ...blockRuns(q.details ?? []), ...q.options.flatMap((o) => [...plainRuns(o.label), ...plainRuns(o.description)])];
+  const plainWords = [...blockPartsOf(q).flatMap((p) => blockRuns(p.blocks)), ...piecePartsOf(q).flatMap((p) => plainRuns(p.pieces))];
   return [
     ...(blocksText(q.context).join("").trim() === "" ? [{ kind: "blankContext" as const, subject: "" }] : []),
     ...(/\?["'”’)\]]*$/u.test(piecesText(q.question).trim()) ? [] : [{ kind: "notLast" as const, subject: "" }]),

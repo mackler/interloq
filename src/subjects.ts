@@ -75,6 +75,7 @@ const LIST_PROBLEMS: readonly QuestionProblem["kind"][] = ["blankContext", "notL
 /** The fields of an agreed entry whose wording the division into pieces keeps (decision Q1), each compared by its words and blocks. */
 const wordingChanges = (agreed: QuestionsFile["questions"][number], entry: TermsEntry): readonly QuestionProblem[] => [
   ...(sameBlocks(entry.context, agreed.context) ? [] : ["context"]),
+  ...(sameBlocks(entry.history, agreed.history) ? [] : ["history"]),
   ...(samePieces(entry.question, agreed.question) ? [] : ["question"]),
   ...(sameBlocks(entry.reason, agreed.reason) ? [] : ["reason"]),
   ...(entry.proposed_answers.length === agreed.proposed_answers.length && entry.proposed_answers.every((a, i) => samePieces(a.label, agreed.proposed_answers[i].label) && samePieces(a.description, agreed.proposed_answers[i].description)) ? [] : ["proposed_answers"]),
