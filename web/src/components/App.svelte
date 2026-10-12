@@ -355,9 +355,10 @@
   /* Issue #133: the decision page holds the question, its answers, the columns and the headings, in that order; the
      question and its answers are at the page's top, in view when it appears. Every control stays, and where the window
      cannot hold them and the columns the run scrolls (the developer's decision of 12 Oct 2026, "Every control stays,
-     windows scroll"): the decision row is at least its content and fills the window otherwise. The rail contributes no
+     windows scroll"): the decision row is at least its content and fills the window otherwise, and the row below it
+     (the notice and the activity line) is its content, however low the window. The rail contributes no
      height of its own (contain: size), so that its content never stretches the rows. */
-  .run.deciding { grid-template-rows: minmax(min-content, 1fr) auto; overflow-y: auto; }
+  .run.deciding { grid-template-rows: minmax(min-content, 1fr) min-content; overflow-y: auto; }
   .run.deciding > :global(.rail) { grid-row: 1 / 3; contain: size; }
   .decision-area { grid-column: 2 / 4; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .run.paused { grid-template-rows: auto minmax(0, 1fr); }

@@ -1,9 +1,9 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, startFromTab, test } from "./fixtures.ts";
-import { attachedHeading, CONTEXT_HEADING, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
-import { IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
+import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both panels are side by side; below it, one panel at a time, chosen by its title, with a badge for the other's
@@ -101,67 +101,153 @@ const answerContinue = async (page: Page) => {
 // narrow and in a wide window; a card is a native button, chosen by keyboard, and the transcript keeps the full line.
 const LONG_CHOICES_URL = layoutUrl("longChoices");
 // Decision support (decision Q5): one column per option at every allowed width, side by side when they fit, scrolling
-// sideways when they do not; below 390 px a message instead.
+// sideways when they do not; below 390 px a message instead. Issue #133 (the developer's instruction of 11 Oct 2026,
+// decision G-R1-1 of its requirements): the page shows the question as its heading, the choices under it, the columns,
+// then the collapsed headings; by the developer's decision of 12 Oct 2026 ("Every control stays, windows scroll") every
+// control stays under the question and the run scrolls where the window cannot hold them and the columns, which keep a
+// floor of 15rem.
 const DECIDE_URL = layoutUrl("decide");
-/** The question text and the notice lie inside the analysis's box (W2-R1-1 of work review 2). */
-const questionAndNoticeInside = async (analysis: Locator) => {
-  const area = await box(analysis);
-  for (const [name, part] of [["the question", analysis.locator(".question-text")], ["the notice", analysis.getByRole("alert")]] as const) {
-    const b = await box(part);
-    expect(b.y, `${name}'s top is above the analysis`).toBeGreaterThanOrEqual(area.y - 1);
-    expect(b.y + b.height, `${name} is below the analysis's end`).toBeLessThanOrEqual(area.y + area.height + 1);
-  }
-};
-const openAnalysis = async (page: Page) => {
-  await startTask(page, DECIDE_URL);
+const analysisOf = (page: Page) => page.getByRole("region", { name: new RegExp(`^${YOUR_CHOICE} `) });
+const cards = (page: Page) => page.getByRole("group", { name: "Proposed answers" }).getByRole("button");
+const sectionButtons = (analysis: Locator) => analysis.locator(".sections button.toggle");
+const sectionButton = (analysis: Locator, heading: string) => sectionButtons(analysis).filter({ hasText: heading });
+const bodyOf = async (page: Page, button: Locator) => page.locator(`#${await button.getAttribute("aria-controls")}`);
+const openAnalysisAt = async (page: Page, url: string, width: number, height: number) => {
+  await page.setViewportSize({ width, height });
+  await startTask(page, url);
   await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-  const analysis = page.getByRole("region", { name: /^Decision 1: / });
+  const analysis = analysisOf(page);
   await expect(analysis).toBeVisible();
   return analysis;
 };
-// W4-R1-1: in the compact layout a long analysis scrolls inside a bounded area, and the answer controls stay in view
-// (a tall window) or can be scrolled into the run's view (a short window, or the progress opened), never overlapping
-// the analysis or each other and never clipped.
-const openLongAnalysis = async (page: Page, width: number, height: number) => {
-  await page.setViewportSize({ width, height });
-  await startTask(page, layoutUrl("decideLong"));
-  await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-  const analysis = page.getByRole("region", { name: /^Decision 1: / });
-  await expect(analysis).toBeVisible();
-  return {
-    analysis,
-    run: page.locator("main.run"),
-    area: page.locator(".decision-area"),
-    // Issue #81: the region that scrolls sideways, each column's own vertical scroller, and the recommendation's region.
-    sideways: analysis.locator(".sideways"),
-    columns: analysis.locator(".column"),
-    recommendation: analysis.locator(".recommendation"),
-    prompt: page.locator("section.pane"),
-    activity: page.locator("[data-activity]"),
-  };
+const openAnalysis = (page: Page, width = 1280, height = 800) => openAnalysisAt(page, DECIDE_URL, width, height);
+const openLongAnalysis = (page: Page, width: number, height: number) => openAnalysisAt(page, layoutUrl("decideLong"), width, height);
+/** Two animation frames, after which a layout that measures on resize has settled. */
+const settled = (page: Page) => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+/** The element's whole box lies in the window. */
+const inWindow = async (page: Page, locator: Locator, what: string) => {
+  const b = await box(locator);
+  const height = page.viewportSize()?.height ?? 0;
+  expect(b.y, `${what}'s top is above the window`).toBeGreaterThanOrEqual(-1);
+  expect(b.y + b.height, `${what} is below the window`).toBeLessThanOrEqual(height + 1);
 };
-type Parts = Awaited<ReturnType<typeof openLongAnalysis>>;
+const runNotScrolled = async (page: Page) => expect(await page.locator("main.run").evaluate((el) => el.scrollTop), "the run scrolled").toBe(0);
+/** The run area holds all its content: nothing to scroll (the developer's decision of 12 Oct 2026 keeps this at 1280 × 800). */
+const runFits = async (page: Page) => {
+  const m = await page.locator("main.run").evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+  expect(m.scroll, `the run scrolls: ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.client + 1);
+};
+const toRunTop = (page: Page) => page.locator("main.run").evaluate((el) => el.scrollTo({ top: 0 }));
+/** The columns' floor in pixels, from the page's root font size (W1-R1-1: `floorPx` of web/src/layout.ts). */
+const floorOf = async (page: Page) => floorPx(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)));
+const heightOf = async (l: Locator) => (await box(l)).height;
 /**
- * The task of L21, by the developer's decision at the stop of execution phase 1: in a window of any width too short for
- * the analysis's floor, the analysis gives up height so that the question and its first answer are in view together,
- * with nothing scrolled into view. The spare room asserted is 16 px: the 24 px ROOM_MARGIN of web/src/layout.ts less 8 px
- * that tolerate rasterization differences between environments rendering the same face (issue #73). The run may hold more below the first answer (the
- * rest of the prompt, the activity line), which the room does not budget, so its scroll position is checked, not its
- * scroll height.
+ * The developer's decision of 12 Oct 2026 ("Every control stays, windows scroll"): nothing on the decision page is
+ * clipped. The element is scrolled into view, and its box then lies in the window and inside the visible box of every
+ * ancestor that clips.
  */
-const questionWithFirstAnswer = async (page: Page, analysis: Locator, height: number) => {
-  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-  expect(await page.locator("main.run").evaluate((el) => el.scrollTop), "the run scrolled").toBe(0);
-  const question = await box(analysis.locator(".question-text"));
-  expect(question.y, "the question's top is above the window").toBeGreaterThanOrEqual(0);
-  const first = await box(page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first());
-  expect(first.y + first.height, "the first answer has less than 16 px below it").toBeLessThanOrEqual(height - 16);
+const unclipped = async (page: Page, locator: Locator, what: string) => {
+  await locator.scrollIntoViewIfNeeded();
+  await settled(page);
+  await inWindow(page, locator, what);
+  const clipped = await locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    for (let a = el.parentElement; a !== null; a = a.parentElement) {
+      const cs = getComputedStyle(a);
+      if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+      const ar = a.getBoundingClientRect();
+      const top = ar.top + a.clientTop, left = ar.left + a.clientLeft;
+      if (r.top < top - 1 || r.bottom > top + a.clientHeight + 1 || r.left < left - 1 || r.right > left + a.clientWidth + 1) return `${a.tagName}.${a.className}`;
+    }
+    return null;
+  });
+  expect(clipped, `${what} is clipped by an ancestor`).toBeNull();
+};
+/** Every control and region of the decision page under its question: the answers' controls, the columns' region and the headings. */
+const everyPart = (analysis: Locator) => analysis.locator(".answers button:visible, .answers textarea:visible, .answers input:not([type=hidden]):visible, .sideways, .sections button.toggle");
+/**
+ * The decision page's order (issue #133) as the developer's decision of 12 Oct 2026 keeps it: the heading is the
+ * question, both choice cards are in the window side by side with nothing scrolled, no "Help me decide" is offered,
+ * every heading is closed, the columns keep their floor, and nothing is clipped: every part is reached by scrolling the
+ * run. At 1280 × 800 (`roomy`) the run does not scroll, the columns are the tallest region and every heading is in view;
+ * at 640 px and wider the headings share one row (`oneRow`).
+ */
+const theOrder = async (page: Page, analysis: Locator, options: Readonly<{ question: string; oneRow: boolean; roomy: boolean }>) => {
+  await settled(page);
+  const heading = (await analysis.locator("h2").textContent())?.replace(/\s+/g, " ").trim() ?? "";
+  expect(heading.startsWith(`${YOUR_CHOICE} `), heading).toBe(true);
+  expect(heading).toContain(options.question);
+  await runNotScrolled(page);
+  const [first, second] = [cards(page).nth(0), cards(page).nth(1)];
+  await inWindow(page, analysis.locator("h2"), "the question");
+  await inWindow(page, first, "the first card");
+  await inWindow(page, second, "the second card");
+  const [a, b] = [await box(first), await box(second)];
+  expect(Math.abs(a.y - b.y), "the two cards are not in one row").toBeLessThanOrEqual(1);
+  expect(b.x, "the second card is not beside the first").toBeGreaterThanOrEqual(a.x + a.width - 1);
+  await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
+  const buttons = sectionButtons(analysis);
+  expect(await buttons.count()).toBeGreaterThan(0);
+  for (const button of await buttons.all()) await expect(button).toHaveAttribute("aria-expanded", "false");
+  expect(await heightOf(analysis.locator(".sideways")), "the columns are lower than their floor").toBeGreaterThanOrEqual((await floorOf(page)) - 1);
+  if (options.oneRow) {
+    const tops = await Promise.all((await buttons.all()).map(async (button) => (await box(button)).y));
+    for (const y of tops) expect(Math.abs(y - tops[0]), "the headings are not in one row").toBeLessThanOrEqual(1);
+  }
+  if (options.roomy) {
+    await runFits(page);
+    const heights = await analysis.evaluate((el) => Object.fromEntries([".head", ".answers", ".sideways", ".sections"].map((s) => [s, el.querySelector(s)?.getBoundingClientRect().height ?? 0])));
+    for (const other of [".head", ".answers", ".sections"]) expect(heights[".sideways"], `the columns are not taller than ${other}: ${JSON.stringify(heights)}`).toBeGreaterThan(heights[other]);
+    for (const button of await buttons.all()) await expect(button).toBeInViewport();
+  }
+  const parts = everyPart(analysis);
+  for (let i = 0; i < (await parts.count()); i++) await unclipped(page, parts.nth(i), `part ${i} (${await parts.nth(i).evaluate((el) => el.className || el.tagName)})`);
+  await toRunTop(page);
 };
 /**
- * The developer's decision of 9 Oct 2026 (issue #120): the question and its first answer stay in view without the run
- * scrolling in windows 450 pixels high and taller; below that, the run area may scroll. So a window lower than 450 px
- * asserts what still holds there: the page does not overflow sideways, the question is in view, and the first answer
- * is reached by scrolling. The limit is `IN_VIEW_MIN_HEIGHT` of web/src/layout.ts, which the page's layout uses too.
+ * An opened heading (issue #133, W1-R1-1): its text scrolls inside itself when longer than its body, the columns keep
+ * their floor. Where the window has room (`roomy`, 1280 × 800) the run does not scroll, the text, the question, the cards
+ * and every heading stay in view, and the text takes at most half the height it shares with the columns (allotWithFloor);
+ * elsewhere the text has at least the smaller of its content and half the floor, and is reached by scrolling the run.
+ */
+const openedText = async (page: Page, analysis: Locator, heading: string, roomy: boolean) => {
+  const button = sectionButton(analysis, heading);
+  await button.click();
+  await expect(button).toHaveAttribute("aria-expanded", "true");
+  await settled(page);
+  const body = await bodyOf(page, button);
+  const floor = await floorOf(page);
+  const m = await body.evaluate((el) => ({ body: el.getBoundingClientRect().height, sideways: el.parentElement?.querySelector(".sideways")?.getBoundingClientRect().height ?? null, scroll: el.scrollHeight, client: el.clientHeight, overflowY: getComputedStyle(el).overflowY }));
+  if (m.scroll > m.client + 1) expect(m.overflowY, "the text does not scroll inside itself").toBe("auto");
+  if (m.sideways !== null) expect(m.sideways, `the columns are lower than their floor: ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(floor - 1);
+  if (roomy) {
+    await runFits(page);
+    expect(m.body, `the text takes more than half: ${JSON.stringify(m)}`).toBeLessThanOrEqual(Math.floor((m.body + (m.sideways ?? 0)) / 2) + 1);
+    await expect(body).toBeInViewport({ ratio: 1 });
+    await inWindow(page, analysis.locator("h2"), "the question");
+    for (const card of await cards(page).all()) await inWindow(page, card, "a card");
+    for (const other of await sectionButtons(analysis).all()) await expect(other).toBeInViewport({ ratio: 1 });
+  } else {
+    expect(m.body, `the text is lower than its floor: ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(Math.min(m.scroll, Math.ceil(floor / 2)) - 1);
+    await unclipped(page, body, `the text of ${heading}`);
+  }
+  return { body, overflows: m.scroll > m.client + 1 };
+};
+/** One heading at a time: each heading opened in turn closes the one opened before it. */
+const opensInTurn = async (page: Page, analysis: Locator, headings: readonly string[], roomy: boolean) => {
+  let before: Locator | null = null;
+  for (const heading of headings) {
+    await openedText(page, analysis, heading, roomy);
+    if (before !== null) await expect(before).toHaveAttribute("aria-expanded", "false");
+    before = sectionButton(analysis, heading);
+  }
+  await toRunTop(page);
+};
+/**
+ * The developer's decision of 9 Oct 2026 (issue #120): on the question page the question and its first answer stay in
+ * view without the run scrolling in windows 450 pixels high and taller; below that, the run area may scroll. So a window
+ * lower than 450 px asserts what still holds there: the page does not overflow sideways, the question is in view, and
+ * the first answer is reached by scrolling. The limit is `IN_VIEW_MIN_HEIGHT` of web/src/layout.ts.
  */
 const belowTheLimit = async (page: Page, question: Locator) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
@@ -170,58 +256,9 @@ const belowTheLimit = async (page: Page, question: Locator) => {
   await first.scrollIntoViewIfNeeded();
   await expect(first).toBeInViewport();
 };
-/**
- * The order in which the analysis yields where the window is shorter than its floor (the task of L21): the columns give
- * up their height before the recommendation shows less than two of its lines, and the recommendation gives up its
- * height before the context shows less than two of its lines. A text counts as shortened only when it is cut.
- */
-const yieldOrder = async (analysis: Locator) => {
-  const m = await analysis.evaluate((el) => {
-    const text = (s: string) => {
-      const r = el.querySelector<HTMLElement>(s);
-      if (r === null) return null;
-      const cs = getComputedStyle(r);
-      const line = parseFloat(cs.lineHeight) || 1.2 * parseFloat(cs.fontSize);
-      const inner = r.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      return { short: r.scrollHeight > r.clientHeight + 1 && inner < 2 * line - 1, height: r.getBoundingClientRect().height };
-    };
-    return { context: text(".question-context"), recommendation: text(".recommendation"), columns: el.querySelector(".sideways")?.getBoundingClientRect().height ?? 0 };
-  });
-  if (m.recommendation?.short === true) expect(m.columns, "the recommendation is shortened while the columns keep height").toBeLessThanOrEqual(1);
-  if (m.context?.short === true) expect(m.recommendation?.height ?? 0, "the context is shortened while the recommendation keeps height").toBeLessThanOrEqual(1);
-};
-/** Whether some column's own scroller holds more than it shows. */
-const someColumnOverflows = (parts: Parts) => parts.columns.evaluateAll((cs) => cs.some((c) => c.scrollHeight > c.clientHeight + 1));
-/** The decision area, the prompt and the activity line do not overlap, and the prompt shows all of its content. */
-const separateAndWhole = async (parts: Parts) => {
-  const rect = (l: Locator) => l.evaluate((el) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
-  const [area, prompt, activity] = [await rect(parts.area), await rect(parts.prompt), await rect(parts.activity)];
-  const apart = (a: { top: number; bottom: number }, b: { top: number; bottom: number }) => a.bottom <= b.top + 1 || b.bottom <= a.top + 1;
-  expect(apart(area, prompt), `the decision area ${JSON.stringify(area)} and the prompt ${JSON.stringify(prompt)} overlap`).toBe(true);
-  expect(apart(area, activity), `the decision area ${JSON.stringify(area)} and the activity line ${JSON.stringify(activity)} overlap`).toBe(true);
-  expect(apart(prompt, activity), `the prompt ${JSON.stringify(prompt)} and the activity line ${JSON.stringify(activity)} overlap`).toBe(true);
-  const clip = await parts.prompt.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
-  expect(clip.scroll, "the prompt is clipped").toBeLessThanOrEqual(clip.client + 1);
-};
-/** Each of the prompt and the activity line can be scrolled fully into the run's view. */
-const reachable = async (parts: Parts) => {
-  for (const [name, part] of [["the prompt", parts.prompt], ["the activity line", parts.activity]] as const) {
-    await part.scrollIntoViewIfNeeded();
-    const within = await part.evaluate((el) => {
-      const run = el.closest("main.run");
-      if (run === null) return null;
-      const [r, e] = [run.getBoundingClientRect(), el.getBoundingClientRect()];
-      return { run: { top: r.top, bottom: r.bottom }, el: { top: e.top, bottom: e.bottom } };
-    });
-    expect(within, `${name} is outside the run`).not.toBeNull();
-    if (within === null) return;
-    expect(within.el.top, `${name}'s top is above the run's view`).toBeGreaterThanOrEqual(within.run.top - 1);
-    expect(within.el.bottom, `${name}'s bottom is below the run's view`).toBeLessThanOrEqual(within.run.bottom + 1);
-  }
-};
-const answerDismisses = async (page: Page, parts: Parts) => {
-  await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-  await expect(parts.analysis).toBeHidden();
+const answerDismisses = async (page: Page, analysis: Locator) => {
+  await cards(page).filter({ hasText: "SQLite" }).first().click();
+  await expect(analysis).toBeHidden();
 };
 
 // S29 (Q10, issue #20): a question with a long context, many terms and long options keeps the question and its first
@@ -493,90 +530,53 @@ test.describe("the tests of the longChoices server, in order", () => {
 test.describe("the tests of the decide server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(L10) the analysis at 1280 × 800: both columns side by side", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    const analysis = await openAnalysis(page);
-    const [a, b] = [await box(analysis.locator(".column").nth(0)), await box(analysis.locator(".column").nth(1))];
-    expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(1);
-    expect(b.x).toBeGreaterThanOrEqual(a.x + a.width);
-    expect(a.width).toBeGreaterThanOrEqual(320);
-    await expect(analysis.getByText("Scroll sideways to see every option.")).toBeHidden();
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
-  });
-
-  // Issue #79, decision Q1 kept by the developer ("Keep the rule as decided"): at 1280 × 800 the columns keep their strip,
-  // and the context takes all the room the rest leaves, scrolling for the remainder; nothing is left empty while it is cut.
-  test("(L24) a context of about ten lines at 1280 × 800 takes the room the rest leaves, and scrolls for the rest", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    const analysis = await openAnalysis(page);
-    const context = analysis.locator(".question-context");
-    const m = await context.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) || 1.2 * parseFloat(getComputedStyle(el).fontSize) }));
-    expect(m.scroll, "the context is about ten lines").toBeGreaterThan(6 * m.line);
-    expect(m.scroll, "the context does not scroll").toBeGreaterThan(m.client + 1);
-    const fill = await analysis.evaluate((el) => {
-      const cs = getComputedStyle(el);
-      const kids = [...el.children] as HTMLElement[];
-      const span = kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
-      const sideways = el.querySelector<HTMLElement>(".sideways")!.getBoundingClientRect().height;
-      const recommendation = el.querySelector<HTMLElement>(".recommendation")!;
-      return {
-        span,
-        inner: el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
-        strip: parseFloat(cs.getPropertyValue("--strip")),
-        sideways,
-        recommendationWhole: recommendation.scrollHeight <= recommendation.clientHeight + 1,
-        minimums: [el.querySelector<HTMLElement>(".question-context")!, recommendation].map((r) => {
-          const rs = getComputedStyle(r);
-          return 2 * (parseFloat(rs.lineHeight) || 1.2 * parseFloat(rs.fontSize)) + parseFloat(rs.paddingTop) + parseFloat(rs.paddingBottom) + parseFloat(rs.borderTopWidth) + parseFloat(rs.borderBottomWidth);
-        }),
-        heights: [el.querySelector<HTMLElement>(".question-context")!.getBoundingClientRect().height, recommendation.getBoundingClientRect().height],
-        recommendationBottom: recommendation.getBoundingClientRect().bottom,
-        bottom: el.getBoundingClientRect().bottom,
-      };
+  // Issue #133 (the developer's instruction of 11 Oct 2026): the question, its choices side by side, the columns, then
+  // the closed headings, at the three sizes the task names; the developer's decision of 12 Oct 2026: every part is
+  // reached by scrolling the run, which does not scroll at 1280 × 800 alone. L10 once asserted the columns alone side by side.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L10) the decision page at ${width} × ${height}: the question, both choices in view side by side, the columns at their floor or more, the headings closed, nothing clipped`, async ({ page }) => {
+      const analysis = await openAnalysis(page, width, height);
+      const roomy = width === 1280;
+      await theOrder(page, analysis, { question: FIRST, oneRow: width >= 640, roomy });
+      await opensInTurn(page, analysis, [CONTEXT_HEADING, RECOMMENDATION_HEADING], roomy);
+      if (width === 1280) {
+        const [a, b] = [await box(analysis.locator(".column").nth(0)), await box(analysis.locator(".column").nth(1))];
+        expect(Math.abs(a.y - b.y)).toBeLessThanOrEqual(1);
+        expect(b.x).toBeGreaterThanOrEqual(a.x + a.width);
+        expect(a.width).toBeGreaterThanOrEqual(320);
+        await expect(analysis.getByText("Scroll sideways to see every option.")).toBeHidden();
+      }
+      await answerDismisses(page, analysis);
     });
-    expect(fill.sideways, "the columns' strip").toBeGreaterThanOrEqual(fill.strip - 1);
-    expect(fill.recommendationBottom, "the recommendation leaves the analysis").toBeLessThanOrEqual(fill.bottom + 1);
-    // Decision Q1: where both texts are longer than the room the strip leaves, they share it equally, unless one text's
-    // own minimum (two lines plus its region's padding, W4-R1-1) is more than half of that room (P1-R1-1).
-    const halfRoom = (fill.heights[0] + fill.heights[1]) / 2;
-    if (!fill.recommendationWhole && Math.max(...fill.minimums) <= halfRoom) expect(Math.abs(fill.heights[0] - fill.heights[1]), "the context and the recommendation do not share the room equally").toBeLessThanOrEqual(1);
-    if (!fill.recommendationWhole && Math.max(...fill.minimums) > halfRoom) expect(Math.abs(fill.heights[1] - Math.max(...fill.minimums)), "the recommendation is not at its own minimum").toBeLessThanOrEqual(1);
-    expect(Math.abs(fill.span - fill.inner), "room is left empty while the context is cut").toBeLessThanOrEqual(1);
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
-  });
+  }
 
-  test("(L24a) the same context at 1280 × 1100 is shown whole", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 1100 });
-    const analysis = await openAnalysis(page);
-    const m = await analysis.locator(".question-context").evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }));
-    expect(m.client, "the context is cut").toBeGreaterThanOrEqual(m.scroll - 1);
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
-  });
+  // Issue #133 and W1-R1-1, replacing issue #79's allotment of the context (L24, L24a) and the yielding of the task of
+  // L21 (L27): the opened context or recommendation scrolls inside itself and the columns keep their floor. Where the
+  // window has room the text takes at most half and the run does not scroll; at 1280 × 400 the columns get the floor
+  // and the run scrolls (the developer's decision of 12 Oct 2026).
+  for (const [id, width, height, heading] of [["L24", 1280, 800, CONTEXT_HEADING], ["L24a", 1280, 1100, CONTEXT_HEADING], ["L27", 1280, 400, RECOMMENDATION_HEADING]] as const) {
+    test(`(${id}) the opened ${heading} at ${width} × ${height} beside the columns`, async ({ page }) => {
+      const analysis = await openAnalysis(page, width, height);
+      await openedText(page, analysis, heading, height >= 800);
+      await answerDismisses(page, analysis);
+    });
+  }
 
-  // The task of L21, by the developer's decision at the stop of execution phase 1: in a short wide window the analysis
-  // gives up height (it once kept its minimum total, W3-R1-1 and decision G-R1-2), so that the question and the first
-  // answer are in view together; nothing in it is clipped outside its own box.
-  test("(L27) the analysis at 1280 × 400 yields: the question and the first answer in view, the question and the recommendation inside the analysis", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 400 });
+  // The task: an equivalence symbol is a link to the entry it names, which the reader reaches and which says what it is.
+  test("(L10a) an equivalence symbol at 1280 × 800 moves the focus to the entry it names, in view", async ({ page }) => {
     const analysis = await openAnalysis(page);
-    await questionWithFirstAnswer(page, analysis, 400);
-    const area = await box(analysis);
-    for (const [name, part] of [["the question", analysis.locator(".question-text")], ["the recommendation", analysis.locator(".recommendation")]] as const) {
-      if (!(await part.isVisible())) continue;
-      const b = await box(part);
-      expect(b.y, `${name}'s top is above the analysis`).toBeGreaterThanOrEqual(area.y - 1);
-      expect(b.y + b.height, `${name} is below the analysis's end`).toBeLessThanOrEqual(area.y + area.height + 1);
-    }
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
+    await analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
+    const link = analysis.locator(".argument a.equivalence").first();
+    await expect(link).toBeVisible();
+    const target = page.locator(`[id="${(await link.getAttribute("href"))!.slice(1)}"]`);
+    await link.click();
+    await expect(target).toBeFocused();
+    await expect(target).toBeInViewport();
+    await answerDismisses(page, analysis);
   });
 
   test("(L11) the analysis at 390 × 844: one column in view, the other reached by scrolling sideways, no page overflow", async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    const analysis = await openAnalysis(page);
+    const analysis = await openAnalysis(page, 390, 844);
     await expect(analysis.getByText("Scroll sideways to see every option.")).toBeVisible();
     const first = await box(analysis.locator(".column").nth(0));
     expect(first.width).toBeGreaterThanOrEqual(320);
@@ -586,124 +586,111 @@ test.describe("the tests of the decide server, in order", () => {
     const shown = await box(second);
     expect(shown.x).toBeGreaterThanOrEqual(0);
     expect(shown.x + shown.width).toBeLessThanOrEqual(390 + 1);
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
+    await answerDismisses(page, analysis);
   });
 
-  test("(L12) the analysis at 360 × 640: a message asks for a wider window, and the question can be answered", async ({ page }) => {
-    await page.setViewportSize({ width: 360, height: 640 });
-    const analysis = await openAnalysis(page);
+  // Issue #133 and the developer's decision of 12 Oct 2026: below 390 px the heading and the choices are in view at the
+  // top; the notice and the headings are reached by scrolling, and nothing is clipped.
+  test("(L12) the analysis at 360 × 640: a message asks for a wider window; the question and the choices in view, the rest reached by scrolling", async ({ page }) => {
+    const analysis = await openAnalysis(page, 360, 640);
     await expect(analysis.getByRole("alert")).toHaveText(/at least 390 pixels wide/);
     await expect(analysis.locator(".column")).toHaveCount(0);
-    await questionAndNoticeInside(analysis);
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
+    await settled(page);
+    await runNotScrolled(page);
+    await inWindow(page, analysis.locator("h2"), "the question");
+    for (const card of await cards(page).all()) await inWindow(page, card, "a card");
+    await unclipped(page, analysis.getByRole("alert"), "the notice");
+    const parts = everyPart(analysis);
+    for (let i = 0; i < (await parts.count()); i++) await unclipped(page, parts.nth(i), `part ${i}`);
+    await answerDismisses(page, analysis);
   });
 
-  // Work review 2 (W2-R1-1): below 390 px the long context is bounded by the room left, so the question and the notice
-  // stay inside the analysis, and the context scrolls for the rest.
-  test("(L12a) a long context at 360 × 800: the question and the notice stay inside the analysis, and the context scrolls", async ({ page }) => {
-    await page.setViewportSize({ width: 360, height: 800 });
-    const analysis = await openAnalysis(page);
-    await expect(analysis.getByRole("alert")).toHaveText(/at least 390 pixels wide/);
-    await questionAndNoticeInside(analysis);
-    const m = await analysis.locator(".question-context").evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }));
-    expect(m.scroll, "the context does not scroll").toBeGreaterThan(m.client + 1);
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button", { name: /SQLite/ }).click();
-    await expect(analysis).toBeHidden();
+  // Issue #133 and W1-R1-1: below 390 px an opened text takes up to the larger of the room and the floor
+  // (allotWithFloor's "Alone"), is reached by scrolling, and scrolls inside itself.
+  test("(L12a) a long context at 360 × 800: the opened Technical Context is reached by scrolling and scrolls inside itself; the question and the choices are in view at the top", async ({ page }) => {
+    const analysis = await openAnalysis(page, 360, 800);
+    const { overflows } = await openedText(page, analysis, CONTEXT_HEADING, false);
+    expect(overflows, "the context does not scroll inside itself").toBe(true);
+    await toRunTop(page);
+    await settled(page);
+    await inWindow(page, analysis.locator("h2"), "the question");
+    for (const card of await cards(page).all()) await inWindow(page, card, "a card");
+    await answerDismisses(page, analysis);
   });
 });
 
 test.describe("the tests of the decideLong server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  // W1-R1-3, issue #81: a recommendation of several paragraphs has a region of its own below the columns, outside their
-  // scrollers; it does not squeeze them below their strip, and its end is reached inside its own region.
-  test("(L13) a long recommendation at 1280 × 800: the columns keep their height, and the recommendation's end can be scrolled into view", async ({ page }) => {
-    const parts = await openLongAnalysis(page, 1280, 800);
-    const strip = await parts.analysis.evaluate((el) => parseFloat(getComputedStyle(el).getPropertyValue("--strip")));
-    expect(strip, "the strip").toBeGreaterThan(0);
-    expect((await box(parts.sideways)).height, "the columns' region keeps its strip").toBeGreaterThanOrEqual(strip - 1);
-    expect(await parts.recommendation.evaluate((el) => el.closest(".sideways, .column") === null), "the recommendation is outside the columns' scrollers").toBe(true);
-    expect((await box(parts.recommendation)).y, "the recommendation is below the columns").toBeGreaterThanOrEqual((await box(parts.sideways)).y + (await box(parts.sideways)).height - 1);
-    const last = parts.analysis.getByText("The last paragraph of the recommendation.");
-    await parts.recommendation.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-    const [end, region] = [await box(last), await box(parts.recommendation)];
-    expect(end.y).toBeGreaterThanOrEqual(region.y - 1);
-    expect(end.y + end.height).toBeLessThanOrEqual(region.y + region.height + 1);
-    await answerDismisses(page, parts);
-  });
+  // Issue #133: a question with a history shows its History heading; each heading opens in turn, one at a time.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L15) the long decision page at ${width} × ${height}: the order, and Technical Context, History and Recommendation opened in turn`, async ({ page }) => {
+      const analysis = await openLongAnalysis(page, width, height);
+      const roomy = width === 1280;
+      await expect(sectionButtons(analysis)).toHaveText([CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING]);
+      await theOrder(page, analysis, { question: FIRST, oneRow: width >= 640, roomy });
+      await opensInTurn(page, analysis, [CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING], roomy);
+      await answerDismisses(page, analysis);
+    });
+  }
 
-  // W4-R1-1 of work review 4: in a short wide window both long texts are cut to their minimums, and each still shows two
-  // lines inside its own region's padding, the recommendation's padding being larger than the context's.
-  // The task of L21: at 1280 × 400 the floor does not fit beside the first answer, and the analysis yields in order.
-  test("(L27a) at 1280 × 400 the analysis yields in order: the columns, then the recommendation, then the context", async ({ page }) => {
-    const parts = await openLongAnalysis(page, 1280, 400);
-    await questionWithFirstAnswer(page, parts.analysis, 400);
-    await yieldOrder(parts.analysis);
-    await answerDismisses(page, parts);
-  });
+  // The task: the opened text in two or three columns at 1280 and 640 px wide, and one below the compact breakpoint.
+  for (const [width, height, expected] of [[1280, 800, [2, 3]], [640, 400, [2, 3]], [390, 844, [1, 1]]] as const) {
+    test(`(L15a) the opened Technical Context at ${width} × ${height} is set in ${expected[0] === expected[1] ? "one column" : "two or three columns"}`, async ({ page }) => {
+      const analysis = await openLongAnalysis(page, width, height);
+      const button = sectionButton(analysis, CONTEXT_HEADING);
+      await button.click();
+      await settled(page);
+      const lefts = await (await bodyOf(page, button)).evaluate((el) => new Set([...el.querySelectorAll(".text-columns p")].map((p) => Math.round(p.getBoundingClientRect().left))).size);
+      expect(lefts).toBeGreaterThanOrEqual(expected[0]);
+      expect(lefts).toBeLessThanOrEqual(expected[1]);
+      await answerDismisses(page, analysis);
+    });
+  }
 
-  // Decision G-R1-2: at 390 × 844 the analysis's minimum total and the answer controls exceed the window, so the run
-  // scrolls, and the controls are reached by scrolling it (reachable, below).
-  test("(L14) a long analysis at 390 × 844: it scrolls inside itself, and the answer controls can be reached", async ({ page }) => {
-    const parts = await openLongAnalysis(page, 390, 844);
-    // Issue #81: the analysis scrolls inside itself, in a column's own scroller (its entry opened, issue #87), and the
-    // recommendation's end is reached inside the recommendation's own region.
-    await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
-    await expect.poll(() => someColumnOverflows(parts), { message: "no column scrolls inside itself" }).toBe(true);
-    const last = parts.analysis.getByText("The last paragraph of the recommendation.");
-    await parts.recommendation.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-    const [end, region] = [await box(last), await box(parts.recommendation)];
-    expect(end.y).toBeGreaterThanOrEqual(region.y - 1);
-    expect(end.y + end.height).toBeLessThanOrEqual(region.y + region.height + 1);
-    expect(await parts.run.evaluate((el) => el.scrollTop), "the run scrolled to show the recommendation").toBe(0);
-    await expect(page.getByRole("button", { name: new RegExp(LEFT) })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: new RegExp(RIGHT) })).toHaveCount(0);
-    await separateAndWhole(parts);
-    await reachable(parts);
-    await answerDismisses(page, parts);
-  });
+  // Issue #133 and W1-R1-1, replacing issue #81's recommendation region (L13, L14), the yielding of the task of L21
+  // (L27a) and S39's context region (L20): the opened text scrolls to its end inside itself and the columns keep their
+  // floor; at 1280 × 800 it takes at most half and the run does not scroll, elsewhere the run scrolls to it (the
+  // developer's decision of 12 Oct 2026).
+  for (const [id, width, height, heading] of [["L13", 1280, 800, RECOMMENDATION_HEADING], ["L14", 390, 844, RECOMMENDATION_HEADING], ["L27a", 1280, 400, CONTEXT_HEADING], ["L20", 390, 844, CONTEXT_HEADING], ["L20", 640, 400, CONTEXT_HEADING]] as const) {
+    test(`(${id}) the opened ${heading} of the long analysis at ${width} × ${height}: the columns keep their floor, its end reached inside it`, async ({ page }) => {
+      const analysis = await openLongAnalysis(page, width, height);
+      const { body, overflows } = await openedText(page, analysis, heading, width === 1280 && height >= 800);
+      expect(overflows, "the long text does not scroll inside itself").toBe(true);
+      await body.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+      const last = heading === RECOMMENDATION_HEADING ? body.getByText("The last paragraph of the recommendation.") : body.locator("p").last();
+      const [end, region] = [await box(last), await box(body)];
+      expect(end.y + end.height).toBeLessThanOrEqual(region.y + region.height + 1);
+      await answerDismisses(page, analysis);
+    });
+  }
 
-  // The task of L21, by the developer's decision at the stop of execution phase 1: in a short window the analysis gives
-  // up height so that the question and the first answer are in view together; the controls below the first answer are
-  // reached by scrolling. Its columns have no height left at this size, so no column is opened here.
-  test("(L15) a long analysis at 640 × 400: the analysis yields, the question and the first answer are in view, and the answer controls can be reached", async ({ page }) => {
-    const parts = await openLongAnalysis(page, 640, 400);
-    await questionWithFirstAnswer(page, parts.analysis, 400);
-    await yieldOrder(parts.analysis);
-    await separateAndWhole(parts);
-    await reachable(parts);
-    await answerDismisses(page, parts);
-  });
-
-  test("(L16) a long analysis at 390 × 600 with the progress opened: the analysis yields, the question and the first answer are in view, and the answer controls can be reached", async ({ page }) => {
-    // The task of L21: at 600 px the floor does not fit beside the first answer even with the progress closed (a room of
-    // 326 px against a minimum total of about 330), so the analysis yields here too.
-    const parts = await openLongAnalysis(page, 390, 600);
+  // W4-R1-1 kept; issue #133 and the developer's decision of 12 Oct 2026: with the progress opened in a short compact
+  // window the run scrolls, and the question, both choices and every part below them are reached, none clipped.
+  test("(L16) a long analysis at 390 × 600 with the progress opened: the question, both choices and every part reached by scrolling, none clipped", async ({ page }) => {
+    const analysis = await openLongAnalysis(page, 390, 600);
     await page.locator("details.progress > summary, details.progress summary").first().click();
     await expect(page.locator("details.progress")).toHaveAttribute("open", "");
-    await questionWithFirstAnswer(page, parts.analysis, 600);
-    // Opening the progress changes the room the analysis is allotted, so its measurements are retried until it settles.
-    await expect(async () => {
-      await yieldOrder(parts.analysis);
-      await separateAndWhole(parts);
-    }).toPass({ timeout: 60_000 });
-    await reachable(parts);
-    await answerDismisses(page, parts);
+    await settled(page);
+    await unclipped(page, analysis.locator("h2"), "the question");
+    for (const card of await cards(page).all()) await unclipped(page, card, "a card");
+    const parts = everyPart(analysis);
+    for (let i = 0; i < (await parts.count()); i++) await unclipped(page, parts.nth(i), `part ${i}`);
+    await answerDismisses(page, analysis);
   });
 
-  // Issue #81: each column scrolls on its own inside the region that scrolls sideways; decision Q1: the strip is measured
-  // from the closed columns, so opening entries, here or in another tab, moves nothing above or below the columns.
-  test("(L26) each column scrolls on its own; the regions above and below keep their heights whatever is open", async ({ context, page }) => {
-    const parts = await openLongAnalysis(page, 1280, 800);
-    const heights = () => Promise.all([parts.analysis.locator(".question-context"), parts.recommendation].map(async (l) => Math.round((await box(l)).height)));
-    const closed = await heights();
-    await parts.analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
-    expect(await heights(), "opening an entry moved the regions above or below the columns").toEqual(closed);
-    const [long, short] = [parts.columns.nth(0), parts.columns.nth(1)];
+  // Issue #81 (the developer's instruction of 1 Oct 2026): each column scrolls on its own inside the region that scrolls
+  // sideways; issue #133: opening entries, here or in another tab, moves neither the answers nor the row of headings.
+  test("(L26) each column scrolls on its own; the answers and the headings keep their places whatever is open", async ({ context, page }) => {
+    const analysis = await openLongAnalysis(page, 1280, 800);
+    const places = () => Promise.all([analysis.locator(".answers"), analysis.locator(".sections")].map(async (l) => { const b = await box(l); return [Math.round(b.y), Math.round(b.height)]; }));
+    const closed = await places();
+    await analysis.getByRole("button", { name: /^Show the reasoning of Advantage 1:/ }).click();
+    expect(await places(), "opening an entry moved the answers or the headings").toEqual(closed);
+    const columns = analysis.locator(".column");
+    const [long, short] = [columns.nth(0), columns.nth(1)];
     await expect.poll(() => long.evaluate((el) => el.scrollHeight > el.clientHeight + 1), { message: "the long column does not scroll on its own" }).toBe(true);
-    const [l, w] = [await box(long), await box(parts.sideways)];
+    const [l, w] = [await box(long), await box(analysis.locator(".sideways"))];
     expect(l.y).toBeGreaterThanOrEqual(w.y - 1);
     expect(l.y + l.height).toBeLessThanOrEqual(w.y + w.height + 1);
     const before = { top: await short.evaluate((el) => el.scrollTop), box: await box(short) };
@@ -715,91 +702,31 @@ test.describe("the tests of the decideLong server, in order", () => {
     const colors = await long.evaluate((el) => ({ heading: getComputedStyle(el.querySelector("h3")!).backgroundColor, column: getComputedStyle(el).backgroundColor }));
     expect(colors.heading, "the sticky heading is transparent").not.toBe("rgba(0, 0, 0, 0)");
     expect(colors.heading, "the sticky heading's color differs from the column's").toBe(colors.column);
-    // An entry open in another tab when this one loads, and a resize with it open: the same heights.
     const other = await context.newPage();
     await other.setViewportSize({ width: 1280, height: 800 });
     await other.goto(layoutUrl("decideLong"));
-    await expect(other.getByRole("region", { name: /^Decision 1: / })).toBeVisible();
+    await expect(analysisOf(other)).toBeVisible();
     await page.reload();
-    await expect(parts.analysis.getByRole("button", { name: /^Hide the reasoning of Advantage 1:/ })).toBeVisible();
-    expect(await heights(), "an entry open from another tab moved the regions").toEqual(closed);
+    await expect(analysis.getByRole("button", { name: /^Hide the reasoning of Advantage 1:/ })).toBeVisible();
+    await expect.poll(places, { message: "an entry open from another tab moved the answers or the headings" }).toEqual(closed);
     await page.setViewportSize({ width: 1200, height: 800 });
     await page.setViewportSize({ width: 1280, height: 800 });
-    await expect.poll(heights, { message: "a resize with an entry open moved the regions" }).toEqual(closed);
+    await expect.poll(places, { message: "a resize with an entry open moved the answers or the headings" }).toEqual(closed);
     await other.close();
-    await answerDismisses(page, parts);
+    await answerDismisses(page, analysis);
   });
+});
 
-  // Decision Q1: a closed column shorter than ten lines in a tall window is its own strip, measured from its content,
-  // not from its scroller, whichever entries are open.
-  test("(L26) short closed columns in a tall window: the strip is the tallest column's closed content", async ({ context, page }) => {
-    const parts = await openLongAnalysis(page, 1280, 1400);
-    const read = () =>
-      parts.analysis.evaluate((el) => {
-        const strip = parseFloat(getComputedStyle(el).getPropertyValue("--strip"));
-        const contents = [...el.querySelectorAll<HTMLElement>(".column")].map((c) => {
-          const cs = getComputedStyle(c);
-          const inner = c.querySelector<HTMLElement>(".column-content")!;
-          const bodies = [...inner.querySelectorAll<HTMLElement>(".elements")].reduce((n, b) => n + b.getBoundingClientRect().height + parseFloat(getComputedStyle(b).marginTop) + parseFloat(getComputedStyle(b).marginBottom), 0);
-          return inner.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) - bodies;
-        });
-        const line = (parseFloat(getComputedStyle(el.querySelector(".question-context")!).lineHeight) || 1.2 * parseFloat(getComputedStyle(el.querySelector(".question-context")!).fontSize));
-        return { strip, closed: Math.max(...contents), ten: 10 * line };
-      });
-    const first = await read();
-    expect(first.closed, "the closed columns are shorter than ten lines").toBeLessThan(first.ten);
-    expect(Math.abs(first.strip - first.closed), "the strip is not the closed columns' content").toBeLessThanOrEqual(1);
-    const other = await context.newPage();
-    await other.setViewportSize({ width: 1280, height: 1400 });
-    await other.goto(layoutUrl("decideLong"));
-    await other.getByRole("region", { name: /^Decision 1: / }).getByRole("button", { name: /^(Show|Hide) the reasoning of Advantage 1:/ }).first().click();
-    await page.reload();
-    await expect(parts.analysis.getByRole("button", { name: /^Hide the reasoning of Advantage 1:/ })).toBeVisible();
-    expect(Math.abs((await read()).strip - first.strip), "an entry open from another tab changed the strip").toBeLessThanOrEqual(1);
-    await other.close();
-    await answerDismisses(page, parts);
+// Decision G-R1-2 (issue #133): an agreed question's analysis carries its reason under "Why You're Being Asked This",
+// and no heading of a permission's request.
+test.describe("the tests of the decideBlank server, in order", () => {
+  test.describe.configure({ mode: "default" });
+  test("(L10b) an agreed question's analysis at 1280 × 800 shows its reason's heading and not a request's", async ({ page }) => {
+    const analysis = await openAnalysisAt(page, layoutUrl("decideBlank"), 1280, 800);
+    await expect(sectionButton(analysis, attachedHeading("reason"))).toHaveCount(1);
+    await expect(sectionButton(analysis, attachedHeading("request"))).toHaveCount(0);
+    await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
   });
-
-  // S39 (W2-R1-2): beside an analysis only the context scrolls; the question text stays in view with the first answer card,
-  // before and after the context is scrolled to its end, and the answer controls remain reachable.
-  for (const [width, height] of [[390, 844], [640, 400]] as const) {
-    test(`(L20) a long context beside the analysis at ${width} × ${height}: the question stays in view with the first answer`, async ({ page }) => {
-      const parts = await openLongAnalysis(page, width, height);
-      const context = parts.analysis.locator(".question-context");
-      const question = parts.analysis.locator(".question-text");
-      const firstCard = page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
-      const overflow = await context.evaluate((el) => el.scrollHeight - el.clientHeight);
-      expect(overflow, "the context overflows its region").toBeGreaterThan(0);
-      expect(await question.evaluate((el) => el.closest(".question-context") === null), "the question is outside the scrolled context").toBe(true);
-      const within = async (what: string, parts: readonly (readonly [string, Locator])[]) => {
-        for (const [name, part] of parts) {
-          const b = await box(part);
-          expect(b.y, `${what}: ${name}'s top`).toBeGreaterThanOrEqual(-1);
-          expect(b.y + b.height, `${what}: ${name} is below the window`).toBeLessThanOrEqual(height + 1);
-        }
-      };
-      // Decision G-R1-2 (the grown analysis wins): at 640 × 400 the analysis keeps its minimum total, so the question is
-      // in the window with its context region, and the first answer comes into the window when the page is scrolled to it.
-      const inView = async (what: string) => {
-        if (height === 400) {
-          await question.scrollIntoViewIfNeeded();
-          await within(what, [["the question", question], ["the context region", context]]);
-          await firstCard.scrollIntoViewIfNeeded();
-          await within(what, [["the first answer", firstCard]]);
-          return;
-        }
-        await firstCard.scrollIntoViewIfNeeded();
-        await within(what, [["the question", question], ["the first answer", firstCard]]);
-      };
-      await inView("before scrolling the context");
-      await context.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-      await expect.poll(() => context.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-      await inView("after scrolling the context to its end");
-      await separateAndWhole(parts);
-      await reachable(parts);
-      await answerDismisses(page, parts);
-    });
-  }
 });
 
 test.describe("the tests of the planSteps server, in order", () => {
@@ -1029,9 +956,13 @@ test.describe("the tests of the permissionLong server, in order", () => {
       await command.evaluate((el) => el.scrollIntoView({ block: "end" }));
       await expect(command).toBeInViewport();
       await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-      const analysis = page.getByRole("region", { name: /^Decision 1: / });
+      const analysis = analysisOf(page);
       await expect(analysis).toBeVisible();
-      await together("beside the analysis", analysis.locator(".question-text"));
+      // Issue #133: beside its analysis the question is the heading and its choices are under it, in view by construction.
+      await together("beside the analysis", analysis.locator("h2"));
+      // Decision G-R1-2: a permission's request is under its own heading, and no agreed question's reason is.
+      await expect(sectionButton(analysis, attachedHeading("request"))).toHaveCount(1);
+      await expect(sectionButton(analysis, attachedHeading("reason"))).toHaveCount(0);
       await firstOption().click();
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
@@ -1060,61 +991,46 @@ test.describe("the tests of the permissionLong server, in order", () => {
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
-  // The developer's decision at the stop of execution phase 1 of the task of L21: where the analysis box is too short for
-  // its heading and its question, the heading stays on one line beside its "Show conversation" button, its words cut
-  // with an ellipsis where the line is too narrow and its whole text shown on hover (its title).
-  for (const [width, height, cut] of [[640, 400, true], [390, 844, true], [1280, 800, false]] as const) {
-    test(`(L29) the analysis's heading stays on one line beside its button at ${width} × ${height}`, async ({ page }) => {
+  // Issue #133 (the developer's instruction of 11 Oct 2026, requirements item 1), superseding the decision of the task of
+  // L21 that kept the heading on one line: the heading is "Your Choice:" and the question, and it wraps, never cut.
+  for (const [width, height] of [[640, 400], [390, 844], [1280, 800]] as const) {
+    test(`(L29) the analysis's heading is the question, whole, at ${width} × ${height}`, async ({ page }) => {
       await page.setViewportSize({ width, height });
       await startTask(page, PERMISSION_URL);
       await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
       await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-      const analysis = page.getByRole("region", { name: /^Decision 1: / });
+      const analysis = analysisOf(page);
       await expect(analysis).toBeVisible();
-      const m = await analysis.evaluate((el) => {
-        const head = el.querySelector<HTMLElement>(".head")!;
-        const h2 = head.querySelector("h2")!;
-        const button = head.querySelector("button")!;
-        return { row: head.getBoundingClientRect().height, button: button.getBoundingClientRect().height, title: h2.getAttribute("title"), name: el.getAttribute("aria-label"), cut: h2.scrollWidth > h2.clientWidth, overflow: getComputedStyle(h2).textOverflow };
-      });
-      expect(m.row, "the heading's row is taller than its button").toBeLessThanOrEqual(m.button + 1);
-      expect(m.title, "the heading's whole text on hover").toBe(m.name);
-      if (cut) {
-        expect(m.cut, "the heading is cut at this width").toBe(true);
-        expect(m.overflow, "the cut heading ends in an ellipsis").toBe("ellipsis");
-      } else expect(m.cut, "the heading is cut in a wide window").toBe(false);
-      await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
+      const m = await analysis.locator("h2").evaluate((el) => ({ text: el.textContent?.replace(/\s+/g, " ").trim() ?? "", cut: el.scrollWidth > el.clientWidth + 1, overflow: getComputedStyle(el).textOverflow }));
+      expect(m.text.startsWith(`${YOUR_CHOICE} `), m.text).toBe(true);
+      expect(m.text).toContain("Do you want to allow it?");
+      expect(m.cut, "the heading is cut").toBe(false);
+      expect(m.overflow).not.toBe("ellipsis");
+      await inWindow(page, analysis.locator("h2"), "the heading");
+      await cards(page).first().click();
       await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     });
   }
-  // The developer's decision of 9 Oct 2026: the question and the first answer in view at 450 px high and taller
-  // (IN_VIEW_MIN_HEIGHT); at 640 × 400 the analysis still stays within its own box and the first answer is reached by
-  // scrolling.
-  for (const height of [450, 400] as const) test(`(L21a) a permission request at 640 × ${height} beside the analysis: ${height >= IN_VIEW_MIN_HEIGHT ? "the question and the first answer in view with room to spare" : "below the 450 px limit, the first answer reached by scrolling"}, the analysis within its own box`, async ({ page }) => {
+  // Issue #133 (decision G-R1-1): beside its analysis the question and its choices are at the top of the page, so they
+  // are in view in a window 400 px high too, where the decision of 9 Oct 2026 (IN_VIEW_MIN_HEIGHT) once let the run
+  // scroll to the first answer; the analysis stays within its own box, and by the developer's decision of 12 Oct 2026
+  // every part below the choices is reached by scrolling the run, none clipped.
+  for (const height of [450, 400] as const) test(`(L21a) a permission request at 640 × ${height} beside the analysis: the question and the first answer in view, the rest reached by scrolling`, async ({ page }) => {
     await page.setViewportSize({ width: 640, height });
     await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    const analysis = analysisOf(page);
     await expect(analysis).toBeVisible();
-    if (height >= IN_VIEW_MIN_HEIGHT) {
-      await questionWithFirstAnswer(page, analysis, height);
-      await yieldOrder(analysis);
-    }
-    const m = await analysis.evaluate((el) => {
-      const own = (s: string) => {
-        const r = el.querySelector<HTMLElement>(s);
-        return r === null ? null : { rendered: r.getBoundingClientRect().height, inline: parseFloat(r.style.height) };
-      };
-      return { scroll: el.scrollHeight, client: el.clientHeight, context: own(".question-context"), recommendation: own(".recommendation") };
-    });
+    await settled(page);
+    await inWindow(page, analysis.locator("h2"), "the question");
+    await inWindow(page, cards(page).first(), "the first answer");
+    await runNotScrolled(page);
+    const m = await analysis.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
     expect(m.scroll, "the analysis's content overflows its own box").toBeLessThanOrEqual(m.client + 1);
-    for (const [name, r] of [["the context", m.context], ["the recommendation", m.recommendation]] as const) {
-      if (r === null) continue;
-      expect(Math.abs(r.rendered - r.inline), `${name} renders at ${r.rendered} px, not its allotted ${r.inline} px`).toBeLessThanOrEqual(1);
-    }
-    if (height < IN_VIEW_MIN_HEIGHT) await belowTheLimit(page, analysis.locator(".question-text"));
-    await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
+    const parts = everyPart(analysis);
+    for (let i = 0; i < (await parts.count()); i++) await unclipped(page, parts.nth(i), `part ${i}`);
+    await cards(page).first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
   // Finding W2-R1-1 of work review 2: a notice that appears while the analysis is shown takes room above the decision
@@ -1135,16 +1051,23 @@ test.describe("the tests of the permissionLong server, in order", () => {
     await startTask(page, PERMISSION_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    const analysis = analysisOf(page);
     await expect(analysis).toBeVisible();
-    await questionWithFirstAnswer(page, analysis, IN_VIEW_MIN_HEIGHT);
+    // Issue #133: the question and its first answer are at the top of the decision page, so a notice above it leaves them in view.
+    const questionAndFirstAnswerAtTheTop = async () => {
+      await settled(page);
+      await inWindow(page, analysis.locator("h2"), "the question");
+      await inWindow(page, cards(page).first(), "the first answer");
+      await runNotScrolled(page);
+    };
+    await questionAndFirstAnswerAtTheTop();
     const reason = "a run is in progress; stop it or wait for its end";
     expect(toPage, "the page's WebSocket was not routed").not.toBeNull();
     toPage!(JSON.stringify({ type: "refused", mode, reason }));
     await expect(page.getByRole("alert").filter({ hasText: reason })).toBeVisible();
     // The room is measured again when the line appears (an observer of the run's children or of its size), and the
     // analysis is laid out again after it; the layout settles within a few frames, so the check is retried until then.
-    await expect(async () => questionWithFirstAnswer(page, analysis, IN_VIEW_MIN_HEIGHT)).toPass({ timeout: 5_000 });
+    await expect(async () => questionAndFirstAnswerAtTheTop()).toPass({ timeout: 5_000 });
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
@@ -1160,9 +1083,12 @@ test.describe("the tests of the whitespace server, in order", () => {
     // Issue #137: the input is in the collapsed section of the request, opened before it is measured.
     await distinctWidths("in the question pane", await expandSection(page, attachedHeading("request")));
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    const analysis = analysisOf(page);
     await expect(analysis).toBeVisible();
-    await distinctWidths("beside the analysis", analysis.locator(".question-context"));
+    // Issue #133: beside the analysis the input is under its own heading, opened before it is measured.
+    const request = sectionButton(analysis, attachedHeading("request"));
+    await request.click();
+    await distinctWidths("beside the analysis", await bodyOf(page, request));
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
     await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
     await distinctWidths("in the transcript", panel(page, LEFT).locator("article", { hasText: "Probe" }).last());

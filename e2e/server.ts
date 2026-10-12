@@ -26,7 +26,7 @@ import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { E2E_ITEMS } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
 import type { RunMode } from "../src/runMode.ts";
-import { fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, currentOf, entryOf } from "../test/helpers.ts";
+import { fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, currentOf, entryOf, para } from "../test/helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 // S39 (W2-R1-2): a context long enough to overflow its region beside the analysis.
@@ -35,6 +35,8 @@ const LONG_DECISION_CONTEXT = Array.from({ length: 8 }, (_, i) => `Paragraph ${i
 const turn = (message: string, complete: boolean, summary: string, asked: string[] = [], answered: string[] = []) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: asked, answered_ids: answered, complete, summary });
 /** A turn that asks the agreed question Q1 by its id: the page shows it from questions.json (S18). */
 const asksQ1 = (message: string) => ({ ...turn(message, false, "", ["Q1"]), current_question: currentOf({ id: "Q1", context: "", text: "", terms: [], options: [] }) });
+/** Issue #133: the history of the decideLong scenario's question, shown under its own heading on the decision page. */
+const DECISION_HISTORY = "You decided on 9 Oct 2026 to keep the service on one machine, and the first prototype ran on SQLite.";
 const LONG = 60;
 /** An analysis of the "decide" scenario: two columns, a counterargument with a defense, one equivalence, a recommendation. */
 const element = (text: string, counterarguments: unknown[] = []) => ({ text, counterarguments });
@@ -167,9 +169,11 @@ export const SCENARIOS: Record<string, TestOptions> = {
     execs: [finished],
   },
   // W1-R1-3: a long recommendation must not squeeze the columns.
+  // Issue #133: its question has a history too, and its context is eight paragraphs, so that the History heading and
+  // the text columns are exercised.
   decideLong: {
     steps: [
-      { output: { questions_for_user: [questionOf({ context: LONG_DECISION_CONTEXT, question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
+      { output: { questions_for_user: [{ ...questionOf({ context: LONG_DECISION_CONTEXT, question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] }), context: para(...LONG_DECISION_CONTEXT.split("\n\n")), history: para(DECISION_HISTORY) }] }, plan: "1. [ ] the step\n" },
       { output: { ...DECIDE_ANALYSIS, recommendation: { option: "SQLite", reason: LONG_RECOMMENDATION } } },
       { output: noQuestions },
     ],
