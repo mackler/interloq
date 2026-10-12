@@ -4,9 +4,10 @@ import { test } from "node:test";
 import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
+import { attachedOf } from "../src/question.ts";
 import { para, plain, workExecution , TEST_ROOT } from "./helpers.ts";
 /** A tool's input as conversation.md records it (S34): its blocks as Markdown, without the heading. */
-const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input).slice(1));
+const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input));
 import { appendRound } from "../src/issueLog.ts";
 import type { IssueId } from "../src/round.ts";
 import * as S from "../src/schema.ts";
@@ -536,7 +537,7 @@ test("permissionQuestion names neither the command, nor the file, nor the addres
   }
   assert.equal(prompts.permissionQuestion("Bash", { command: "ls" }).length, prompts.permissionQuestion("Bash", { command: long }).length);
   assert.equal(prompts.permissionQuestion("Edit", { file_path: "/a" }).length, prompts.permissionQuestion("Edit", { file_path: `/${"b".repeat(3000)}` }).length);
-  assert.ok(prompts.permissionQuestion("Bash", { command: "ls" }).includes(prompts.TOOL_INPUT_HEADING));
+  assert.ok(prompts.permissionQuestion("Bash", { command: "ls" }).includes(prompts.attachedHeading("request")));
 });
 
 // S52 (W5-R1-1): every question the program composes has a length independent of its inputs. An argument is either free
@@ -559,22 +560,20 @@ test("the questions the program composes embed no agent-written or SDK-written t
   }
   for (const file of files) for (const pause of ["unexplained", "identical"] as const) assert.ok(prompts.pauseQuestion({ pause, fileLabel: file, heading: "Planning phase 1", round: 1 } as never).length < 200, file);
 });
-test("the transport pause's details hold the attempts and the whole fault under their heading; the fallback context points to them", () => {
+test("the transport pause's details hold the attempts and the whole fault; the fallback context points to them", () => {
   const fault = `read ECONNRESET ${"z".repeat(2500)}`;
   const details = blocksMarkdown(prompts.transportDetails(4, fault));
-  assert.ok(details.startsWith(prompts.TRANSPORT_FAULT_HEADING));
   assert.ok(details.includes("4"));
   assert.ok(details.includes(fault));
   const context = prompts.fallbackContext({ kind: "transport", agent: "codex", what: "the review", attempts: 4, fault });
   assert.ok(!context.includes(fault), "the fallback paragraph embeds the fault");
   assert.ok(context.length < 1000);
 });
-test("an execution stop's details hold Claude Code's description under their heading", () => {
+test("an execution stop's details hold Claude Code's description", () => {
   const description = "The build needs a decision about **the cache**.";
   const shown = (d: string) => blocksMarkdown(prompts.execStopDetails(d));
-  assert.ok(shown(description).startsWith(prompts.EXEC_STOP_HEADING));
   assert.ok(shown(description).includes(description));
-  assert.deepEqual(prompts.execStopDetails(description)[1], { kind: "document", markdown: description }, "Claude Code's prose is shown whole");
+  assert.deepEqual(prompts.execStopDetails(description)[0], { kind: "document", markdown: description }, "Claude Code's prose is shown whole");
   assert.ok(shown("  ").includes(prompts.EXEC_STOP_NO_DESCRIPTION));
 });
 
@@ -586,7 +585,7 @@ test("a multi-line value's edge line breaks are escaped in the record", async ()
   assert.ok(lines.includes(prompts.ESCAPED_VALUE_NOTE));
   assert.ok(prompts.ESCAPED_VALUE_NOTE.includes("`\\n`"));
   assert.notEqual(inputLines({ content: "a\nb" }), lines);
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks({ content: "a\nb\n" }), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks({ content: "a\nb\n" })), decision: null });
   assert.ok(record.includes("a\nb\\n"));
 });
 
@@ -602,7 +601,7 @@ test("an unknown field's name is shown literally and looked up by own properties
   }
   assert.equal(prompts.unknownSettingLabel("**mode**"), "The tool's setting named `**mode**`");
   assert.ok(inputLines(own("a\nb")).includes("`a\\nb`"));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks(own("<target>")), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks(own("<target>"))), decision: null });
   assert.ok(record.includes("`<target>`"));
 });
 
@@ -661,7 +660,7 @@ test("S57: shownName is one-to-one over non-empty names, never blank, and the em
 test("S57: conversation.md carries the labels and notes of escaped names", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const details = prompts.toolInputBlocks(withKeys([`a${BS}nb`, SP]));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details, decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", details), decision: null });
   assert.ok(record.includes(prompts.unknownSettingLabel(`a${BS}nb`)));
   assert.ok(record.includes(prompts.unknownSettingLabel(SP)));
 });
@@ -684,7 +683,7 @@ test("S60: empty lists, empty objects, the empty text and null display different
   assert.notEqual(prompts.permissionFacts("T", nested[0]), prompts.permissionFacts("T", nested[1]));
   assert.equal(inputLines({}), prompts.NO_INPUT_PHRASE);
   assert.ok(prompts.permissionFacts("T", {}).includes(prompts.NO_INPUT_PHRASE));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], details: prompts.toolInputBlocks(inputs[0]), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks(inputs[0])), decision: null });
   assert.ok(record.includes(prompts.EMPTY_LIST_PHRASE));
 });
 
@@ -891,4 +890,31 @@ test("issue #122: the revision prompt carries the task and names requirements.md
   assert.ok(!without.includes(prompts.requirementsSentence(TEST_ROOT)));
   assert.ok(without.includes(prompts.userDecisionsSentence(TEST_ROOT)));
   assert.match(without, /^Execution phase 1 has ended\./);
+});
+
+// Issue #137 (Q1): each kind of attached material has a heading of its own, the one source of every reader's heading.
+test("attachedHeading: a distinct, non-blank heading per kind; the reason's is the developer's name", async () => {
+  const { ATTACHED_KINDS } = await import("../src/question.ts");
+  const headings = ATTACHED_KINDS.map((k) => prompts.attachedHeading(k));
+  assert.ok(headings.every((h) => h.trim() !== ""), headings.join(" | "));
+  assert.equal(new Set(headings).size, headings.length);
+  assert.equal(prompts.attachedHeading("reason"), "Why You're Being Asked This");
+});
+
+// Issue #137: the material now follows the question on the page and precedes it in conversation.md, so a question
+// names it by its heading and says neither "above" nor "below".
+test("the questions and facts that point at attached material name it by its heading, without a direction", () => {
+  const texts: readonly (readonly [string, string])[] = [
+    [prompts.permissionQuestion("Bash", { command: "ls" }), prompts.attachedHeading("request")],
+    [prompts.permissionQuestion("Edit", { file_path: "/x" }), prompts.attachedHeading("request")],
+    [prompts.permissionQuestion("WebFetch", { url: "https://x" }), prompts.attachedHeading("request")],
+    [prompts.permissionQuestion("Other", { a: 1 }), prompts.attachedHeading("request")],
+    [prompts.permissionFacts("Bash", { command: "ls" }), prompts.attachedHeading("request")],
+    [prompts.execStopQuestion(), prompts.attachedHeading("stopReport")],
+    [prompts.transportExhaustedQuestion("codex", "the review"), prompts.attachedHeading("fault")],
+  ];
+  for (const [text, heading] of texts) {
+    assert.ok(text.includes(heading), `${heading} in ${text}`);
+    assert.ok(!/\b(above|below)\b/.test(text), text);
+  }
 });

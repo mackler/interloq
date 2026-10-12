@@ -9,18 +9,17 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import fc from "fast-check";
-import { askOffering, numberedOptions, permissionDraft, type QuestionDraft } from "../src/offer.ts";
+import { askOffering, numberedOptions, permissionDraft, type QuestionDraft, withContext } from "../src/offer.ts";
 import { blockPieces, literalsOf, piecesText, plainBlocks, valueTokensOf } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { contextValidation, writeContext } from "../src/questionContext.ts";
-import { questionProblems } from "../src/question.ts";
+import { attachedOf, questionProblems } from "../src/question.ts";
 import type { Block, Piece, QuestionContext } from "../src/schema.ts";
 import { Store, Ui } from "../src/services.ts";
 import { finished, opt, para, plain, presentedQuestions, runTask, SCRIPTED_CONTEXT, scriptedContextReply, tempRepo, term, testLayer, type TestOptions } from "./helpers.ts";
 
 const origin = { kind: "permission", tool: "Bash", input: "npm install zod" } as const;
 const details: readonly Block[] = [
-  { kind: "paragraph", pieces: plain(prompts.TOOL_INPUT_HEADING) },
   { kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), { text: "npm install zod", ref: "", code: true }] }] },
 ];
 const request: prompts.ContextRequest = {
@@ -101,16 +100,16 @@ test("G-R1-1: a rephrased question, options and details' prose pass; F1: a chang
   const changed = (d: readonly Block[]) => ({ ...good, details: d });
   const literal = (text: string): Piece => ({ text, ref: "", code: true });
   for (const [what, d] of [
-    ["changed", [details[0], { kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), literal("npm install zod@4")] }] }]],
-    ["removed", [details[0], { kind: "list", items: [{ level: 0, pieces: plain("The command: npm install zod") }] }]],
+    ["changed", [{ kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), literal("npm install zod@4")] }] }]],
+    ["removed", [{ kind: "list", items: [{ level: 0, pieces: plain("The command: npm install zod") }] }]],
     ["added", [...details, { kind: "code", text: "rm -rf /" }]],
-    ["moved into a code block", [details[0], { kind: "code", text: "npm install zod" }, { kind: "list", items: [{ level: 0, pieces: [literal("npm install zod")] }] }]],
+    ["moved into a code block", [{ kind: "code", text: "npm install zod" }, { kind: "list", items: [{ level: 0, pieces: [literal("npm install zod")] }] }]],
   ] as const) {
     const result = validate(changed(d as readonly Block[]));
     assert.ok(Result.isFailure(result), what);
     assert.equal(result.failure.repair, repairOf({ kind: "literalChanged", subject: "" }), what);
   }
-  assert.ok(Result.isFailure(validate({ ...good, details: [details[0], { kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), { text: "npm install zod", ref: "z", code: true }] }] }] })), "a ref added to a literal");
+  assert.ok(Result.isFailure(validate({ ...good, details: [{ kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), { text: "npm install zod", ref: "z", code: true }] }] }] })), "a ref added to a literal");
   const fewer = validate({ ...good, options: good.options.slice(0, 1) });
   assert.ok(Result.isFailure(fewer));
   assert.equal(fewer.failure.repair, repairOf({ kind: "optionsChanged", subject: "" }));
@@ -120,7 +119,7 @@ test("G-R1-1: a rephrased question, options and details' prose pass; F1: a chang
 // in the prompt alone and checked by the validation: the seam of the two, for a permission request with an unknown field.
 test("S9 seam: KEEP_SUPPLIED_REFS is in the prompt of a request that supplies a reference, and the validation holds the reply to it", () => {
   const draft = permissionDraft("Bash", { command: "ls", max_depth: 3 });
-  const supplied: prompts.ContextRequest = { origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: draft.details as readonly Block[], explanations: draft.explanations, facts: "" };
+  const supplied: prompts.ContextRequest = { origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "" };
   const prompt = prompts.contextPrompt("t", supplied);
   assert.ok(prompt.includes(prompts.KEEP_SUPPLIED_REFS));
   const named = blockPieces(supplied.details).find((p) => p.code && p.ref !== "");
@@ -158,7 +157,7 @@ test("property F1: a reply that keeps the literals and the options, whatever its
 
 test("S9: a question that asks for its context is presented with the agent's paragraph, pieces and explanations", async () => {
   const { layer, probe } = initialized({ answers: ["1"], contexts: [{ output: good }] });
-  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), details, explain: request.facts, decision: null };
+  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), attached: attachedOf("request", details), explain: request.facts, decision: null };
   const ask = Effect.gen(function* () {
     yield* (yield* Store).init("the task");
     const ui = yield* Ui;
@@ -179,9 +178,9 @@ test("S9: a question that asks for its context is presented with the agent's par
 
 // F1 (G-R1-1 of the requirements): a reply that alters a command twice leaves the program's own text for the user.
 test("F1 scenario: a context call that alters the command twice leaves Interloq's own question and command", async () => {
-  const altered: QuestionContext = { ...good, details: [details[0], { kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), { text: "npm install zod --force", ref: "", code: true }] }] }] };
+  const altered: QuestionContext = { ...good, details: [{ kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), { text: "npm install zod --force", ref: "", code: true }] }] }] };
   const { layer, probe } = initialized({ answers: ["1"], contexts: [{ output: altered }, { output: altered }] });
-  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), details, explain: request.facts, decision: null };
+  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), attached: attachedOf("request", details), explain: request.facts, decision: null };
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
@@ -191,7 +190,7 @@ test("F1 scenario: a context call that alters the command twice leaves Interloq'
   );
   const [q] = presentedQuestions(probe.ui);
   assert.equal(q.context.by, "program");
-  assert.deepEqual(q.details, details);
+  assert.deepEqual(q.attached?.blocks, details);
   assert.deepEqual(q.question, request.question);
   assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "literalChanged", subject: "" }));
 });
@@ -228,7 +227,7 @@ test("a context call that changes the project halts with ProjectChanged; the fal
 /** A permission request as the context call is given it, from the input of a tool. */
 const permissionRequest = (tool: string, input: Record<string, unknown>): prompts.ContextRequest => {
   const draft = permissionDraft(tool, input);
-  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: draft.details as readonly Block[], explanations: draft.explanations, facts: "" };
+  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "" };
 };
 /** The reply a context call returns when it does exactly what its prompt says: the question as given. */
 const faithful = (request: prompts.ContextRequest): QuestionContext => scriptedContextReply(prompts.contextPrompt("t", request));
@@ -447,8 +446,8 @@ test("W3-R1-1 scenario (P4-R1-1): a reply that puts a two-line command in a code
   assert.ok(probe.planner.contextPrompts[1].includes(codeLineClause?.text ?? "missing"));
   const [q] = presentedQuestions(probe.ui);
   assert.equal(q.context.by, "program");
-  assert.deepEqual(q.details, draft.details);
-  assert.ok(q.details.some((b) => b.kind === "code" && b.text === "printf a\nprintf b"), "the command in a code block, its line break intact");
+  assert.deepEqual(q.attached, draft.attached);
+  assert.ok((q.attached?.blocks ?? []).some((b) => b.kind === "code" && b.text === "printf a\nprintf b"), "the command in a code block, its line break intact");
 });
 
 // ---- W4-R1-1, P5-R1-1 (S31): a supplied reference stays on its occurrence, in its part ------------------------------
@@ -555,8 +554,8 @@ test("W4-R1-1 scenario: a reply that moves the setting's reference onto its valu
   assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "literalChanged", subject: "" }));
   const [q] = presentedQuestions(probe.ui);
   assert.equal(q.context.by, "program");
-  assert.deepEqual(q.details, draft.details);
-  const foos = blockPieces(q.details as readonly Block[]).filter((p) => p.code && p.text === "foo");
+  assert.deepEqual(q.attached, draft.attached);
+  const foos = blockPieces((q.attached?.blocks ?? []) as readonly Block[]).filter((p) => p.code && p.text === "foo");
   assert.deepEqual(foos.map((p) => p.ref), ["setting-1", ""], "the name carries the reference, the value none");
 });
 
@@ -612,8 +611,8 @@ test("S32 scenario: a reply that drops one occurrence's reference twice leaves I
   assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "literalChanged", subject: "" }, { kind: "suppliedRefDropped", subject: "foo" }));
   const [q] = presentedQuestions(probe.ui);
   assert.equal(q.context.by, "program");
-  assert.deepEqual(q.details, draft.details);
-  assert.deepEqual(blockPieces(q.details as readonly Block[]).filter((p) => p.code && p.text === "foo").map((p) => p.ref), ["setting-2", "setting-2"]);
+  assert.deepEqual(q.attached, draft.attached);
+  assert.deepEqual(blockPieces((q.attached?.blocks ?? []) as readonly Block[]).filter((p) => p.code && p.text === "foo").map((p) => p.ref), ["setting-2", "setting-2"]);
 });
 
 // ---- W5-R1-1, P6-R1-1 to P6-R1-3 (S33): two code pieces never stand next to each other -------------------------------
@@ -690,4 +689,15 @@ test("a context call refused because its session is too long halts with ClaudeSe
   await assert.rejects(written(), (e: unknown) => (e as { _tag?: string })._tag === "ClaudeSessionTooLong");
   assert.ok(!conversation(probe.dir).includes(prompts.contextFallbackNote(prompts.sessionTooLongText("Prompt is too long"))));
   assert.doesNotMatch(conversation(probe.dir), /Context written by Interloq/);
+});
+
+// Issue #137: a context call rephrases the attached material's blocks and never its kind; a draft without material gets none.
+test("withContext keeps the draft's kind of attached material and takes the call's rephrased blocks", () => {
+  const blocks = [{ kind: "paragraph" as const, pieces: plain("The command: ls") }] as const;
+  const rephrased = [{ kind: "paragraph" as const, pieces: plain("Claude Code would run: ls") }] as const;
+  const base: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), decision: null };
+  const written = { context: { blocks: para("c"), by: "agent" as const }, explanations: [], details: rephrased };
+  assert.deepEqual(withContext({ ...base, attached: { kind: "request", blocks } }, written).attached, { kind: "request", blocks: rephrased });
+  assert.deepEqual(withContext({ ...base, attached: { kind: "request", blocks } }, { ...written, details: undefined }).attached, { kind: "request", blocks });
+  assert.equal(withContext(base, written).attached ?? null, null);
 });

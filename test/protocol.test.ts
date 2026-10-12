@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Sense, Senses } from "../src/question.ts";
+import { ATTACHED_KINDS, type Sense, type Senses } from "../src/question.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { Schema } from "effect";
 import { RUN_MODES } from "../src/runMode.ts";
-import { type ClientMessage, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import { type ClientMessage, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
@@ -74,7 +74,7 @@ const presentedQuestion = fc.record({
   explanations: fc.array(shownExplanation, { maxLength: 2 }),
   question: pieces,
   options: fc.array(fc.record({ label: pieces, description: pieces, answer: fc.oneof(fc.record({ token: text }), fc.constant({ numeric: true as const })) }), { maxLength: 3 }),
-  details: fc.array(shownBlock, { maxLength: 2 }),
+  attached: fc.option(fc.record({ kind: fc.constantFrom(...ATTACHED_KINDS), blocks: fc.tuple(shownBlock).chain((first) => fc.array(shownBlock, { maxLength: 1 }).map((rest) => [...first, ...rest] as const)) }), { nil: null }),
   decision: fc.option(nat, { nil: null }),
 });
 const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
@@ -339,8 +339,21 @@ test("the ui frames and a replay with shared states decode; an unknown scope and
 
 // Issue #112: a presented question's explanation has one or more senses, none blank; anything else is refused.
 test("issue #112: a presented question with an empty senses list or a blank sense does not decode", () => {
-  const question = (senses: readonly string[]) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [{ id: "z", term: "zod", senses }], question: [], options: [], details: [], decision: null });
+  const question = (senses: readonly string[]) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [{ id: "z", term: "zod", senses }], question: [], options: [], attached: null, decision: null });
   const frame = (senses: readonly string[]) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "QuestionPresented", question: question(senses) } } });
   assert.ok(Result.isSuccess(decodeServer(frame(["A library.", "The SDK's input library."]))));
   for (const senses of [[], [""], ["A library.", "  "]]) assert.ok(Result.isFailure(decodeServer(frame(senses))), JSON.stringify(senses));
+});
+
+// Issue #137: a presented question's attached material crosses the wire with its kind, and is never empty.
+test("a presented question's attached material decodes with each kind and as null; empty blocks are refused", () => {
+  const question = (attached: unknown) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [], question: [], options: [], attached, decision: null });
+  const decode = Schema.decodeUnknownResult(PresentedQuestionSchema);
+  for (const kind of ATTACHED_KINDS) {
+    const q = question({ kind, blocks: [{ kind: "document", markdown: "x" }] });
+    assert.deepEqual(Result.getOrThrow(decode(q)), q);
+  }
+  assert.deepEqual(Result.getOrThrow(decode(question(null))), question(null));
+  assert.ok(Result.isFailure(decode(question({ kind: "reason", blocks: [] }))));
+  assert.ok(Result.isFailure(decode({ ...question(null), attached: undefined, details: [] })));
 });

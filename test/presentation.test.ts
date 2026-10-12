@@ -103,6 +103,7 @@ test("S11: a pause reaches the user as prose: no line said and no question shown
   assert.ok(pause !== undefined);
   assert.match(detailsText(pause), new RegExp(`^${prompts.pauseLead({ pause: "reraised", id: "P1-R1-1" })}`));
   assert.match(detailsText(pause), /Codex says: p\n\ne/);
+  assert.equal(pause.attached?.kind, "reviewFacts");
   const shown = [...probe.ui.said, ...presentedQuestions(probe.ui).flatMap((q) => [contextText(q), detailsText(q), questionText(q), ...q.options.map((o) => piecesText(o.description))])];
   for (const text of shown) for (const forbidden of ["{\n", '"duplicate_of"', "duplicate_of:", "superseded", "\\n"]) assert.ok(!text.includes(forbidden), `${forbidden} in: ${text}`);
 });
@@ -119,7 +120,7 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
   assert.deepEqual([paused?.context, paused?.explanations], [{ blocks: context, by: "agent" }, explanations]);
   assert.equal(paused && questionText(paused), prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }));
   // The context call was given the pause's facts, which the user also reads (S11).
-  assert.ok(pause.probe.planner.contextPrompts[0].includes(JSON.stringify(paused?.details ?? "?")));
+  assert.ok(pause.probe.planner.contextPrompts[0].includes(JSON.stringify(paused?.attached?.blocks ?? "?")));
 
   const limit = testLayer(tempRepo(), {
     answers: ["p"],
@@ -158,6 +159,14 @@ test("S12: the questions that do not need one make no context call: the clarific
   assert.equal(byKind.get("confirmSummary")?.by, "program");
 });
 
+// Issue #137: the summary to confirm is attached as the summary, whole, and recorded under its heading.
+test("the summary's confirmation carries the summary as its attached material", async () => {
+  const { refinement } = await scenario();
+  const confirm = presentedQuestions(refinement.ui).find((q) => q.origin.kind === "confirmSummary");
+  assert.deepEqual(confirm?.attached, { kind: "summary", blocks: [{ kind: "document", markdown: done.summary }] });
+  assert.ok(fs.readFileSync(path.join(refinement.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("summary")}**`));
+});
+
 // S18: an agreed question is presented from the reviewed records alone: questions.json and terms.json.
 test("S18: an agreed question is presented as reviewed: its context, text, proposed answers and reason, and the terms of terms.json", async () => {
   const zod = { id: "z", term: "zod", senses: ["A library that checks the shape of data."] };
@@ -188,6 +197,9 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
   ]);
   assert.deepEqual(q.explanations, [zod]);
   assert.match(detailsText(q), /package\.json does not list zod/);
+  // Issue #137: the reason is attached as such, without a heading paragraph of its own; the record writes the heading.
+  assert.deepEqual(q.attached, { kind: "reason", blocks: entryZod.reason });
+  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("reason")}**`));
   // Every explanation shown with an agreed question is non-empty and referred to by a piece of what is shown.
   const refs = [...(q.context.blocks[0].kind === "paragraph" ? q.context.blocks[0].pieces : []), ...q.question].map((p) => p.ref);
   for (const t of q.explanations) {

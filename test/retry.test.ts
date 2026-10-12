@@ -191,7 +191,8 @@ test("at the exhaustion pause, the details hold the attempts and the whole fault
   await exitOf(withTransportRetry("claude", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null })), Effect.void), layer);
   const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
   assert.ok(!piecesText(q.question).includes(long.slice(0, 40)), piecesText(q.question));
-  assert.deepEqual(q.details, prompts.transportDetails(3, long));
+  assert.deepEqual(q.attached, { kind: "fault", blocks: prompts.transportDetails(3, long) });
+  assert.ok(!piecesText(q.attached?.blocks[0].kind === "paragraph" ? q.attached.blocks[0].pieces : []).includes("could not be reached"), "no heading paragraph of its own");
 });
 
 // Issue #68: a usage limit with a stated reset is waited out on the Clock, and the call is made again; nothing is asked.

@@ -9,7 +9,7 @@ import fc from "fast-check";
 import { decodeRunError, haltMessage } from "../src/errors.ts";
 import { piecesMarkdown, piecesText } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
-import { type Piece, type Question, questionProblems, sensesOf, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
+import { ATTACHED_KINDS, attachedOf, type Piece, type Question, questionProblems, sensesOf, type SuppliedRef, validateQuestion, validateQuestions } from "../src/question.ts";
 import type { Block, Explanation } from "../src/schema.ts";
 import { opt, para, plain, readBack, readBlocks, term , TEST_ROOT } from "./helpers.ts";
 
@@ -350,4 +350,23 @@ test("property (issue #112): with a single sense the checks are those of one exp
     }),
     { numRuns: 200 },
   );
+});
+
+// Issue #137 (Q1): a question's attached material is named by its kind and never empty; attachedOf is its one constructor.
+test("attachedOf: null for blocks without text; otherwise the kind and the blocks unchanged", () => {
+  const block = fc.oneof(
+    fc.string().map((t): Block => ({ kind: "paragraph", pieces: plain(t) })),
+    fc.string().map((t): Block => ({ kind: "code", text: t })),
+    fc.array(fc.string(), { minLength: 1, maxLength: 3 }).map((ts): Block => ({ kind: "list", items: ts.map((t) => ({ level: 0, pieces: plain(t) })) })),
+  );
+  fc.assert(
+    fc.property(fc.constantFrom(...ATTACHED_KINDS), fc.array(block, { maxLength: 3 }), (kind, blocks) => {
+      const empty = blocks.every((b) => (b.kind === "paragraph" ? piecesText(b.pieces) : b.kind === "code" ? b.text : b.items.map((i) => piecesText(i.pieces)).join("")).trim() === "");
+      const attached = attachedOf(kind, blocks);
+      return empty ? attached === null : attached !== null && attached.kind === kind && (attached.blocks as readonly unknown[]) === blocks;
+    }),
+    { numRuns: 200 },
+  );
+  assert.equal(attachedOf("summary", [{ kind: "document", markdown: "  " }]), null);
+  assert.deepEqual(attachedOf("summary", [{ kind: "document", markdown: "# R" }]), { kind: "summary", blocks: [{ kind: "document", markdown: "# R" }] });
 });

@@ -14,7 +14,7 @@ import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNor
 import { type Services, Store, Ui } from "./services.ts";
 import { agentContext, askOffering, numberedOptions, programContext, type QuestionDraft } from "./offer.ts";
 import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
-import type { QuestionOrigin } from "./question.ts";
+import { attachedOf, type QuestionOrigin } from "./question.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 
 /**
@@ -95,7 +95,7 @@ export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDr
     const divided = records.terms.find((t) => t.id === agreed.id);
     const entry = divided ?? { ...agreed, explanations: [] };
     const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description })));
-    return { origin, context: agentContext(entry.context, origin), explanations: entry.explanations, question: entry.question, options, details: prompts.agreedDetails(entry.reason), decision: null };
+    return { origin, context: agentContext(entry.context, origin), explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", prompts.agreedDetails(entry.reason)), decision: null };
   }
   if (asksNothing(current)) return { origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: turn.message }], by: "agent" }, explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null };
   const origin: QuestionOrigin = { kind: "followUp", id: current.id };
@@ -134,7 +134,7 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
       if (turn.kind === "summary_proposed") {
         // S7: the summary is read beside the question that confirms it, after the program's paragraph.
         const origin: QuestionOrigin = { kind: "confirmSummary" };
-        const draft: QuestionDraft = { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], details: [{ kind: "document", markdown: turn.summary.trim() }], decision: null };
+        const draft: QuestionDraft = { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], attached: attachedOf("summary", [{ kind: "document", markdown: turn.summary.trim() }]), decision: null };
         const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.confirmSummaryPrompt, draft));
         if (reply.kind !== "text") {
           yield* store.writeRequirements(turn.summary.trimEnd() + "\n");

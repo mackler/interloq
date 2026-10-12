@@ -973,8 +973,13 @@ const permissionAsked = async (tool: string, input: Record<string, unknown>, exp
 test("an Edit permission shows the file and both texts under plain labels, never the raw keys, with the program's context", async () => {
   const { q, conversation } = await permissionAsked("Edit", { file_path: "/tmp/config", old_string: "safe", new_string: "unsafe" });
   assert.equal(q.context.by, "program");
-  for (const text of [blocksMarkdown(q.details), renderQuestionRecord(q), conversation]) {
-    for (const shown of ["/tmp/config", "safe", "unsafe", prompts.TOOL_INPUT_HEADING]) assert.ok(text.includes(shown), `${shown} in ${text}`);
+  // Issue #137: the input is attached as the request, its heading written by the record alone.
+  assert.equal(q.attached?.kind, "request");
+  assert.deepEqual(q.attached?.blocks, prompts.toolInputBlocks({ file_path: "/tmp/config", old_string: "safe", new_string: "unsafe" }));
+  assert.ok(conversation.includes(`**${prompts.attachedHeading("request")}**`));
+  assert.ok(!/what claude code would do/i.test(blocksMarkdown(q.attached?.blocks ?? [])), "no heading paragraph of its own");
+  for (const text of [blocksMarkdown(q.attached?.blocks ?? []), renderQuestionRecord(q), conversation]) {
+    for (const shown of ["/tmp/config", "safe", "unsafe"]) assert.ok(text.includes(shown), `${shown} in ${text}`);
     for (const raw of ["file_path", "old_string", "new_string"]) assert.ok(!text.includes(raw), `${raw} in ${text}`);
   }
 });
@@ -982,7 +987,7 @@ test("an Edit permission shows the file and both texts under plain labels, never
 test("an unknown field keeps its own name, explained as a term, with and without the context call", async () => {
   const overwrite = await permissionAsked("FutureTool", { overwrite: true });
   const dryRun = await permissionAsked("FutureTool", { dry_run: true });
-  assert.notEqual(overwrite.q.details, dryRun.q.details);
+  assert.notEqual(overwrite.q.attached, dryRun.q.attached);
   assert.deepEqual(overwrite.q.explanations, [{ id: "setting-1", term: "overwrite", senses: [prompts.unknownSettingExplanation] }]);
   assert.deepEqual(dryRun.q.explanations, [{ id: "setting-1", term: "dry_run", senses: [prompts.unknownSettingExplanation] }]);
   // The context call rewrites the explanation of the same id, which the name's code piece keeps referring to.
@@ -990,7 +995,7 @@ test("an unknown field keeps its own name, explained as a term, with and without
     Effect.succeed({ context: { blocks: plainBlocks("Written by Claude Code."), by: "agent" as const }, explanations: [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }] }),
   );
   assert.deepEqual(agent.q.explanations, [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }]);
-  const named = agent.q.details.flatMap((b) => (b.kind === "list" ? b.items.flatMap((i) => i.pieces) : [])).find((p) => p.code && p.ref !== "");
+  const named = (agent.q.attached?.blocks ?? []).flatMap((b) => (b.kind === "list" ? b.items.flatMap((i) => i.pieces) : [])).find((p) => p.code && p.ref !== "");
   assert.deepEqual(named, { text: "overwrite", ref: "setting-1", code: true });
 });
 

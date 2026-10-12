@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
-import { interviewSays, recordHeading, renderTerms, termItem, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
+import { attachedMarkdown, renderQuestionRecord as recordOf, interviewSays, recordHeading, renderTerms, termItem, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
 import { issue, para, plain, questionEntry, readTerms, respond, senseRead, shownOf, term } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
-import type { PresentedQuestion } from "../src/question.ts";
+import { attachedOf, type PresentedQuestion } from "../src/question.ts";
 import type { LogEntry } from "../src/schema.ts";
 import * as prompts from "../src/prompts.ts";
 
@@ -80,7 +80,7 @@ test("renderQuestionRecord writes the heading, the origin, the context, the deta
       { label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } },
       { label: plain("More cycles"), description: [], answer: { numeric: true } },
     ],
-    details: para("Codex says: the migration is missing."),
+    attached: attachedOf("reviewFacts", para("Codex says: the migration is missing.")),
     decision: null,
   };
   const record = renderQuestionRecord(q);
@@ -104,7 +104,7 @@ test("a question inside a decision says in its origin line that it belongs to th
 
 test("conversation.md records a question under its displayed number with the record's id beside it (S6)", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
-  const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], details: [], decision: null };
+  const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], attached: null, decision: null };
   assert.match(renderQuestionRecord(q), /^### Question 3 \(Q1\)\n/);
   // S11 (issue #59): each option's label in bold on its own line, the description on the next.
   const record = renderQuestionRecord({ ...q, explanations: [shownOf({ id: "t", term: "zod", senses: ["a library"] })], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
@@ -150,7 +150,7 @@ test("pauseProse writes every kind of pause as prose, without the record's field
   assert.ok(all.flat().every((b) => b.kind !== "paragraph" || b.pieces.every((p) => p.ref === "" && !p.code)));
 });
 
-// S49: the permission question says the input is "shown above": conversation.md records the details before the question.
+// S49: conversation.md records a permission's input before its question, under its heading (issue #137).
 test("renderQuestionRecord writes a permission's input before its question", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const { permissionDraft, presentedQuestion } = await import("../src/offer.ts");
@@ -161,7 +161,7 @@ test("renderQuestionRecord writes a permission's input before its question", asy
   const input = record.indexOf("rm -rf build");
   const asked = record.indexOf(piecesText(q.question));
   assert.ok(input > 0 && asked > input, record);
-  assert.ok(record.includes(prompts.TOOL_INPUT_HEADING));
+  assert.ok(record.includes(prompts.attachedHeading("request")));
 });
 
 // Issue #112: the "Terms:" block labels a term once; one sense stays on its line, several are numbered in order under it.
@@ -174,7 +174,7 @@ test("issue #112: the Terms block of conversation.md numbers two senses in order
     explanations: [shownOf({ id: "a", term: "zod", senses: ["A library."] }), shownOf({ id: "b", term: "port", senses: ["# The number in the address.", "The socket the server listens on."] })],
     question: [...plain("Use "), term("zod", "a"), ...plain(" on the "), term("port", "b"), ...plain("?")],
     options: [],
-    details: [],
+    attached: null,
     decision: null,
   };
   const record = renderQuestionRecord(q);
@@ -199,7 +199,7 @@ const multiline = (): PresentedQuestion => ({
   ],
   question: [...plain("Use "), term("port", "a"), ...plain(", "), term("cache", "b"), ...plain(" and "), term("zod", "c"), ...plain("?")],
   options: [],
-  details: [],
+  attached: null,
   decision: null,
 });
 
@@ -248,4 +248,16 @@ test("W1-R1-1 of work review 2: senses with CR and CRLF line endings stay whole 
     assert.deepEqual(terms.get("port"), several.map(senseRead), JSON.stringify(eol));
     assert.deepEqual(terms.get("zod"), [senseRead(single)], JSON.stringify(eol));
   }
+});
+
+// Issue #137: conversation.md writes a question's attached material under the heading the page shows (seam: both from attachedHeading).
+test("renderQuestionRecord writes the attached material under its heading, before the question", () => {
+  const attached = { kind: "reviewFacts" as const, blocks: [{ kind: "paragraph" as const, pieces: plain("Codex says: the migration is missing.") }] as const };
+  const markdown = attachedMarkdown(attached);
+  assert.equal(markdown, `**${prompts.attachedHeading("reviewFacts")}**\n\n${blocksMarkdown(attached.blocks)}`);
+  assert.equal(attachedMarkdown(null), "");
+  const q: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], attached, decision: null };
+  const record = recordOf(q);
+  assert.ok(record.includes(markdown), record);
+  assert.ok(record.indexOf(markdown) < record.indexOf("**Which?**"));
 });

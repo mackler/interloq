@@ -181,7 +181,7 @@ export const presentedSubjects = (ui: ScriptedUi): string[] => presentedQuestion
 /** The words of a presented question's text, its context, its details and its options' labels (issue #36: pieces). */
 export const questionText = (q: PresentedQuestion): string => piecesText(q.question);
 export const contextText = (q: PresentedQuestion): string => q.context.blocks.map((b) => (b.kind === "paragraph" ? piecesText(b.pieces) : b.kind === "list" ? b.items.map((i) => piecesText(i.pieces)).join("\n") : b.kind === "code" ? b.text : b.markdown)).join("\n\n");
-export const detailsText = (q: PresentedQuestion): string => q.details.map((b) => (b.kind === "paragraph" ? piecesText(b.pieces) : b.kind === "list" ? b.items.map((i) => piecesText(i.pieces)).join("\n") : b.kind === "code" ? b.text : b.markdown)).join("\n\n");
+export const detailsText = (q: PresentedQuestion): string => (q.attached?.blocks ?? []).map((b) => (b.kind === "paragraph" ? piecesText(b.pieces) : b.kind === "list" ? b.items.map((i) => piecesText(i.pieces)).join("\n") : b.kind === "code" ? b.text : b.markdown)).join("\n\n");
 export const optionLabels = (q: PresentedQuestion): string[] => q.options.map((o) => piecesText(o.label));
 
 // ---- a question's text as pieces (issue #36): builders for the tests ------------------------------------------------

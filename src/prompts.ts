@@ -4,7 +4,7 @@ import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { FILE_CHANGE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
-import type { PauseOrigin, QuestionOrigin } from "./question.ts";
+import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
 
@@ -1785,8 +1785,6 @@ export const TOOL_INPUT_LABELS: Readonly<Record<string, string>> = {
   query: "The search query",
   prompt: "What Claude Code asks about the page",
 };
-/** The heading of a permission request's input in the question's details (S34). */
-export const TOOL_INPUT_HEADING = "What Claude Code would do:";
 /** The line of a field Interloq has no words for: its own name, so that two such fields never look alike (P2-R1-2). */
 /**
  * S55 (W6-R1-1, P7-R1-1): the name is shown as code, on one line, so that no character of it is interpreted as Markdown
@@ -1993,7 +1991,7 @@ export function toolInputBlocks(input: unknown): readonly Block[] {
     if (Array.isArray(v)) return [...head, ...v.flatMap((x, i) => rows([plainPiece(`${i + 1}.`)], " ", x, label.length === 0 ? level : level + 1))];
     return [...head, ...Object.entries(v as Record<string, unknown>).flatMap(([k, x]) => rows(labelOf(k), ": ", x, label.length === 0 ? level : level + 1))];
   };
-  if (isEmptyObject(input)) return [{ kind: "paragraph", pieces: [plainPiece(TOOL_INPUT_HEADING)] }, { kind: "paragraph", pieces: [plainPiece(NO_INPUT_PHRASE)] }];
+  if (isEmptyObject(input)) return [{ kind: "paragraph", pieces: [plainPiece(NO_INPUT_PHRASE)] }];
   const all = rows([], "", input, 0);
   // Consecutive items form one list; a code block or the escapes' note ends it.
   const blocks = all.reduce<readonly Block[]>((acc, row) => {
@@ -2003,7 +2001,7 @@ export function toolInputBlocks(input: unknown): readonly Block[] {
     const it = { level: row.level, pieces: row.pieces };
     return last?.kind === "list" ? [...acc.slice(0, -1), { kind: "list", items: [...last.items, it] }] : [...acc, { kind: "list", items: [it] }];
   }, []);
-  return [{ kind: "paragraph", pieces: [plainPiece(TOOL_INPUT_HEADING)] }, ...blocks];
+  return blocks;
 }
 /** What the context call is asked about the fields without a plain label (P2-R1-2). */
 export function unknownSettingsRequest(keys: readonly string[]): string {
@@ -2019,13 +2017,13 @@ export function toolInputProse(input: unknown): string {
 const proseValue = (v: unknown): string =>
   typeof v === "string" ? v : typeof v === "number" ? String(v) : typeof v === "boolean" ? (v ? YES_PHRASE : NO_PHRASE) : Array.isArray(v) && v.length === 0 ? EMPTY_LIST_PHRASE : isEmptyObject(v) ? EMPTY_OBJECT_PHRASE : Array.isArray(v) ? v.map(proseValue).join(", ") : v === null || v === undefined ? NONE_PHRASE : Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k} ${proseValue(x)}`).join("; ");
 /**
- * The question of a permission request (S12, S49): the tool and the kind of action, pointing at the input shown above it
- * under TOOL_INPUT_HEADING (the page shows them in the region above it, and conversation.md records them before the
- * question). The input itself is never in the question, so that a long command cannot push the answers out of view.
+ * The question of a permission request (S12, S49): the tool and the kind of action, pointing at the input by its heading,
+ * attachedHeading("request"), with no direction, since the page shows it after the question and conversation.md before
+ * it (issue #137). The input itself is never in the question, so that a long command cannot push the answers out of view.
  */
 export function permissionQuestion(tool: string, input: unknown): string {
   const fields = input !== null && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
-  const shown = `shown above under "${TOOL_INPUT_HEADING}"`;
+  const shown = `shown under "${attachedHeading("request")}"`;
   const what =
     typeof fields.command === "string"
       ? `run the command ${shown}`
@@ -2041,7 +2039,7 @@ export function permissionFacts(tool: string, input: unknown): string {
   const fields = input !== null && typeof input === "object" && !Array.isArray(input) ? Object.entries(input as Record<string, unknown>) : [];
   const lines = fields.length === 0 ? toolInputProse(input) : fields.map(([k, v]) => `${k}${knownLabel(k) !== null ? ` (${knownLabel(k)})` : ""}: ${proseValue(v)}`).join("\n");
   const unknown = toolInputExplanations(input).map((t) => t.term);
-  return `Claude Code, while it carries out the plan, asks to use its tool ${tool} with this input:\n${lines}\nIf the user allows it, the tool runs in the project; if not, Claude Code is told so and continues without it. The user is shown the input under the heading "${TOOL_INPUT_HEADING}".${unknown.length === 0 ? "" : `\n${unknownSettingsRequest(unknown)}`}`;
+  return `Claude Code, while it carries out the plan, asks to use its tool ${tool} with this input:\n${lines}\nIf the user allows it, the tool runs in the project; if not, Claude Code is told so and continues without it. The user is shown the input under the heading "${attachedHeading("request")}".${unknown.length === 0 ? "" : `\n${unknownSettingsRequest(unknown)}`}`;
 }
 /** The facts of the cycle limit a context call is given (S12). */
 export function limitFacts(heading: string, limit: number, counts: readonly number[]): string {
@@ -2170,10 +2168,8 @@ export function transportRecoveredLine(agent: "claude" | "codex"): string {
  * by the program. The attempts and the fault, whose length the program does not choose, are in its details.
  */
 export function transportExhaustedQuestion(agent: "claude" | "codex", what: string): string {
-  return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown above. Do you want Interloq to retry again, or to stop the run?`;
+  return `${agentName(agent)} could not be reached for ${what}; the attempts and the last error are shown under "${attachedHeading("fault")}". Do you want Interloq to retry again, or to stop the run?`;
 }
-/** The heading of the exhaustion pause's details (S52). */
-export const TRANSPORT_FAULT_HEADING = "Why the agent could not be reached:";
 /**
  * The exhaustion pause's details (S52, P6-R1-1): the attempts in the program's words, and the last fault. The fault is
  * text of the SDK or the CLI, not Markdown, so it is shown literally, as a tool's input is (S45, S48).
@@ -2188,7 +2184,7 @@ export function transportDetails(attempts: number, fault: string): readonly Bloc
       : shown.text.includes("\n")
         ? [{ kind: "paragraph", pieces: [plainPiece(lead)] }, { kind: "code", text: shown.text }, ...note]
         : [{ kind: "paragraph", pieces: [plainPiece(`${lead} `), codePiece(shown.text), ...(shown.kind === "escaped" ? escapedNotePieces(" ") : [])] }];
-  return [{ kind: "paragraph", pieces: [plainPiece(TRANSPORT_FAULT_HEADING)] }, ...fault_];
+  return fault_;
 }
 export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" | "codex", what: string): string {
   return `**User decision:** ${answer === "retry" ? "retry again" : "stop the run"} after ${agentName(agent)} could not be reached for ${what}.\n\n`;
@@ -2354,16 +2350,33 @@ export function pauseQuestion(p: PauseOrigin): string {
       return `Claude Code has accepted no point of the review ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What do you want Claude Code and Codex to do about the points that led to no change?`;
   }
 }
+/** The heading of a question's context on the page (issue #137), the name issue #133 gives the same field on the decision page. */
+export const CONTEXT_HEADING = "Technical Context";
+/** The heading of a question's attached material, named by what it holds (issue #137, Q1): the one source of each heading. */
+export function attachedHeading(kind: AttachedKind): string {
+  switch (kind) {
+    case "reason":
+      return "Why You're Being Asked This";
+    case "summary":
+      return "The Summary to Confirm";
+    case "request":
+      return "What Claude Code Would Do";
+    case "reviewFacts":
+      return "What Happened in the Review";
+    case "stopReport":
+      return "Why Claude Code Stopped";
+    case "fault":
+      return "Why the Agent Could Not Be Reached";
+  }
+}
 /** An agreed question's default, as its option's description marks it (S18). */
 export function defaultMarked(description: string): string {
   return description.trim() === "" ? "(the default)" : `${description} (the default)`;
 }
 /** What the user reads of an agreed question beside its context (S18): why the plan needs the answer. */
 export function agreedDetails(reason: readonly Block[]): readonly Block[] {
-  return reason.length === 0 ? [] : [{ kind: "paragraph", pieces: [{ text: AGREED_REASON_HEADING, ref: "", code: false }] }, ...reason];
+  return reason;
 }
-/** The heading of an agreed question's reason in its details (S18). */
-export const AGREED_REASON_HEADING = "Why the plan needs your answer:";
 /** The question of a clarification turn that asks no particular question: its context is Claude Code's message. */
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
 /** The question of the summary's confirmation. */
@@ -2373,17 +2386,13 @@ export const CONFIRM_SUMMARY_QUESTION = "Claude Code has written this summary of
  * fixed; Claude Code's description is in its details (`execStopDetails`).
  */
 export function execStopQuestion(): string {
-  return "Claude Code stopped before the plan was finished, for the reason shown above. What do you want Claude Code to know or do when the plan is revised?";
+  return `Claude Code stopped before the plan was finished, for the reason shown under "${attachedHeading("stopReport")}". What do you want Claude Code to know or do when the plan is revised?`;
 }
-/** The heading of an execution stop's details, and what they say when Claude Code gave no description (S52). */
-export const EXEC_STOP_HEADING = "Why Claude Code stopped, in its own words:";
+/** What an execution stop's attached material says when Claude Code gave no description (S52). */
 export const EXEC_STOP_NO_DESCRIPTION = "Claude Code gave no description of why it stopped.";
 /** An execution stop's details (S52): Claude Code's description, its own prose, rendered as Markdown like all of it (issue #7). */
 export function execStopDetails(description: string): readonly ShownBlock[] {
-  return [
-    { kind: "paragraph", pieces: [{ text: EXEC_STOP_HEADING, ref: "", code: false }] },
-    description.trim() === "" ? { kind: "paragraph", pieces: [{ text: EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] } : { kind: "document", markdown: description.trim() },
-  ];
+  return [description.trim() === "" ? { kind: "paragraph", pieces: [{ text: EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] } : { kind: "document", markdown: description.trim() }];
 }
 
 /**

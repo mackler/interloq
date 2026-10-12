@@ -10,7 +10,7 @@
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { answerHint, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { answerHint, attachedHeading, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import type { Widget } from "../state.ts";
   import type { DraftKey } from "../draft.ts";
   import { type Ending, endingOf } from "../../../src/input.ts";
@@ -82,7 +82,7 @@
         <Button variant="text" type="button" name="conversation" onclick={onShowConversation}>{SHOW_CONVERSATION}</Button>
       {/if}
     </div>
-    {#if question !== null && (hasText(question.context.blocks) || hasText(question.details))}
+    {#if question !== null && (hasText(question.context.blocks) || question.attached !== null)}
       <div class="top">
         {#if hasText(question.context.blocks)}
           <div class="context m3-font-body-medium">
@@ -90,8 +90,8 @@
             {#if question.context.by === "program"}<p class="by m3-font-body-small">{PROGRAM_CONTEXT_NOTE}</p>{/if}
           </div>
         {/if}
-        {#if hasText(question.details)}
-          <QuestionText class="details markdown m3-font-body-medium" blocks={question.details} explanations={question.explanations} />
+        {#if question.attached !== null}
+          <div class="details m3-font-body-medium"><p class="attached-heading">{attachedHeading(question.attached.kind)}</p><QuestionText class="markdown" blocks={question.attached.blocks} explanations={question.explanations} /></div>
         {/if}
       </div>
     {/if}
@@ -193,4 +193,6 @@
   /* The field has the full width in every window (finding 7); the hint and Send share the row below it. */
   .send-row { display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; }
   .hint { margin: 0; color: var(--m3c-on-surface-variant); }
+  /* Issue #137: the heading of a question's attached material, named by attachedHeading of src/prompts.ts. */
+  .attached-heading { font-weight: 700; margin: 0.5rem 0 0.25rem; }
 </style>

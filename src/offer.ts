@@ -7,10 +7,10 @@ import type { RunError } from "./errors.ts";
 import { chooseOption, isDecide, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
-import { type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
+import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
-import { renderChoice, renderQuestionRecord, termItem } from "./render.ts";
+import { attachedMarkdown, renderChoice, renderQuestionRecord, termItem } from "./render.ts";
 import { Decider, Store, Ui } from "./services.ts";
 
 // ---- the offer (D2) ------------------------------------------------------------------------------------
@@ -29,10 +29,10 @@ export type QuestionDraft = Readonly<{
   explanations: readonly Explanation[];
   question: readonly Piece[];
   options: readonly OfferedOption[];
-  details?: readonly ShownBlock[];
+  attached?: Attached | null;
   /**
    * A question the program composed asks a context call for its context and terms (S9, decision Q1): the facts of the
-   * case in prose beside `details`. Absent: the draft's own context stands.
+   * case in prose beside its attached material. Absent: the draft's own context stands.
    */
   explain?: string;
   decision: number | null;
@@ -60,7 +60,7 @@ export const presentedQuestion = (draft: QuestionDraft, number: number): Result.
     explanations,
     question: draft.question,
     options: draft.options.map((o) => ({ label: o.shown.label, description: o.shown.description, answer: o.answer })),
-    details: draft.details ?? [],
+    attached: draft.attached ?? null,
     decision: draft.decision,
   }));
 
@@ -93,7 +93,7 @@ export const permissionDraft = (tool: string, input: unknown): QuestionDraft => 
     explanations: prompts.toolInputExplanations(input),
     question: plainPieces(prompts.permissionQuestion(tool, input)),
     options: permissionOptions,
-    details: prompts.toolInputBlocks(input),
+    attached: attachedOf("request", prompts.toolInputBlocks(input)),
     explain: prompts.permissionFacts(tool, input),
     decision: null,
   };
@@ -141,7 +141,7 @@ export const withContext = (draft: QuestionDraft, written: ContextWritten): Ques
   explanations: written.explanations,
   question: written.question ?? draft.question,
   options: written.options === undefined ? draft.options : draft.options.map((o, i) => ({ ...o, shown: written.options?.[i] ?? o.shown })),
-  details: written.details ?? draft.details,
+  attached: draft.attached == null ? null : attachedOf(draft.attached.kind, written.details ?? draft.attached.blocks),
 });
 /** Details the program gave a context call: blocks of its own words; a document is Markdown shown whole, never divided. */
 const requestDetails = (details: readonly ShownBlock[]): readonly Block[] => details.flatMap((b): readonly Block[] => (b.kind === "document" ? plainBlocks(b.markdown) : [b]));
@@ -150,7 +150,7 @@ const explain = (draft: QuestionDraft, facts: string) =>
   Effect.gen(function* () {
     const decider = yield* Decider;
     const options = draft.options.map((o) => o.shown);
-    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.details ?? []), explanations: draft.explanations, facts });
+    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts });
   });
 
 /**
@@ -194,7 +194,7 @@ export const askOffering = <E>(
       if (isDecide(answer)) {
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
-        const shown = { context: blocksMarkdown(explained.context.blocks), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: blocksMarkdown(explained.details ?? []) };
+        const shown = { context: blocksMarkdown(explained.context.blocks), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
         const outcome = yield* decider.decide({ question: asked, options, number: question.number, shown });
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });

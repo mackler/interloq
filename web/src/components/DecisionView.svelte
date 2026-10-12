@@ -19,7 +19,7 @@
   // message asks for a wider window; the prompt below stays usable [help users recognize and recover]. The
   // conversation is one click away and back [user control and freedom].
   import { Button } from "m3-svelte";
-  import { CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { attachedHeading, CONTEXT_BY_PROGRAM, decisionViewHeading, ENLARGE_WINDOW_NOTICE, ENTRY_DISPUTED_LABEL, entryToggleName, recommendedOption, RECOMMENDATION_HEADING, SCROLL_SIDEWAYS_HINT, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import { type EntryView, viewOf } from "../../../src/analysisView.ts";
   import { allot, type Allotment, type AnalysisMinimum, boundedMinimum, closedHeightOf, questionFloorOf, regionsRoom, type Room, stripOf, UNBOUNDED_ROOM } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
@@ -206,7 +206,7 @@
              markup is marked here too. -->
         <QuestionText class="context-text markdown" blocks={event.presented.context.blocks} explanations={event.presented.explanations} />
         {#if event.presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
-        {#if event.presented.details.length > 0}<QuestionText class="details markdown" blocks={event.presented.details} explanations={event.presented.explanations} />{/if}
+        {#if event.presented.attached !== null}<div class="details"><p class="attached-heading">{attachedHeading(event.presented.attached.kind)}</p><QuestionText class="markdown" blocks={event.presented.attached.blocks} explanations={event.presented.explanations} /></div>{/if}
       </div>
     </div>
     <p class="question-text m3-font-title-small"><QuestionText class="markdown" pieces={event.presented.question} explanations={event.presented.explanations} /></p>
@@ -309,4 +309,6 @@
   .recommendation { box-sizing: border-box; flex: 0 0 auto; overflow-y: auto; }
   .recommendation h3 { margin: 0; }
   .recommendation p { margin: 0.5rem 0 0; }
+  /* Issue #137: the heading of a question's attached material, named by attachedHeading of src/prompts.ts. */
+  .attached-heading { font-weight: 700; margin: 0.5rem 0 0.25rem; }
 </style>

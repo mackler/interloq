@@ -9,7 +9,7 @@ const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
 import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
-import type { PresentedQuestion } from "../../src/question.ts";
+import { attachedOf, type PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
@@ -23,7 +23,7 @@ const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prom
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",
-  question: { number: 1, origin, context: { blocks: [], by: "agent" }, explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), answer: { token: String(i + 1) } })), details: [], decision: null },
+  question: { number: 1, origin, context: { blocks: [], by: "agent" }, explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), answer: { token: String(i + 1) } })), attached: null, decision: null },
 });
 const presentedOf = (event: UiEvent): PresentedQuestion => (event._tag === "QuestionPresented" ? event.question : (undefined as never));
 /** The time of publication of an event: by default one second per seq from 14:00:00 UTC; `times` gives it in seconds. */
@@ -872,7 +872,7 @@ describe("decision support", () => {
   const positions = [{ label: "Follow Codex", description: "the issue" }, { label: "Follow Claude", description: "the rationale" }];
   const presented: UiEvent = presentedEvent("Should Codex's position or Claude Code's position stand?", positions, { kind: "pause", heading: "Planning phase 1", pause: "reraised", id: "A" });
   const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-  const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options: positions, analysis });
+  const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: positions, analysis });
 
   test("presented options become the cards of the next decision prompt; the offer is a choice", () => {
     const s = fold(live([started, notified(presented), asked(1, prompts.withOffer(prompts.decisionPrompt))]));
@@ -963,7 +963,7 @@ test("a decision's ResponseReceived is one Claude message in the right panel, li
 // W3-R1-1: a reply the run rejects (a blank answer where one is required) keeps the analysis for the prompt asked again.
 test("a rejected blank reply keeps the analysis for the retry; an accepted empty answer and the retry's answer dismiss it", () => {
   const options = [{ label: "A", description: "" }, { label: "B", description: "" }];
-  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], details: [], decision: null }, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
+  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
   const question: UiEvent = presentedEvent("A or B?", options);
   const rejected: RunEvent[] = [
     started,
@@ -1450,7 +1450,7 @@ test("the question of an answered exchange is the presented question, whole", ()
     ...presentedOf(presentedEvent("Which zod?", [{ label: "A", description: "a" }])),
     question: [{ text: "Which ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: "?", ref: "", code: false }],
     explanations: [shownOf({ id: "z", term: "zod", senses: ["A library."] })],
-    details: [{ kind: "code", text: "npm i zod" }, { kind: "document", markdown: "# Doc" }],
+    attached: { kind: "request", blocks: [{ kind: "code", text: "npm i zod" }, { kind: "document", markdown: "# Doc" }] },
   };
   const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
   expect(s.modes.implementation.run?.left[0].question).toEqual(question);
@@ -1468,7 +1468,7 @@ test("property: an answered question joins the transcript exactly as it was pres
   );
   fc.assert(
     fc.property(fc.array(block, { maxLength: 3 }), fc.array(piece, { minLength: 1, maxLength: 3 }), fc.array(block, { maxLength: 2 }), (context, text, details) => {
-      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, question: text, details, explanations: [shownOf({ id: "a", term: "t", senses: ["e"] })] };
+      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, question: text, attached: attachedOf("reviewFacts", details), explanations: [shownOf({ id: "a", term: "t", senses: ["e"] })] };
       const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
       return JSON.stringify(s.modes.implementation.run?.left[0].question) === JSON.stringify(question) && s.modes.implementation.run?.left[0].body === piecesText(text);
     }),

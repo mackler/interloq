@@ -69,7 +69,7 @@ test("a pause shows the log entries without file_change, while issue-log.json ke
   });
   await runTask(layer);
   // S11: the pause shows the point's history as prose; the measurement is not in it.
-  const details = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.details)).join("\n");
+  const details = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.attached?.blocks ?? [])).join("\n");
   assert.match(details, /Claude Code rejected it: rationale B/, "the pause showed no log entry");
   assert.equal([...probe.ui.said, details].some((line) => line.includes(S.FILE_CHANGE_FIELD) || /lines? added/.test(line)), false, "the user was shown file_change");
   assert.ok((await probe.loadLog()).some((e) => S.FILE_CHANGE_FIELD in e), "issue-log.json lacks file_change");
@@ -305,7 +305,7 @@ test("the identical-content message names the round after which the content was 
     config: { maxIdleRounds: 1, maxRounds: 6 },
   });
   assert.equal(await runTask(layer), 1);
-  const identical = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.details)).filter((line) => /is identical to plan\.json after/.test(line));
+  const identical = presentedQuestions(probe.ui).map((q) => blocksMarkdown(q.attached?.blocks ?? [])).filter((line) => /is identical to plan\.json after/.test(line));
   assert.equal(identical.length, 1, presentedSubjects(probe.ui).join("\n"));
   assert.match(identical[0], /identical to plan\.json after cycle 2\b/);
 });
@@ -653,7 +653,8 @@ test("a stop without a question presents Claude Code's description in the detail
   assert.equal(await runTask(layer), 2);
   const [q] = presentedQuestions(probe.ui).filter((p) => p.origin.kind === "execStop");
   assert.equal(piecesText(q.question), prompts.execStopQuestion());
-  assert.deepEqual(q.details, prompts.execStopDetails(description));
+  assert.deepEqual(q.attached, { kind: "stopReport", blocks: [{ kind: "document", markdown: description }] });
+  assert.deepEqual(prompts.execStopDetails("  "), [{ kind: "paragraph", pieces: [{ text: prompts.EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] }]);
 });
 
 // Issue #112: the exception is narrow. On the plan, an issue raised again after a partial acceptance is still put to

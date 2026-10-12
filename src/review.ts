@@ -6,7 +6,7 @@ import { Effect, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
-import { pauseOriginOf, type Question, type QuestionOrigin, validateQuestions } from "./question.ts";
+import { attachedOf, pauseOriginOf, type Question, type QuestionOrigin, validateQuestions } from "./question.ts";
 import { piecesText, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
 import * as prompts from "./prompts.ts";
@@ -85,7 +85,7 @@ export const decisionDraft = (heading: string, asks: Asks, options: readonly Opt
   const pause = pauseOriginOf(asks.facts);
   const origin: QuestionOrigin = { kind: "pause", heading, ...pause };
   // S12: Claude Code writes the context from the pause's facts, which the user reads beside it as prose (S11).
-  return { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.pauseQuestion(pause)), options: numberedOptions(options), details: pauseProse(asks.facts), explain: "", decision };
+  return { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.pauseQuestion(pause)), options: numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: "", decision };
 };
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
 export const plannerDraft = (question: UserQuestion, heading: string, decision: number | null): QuestionDraft => {

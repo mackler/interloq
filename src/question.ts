@@ -275,6 +275,20 @@ export type ContextWritten = Readonly<{
   details?: readonly ShownBlock[];
 }>;
 
+/** The kinds of material a question carries beside its context (issue #137, Q1 of its requirements). */
+export const ATTACHED_KINDS = ["reason", "summary", "request", "reviewFacts", "stopReport", "fault"] as const;
+export type AttachedKind = (typeof ATTACHED_KINDS)[number];
+/**
+ * What a question carries beside its context, named by what it holds (issue #137, Q1); never empty. Its kind is its own
+ * field and not a function of the question's origin, although today they correspond one to one (clarification, reason;
+ * confirmSummary, summary; permission, request; pause, reviewFacts; execStop, stopReport; transport, fault): the origin
+ * says where a question came from, the kind says what the material is, and the page's heading names the material.
+ */
+export type Attached = Readonly<{ kind: AttachedKind; blocks: readonly [ShownBlock, ...ShownBlock[]] }>;
+/** The one constructor of Attached: null where the blocks have no text. */
+export const attachedOf = (kind: AttachedKind, blocks: readonly ShownBlock[]): Attached | null =>
+  blocks.length > 0 && blocksText(blocks).join("").trim() !== "" ? { kind, blocks: blocks as readonly [ShownBlock, ...ShownBlock[]] } : null;
+
 /**
  * A question as the user is shown it (S5), the same shape whatever produced it: its number in the run, where it came
  * from, the context paragraph, the explanations its pieces refer to, the question and the options that answer it, and
@@ -287,8 +301,8 @@ export type PresentedQuestion = Readonly<{
   explanations: readonly ShownExplanation[];
   question: readonly Piece[];
   options: readonly PresentedOption[];
-  /** What the question is about, shown with the context (S11): a pause's facts, the summary to confirm; empty when none. */
-  details: readonly ShownBlock[];
+  /** What the question carries beside its context (S11, issue #137): a pause's facts, the summary to confirm; null when none. */
+  attached: Attached | null;
   decision: number | null;
 }>;
 

@@ -265,7 +265,7 @@ describe("the senses of a term", () => {
     const root = show({ pieces: [ref("port", "p"), plain("?")], explanations: [port] });
     hover(root.querySelector<HTMLElement>(".term")!);
     expect([...tooltip()!.querySelectorAll("li")].map((li) => li.textContent?.replace(/\s+/g, " ").trim())).toEqual(numbered);
-    const q: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [explanation], question: [ref("port", "p"), plain("?")], options: [], details: [], decision: null };
+    const q: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [explanation], question: [ref("port", "p"), plain("?")], options: [], attached: null, decision: null };
     const record = renderQuestionRecord(q);
     for (const line of numbered) expect(record).toContain(`  ${line}\n`);
   });

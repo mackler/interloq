@@ -2,9 +2,9 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
-import { CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
+import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
-import { numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
+import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
@@ -147,6 +147,8 @@ export const termItem = (explanation: ShownExplanation, indent: string): string 
 /** The id by which a record names the question (S6): an agreed question's, a follow-up's, an issue's; null for the others. */
 export const recordIdOf = (origin: QuestionOrigin): string | null =>
   origin.kind === "clarification" || origin.kind === "followUp" ? origin.id : origin.kind === "pause" && "id" in origin ? origin.id : null;
+/** A question's attached material in conversation.md (issue #137): its heading in bold, then its blocks; "" where it has none. */
+export const attachedMarkdown = (attached: Attached | null): string => (attached === null ? "" : `**${attachedHeading(attached.kind)}**\n\n${blocksMarkdown(attached.blocks)}`);
 /** A question in conversation.md (S6): under its displayed number, with the record's id beside it, so that the two can be matched. */
 export const renderQuestionRecord = (q: PresentedQuestion): string => {
   const id = recordIdOf(q.origin);
@@ -159,8 +161,8 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
   const options = q.options.length === 0 ? "" : `${q.options.map(option).join("\n")}\n\n`;
   const contextText = blocksMarkdown(q.context.blocks);
   const context = contextText.trim() === "" ? "" : `${contextText.split("\n").map((l) => `> ${l}`).join("\n")}${q.context.by === "program" ? ` (${CONTEXT_BY_PROGRAM})` : ""}\n\n`;
-  const detailsText = blocksMarkdown(q.details);
-  const details = detailsText.trim() === "" ? "" : `${detailsText}\n\n`;
+  const attachedText = attachedMarkdown(q.attached);
+  const details = attachedText === "" ? "" : `${attachedText}\n\n`;
   return `### ${questionTitle(q.number)}${id === null ? "" : ` (${id})`}\n\n_${originLine(q.origin, q.decision)}_\n\n${context}${details}${terms}**${piecesMarkdown(q.question)}**\n\n${options}`;
 };
 // ---- a pause's facts as prose (S11, issue #19) -------------------------------------------------------------------------

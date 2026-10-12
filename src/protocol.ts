@@ -7,6 +7,7 @@ import type { UiEvent } from "./uiEvents.ts";
 import type { RunUiState, UiFlag } from "./uiState.ts";
 import type { Choice, PromptKind } from "./userPrompts.ts";
 import { RunMode } from "./runMode.ts";
+import { ATTACHED_KINDS } from "./question.ts";
 
 
 /** A prompt the run waits on, with its widget (src/userPrompts.ts). `prompt` numbers the prompts of a run. */
@@ -118,7 +119,7 @@ export const PresentedQuestionSchema = Schema.Struct({
   explanations: Schema.Array(ShownExplanationSchema),
   question: Schema.Array(S.Piece),
   options: Schema.Array(Schema.Struct({ label: Schema.Array(S.Piece), description: Schema.Array(S.Piece), answer: Schema.Union([Schema.Struct({ token: Str }), Schema.Struct({ numeric: Schema.Literal(true) })]) })),
-  details: Schema.Array(ShownBlockSchema),
+  attached: Schema.NullOr(Schema.Struct({ kind: Schema.Literals(ATTACHED_KINDS), blocks: Schema.NonEmptyArray(ShownBlockSchema) })),
   decision: Schema.NullOr(Int),
 });
 

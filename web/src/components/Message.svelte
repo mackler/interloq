@@ -9,7 +9,7 @@
   import QuestionText from "./QuestionText.svelte";
   import type { Author, Message } from "../state.ts";
   import { clockTime, fullTime } from "../time.ts";
-  import { CONTEXT_BY_PROGRAM, originLine, questionTitle } from "../../../src/prompts.ts";
+  import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, questionTitle } from "../../../src/prompts.ts";
   import { piecesText } from "../../../src/pieces.ts";
 
   type Props = { message: Message };
@@ -27,7 +27,7 @@
       <p><strong>{questionTitle(q.number)}</strong> · <em>{originLine(q.origin, q.decision)}</em></p>
       <QuestionText class="markdown" blocks={q.context.blocks} explanations={q.explanations} />
       {#if q.context.by === "program"}<p><em>({CONTEXT_BY_PROGRAM})</em></p>{/if}
-      {#if q.details.length > 0}<QuestionText class="markdown" blocks={q.details} explanations={q.explanations} />{/if}
+      {#if q.attached !== null}<p class="attached-heading">{attachedHeading(q.attached.kind)}</p><QuestionText class="markdown" blocks={q.attached.blocks} explanations={q.explanations} />{/if}
       <p><strong><QuestionText class="markdown" pieces={q.question} explanations={q.explanations} /></strong></p>
       {#if q.options.length > 0}
         <ul class="options">
@@ -65,4 +65,6 @@
   .question > :global(*:last-child) { margin-bottom: 0; }
   .options { padding-inline-start: 1.25rem; }
   .option-label, .option-description { display: block; }
+  /* Issue #137: the heading of a question's attached material, named by attachedHeading of src/prompts.ts. */
+  .attached-heading { font-weight: 700; margin: 0.5rem 0 0.25rem; }
 </style>
