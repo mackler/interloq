@@ -118,3 +118,59 @@ test("turnValidation rejects a current question whose only defect is in its hist
   const used = { ...current([{ kind: "paragraph", pieces: [...plain("You chose "), term("port 80", "p"), ...plain(" before.")] }]), explanations: [{ id: "p", term: "port 80", senses: ["The usual port of a web server."] }] };
   assert.ok(Result.isSuccess(turnValidation([], null)(turnOf(used))));
 });
+
+// ---- S3: the prompts ask for the history apart, and Codex's criteria check the split ----------------------------------
+
+test("QUESTION_RULES: historyApart right after contextBearsOnChoice, its rule and criterion in the writers' and the reviewers' texts", async () => {
+  const prompts = await import("../src/prompts.ts");
+  const ids = prompts.QUESTION_RULES.map((r) => r.id);
+  assert.equal(ids.indexOf("historyApart"), ids.indexOf("contextBearsOnChoice") + 1);
+  const rule = prompts.QUESTION_RULES.find((r) => r.id === "historyApart");
+  assert.ok(rule !== undefined);
+  assert.match(rule.rule, /history \(the field `history`\)/);
+  assert.match(rule.rule, /earlier decisions with their dates/);
+  assert.match(rule.rule, /empty when there is none/);
+  assert.match(rule.rule, /[Nn]either repeats the other/);
+  assert.match(rule.rule, /applies to the context, not to the history/);
+  assert.match(rule.criterion, /history .*in the context/);
+  assert.match(rule.criterion, /background .*in the history/);
+  assert.match(rule.criterion, /repeats the other/);
+  assert.ok(prompts.questionWritingRules().includes(rule.rule));
+  assert.ok(prompts.questionReviewCriteria().includes(rule.criterion));
+  assert.match(prompts.QUESTION_FORMAT.find((c) => c.id === "blocks")?.text ?? "", /^Write a context, a history \(and any details\) as a list of blocks/);
+});
+
+test("the seam: RELAYED_SHAPE names the history, and its example, with a history, decodes as a RelayedQuestion and passes validateQuestion", async () => {
+  const prompts = await import("../src/prompts.ts");
+  const { RelayedQuestion, validateQuestion, parseRelayedQuestion } = await import("../src/question.ts");
+  const { Schema } = await import("effect");
+  const { piecesText } = await import("../src/pieces.ts");
+  assert.match(prompts.RELAYED_SHAPE, /with the fields context, history, question, explanations and options/);
+  assert.ok(prompts.RELAYED_EXAMPLE.history.length > 0);
+  const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(RelayedQuestion))(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE));
+  assert.ok(Result.isSuccess(validateQuestion(decoded)));
+  const options = prompts.RELAYED_EXAMPLE.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
+  assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE), options)?.history, prompts.RELAYED_EXAMPLE.history);
+});
+
+test("every prompt that asks an agent for a question asks for its history beside its context", async () => {
+  const prompts = await import("../src/prompts.ts");
+  const { TEST_ROOT } = await import("./helpers.ts");
+  const request = { origin: { kind: "relayed" as const }, decision: null, question: plain("Which?"), options: [], details: [], explanations: [], facts: "" };
+  const asking: Record<string, string> = {
+    questionList: prompts.questionListPrompt("task"),
+    terms: prompts.termsPrompt(TEST_ROOT, "task"),
+    interview: prompts.interviewOpenPrompt(TEST_ROOT),
+    plannerQuestions: prompts.QUESTION_OPTIONS_RULE,
+    relayed: prompts.RELAYED_SHAPE,
+    context: prompts.contextPrompt("task", request),
+  };
+  for (const [name, text] of Object.entries(asking)) assert.match(text, /\bhistory\b/, name);
+  assert.match(prompts.questionListPrompt("task"), /history: what happened before that led to the question/);
+  assert.match(prompts.QUESTION_OPTIONS_RULE, /has a context, a history, a question, explanations and options/);
+  assert.match(prompts.termsPrompt(TEST_ROOT, "task"), /its context, history, question, reason and proposed_answers/);
+  assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /give its context, its history, its text/);
+  const context = prompts.contextPrompt("task", request);
+  assert.match(context, /Return in history /);
+  assert.match(context, /history may be empty/);
+});

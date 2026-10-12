@@ -44,7 +44,7 @@ test("the interview prompts ask for the current question's parts under the rules
   for (const text of texts) {
     assert.ok(text.includes(prompts.questionWritingRules()));
     assert.match(text, /For an agreed question of plan-review\/runs\/[^/\s]+\/questions\.json, give only its id/);
-    assert.match(text, /For any other question, give its context, its text, its explanations and its options/);
+    assert.match(text, /For any other question, give its context, its history, its text, its explanations and its options/);
     assert.doesNotMatch(text, /show each proposed answer on its own line/);
   }
 });
@@ -751,7 +751,7 @@ test("a multi-line value and its escapes note keep the nesting of the settings a
 
 // S1, moved here from test/questionRules.test.ts on 5 Oct 2026 (the requirements name this file): the one list of the
 // ids of QUESTION_RULES, with the seven of issues #59, #91, #92 and #93, and explainedKnowledge of issue #111.
-const RULE_IDS = ["whetherToAsk", "explainedKnowledge", "selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
+const RULE_IDS = ["whetherToAsk", "explainedKnowledge", "selfContained", "nameThings", "noIdentifiers", "noLiterals", "kindBeforeNumber", "oneWord", "noInternalTerms", "questionLast", "context", "contextNoAnnouncement", "contextBearsOnChoice", "historyApart", "purposeOwner", "askWhatUserWants", "askOutcome", "determinateOptions", "optionDifferences", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor", "terms"];
 
 test("QUESTION_RULES holds one entry per rule, with unique ids and a rule and a criterion each", () => {
   assert.deepEqual(prompts.QUESTION_RULES.map((r) => r.id), RULE_IDS);

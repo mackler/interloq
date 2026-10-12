@@ -127,6 +127,12 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: "a sentence of the context neither would differ under another option nor helps the reader tell the options apart: it recounts how the situation was learned, argues for a decision taken elsewhere instead of stating it, shows code, a file's contents or an instruction the reader is not deciding about, or states a point that does not bear on the choice. Where this and the criterion of the five points of a context paragraph disagree, this one governs: a point of the five left out because it does not bear on the choice is not an issue.",
   },
   {
+    // Issue #133, decision Q1 (12 Oct 2026): the history is written apart from the context, and each page shows it under a heading of its own.
+    id: "historyApart",
+    rule: "Write the history apart from the context. The context states the present situation and the technical background the choice turns on. The history (the field `history`) states what happened before that led to the question: the reader's earlier decisions with their dates, earlier runs or issues, and what was tried; it is empty when there is none. Neither repeats the other. The rule against recounting how the situation was learned applies to the context, not to the history.",
+    criterion: "a question's history is written in the context (an earlier decision, run, issue or attempt that led to the question), its background is in the history (the present situation or the technical facts the choice turns on), or one repeats the other.",
+  },
+  {
     id: "purposeOwner",
     rule: "Where the context states a purpose, name what the purpose belongs to (the question, a component, or the program): not 'The point is that you can look a word up', but 'Binding each explanation to its word is what allows you to find out what a word means without leaving the question.'",
     criterion: "a statement of purpose leaves unstated what the purpose belongs to, as 'The point is that …' or 'The purpose is that …' does.",
@@ -222,7 +228,7 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
   {
     id: "blocks",
     kind: "data",
-    text: 'Write a context (and any details) as a list of blocks, each with its kind: a paragraph (kind "paragraph", with its pieces), a bulleted list (kind "list", with its items, each with its level, 0 at the top and one more per nesting, and its pieces), or a code block (kind "code", with its text, a value shown exactly).',
+    text: 'Write a context, a history (and any details) as a list of blocks, each with its kind: a paragraph (kind "paragraph", with its pieces), a bulleted list (kind "list", with its items, each with its level, 0 at the top and one more per nesting, and its pieces), or a code block (kind "code", with its text, a value shown exactly).',
     criterion: "",
   },
   {
@@ -480,7 +486,7 @@ Return the complete output again, corrected. Do not modify any file.`;
 export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
 
 /** How a question for the user is filled (decision Q1 of the decision-support task), with the rules of every question (S1). */
-export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a context, a question, explanations and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.
+export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a context, a history, a question, explanations and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.
 ${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}`;
 
@@ -534,7 +540,7 @@ export function questionListPrompt(task: string): string {
   return `Do not write a plan yet. Read the task below and inspect the codebase without changing anything.
 Return in 'questions' the questions whose answers you need from the user before you can write an implementation plan for the task.
 Include a question only as the rule on whether to ask, below, allows.
-Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. question: one decision per question, as pieces. reason: what in the plan depends on the answer, and the files you inspected that do not settle it, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
+Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. history: what happened before that led to the question, apart from the context, as the rules below describe it, as blocks; an empty list when there is none. question: one decision per question, as pieces. reason: what in the plan depends on the answer, and the files you inspected that do not settle it, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
 ${SKIP_IF_FIELD}
 How the text of an entry is written:
 ${formatClauses(["blocks", "pieces", "code", "inline"])}
@@ -575,7 +581,7 @@ const termsRule = (): string => QUESTION_RULES.find((r) => r.id === "terms")?.ru
 export function termsPrompt(root: RunRoot, task: string): string {
   return `${runDir(root)}/questions.json contains the task and the question list that Claude Code and Codex have agreed. The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.
 ${termsRule()}
-Return in 'entries' one entry per question of the list: its id; its explanations; and its context, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it. A term may occur in any of these fields; each question carries all of its own explanations, since each question is read on its own. The explanations are shown on the words themselves.
+Return in 'entries' one entry per question of the list: its id; its explanations; and its context, history, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it. A term may occur in any of these fields; each question carries all of its own explanations, since each question is read on its own. The explanations are shown on the words themselves.
 ${KEEP_WORDING}
 ${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}
@@ -613,7 +619,7 @@ Return in 'questions' the complete question list of ${runDir(root)}/questions.js
 
 const interviewRules = (root: RunRoot): string => `Rules for the interview.
 Each of your turns produces these output fields. message_to_user: what you say to the user in this turn, in plain text without Markdown tables: the record of his earlier answer, an answer to his question, a remark. The question you ask now is not repeated in it; the program shows that question below your message.
-current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of ${runDir(root)}/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its text, its explanations and its options: the context paragraph as blocks, the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+current_question: the question this message asks the user to answer now, or every field an empty string or an empty list when the message asks none. Its id is the agreed question's id, the id you assign to a follow-up question, or in a second interview the id of the accepted issue. For an agreed question of ${runDir(root)}/questions.json, give only its id and leave its other fields empty: the program shows the agreed question as it was reviewed, with its context, its terms and its proposed answers. For any other question, give its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the record of an earlier answer, without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
 ${QUESTION_TEXT_FORMAT}
 asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that you assign to each follow-up question. answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far. complete: true only when every agreed question has been answered or the program has reported it skipped, and you need nothing further from the user. summary: an empty string while complete is false.
 When complete is true, summary contains the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
@@ -795,7 +801,7 @@ Return the complete output again, corrected. Do not modify any file.`;
 export const resumeStepSentence = `When you resume a step after you have started another, report it with the status '${REPORT_STEP_STATUSES[0]}' again.`;
 /**
  * A relayed question's text as its shape composes it (S8 of the task of issue #36; behavior 4): the question as a JSON
- * object with its context, its question, its explanations and its options, as pieces.
+ * object with its context, its history, its question, its explanations and its options, as pieces.
  */
 export type RelayedParts = Readonly<{ context: readonly Block[]; history: readonly Block[]; question: readonly Piece[]; explanations: readonly Explanation[]; options: readonly PieceOption[] }>;
 export function relayedQuestionText(parts: RelayedParts): string {
@@ -804,7 +810,7 @@ export function relayedQuestionText(parts: RelayedParts): string {
 /** The example of RELAYED_SHAPE: a question with one explanation and two options, in the shape it states. */
 export const RELAYED_EXAMPLE: RelayedParts = {
   context: [{ kind: "paragraph", pieces: [{ text: "<the context paragraph>", ref: "", code: false }] }],
-  history: [],
+  history: [{ kind: "paragraph", pieces: [{ text: "<what led to the question, or an empty list>", ref: "", code: false }] }],
   question: [
     { text: "<the question, where a word such as ", ref: "", code: false },
     { text: "<a term>", ref: "t1", code: false },
@@ -821,7 +827,7 @@ export const RELAYED_EXAMPLE: RelayedParts = {
  * object in the question's text, which parseRelayedQuestion in src/question.ts reads; the example is the composer's own
  * output.
  */
-export const RELAYED_SHAPE = `Write the text of each question you ask with the AskUserQuestion tool as one JSON object, and nothing else, with the fields context, question, explanations and options:
+export const RELAYED_SHAPE = `Write the text of each question you ask with the AskUserQuestion tool as one JSON object, and nothing else, with the fields context, history, question, explanations and options:
 ${QUESTION_TEXT_FORMAT}
 - options: the same options as the tool's options, in the same order, each with its label and description as pieces whose words, joined, are exactly the tool option's label and description.
 For example:
@@ -2535,7 +2541,7 @@ export function contextPrompt(task: string, request: ContextRequest): string {
   return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and return the whole question as pieces, with the explanations of the words a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer the question.
 ${questionWritingRules()}
 ${QUESTION_TEXT_FORMAT}
-Return in context your paragraph, which places the reader before he is asked. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
+Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it; the history may be empty, and is an empty list when nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
 
 The task of the run: ${task}
 

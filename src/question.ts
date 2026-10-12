@@ -323,7 +323,7 @@ export type PresentedQuestion = Readonly<{
 
 /**
  * A question Claude Code relays with AskUserQuestion, as the text of the tool's question (RELAYED_SHAPE of src/prompts.ts):
- * a JSON object with its context, its question, its explanations and its options as pieces, in the tool's option order.
+ * a JSON object with its context, its history, its question, its explanations and its options as pieces, in the tool's option order.
  */
 export const RelayedQuestion = Schema.Struct({
   context: Schema.Array(Block),
