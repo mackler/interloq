@@ -82,7 +82,7 @@ const markedDefault = (description: readonly Piece[]): readonly Piece[] => {
 /**
  * The question an interview turn asks (S7, S18). A question of questions.json is presented from the reviewed records
  * alone: its entry in terms.json, divided into pieces that refer to its explanations (decision Q1), or where there is
- * none the agreed entry's plain pieces; its reason as details and its proposed answers as options with the default
+ * none the agreed entry's plain pieces; its reason as its attached material and its proposed answers as options with the default
  * marked; what the turn writes beside the id is ignored, so no word shown can lose its explanation. Any other question (a
  * follow-up, an accepted requirements issue) is presented from the turn, as validated (S16). A turn that names none asks
  * for the user's reply to its message, which is then the context, shown whole (S7).
@@ -95,7 +95,7 @@ export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDr
     const divided = records.terms.find((t) => t.id === agreed.id);
     const entry = divided ?? { ...agreed, explanations: [] };
     const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description })));
-    return { origin, context: agentContext(entry.context, origin), explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", prompts.agreedDetails(entry.reason)), decision: null };
+    return { origin, context: agentContext(entry.context, origin), explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", entry.reason), decision: null };
   }
   if (asksNothing(current)) return { origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: turn.message }], by: "agent" }, explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null };
   const origin: QuestionOrigin = { kind: "followUp", id: current.id };

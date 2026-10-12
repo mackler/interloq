@@ -82,7 +82,7 @@ export const permissionOptions: readonly OfferedOption[] = [
   own(prompts.PERMISSION_DENY, prompts.PERMISSION_DENY_DESCRIPTION, { token: "n" }, (answer) => answer.trim().toLowerCase() !== "y"),
 ];
 /**
- * A permission request as the user is asked it (S34, S49): the tool's input under plain labels in the details, a field
+ * A permission request as the user is asked it (S34, S49): the tool's input under plain labels as its attached material, a field
  * without a label explained as a term, the question naming the action, and the facts a context call is given.
  */
 export const permissionDraft = (tool: string, input: unknown): QuestionDraft => {

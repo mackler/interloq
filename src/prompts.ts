@@ -2373,10 +2373,6 @@ export function attachedHeading(kind: AttachedKind): string {
 export function defaultMarked(description: string): string {
   return description.trim() === "" ? "(the default)" : `${description} (the default)`;
 }
-/** What the user reads of an agreed question beside its context (S18): why the plan needs the answer. */
-export function agreedDetails(reason: readonly Block[]): readonly Block[] {
-  return reason;
-}
 /** The question of a clarification turn that asks no particular question: its context is Claude Code's message. */
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
 /** The question of the summary's confirmation. */

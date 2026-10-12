@@ -162,8 +162,8 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
   const contextText = blocksMarkdown(q.context.blocks);
   const context = contextText.trim() === "" ? "" : `${contextText.split("\n").map((l) => `> ${l}`).join("\n")}${q.context.by === "program" ? ` (${CONTEXT_BY_PROGRAM})` : ""}\n\n`;
   const attachedText = attachedMarkdown(q.attached);
-  const details = attachedText === "" ? "" : `${attachedText}\n\n`;
-  return `### ${questionTitle(q.number)}${id === null ? "" : ` (${id})`}\n\n_${originLine(q.origin, q.decision)}_\n\n${context}${details}${terms}**${piecesMarkdown(q.question)}**\n\n${options}`;
+  const attached = attachedText === "" ? "" : `${attachedText}\n\n`;
+  return `### ${questionTitle(q.number)}${id === null ? "" : ` (${id})`}\n\n_${originLine(q.origin, q.decision)}_\n\n${context}${attached}${terms}**${piecesMarkdown(q.question)}**\n\n${options}`;
 };
 // ---- a pause's facts as prose (S11, issue #19) -------------------------------------------------------------------------
 
