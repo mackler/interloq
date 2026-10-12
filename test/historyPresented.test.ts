@@ -37,9 +37,17 @@ test("an agreed question presents the history of its terms.json entry, and conve
   const record = conversation(probe.dir);
   const heading = `**${prompts.QUESTION_HISTORY_HEADING}**`;
   assert.equal(prompts.QUESTION_HISTORY_HEADING, "History");
-  const at = record.indexOf(heading);
-  assert.ok(at > record.indexOf("> The service, a web server"), record);
-  assert.ok(record.slice(at).startsWith(`${heading}\n\n> ${HISTORY}`), record.slice(at, at + 200));
+  // The presented question's own record (W2-R1-1): from its heading to the next heading of its level, since the
+  // question list's record before it carries the history too (S16).
+  const title = `### ${prompts.questionTitle(q.number)} (Q1)`;
+  const start = record.indexOf(title);
+  assert.ok(start >= 0, record);
+  const next = record.indexOf("\n### ", start + title.length);
+  const own = record.slice(start, next < 0 ? undefined : next + 1);
+  const at = own.indexOf(heading);
+  assert.ok(at > own.indexOf("> The service, a web server"), own);
+  assert.ok(own.slice(at).startsWith(`${heading}\n\n> ${HISTORY}`), own.slice(at, at + 200));
+  assert.ok(record.slice(0, start).includes(`  ${heading}\n  \n  > ${HISTORY}`), record.slice(0, start));
 });
 
 test("renderQuestionRecord writes the history as a block quote under History after the context, and nothing when it is empty", () => {
