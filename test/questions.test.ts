@@ -12,7 +12,7 @@ type InterviewTurn = typeof S.InterviewTurn.Type;
 
 const noQuestions = { questions_for_user: [] };
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
-const none = { id: "", context: [], text: [], explanations: [], options: [] };
+const none = { id: "", context: [], history: [], text: [], explanations: [], options: [] };
 const turn = (message: string, answered: string[], summary = ""): InterviewTurn => ({
   message_to_user: message,
   current_question: none,
@@ -224,8 +224,8 @@ test("a response to the question review whose list breaks a rule gets the valida
 // S16 (Q12): a question of the plan writer and an interview question outside questions.json are held to the rules, with
 // behaviour 10's validation repair turn and no Codex review; an agreed question and a turn that asks nothing are not.
 test("a plan writer's question that breaks a rule gets the validation repair turn; a second failure halts", async () => {
-  const bad = { context: para("c"), question: plain("Which database? Say."), explanations: [], options: [] };
-  const good = { context: para("c"), question: plain("Which database?"), explanations: [], options: [] };
+  const bad = { context: para("c"), history: [], question: plain("Which database? Say."), explanations: [], options: [] };
+  const good = { context: para("c"), history: [], question: plain("Which database?"), explanations: [], options: [] };
   const repaired = testLayer(tempRepo(), {
     answers: ["SQLite"],
     steps: [{ output: { questions_for_user: [bad] }, plan: "v1" }, { output: { questions_for_user: [good] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
@@ -239,7 +239,7 @@ test("a plan writer's question that breaks a rule gets the validation repair tur
 });
 
 test("an interview question outside questions.json is validated, an agreed one and a turn that asks nothing are not", async () => {
-  const followUp = (context: string) => ({ ...turn("A follow-up.", ["Q1"]), current_question: { ...none, id: "F1", context: para(context), text: plain("Which port?") }, asked_ids: ["Q1", "F1"] });
+  const followUp = (context: string) => ({ ...turn("A follow-up.", ["Q1"]), current_question: { ...none, id: "F1", context: para(context), history: [], text: plain("Which port?") }, asked_ids: ["Q1", "F1"] });
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "8080", ""],
     steps: [
@@ -285,7 +285,7 @@ test("a turn with a blank id asking an invalid question gets the repair turn; a 
 
 // S7 of the task of issue #36: a follow-up question is pieces; a piece that refers to no explanation gets the repair turn.
 test("S7: a follow-up with a dangling ref gets the validation repair turn, and the repaired one is presented with its pieces", async () => {
-  const dangling = { ...none, id: "F1", context: para("The service, a web server, listens on a port."), text: [...plain("Which "), term("port", "p"), ...plain("?")] };
+  const dangling = { ...none, id: "F1", context: para("The service, a web server, listens on a port."), history: [], text: [...plain("Which "), term("port", "p"), ...plain("?")] };
   const repaired = { ...dangling, explanations: [{ id: "p", term: "port", senses: ["The number a program listens on for connections."] }] };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["8080", ""],

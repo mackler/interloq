@@ -78,7 +78,7 @@ describe("a tool's input, rendered in the page", () => {
 
   test("conversation.md carries the same text", () => {
     const details = prompts.toolInputBlocks({ command: "echo <secret> > /tmp/out" });
-    const record = renderQuestionRecord({ number: 1, origin: { kind: "permission", tool: "Bash", input: "" }, context: { blocks: plainBlocks("c"), by: "program" }, explanations: [], question: [{ text: "Allow?", ref: "", code: false }], options: [], attached: attachedOf("request", details), decision: null });
+    const record = renderQuestionRecord({ number: 1, origin: { kind: "permission", tool: "Bash", input: "" }, context: { blocks: plainBlocks("c"), by: "program" }, history: [], explanations: [], question: [{ text: "Allow?", ref: "", code: false }], options: [], attached: attachedOf("request", details), decision: null });
     const el = document.createElement("div");
     el.innerHTML = render(record);
     expect(codes(el)).toContain("echo <secret> > /tmp/out");
@@ -134,7 +134,7 @@ describe("the transport pause's fault, rendered in the page", () => {
   });
   test("the record in conversation.md carries the same details", () => {
     const details = prompts.transportDetails(3, faults[0]);
-    const q = { number: 1, origin: { kind: "transport", agent: "codex", what: "the review", attempts: 3, fault: faults[0] }, context: { blocks: plainBlocks("c"), by: "program" }, explanations: [], question: [{ text: prompts.transportExhaustedQuestion("codex", "the review"), ref: "", code: false }], options: [], attached: { kind: "fault", blocks: details }, decision: null } as const;
+    const q = { number: 1, origin: { kind: "transport", agent: "codex", what: "the review", attempts: 3, fault: faults[0] }, context: { blocks: plainBlocks("c"), by: "program" }, history: [], explanations: [], question: [{ text: prompts.transportExhaustedQuestion("codex", "the review"), ref: "", code: false }], options: [], attached: { kind: "fault", blocks: details }, decision: null } as const;
     const record = renderQuestionRecord(q as never);
     expect(record).toContain(prompts.attachedHeading("fault"));
     expect(record).toContain(`\`${faults[0]}\``);
@@ -189,8 +189,8 @@ describe("the names of fields without a plain label", () => {
       const draft = permissionDraft("FutureTool", inputWith(key));
       expect(draft.explanations.length, key).toBe(1);
       const details = draft.attached?.blocks ?? [];
-      const supplied = suppliedOf({ context: [], question: [], explanations: [], options: [], details });
-      const problems = questionProblems({ context: plainBlocks("c"), question: draft.question, explanations: draft.explanations, options: [], details }, supplied);
+      const supplied = suppliedOf({ context: [], history: [], question: [], explanations: [], options: [], details });
+      const problems = questionProblems({ context: plainBlocks("c"), history: [], question: draft.question, explanations: draft.explanations, options: [], details }, supplied);
       expect(problems, key).toEqual([]);
       const el = rendered(inputWith(key));
       expect([...el.querySelectorAll<HTMLElement>(".term")].map((m) => [m.textContent, m.dataset.ref]), key).toEqual([[draft.explanations[0].term, draft.explanations[0].id]]);
@@ -236,8 +236,8 @@ describe("names that would otherwise display alike", () => {
       const draft = permissionDraft("FutureTool", inputOf(group));
       expect(draft.explanations.length).toBe(group.filter((k) => k !== "").length);
       const details = draft.attached?.blocks ?? [];
-      const supplied = suppliedOf({ context: [], question: [], explanations: [], options: [], details });
-      const problems = questionProblems({ context: plainBlocks("c"), question: draft.question, explanations: draft.explanations, options: [], details }, supplied);
+      const supplied = suppliedOf({ context: [], history: [], question: [], explanations: [], options: [], details });
+      const problems = questionProblems({ context: plainBlocks("c"), history: [], question: draft.question, explanations: draft.explanations, options: [], details }, supplied);
       expect(problems, JSON.stringify(group)).toEqual([]);
       const marked = new Set([...rendered(inputOf(group)).querySelectorAll<HTMLElement>(".term")].map((m) => m.dataset.ref));
       for (const e of draft.explanations) expect(marked.has(e.id), e.term).toBe(true);

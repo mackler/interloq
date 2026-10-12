@@ -32,6 +32,7 @@ const dividedEntry = (explanation = zod.senses[0]): S.TermsEntry => ({
   id: "Q1",
   explanations: [{ ...zod, senses: [explanation] }],
   context: entry.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)),
+  history: [],
   question: divide(entry.question),
   reason: entry.reason,
   proposed_answers: entry.proposed_answers.map((a) => ({ label: a.label, description: divide(a.description) })),

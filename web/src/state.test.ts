@@ -23,7 +23,7 @@ const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prom
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",
-  question: { number: 1, origin, context: { blocks: [], by: "agent" }, explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), answer: { token: String(i + 1) } })), attached: null, decision: null },
+  question: { number: 1, origin, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), answer: { token: String(i + 1) } })), attached: null, decision: null },
 });
 const presentedOf = (event: UiEvent): PresentedQuestion => (event._tag === "QuestionPresented" ? event.question : (undefined as never));
 /** The time of publication of an event: by default one second per seq from 14:00:00 UTC; `times` gives it in seconds. */
@@ -677,7 +677,7 @@ describe("a replay of a question phase", () => {
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],
-          questions: [{ id: "Q1", context: plainBlocks("c"), question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p") }, { label: plainPieces("SQLite"), description: plainPieces("s") }], default_answer: "PostgreSQL", skip_if: null }],
+          questions: [{ id: "Q1", context: plainBlocks("c"), history: [], question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p") }, { label: plainPieces("SQLite"), description: plainPieces("s") }], default_answer: "PostgreSQL", skip_if: null }],
         },
         resultText: "",
       }),
@@ -872,7 +872,7 @@ describe("decision support", () => {
   const positions = [{ label: "Follow Codex", description: "the issue" }, { label: "Follow Claude", description: "the rationale" }];
   const presented: UiEvent = presentedEvent("Should Codex's position or Claude Code's position stand?", positions, { kind: "pause", heading: "Planning phase 1", pause: "reraised", id: "A" });
   const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
-  const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: positions, analysis });
+  const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: positions, analysis });
 
   test("presented options become the cards of the next decision prompt; the offer is a choice", () => {
     const s = fold(live([started, notified(presented), asked(1, prompts.withOffer(prompts.decisionPrompt))]));
@@ -963,7 +963,7 @@ test("a decision's ResponseReceived is one Claude message in the right panel, li
 // W3-R1-1: a reply the run rejects (a blank answer where one is required) keeps the analysis for the prompt asked again.
 test("a rejected blank reply keeps the analysis for the retry; an accepted empty answer and the retry's answer dismiss it", () => {
   const options = [{ label: "A", description: "" }, { label: "B", description: "" }];
-  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
+  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
   const question: UiEvent = presentedEvent("A or B?", options);
   const rejected: RunEvent[] = [
     started,
@@ -1468,7 +1468,7 @@ test("property: an answered question joins the transcript exactly as it was pres
   );
   fc.assert(
     fc.property(fc.array(block, { maxLength: 3 }), fc.array(piece, { minLength: 1, maxLength: 3 }), fc.array(block, { maxLength: 2 }), (context, text, details) => {
-      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, question: text, attached: attachedOf("reviewFacts", details), explanations: [shownOf({ id: "a", term: "t", senses: ["e"] })] };
+      const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, history: [], question: text, attached: attachedOf("reviewFacts", details), explanations: [shownOf({ id: "a", term: "t", senses: ["e"] })] };
       const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
       return JSON.stringify(s.modes.implementation.run?.left[0].question) === JSON.stringify(question) && s.modes.implementation.run?.left[0].body === piecesText(text);
     }),

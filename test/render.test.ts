@@ -74,6 +74,7 @@ test("renderQuestionRecord writes the heading, the origin, the context, the deta
     number: 4,
     origin: { kind: "relayed" },
     context: { blocks: para("Claude Code, the coding agent, is writing the tool's input check."), by: "agent" },
+    history: [],
     explanations: [shownOf({ id: "z", term: "zod", senses: ["a library that checks the shape of data"] })],
     question: [...plain("Should "), term("Zod's package", "z"), ...plain(" be declared as a dependency?")],
     options: [
@@ -104,7 +105,7 @@ test("a question inside a decision says in its origin line that it belongs to th
 
 test("conversation.md records a question under its displayed number with the record's id beside it (S6)", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
-  const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], attached: null, decision: null };
+  const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [], attached: null, decision: null };
   assert.match(renderQuestionRecord(q), /^### Question 3 \(Q1\)\n/);
   // S11 (issue #59): each option's label in bold on its own line, the description on the next.
   const record = renderQuestionRecord({ ...q, explanations: [shownOf({ id: "t", term: "zod", senses: ["a library"] })], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
@@ -171,6 +172,7 @@ test("issue #112: the Terms block of conversation.md numbers two senses in order
     number: 1,
     origin: { kind: "relayed" },
     context: { blocks: para("c"), by: "agent" },
+    history: [],
     explanations: [shownOf({ id: "a", term: "zod", senses: ["A library."] }), shownOf({ id: "b", term: "port", senses: ["# The number in the address.", "The socket the server listens on."] })],
     question: [...plain("Use "), term("zod", "a"), ...plain(" on the "), term("port", "b"), ...plain("?")],
     options: [],
@@ -192,6 +194,7 @@ const multiline = (): PresentedQuestion => ({
   number: 1,
   origin: { kind: "relayed" },
   context: { blocks: para("c"), by: "agent" },
+  history: [],
   explanations: [
     shownOf({ id: "a", term: "port", senses: MULTILINE }),
     shownOf({ id: "b", term: "cache", senses: [LINK_LABEL, "A store kept in memory."] }),
@@ -212,7 +215,7 @@ test("W1-R1-1, P2-R1-1: a multiline sense stays whole inside its item in the Ter
 });
 
 test("W1-R1-2: the terms list of conversation.md nests each term under its entry, multiline senses whole", () => {
-  const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }, { id: "c", term: "zod", senses: [ONE_OF_TWO_PARAGRAPHS] }], context: para("c"), question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
+  const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }, { id: "c", term: "zod", senses: [ONE_OF_TWO_PARAGRAPHS] }], context: para("c"), history: [], question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
   const rendered = renderTerms([entry, { ...entry, id: "Q2", explanations: [] }]);
   assert.ok(Result.isSuccess(rendered));
   const terms = readTerms(rendered.success);
@@ -227,7 +230,7 @@ test("W1-R1-2: the Terms block and the terms list write a term as the same item"
   const explanation = shownOf({ id: "a", term: "port", senses: MULTILINE });
   const item = termItem(explanation, "");
   assert.ok(renderQuestionRecord({ ...multiline(), explanations: [explanation], question: [...plain("Use "), term("port", "a"), ...plain("?")] }).includes(`${item}\n`));
-  const rendered = renderTerms([{ id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }], context: para("c"), question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
+  const rendered = renderTerms([{ id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }], context: para("c"), history: [], question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
   assert.ok(Result.isSuccess(rendered));
   const nested = rendered.success.split("\n").slice(1).map((l) => l.replace(/^ {2}/u, "")).join("\n");
   assert.ok(nested.includes(item), nested);
@@ -256,7 +259,7 @@ test("renderQuestionRecord writes the attached material under its heading, befor
   const markdown = attachedMarkdown(attached);
   assert.equal(markdown, `**${prompts.attachedHeading("reviewFacts")}**\n\n${blocksMarkdown(attached.blocks)}`);
   assert.equal(attachedMarkdown(null), "");
-  const q: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: [], attached, decision: null };
+  const q: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [], attached, decision: null };
   const record = recordOf(q);
   assert.ok(record.includes(markdown), record);
   assert.ok(record.indexOf(markdown) < record.indexOf("**Which?**"));

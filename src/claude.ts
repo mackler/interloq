@@ -159,9 +159,9 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       const origin: QuestionOrigin = { kind: "relayed" };
       const options = numberedOptions(q.options);
       const parsed = parseRelayedQuestion(q.question, q.options);
-      if (parsed !== null) return { origin, context: { blocks: parsed.context, by: "agent" }, explanations: parsed.explanations, question: parsed.question, options: options.map((o, i) => ({ ...o, shown: parsed.options[i] ?? o.shown })), decision: null };
+      if (parsed !== null) return { origin, context: { blocks: parsed.context, by: "agent" }, history: [], explanations: parsed.explanations, question: parsed.question, options: options.map((o, i) => ({ ...o, shown: parsed.options[i] ?? o.shown })), decision: null };
       const { plan } = yield* store.readContext();
-      return { origin, context: programContext(origin), explanations: [], question: plainPieces(q.question), options, explain: prompts.relayedFacts(store.root, plan), decision: null };
+      return { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(q.question), options, explain: prompts.relayedFacts(store.root, plan), decision: null };
     });
 
   /**

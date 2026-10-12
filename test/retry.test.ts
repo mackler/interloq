@@ -165,7 +165,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
   const decider: DeciderShape = {
     at: () => decider,
     decide: () => Effect.die(new Error("no decision was expected")),
-    explain: (request) => Effect.sync(() => (explained.push(request), { context: { blocks: para("Written by Claude Code."), by: "agent" as const }, explanations: [] })),
+    explain: (request) => Effect.sync(() => (explained.push(request), { context: { blocks: para("Written by Claude Code."), by: "agent" as const }, history: [], explanations: [] })),
   };
   for (const agent of ["codex", "claude"] as const) {
     explained.length = 0;

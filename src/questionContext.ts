@@ -13,7 +13,7 @@ import * as S from "./schema.ts";
 import { type Decider, Planner, type RunConfig, type RunKind, Store, type Ui } from "./services.ts";
 
 /** The code pieces with a ref that the program supplied in its request (the names of a tool's settings it explains, S55), each with its part (P5-R1-1). */
-const suppliedRefs = (request: ContextRequest): readonly SuppliedRef[] => suppliedOf({ context: [], question: request.question, explanations: [], options: request.options, details: request.details });
+const suppliedRefs = (request: ContextRequest): readonly SuppliedRef[] => suppliedOf({ context: [], history: [], question: request.question, explanations: [], options: request.options, details: request.details });
 
 /** The values of the request and of the reply agree position by position, in kind, text and ref exactly (W1-R1-1, W4-R1-1, S32). */
 const sameValues = (asked: readonly ValueToken[], replied: readonly ValueToken[]): boolean =>
@@ -41,9 +41,9 @@ export const contextValidation =
   (request: ContextRequest): Validation<S.QuestionContext> =>
   (reply) => {
     const supplied = suppliedRefs(request);
-    const shown = suppliedOf({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details });
+    const shown = suppliedOf({ context: reply.context, history: reply.history, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details });
     const problems: readonly QuestionProblem[] = [
-      ...questionProblems({ context: reply.context, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details }, supplied),
+      ...questionProblems({ context: reply.context, history: reply.history, question: reply.question, explanations: reply.explanations, options: reply.options, details: reply.details }, supplied),
       ...(reply.options.length === request.options.length ? [] : [{ kind: "optionsChanged" as const, subject: "" }]),
       // W1-R1-1: every value, code or phrase, kept in its kind and its order, none added; W4-R1-1: each code value's ref kept on its occurrence.
       ...(sameValues(valueTokensOf(request.details), valueTokensOf(reply.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
@@ -55,7 +55,7 @@ export const contextValidation =
   };
 
 /** The program's own paragraph (S10), marked as the program's; its question, options, details and explanations stand. */
-export const programWritten = (request: ContextRequest): ContextWritten => ({ context: { blocks: plainBlocks(fallbackContext(request.origin)), by: "program" }, explanations: request.explanations });
+export const programWritten = (request: ContextRequest): ContextWritten => ({ context: { blocks: plainBlocks(fallbackContext(request.origin)), by: "program" }, history: [], explanations: request.explanations });
 
 /**
  * Writes a question's context in a fresh session, which may read the project and change nothing (S33): the agent's
@@ -68,7 +68,7 @@ export const writeContext = (task: string, request: ContextRequest): Effect.Effe
     // S33: it may read the project and change nothing; the project and the guarded records are compared after the call.
     const written = yield* planningCall(contextPrompt(task, request), S.QuestionContext, "context", "readProject", contextValidation(request)).pipe(Effect.provideService(Planner, planner));
     const reply = written.output;
-    return { context: { blocks: reply.context, by: "agent" as const }, explanations: reply.explanations, question: reply.question, options: reply.options, details: reply.details };
+    return { context: { blocks: reply.context, by: "agent" as const }, history: [], explanations: reply.explanations, question: reply.question, options: reply.options, details: reply.details };
   }).pipe(
     Effect.catch((error: RunError): Effect.Effect<ContextWritten, RunError, Store> =>
       error._tag === "UserStopped" || error._tag === "Interrupted" || error._tag === "ProjectChanged" || error._tag === "RecordsChanged" || error._tag === "ClaudeSessionTooLong"

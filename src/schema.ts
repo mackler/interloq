@@ -76,6 +76,8 @@ export const QuestionOption = Schema.Struct({ label: Schema.String, description:
  */
 export const UserQuestion = Schema.Struct({
   context: Schema.Array(Block),
+  /** What happened before that led to the question (issue #133, decision Q1); empty when there is none. */
+  history: Schema.Array(Block),
   question: Schema.Array(Piece),
   explanations: Schema.Array(Explanation),
   options: Schema.Array(PieceOption),
@@ -86,6 +88,8 @@ export const UserQuestion = Schema.Struct({
  */
 export const QuestionContext = Schema.Struct({
   context: Schema.Array(Block),
+  /** The history that led to the question (issue #133, decision Q1); empty when there is none. */
+  history: Schema.Array(Block),
   question: Schema.Array(Piece),
   options: Schema.Array(PieceOption),
   details: Schema.Array(Block),
@@ -187,6 +191,8 @@ export const QuestionEntry = Schema.Struct({
    * refer to explanations come from the terms subject after convergence (decision Q1).
    */
   context: Schema.Array(Block),
+  /** What happened before that led to the question, apart from the context (issue #133, decision Q1); empty when none. */
+  history: Schema.Array(Block),
   question: Schema.Array(Piece),
   reason: Schema.Array(Block),
   proposed_answers: Schema.Array(PieceOption),
@@ -213,6 +219,7 @@ export const TermsEntry = Schema.Struct({
   id: Schema.String,
   explanations: Schema.Array(Explanation),
   context: Schema.Array(Block),
+  history: Schema.Array(Block),
   question: Schema.Array(Piece),
   reason: Schema.Array(Block),
   proposed_answers: Schema.Array(PieceOption),
@@ -236,7 +243,7 @@ export const InterviewTurn = Schema.Struct({
    * Issue #35 (Q5, Q6): the question the message asks the user to answer now, its id and its text alone; S3: with its
    * context paragraph, its explanations and its options, as pieces (issue #36). Every field empty when the message asks none.
    */
-  current_question: Schema.Struct({ id: Schema.String, context: Schema.Array(Block), text: Schema.Array(Piece), explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }),
+  current_question: Schema.Struct({ id: Schema.String, context: Schema.Array(Block), history: Schema.Array(Block), text: Schema.Array(Piece), explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }),
   asked_ids: Schema.Array(Schema.String),
   answered_ids: Schema.Array(Schema.String),
   complete: Schema.Boolean,

@@ -59,7 +59,7 @@ const questionRules =
     // S35 (W1-R1-3): only a turn that asks nothing, or asks an agreed question by its id, is not checked.
     if (asksNothing(current) || (current.id.trim() !== "" && recorded.includes(current.id))) return Result.succeed({ value: turn, notes: [] });
     const where = current.id.trim() === "" ? "the current question" : current.id;
-    return questionsValidation((t: S.InterviewTurn) => [{ where, question: { context: t.current_question.context, question: t.current_question.text, explanations: t.current_question.explanations, options: t.current_question.options } }])(turn);
+    return questionsValidation((t: S.InterviewTurn) => [{ where, question: { context: t.current_question.context, history: t.current_question.history, question: t.current_question.text, explanations: t.current_question.explanations, options: t.current_question.options } }])(turn);
   };
 
 /**
@@ -95,11 +95,11 @@ export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDr
     const divided = records.terms.find((t) => t.id === agreed.id);
     const entry = divided ?? { ...agreed, explanations: [] };
     const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description })));
-    return { origin, context: agentContext(entry.context, origin), explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", entry.reason), decision: null };
+    return { origin, context: agentContext(entry.context, origin), history: [], explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", entry.reason), decision: null };
   }
-  if (asksNothing(current)) return { origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: turn.message }], by: "agent" }, explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null };
+  if (asksNothing(current)) return { origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: turn.message }], by: "agent" }, history: [], explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null };
   const origin: QuestionOrigin = { kind: "followUp", id: current.id };
-  return { origin, context: agentContext(current.context, origin), explanations: current.explanations, question: current.text, options: numberedOptions(current.options), decision: null };
+  return { origin, context: agentContext(current.context, origin), history: [], explanations: current.explanations, question: current.text, options: numberedOptions(current.options), decision: null };
 };
 
 /**
@@ -134,7 +134,7 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
       if (turn.kind === "summary_proposed") {
         // S7: the summary is read beside the question that confirms it, after the program's paragraph.
         const origin: QuestionOrigin = { kind: "confirmSummary" };
-        const draft: QuestionDraft = { origin, context: programContext(origin), explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], attached: attachedOf("summary", [{ kind: "document", markdown: turn.summary.trim() }]), decision: null };
+        const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], attached: attachedOf("summary", [{ kind: "document", markdown: turn.summary.trim() }]), decision: null };
         const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.confirmSummaryPrompt, draft));
         if (reply.kind !== "text") {
           yield* store.writeRequirements(turn.summary.trimEnd() + "\n");

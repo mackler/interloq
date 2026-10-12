@@ -995,7 +995,7 @@ describe("App and the draft", () => {
   // W2-R1-3: the conversation shown for run 1's decision 1 does not hide run 2's decision 1.
   test("the conversation toggle of one run's decision leaves the next run's decision of the same number displayed", async () => {
     const { root, ws } = await openPage();
-    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
+    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Decision 1"]')).not.toBe(null);
     one(root, "button[name=conversation]").click();
@@ -1011,7 +1011,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     const el = (text: string) => ({ text, counterarguments: [] });
     const e1 = { id: "e1", title: "T.", comparative_condition: el("c"), starting_cause: el("s"), intermediate_steps: el("i"), threshold: el("t"), effect_on_persons: el("e"), reason_the_effect_matters: el("r"), extent: { per_person: el("p"), persons_affected: el("a"), likelihood: el("l"), timing: el("w") } };
-    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 3, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [{ kind: "argued", option: "A", advantages: [e1], disadvantages: [] }], recommendation: { option: "", reason: "" } } } };
+    const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 3, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [{ kind: "argued", option: "A", advantages: [e1], disadvantages: [] }], recommendation: { option: "", reason: "" } } } };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1)]) }] });
     ws.onopen?.({});
     ws.sent = [];
@@ -1053,7 +1053,7 @@ describe("App and the draft", () => {
   // issue #87, and a new pending prompt starts with them closed.
   test("the question pane's sections start closed for each new prompt and send no ui frame", async () => {
     const { root, ws } = await openPage();
-    const presented = (n: number) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: n, origin: { kind: "relayed" }, context: { blocks: plainBlocks(`context ${n}`), by: "agent" }, explanations: [], question: plainPieces(`Q${n}?`), options: [], attached: null, decision: null } } });
+    const presented = (n: number) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: n, origin: { kind: "relayed" }, context: { blocks: plainBlocks(`context ${n}`), by: "agent" }, history: [], explanations: [], question: plainPieces(`Q${n}?`), options: [], attached: null, decision: null } } });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, presented(1), asked(1)]) }] });
     ws.onopen?.({});
     const sent = ws.sent.length;
@@ -1073,7 +1073,7 @@ describe("App and the draft", () => {
   // analysis's "Show the conversation" shows the conversation itself.
   test("beside an analysis the pane shows only its answers; the analysis's Show the conversation shows the transcript", async () => {
     const { root, ws } = await openPage();
-    const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null };
+    const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null };
     const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: presentedQ, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question: presentedQ } }, analyzed, asked(1)]) }] });
     expect(root.querySelector(".pane")).not.toBe(null);
@@ -1219,7 +1219,7 @@ describe("DecisionView", () => {
     extent: { per_person: el(`pp ${id}`), persons_affected: el(`pa ${id}`), likelihood: el(`l ${id}`), timing: el(`w ${id}`) },
   });
   const arg = (id: string, equivalent_to = "", replies: unknown[] = []) => ({ id, text: `But ${id}.`, equivalent_to, replies });
-  const presented = { number: 4, origin: { kind: "relayed" }, context: { blocks: plainBlocks("The service keeps its data in a database."), by: "agent" }, explanations: [], question: plainPieces("Which database?"), options: [], attached: null, decision: null };
+  const presented = { number: 4, origin: { kind: "relayed" }, context: { blocks: plainBlocks("The service keeps its data in a database."), by: "agent" }, history: [], explanations: [], question: plainPieces("Which database?"), options: [], attached: null, decision: null };
   const event = {
     _tag: "DecisionAnalyzed" as const,
     decision: 2,
@@ -1967,6 +1967,7 @@ describe("QuestionPane's order", () => {
     number: 4,
     origin: { kind: "relayed" },
     context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The "), ref("service", "s"), ...plainPieces(" keeps its data in a database.")] }], by: "agent" },
+    history: [],
     explanations: [shownOf({ id: "s", term: "service", senses: ["The program this task builds."] })],
     question: [...plainPieces("Which database should the "), ref("service", "s"), ...plainPieces(" use?")],
     options: [
@@ -2089,6 +2090,7 @@ describe("QuestionPane's order", () => {
       explanations: [shownOf({ id: "c", term: "cycles", senses: ["Rounds of review and response."] }), shownOf({ id: "r", term: "reviewer", senses: ["Codex, which checks the plan."] })],
       question: plainPieces("Should the review stop?"),
       context: { blocks: plainBlocks("The review has reached its limit."), by: "agent" },
+      history: [],
       attached: null,
       options: [{ label: [...plainPieces("More "), ref("cycles", "c")], description: [...plainPieces("let the "), ref("reviewer", "r"), ...plainPieces(" go on")], answer: { numeric: true } }],
     };
@@ -2224,7 +2226,7 @@ test("the question pane and the scripted Ui both take endingOf from src/input.ts
 // explanations; the transcript shows the question whole, its options' labels on their own lines (S14).
 test("an answered question in the transcript marks its words; the question beside an analysis marks its words", async () => {
   const zod = [shownOf({ id: "z", term: "zod", senses: ["A library."] })];
-  const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), answer: { token: "1" } }], attached: null, decision: null };
+  const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, history: [], explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), answer: { token: "1" } }], attached: null, decision: null };
   const root = show(MessageView, { message: { key: "k", author: "program", heading: null, body: "Use zod?", format: "text", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null, question: asked } });
   expect([...root.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["Zod", "zod"]);
   expect(one(root, ".option-label").textContent).toContain("Yes");
@@ -2264,7 +2266,7 @@ describe("the shared rule for code in rendered Markdown", () => {
   });
   test("QuestionPane, DecisionView and Message render their code inside .markdown", async () => {
     const details = prompts.toolInputBlocks({ command: " a " });
-    const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("Run `x`."), by: "agent" }, explanations: [], question: plainPieces("Q?"), options: [], attached: { kind: "request", blocks: details as [Block] }, decision: null };
+    const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("Run `x`."), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: { kind: "request", blocks: details as [Block] }, decision: null };
     const pane = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
     // Issue #137: the pane's attached material is read once its section is opened.
     openSections(pane);
@@ -2283,7 +2285,7 @@ describe("the shared rule for code in rendered Markdown", () => {
 // Issue #36 (replacing S59's marking of a split term): a piece that refers to an explanation sits beside inline
 // formatting in the question pane and beside an analysis; the formatting is rendered and the word carries its explanation.
 describe("a word that refers to an explanation beside inline formatting in the context", () => {
-  const presented: PresentedQuestion = { number: 3, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The **saved** "), ref("cache key", "k"), ...plainPieces(" identifies the result.")] }], by: "agent" }, explanations: [shownOf({ id: "k", term: "cache key", senses: ["The name of a saved result."] })], question: plainPieces("Should we keep it?"), options: [], attached: null, decision: null };
+  const presented: PresentedQuestion = { number: 3, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [...plainPieces("The **saved** "), ref("cache key", "k"), ...plainPieces(" identifies the result.")] }], by: "agent" }, history: [], explanations: [shownOf({ id: "k", term: "cache key", senses: ["The name of a saved result."] })], question: plainPieces("Should we keep it?"), options: [], attached: null, decision: null };
   const check = (region: Element) => {
     expect(region.querySelector("strong")?.textContent).toBe("saved");
     expect(region.textContent).not.toContain("*");
@@ -2309,7 +2311,7 @@ describe("a word that refers to an explanation beside inline formatting in the c
 
 // S14 (issue #59): an option's label is set apart from its text: in bold, on its own line, a separate element.
 test("each option card shows its label in bold as its own element and its description as another", () => {
-  const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, explanations: [], question: plainPieces("Which?"), options: [{ label: plainPieces("SQLite"), description: plainPieces("one file, no server"), answer: { token: "1" } }, { label: plainPieces("More cycles"), description: plainPieces("go on"), answer: { numeric: true } }], attached: null, decision: null };
+  const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Which?"), options: [{ label: plainPieces("SQLite"), description: plainPieces("one file, no server"), answer: { token: "1" } }, { label: plainPieces("More cycles"), description: plainPieces("go on"), answer: { numeric: true } }], attached: null, decision: null };
   const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
   for (const option of [one(root, ".options button"), one(root, ".numeric")]) {
     const label = one(option, ".option-label");

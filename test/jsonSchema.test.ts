@@ -10,6 +10,7 @@ import * as legacy from "./fixtures/legacy-schemas.ts";
 // Decision Q1 of the decision-support task: questions_for_user is a list of structured questions; the legacy schemas stay frozen.
 // S3 (issues #36, #59): with its context paragraph and the explanations of its terms. Issue #36 (30 Sep 2026): every text
 // is pieces, the context blocks of pieces (a paragraph, a list with levels, a code block), and the explanations a list. Issue #112 (8 Oct 2026): an explanation's text is its senses, a list.
+// Issue #133: a history, blocks like the context, after it.
 const pieces = { type: "array", items: { type: "object", properties: { text: { type: "string" }, ref: { type: "string" }, code: { type: "boolean" } } } };
 const blocks = {
   type: "array",
@@ -27,7 +28,7 @@ const userQuestions = {
   type: "array",
   items: {
     type: "object",
-    properties: { context: blocks, question: pieces, explanations, options },
+    properties: { context: blocks, history: blocks, question: pieces, explanations, options },
   },
 };
 /** Issue #99: an entry's skip condition, null or the question and the answer that make it unnecessary. */
@@ -41,7 +42,7 @@ const withContext = <T extends { properties: { questions: { items: { properties:
       ...schema.properties.questions,
       items: {
         ...schema.properties.questions.items,
-        properties: (({ id, default_answer }) => ({ id, context: blocks, question: pieces, reason: blocks, proposed_answers: options, default_answer, skip_if: skipIf }))(schema.properties.questions.items.properties as { id: unknown; default_answer: unknown }),
+        properties: (({ id, default_answer }) => ({ id, context: blocks, history: blocks, question: pieces, reason: blocks, proposed_answers: options, default_answer, skip_if: skipIf }))(schema.properties.questions.items.properties as { id: unknown; default_answer: unknown }),
       },
     },
   },
@@ -63,7 +64,7 @@ const agentSchemas = {
         message_to_user,
         // Issue #35 (Q5, Q6): the question the message asks now, its id and its text alone.
         // S3: with its context, explanations and options, as pieces (issue #36).
-        current_question: { type: "object", properties: { id: { type: "string" }, context: blocks, text: pieces, explanations, options } },
+        current_question: { type: "object", properties: { id: { type: "string" }, context: blocks, history: blocks, text: pieces, explanations, options } },
         asked_ids: { type: "array", items: { type: "string" } },
         ...rest,
       }))(legacy.interviewTurnSchema.properties),

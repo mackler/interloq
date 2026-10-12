@@ -585,7 +585,7 @@ test("a multi-line value's edge line breaks are escaped in the record", async ()
   assert.ok(lines.includes(prompts.ESCAPED_VALUE_NOTE));
   assert.ok(prompts.ESCAPED_VALUE_NOTE.includes("`\\n`"));
   assert.notEqual(inputLines({ content: "a\nb" }), lines);
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks({ content: "a\nb\n" })), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks({ content: "a\nb\n" })), decision: null });
   assert.ok(record.includes("a\nb\\n"));
 });
 
@@ -601,7 +601,7 @@ test("an unknown field's name is shown literally and looked up by own properties
   }
   assert.equal(prompts.unknownSettingLabel("**mode**"), "The tool's setting named `**mode**`");
   assert.ok(inputLines(own("a\nb")).includes("`a\\nb`"));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks(own("<target>"))), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks(own("<target>"))), decision: null });
   assert.ok(record.includes("`<target>`"));
 });
 
@@ -660,7 +660,7 @@ test("S57: shownName is one-to-one over non-empty names, never blank, and the em
 test("S57: conversation.md carries the labels and notes of escaped names", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
   const details = prompts.toolInputBlocks(withKeys([`a${BS}nb`, SP]));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", details), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", details), decision: null });
   assert.ok(record.includes(prompts.unknownSettingLabel(`a${BS}nb`)));
   assert.ok(record.includes(prompts.unknownSettingLabel(SP)));
 });
@@ -683,7 +683,7 @@ test("S60: empty lists, empty objects, the empty text and null display different
   assert.notEqual(prompts.permissionFacts("T", nested[0]), prompts.permissionFacts("T", nested[1]));
   assert.equal(inputLines({}), prompts.NO_INPUT_PHRASE);
   assert.ok(prompts.permissionFacts("T", {}).includes(prompts.NO_INPUT_PHRASE));
-  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks(inputs[0])), decision: null });
+  const record = renderQuestionRecord({ number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Q?"), options: [], attached: attachedOf("request", prompts.toolInputBlocks(inputs[0])), decision: null });
   assert.ok(record.includes(prompts.EMPTY_LIST_PHRASE));
 });
 
@@ -819,6 +819,7 @@ test("issue #112: the explanations clause states the senses that questionProblem
   const rule = prompts.QUESTION_RULES.find((r) => r.id === "terms")!;
   for (const text of [rule.rule, rule.criterion]) assert.match(text, /sense/);
   const question = (senses: readonly string[]) => ({
+    history: [],
     context: [{ kind: "paragraph" as const, pieces: [{ text: "Interloq asks this.", ref: "", code: false }] }],
     question: [{ text: "Should ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: " be declared?", ref: "", code: false }],
     explanations: [{ id: "z", term: "zod", senses }],

@@ -797,13 +797,14 @@ export const resumeStepSentence = `When you resume a step after you have started
  * A relayed question's text as its shape composes it (S8 of the task of issue #36; behavior 4): the question as a JSON
  * object with its context, its question, its explanations and its options, as pieces.
  */
-export type RelayedParts = Readonly<{ context: readonly Block[]; question: readonly Piece[]; explanations: readonly Explanation[]; options: readonly PieceOption[] }>;
+export type RelayedParts = Readonly<{ context: readonly Block[]; history: readonly Block[]; question: readonly Piece[]; explanations: readonly Explanation[]; options: readonly PieceOption[] }>;
 export function relayedQuestionText(parts: RelayedParts): string {
-  return JSON.stringify({ context: parts.context, question: parts.question, explanations: parts.explanations, options: parts.options });
+  return JSON.stringify({ context: parts.context, history: parts.history, question: parts.question, explanations: parts.explanations, options: parts.options });
 }
 /** The example of RELAYED_SHAPE: a question with one explanation and two options, in the shape it states. */
 export const RELAYED_EXAMPLE: RelayedParts = {
   context: [{ kind: "paragraph", pieces: [{ text: "<the context paragraph>", ref: "", code: false }] }],
+  history: [],
   question: [
     { text: "<the question, where a word such as ", ref: "", code: false },
     { text: "<a term>", ref: "t1", code: false },

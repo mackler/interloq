@@ -35,7 +35,7 @@ export const writeQuestions = (task: string, list: QuestionList): Effect.Effect<
 export const questionListValidation = <T extends Readonly<{ questions: readonly QuestionList["questions"][number][] }>>(): Validation<T> =>
   bothValidations(
     questionsValidation((output: T) =>
-      output.questions.map((e, i) => ({ where: e.id.trim() === "" ? `question ${i + 1}` : e.id, question: { context: e.context, question: e.question, explanations: [], options: e.proposed_answers, details: e.reason } })),
+      output.questions.map((e, i) => ({ where: e.id.trim() === "" ? `question ${i + 1}` : e.id, question: { context: e.context, history: e.history, question: e.question, explanations: [], options: e.proposed_answers, details: e.reason } })),
     ),
     skipConditionValidation<T>(),
   );
@@ -93,7 +93,7 @@ export const termsValidation =
       if (q === undefined) return [{ where: entry.id, problems: [{ kind: "unknownQuestion", subject: entry.id }] }];
       const problems = [
         ...wordingChanges(q, entry),
-        ...questionProblems({ context: entry.context, question: entry.question, explanations: entry.explanations, options: entry.proposed_answers, details: entry.reason }).filter((p) => !LIST_PROBLEMS.includes(p.kind)),
+        ...questionProblems({ context: entry.context, history: entry.history, question: entry.question, explanations: entry.explanations, options: entry.proposed_answers, details: entry.reason }).filter((p) => !LIST_PROBLEMS.includes(p.kind)),
       ];
       return problems.length === 0 ? [] : [{ where: entry.id, problems }];
     });

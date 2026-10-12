@@ -29,12 +29,13 @@ type Piece = { text: string; ref: string; code: boolean };
 type Explanation = { id: string; term: string; senses: string[] };
 type Block = { kind: "paragraph"; pieces: Piece[] } | { kind: "list"; items: { level: number; pieces: Piece[] }[] } | { kind: "code"; text: string };
 type PieceOption = { label: Piece[]; description: Piece[] };
-type UserQuestion = { context: Block[]; question: Piece[]; explanations: Explanation[]; options: PieceOption[] };
+type UserQuestion = { context: Block[]; history: Block[]; question: Piece[]; explanations: Explanation[]; options: PieceOption[] };
 type WithQuestions<T> = Omit<T, "questions_for_user"> & { questions_for_user: UserQuestion[] };
 const plain = (text: string): Piece[] => [{ text, ref: "", code: false }];
 const para = (text: string): Block[] => [{ kind: "paragraph", pieces: plain(text) }];
 const option = (label: string, description: string): PieceOption => ({ label: plain(label), description: plain(description) });
 const userQuestion: UserQuestion = {
+  history: para("h"),
   context: [{ kind: "paragraph", pieces: plain("c") }, { kind: "list", items: [{ level: 0, pieces: plain("i") }, { level: 1, pieces: [{ text: "x", ref: "", code: true }] }] }, { kind: "code", text: "ls\n" }],
   question: [{ text: "q", ref: "t1", code: false }, { text: "?", ref: "", code: false }],
   explanations: [{ id: "t1", term: "q", senses: ["a letter"] }],
@@ -42,11 +43,11 @@ const userQuestion: UserQuestion = {
 };
 const plannerResponse: WithQuestions<legacy.PlannerResponse> = { dispositions: [disposition], self_corrections: [selfCorrection], reviewer_feedback: "", questions_for_user: [userQuestion] };
 // Issue #99: an entry carries its skip condition, null or the question and the answer that make it unnecessary.
-type QuestionEntry = { id: string; context: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string; skip_if: { question: string; answer: string } | null };
-const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A", skip_if: null };
+type QuestionEntry = { id: string; context: Block[]; history: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[]; default_answer: string; skip_if: { question: string; answer: string } | null };
+const questionEntry: QuestionEntry = { id: "Q1", context: para("c"), history: para("h"), question: plain("q?"), reason: para("r"), proposed_answers: [option("A", "a")], default_answer: "A", skip_if: null };
 // Issue #21 (Q6 follow-up) and issue #35 (Q5, Q6): the fields the interview turn has beyond the frozen legacy shape.
-type CurrentQuestion = { current_question: { id: string; context: Block[]; text: Piece[]; explanations: Explanation[]; options: PieceOption[] } };
-const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
+type CurrentQuestion = { current_question: { id: string; context: Block[]; history: Block[]; text: Piece[]; explanations: Explanation[]; options: PieceOption[] } };
+const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQuestion = { message_to_user: "m", current_question: { id: "F1", context: para("c"), history: [], text: plain("q?"), explanations: [], options: [option("A", "a")] }, asked_ids: ["Q1", "F1"], answered_ids: ["Q1"], complete: false, summary: "" };
 const execReport: legacy.ExecReport = { status: "finished", summary: "s", question: "", remaining_work: "" };
 const execOutcome: legacy.ExecOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null };
 // Version 2 (Q5): three shapes tagged by source.
@@ -91,9 +92,9 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.QuestionList.Type>, { questions: QuestionEntry[] }>>();
   sameType<Equals<DeepMutable<typeof S.QuestionListResponse.Type>, DeepMutable<WithQuestions<Omit<legacy.QuestionListResponse, "questions">> & { questions: QuestionEntry[] }>>>();
   // G-R1-1: the context call returns the whole question as pieces.
-  sameType<Equals<DeepMutable<typeof S.QuestionContext.Type>, { context: Block[]; question: Piece[]; options: PieceOption[]; details: Block[]; explanations: Explanation[] }>>();
+  sameType<Equals<DeepMutable<typeof S.QuestionContext.Type>, { context: Block[]; history: Block[]; question: Piece[]; options: PieceOption[]; details: Block[]; explanations: Explanation[] }>>();
   // Decision Q1: the explaining conversation returns each agreed entry divided into pieces, with its explanations.
-  sameType<Equals<DeepMutable<typeof S.TermsEntry.Type>, { id: string; explanations: Explanation[]; context: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[] }>>();
+  sameType<Equals<DeepMutable<typeof S.TermsEntry.Type>, { id: string; explanations: Explanation[]; context: Block[]; history: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[] }>>();
   sameType<Equals<DeepMutable<typeof S.InterviewTurn.Type>, DeepMutable<legacy.InterviewTurn & { asked_ids: readonly string[] } & CurrentQuestion>>>();
   sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<legacy.ExecReport>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<legacy.ExecOutcome>>>();
@@ -113,7 +114,7 @@ test("each schema rejects a wrong enum value, a missing field and a wrong type",
   rejects(S.QuestionEntry, (({ skip_if: _, ...rest }) => rest)(questionEntry), "an entry without its skip condition");
   rejects(S.QuestionEntry, { ...questionEntry, skip_if: { question: "Q0" } }, "a skip condition without its answer");
   rejects(S.InterviewTurn, { ...interviewTurn, complete: "yes" }, "complete as a string");
-  rejects(S.InterviewTurn, { message_to_user: "m", current_question: { id: "", context: [], text: [], explanations: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
+  rejects(S.InterviewTurn, { message_to_user: "m", current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, answered_ids: [], complete: false, summary: "" }, "a turn without asked_ids");
   rejects(S.InterviewTurn, { message_to_user: "m", asked_ids: [], answered_ids: [], complete: false, summary: "" }, "a turn without current_question");
   rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "Q1" } }, "a current question without its text");
   rejects(S.InterviewTurn, { ...interviewTurn, current_question: { id: "F1", text: "q?" } }, "a current question without its context, explanations and options");
@@ -139,7 +140,7 @@ test("each schema rejects a wrong enum value, a missing field and a wrong type",
 
 test("a question for the user is structured: with options, without options, never a bare string (decision Q1)", () => {
   assert.deepEqual(decode(S.UserQuestion, userQuestion), userQuestion);
-  const free = { context: para("c"), question: plain("Which?"), explanations: [], options: [] };
+  const free = { context: para("c"), history: [], question: plain("Which?"), explanations: [], options: [] };
   assert.deepEqual(decode(S.PlanWriteResult, { questions_for_user: [free] }), { questions_for_user: [free] });
   rejects(S.PlanWriteResult, { questions_for_user: ["Which?"] }, "a bare string question");
   rejects(S.PlannerResponse, { ...plannerResponse, questions_for_user: ["Which?"] }, "a bare string question in a response");

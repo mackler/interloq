@@ -37,7 +37,7 @@ const explanation = fc.record({ id: text, term: text, senses: fc.array(text, { m
 const sense = text.filter((t) => t.trim() !== "").map((t) => t as Sense);
 const shownExplanation = fc.record({ id: text, term: text, senses: fc.tuple(sense, fc.array(sense, { maxLength: 1 })).map(([first, rest]): Senses => [first, ...rest]) });
 const pieceOption = fc.record({ label: pieces, description: pieces });
-const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
+const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), history: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
 const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text });
 const plannerResponse = fc.record({
   dispositions: fc.array(disposition, { maxLength: 3 }),
@@ -45,7 +45,7 @@ const plannerResponse = fc.record({
   reviewer_feedback: text,
   questions_for_user: fc.array(userQuestion, { maxLength: 2 }),
 });
-const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength: 2 }), question: pieces, reason: fc.array(block, { maxLength: 2 }), proposed_answers: fc.array(pieceOption, { maxLength: 2 }), default_answer: text, skip_if: fc.option(fc.record({ question: text, answer: text }), { nil: null }) });
+const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength: 2 }), history: fc.array(block, { maxLength: 2 }), question: pieces, reason: fc.array(block, { maxLength: 2 }), proposed_answers: fc.array(pieceOption, { maxLength: 2 }), default_answer: text, skip_if: fc.option(fc.record({ question: text, answer: text }), { nil: null }) });
 // Defect A of docs/page-question-phase-defects.md: the question subject's response carries the amended list too.
 const response = fc.oneof(plannerResponse, fc.tuple(plannerResponse, fc.array(questionEntry, { maxLength: 2 })).map(([r, questions]) => ({ ...r, questions })));
 const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }) });
@@ -70,6 +70,7 @@ const presentedQuestion = fc.record({
   number: nat,
   origin,
   context: fc.record({ blocks: fc.array(shownBlock, { maxLength: 2 }), by: fc.constantFrom("agent" as const, "program" as const) }),
+  history: fc.array(shownBlock, { maxLength: 2 }),
   // Issue #112: a presented explanation has one or more senses, none blank.
   explanations: fc.array(shownExplanation, { maxLength: 2 }),
   question: pieces,
@@ -339,7 +340,7 @@ test("the ui frames and a replay with shared states decode; an unknown scope and
 
 // Issue #112: a presented question's explanation has one or more senses, none blank; anything else is refused.
 test("issue #112: a presented question with an empty senses list or a blank sense does not decode", () => {
-  const question = (senses: readonly string[]) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [{ id: "z", term: "zod", senses }], question: [], options: [], attached: null, decision: null });
+  const question = (senses: readonly string[]) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [{ id: "z", term: "zod", senses }], question: [], options: [], attached: null, decision: null });
   const frame = (senses: readonly string[]) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "QuestionPresented", question: question(senses) } } });
   assert.ok(Result.isSuccess(decodeServer(frame(["A library.", "The SDK's input library."]))));
   for (const senses of [[], [""], ["A library.", "  "]]) assert.ok(Result.isFailure(decodeServer(frame(senses))), JSON.stringify(senses));
@@ -347,7 +348,7 @@ test("issue #112: a presented question with an empty senses list or a blank sens
 
 // Issue #137: a presented question's attached material crosses the wire with its kind, and is never empty.
 test("a presented question's attached material decodes with each kind and as null; empty blocks are refused", () => {
-  const question = (attached: unknown) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, explanations: [], question: [], options: [], attached, decision: null });
+  const question = (attached: unknown) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: [], options: [], attached, decision: null });
   const decode = Schema.decodeUnknownResult(PresentedQuestionSchema);
   for (const kind of ATTACHED_KINDS) {
     const q = question({ kind, blocks: [{ kind: "document", markdown: "x" }] });

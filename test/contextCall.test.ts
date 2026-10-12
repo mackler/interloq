@@ -33,6 +33,7 @@ const request: prompts.ContextRequest = {
 };
 const zod = { id: "z", term: "zod", senses: ["A library that checks that data has the shape a program expects."] };
 const good: QuestionContext = {
+  history: [],
   context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, is carrying out the plan in this project. It wants to run a command that installs "), term("zod", "z"), ...plain(", a library, now, while the plan's work waits, so that it can check the input of a tool.")] }],
   question: request.question,
   options: [{ label: plain("Allow"), description: [term("zod", "z"), ...plain(" is installed.")] }, request.options[1]],
@@ -59,7 +60,7 @@ const repairOf = (...problems: prompts.QuestionProblem[]) => prompts.questionRep
 
 test("the context call is a read-only call in a fresh session, with the rules, the format, the task, the facts and the question as data", async () => {
   const { probe, written } = run({ contexts: [{ output: good }] });
-  assert.deepEqual(await written(), { context: { blocks: good.context, by: "agent" }, explanations: good.explanations, question: good.question, options: good.options, details: good.details });
+  assert.deepEqual(await written(), { context: { blocks: good.context, by: "agent" }, history: [], explanations: good.explanations, question: good.question, options: good.options, details: good.details });
   assert.equal(probe.planner.freshSessions, 1);
   assert.equal(probe.planner.contextPrompts.length, 1);
   const prompt = probe.planner.contextPrompts[0];
@@ -82,7 +83,7 @@ test("a reply that does not match the schema gets its repair turn; a reply that 
 test("S10: a second invalid reply leaves the program's own paragraph and question, with a note in conversation.md", async () => {
   const blank = { ...good, context: para(" ") };
   const { probe, written } = run({ contexts: [{ output: blank }, { output: blank }] });
-  assert.deepEqual(await written(), { context: { blocks: plainBlocks(prompts.fallbackContext(origin)), by: "program" }, explanations: [] });
+  assert.deepEqual(await written(), { context: { blocks: plainBlocks(prompts.fallbackContext(origin)), by: "program" }, history: [], explanations: [] });
   assert.match(conversation(probe.dir), /\*\*Context written by Interloq:\*\*/);
 });
 
@@ -157,7 +158,7 @@ test("property F1: a reply that keeps the literals and the options, whatever its
 
 test("S9: a question that asks for its context is presented with the agent's paragraph, pieces and explanations", async () => {
   const { layer, probe } = initialized({ answers: ["1"], contexts: [{ output: good }] });
-  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), attached: attachedOf("request", details), explain: request.facts, decision: null };
+  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, history: [], explanations: [], question: request.question, options: numberedOptions(request.options), attached: attachedOf("request", details), explain: request.facts, decision: null };
   const ask = Effect.gen(function* () {
     yield* (yield* Store).init("the task");
     const ui = yield* Ui;
@@ -180,7 +181,7 @@ test("S9: a question that asks for its context is presented with the agent's par
 test("F1 scenario: a context call that alters the command twice leaves Interloq's own question and command", async () => {
   const altered: QuestionContext = { ...good, details: [{ kind: "list", items: [{ level: 0, pieces: [...plain("The command: "), { text: "npm install zod --force", ref: "", code: true }] }] }] };
   const { layer, probe } = initialized({ answers: ["1"], contexts: [{ output: altered }, { output: altered }] });
-  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), attached: attachedOf("request", details), explain: request.facts, decision: null };
+  const draft: QuestionDraft = { origin, context: { blocks: [], by: "program" }, history: [], explanations: [], question: request.question, options: numberedOptions(request.options), attached: attachedOf("request", details), explain: request.facts, decision: null };
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
@@ -198,7 +199,7 @@ test("F1 scenario: a context call that alters the command twice leaves Interloq'
 test("S10: a context call whose retries are exhausted asks nothing of its own; the program's paragraph stands", async () => {
   const fault = { fault: "read ECONNRESET" };
   const { probe, written } = run({ contexts: [fault, fault], config: { maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 } });
-  assert.deepEqual(await written(), { context: { blocks: plainBlocks(prompts.fallbackContext(origin)), by: "program" }, explanations: [] });
+  assert.deepEqual(await written(), { context: { blocks: plainBlocks(prompts.fallbackContext(origin)), by: "program" }, history: [], explanations: [] });
   assert.equal(probe.planner.contextPrompts.length, 2, "one call and one retry");
   assert.deepEqual(probe.ui.asked, [], "no exhaustion pause was asked");
   assert.deepEqual(presentedQuestions(probe.ui), []);
@@ -415,9 +416,9 @@ test("W3-R1-1: a code piece with a line break is a problem in any question; one 
   const withLabel = (text: string): QuestionContext => ({ ...good, options: [{ label: [{ text, ref: "", code: true }], description: plain("Runs it.") }, good.options[1]] });
   const oneLine = contextValidation({ ...request, options: [{ label: [{ text: "npm ci", ref: "", code: true }], description: plain("Runs it.") }, request.options[1]] });
   assert.ok(Result.isSuccess(oneLine(withLabel("npm ci"))));
-  const problems = questionProblems({ context: good.context, question: good.question, explanations: good.explanations, options: withLabel("a\nb").options, details: good.details });
+  const problems = questionProblems({ context: good.context, history: [], question: good.question, explanations: good.explanations, options: withLabel("a\nb").options, details: good.details });
   assert.deepEqual(problems, [{ kind: "multiLineCode", subject: "a\nb" }]);
-  assert.deepEqual(questionProblems({ context: good.context, question: good.question, explanations: good.explanations, options: withLabel("a\r\nb").options }), [{ kind: "multiLineCode", subject: "a\r\nb" }]);
+  assert.deepEqual(questionProblems({ context: good.context, history: [], question: good.question, explanations: good.explanations, options: withLabel("a\r\nb").options }), [{ kind: "multiLineCode", subject: "a\r\nb" }]);
 });
 
 test("W3-R1-1 seam: the one-line clause is in the writer's format and is the rule the new problem's repair prompt quotes", () => {
@@ -620,7 +621,7 @@ test("S32 scenario: a reply that drops one occurrence's reference twice leaves I
 const code = (text: string): Piece => ({ text, ref: "", code: true });
 const codeAdjacentClause = prompts.QUESTION_FORMAT.find((c) => c.id === "codeAdjacent");
 const withLabelPieces = (label: readonly Piece[]): QuestionContext => ({ ...good, options: [{ label, description: plain("Runs them.") }, good.options[1]] });
-const problemKinds = (q: QuestionContext) => questionProblems({ context: q.context, question: q.question, explanations: q.explanations, options: q.options, details: q.details }).map((p) => p.kind);
+const problemKinds = (q: QuestionContext) => questionProblems({ context: q.context, history: [], question: q.question, explanations: q.explanations, options: q.options, details: q.details }).map((p) => p.kind);
 
 test("S33: two adjacent code pieces, or two with only an empty piece between them, are adjacentCode; a space or an empty code piece separates them", () => {
   assert.deepEqual(problemKinds(withLabelPieces([code("a"), code("b")])), ["adjacentCode"]);
@@ -665,6 +666,7 @@ test("S33 scenario (P6-R1-3): a reply whose option label is two adjacent code pi
 
 test("W7-R1-1 scenario (P8-R1-1): a plan writer's option label with a code piece of one space reaches conversation.md unpadded", async () => {
   const asked = {
+    history: [],
     context: para("Interloq, the orchestrator, writes the list file now, so that its entries can be read apart."),
     question: plain("Which separator do you want between the entries?"),
     explanations: [],
@@ -695,8 +697,8 @@ test("a context call refused because its session is too long halts with ClaudeSe
 test("withContext keeps the draft's kind of attached material and takes the call's rephrased blocks", () => {
   const blocks = [{ kind: "paragraph" as const, pieces: plain("The command: ls") }] as const;
   const rephrased = [{ kind: "paragraph" as const, pieces: plain("Claude Code would run: ls") }] as const;
-  const base: QuestionDraft = { origin, context: { blocks: [], by: "program" }, explanations: [], question: request.question, options: numberedOptions(request.options), decision: null };
-  const written = { context: { blocks: para("c"), by: "agent" as const }, explanations: [], details: rephrased };
+  const base: QuestionDraft = { origin, context: { blocks: [], by: "program" }, history: [], explanations: [], question: request.question, options: numberedOptions(request.options), decision: null };
+  const written = { context: { blocks: para("c"), by: "agent" as const }, history: [], explanations: [], details: rephrased };
   assert.deepEqual(withContext({ ...base, attached: { kind: "request", blocks } }, written).attached, { kind: "request", blocks: rephrased });
   assert.deepEqual(withContext({ ...base, attached: { kind: "request", blocks } }, { ...written, details: undefined }).attached, { kind: "request", blocks });
   assert.equal(withContext(base, written).attached ?? null, null);

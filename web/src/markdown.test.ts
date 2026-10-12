@@ -51,7 +51,7 @@ describe("code pieces rendered from piecesMarkdown", () => {
     const codePiece = fc.stringMatching(/^[a-z0-9]{1,6}$/).map((text) => ({ text, ref: "", code: true }));
     fc.assert(
       fc.property(fc.array(fc.oneof(plainPiece, codePiece), { minLength: 1, maxLength: 6 }), (pieces) => {
-        const q = { context: [{ kind: "paragraph" as const, pieces: [{ text: "c", ref: "", code: false }] }], question: [{ text: "Q?", ref: "", code: false }], explanations: [], options: [{ label: pieces, description: [] }] };
+        const q = { history: [], context: [{ kind: "paragraph" as const, pieces: [{ text: "c", ref: "", code: false }] }], question: [{ text: "Q?", ref: "", code: false }], explanations: [], options: [{ label: pieces, description: [] }] };
         if (questionProblems(q).length > 0) return true;
         const el = document.createElement("div");
         el.innerHTML = render(piecesMarkdown(pieces));
@@ -85,7 +85,7 @@ describe("a code piece of spaces alone", () => {
     const codePiece = fc.oneof(fc.stringMatching(/^[a-z0-9]{1,6}$/), fc.stringMatching(/^ {1,5}$/)).map((text) => ({ text, ref: "", code: true }));
     fc.assert(
       fc.property(fc.array(fc.oneof(plainPiece, codePiece), { minLength: 1, maxLength: 6 }), (pieces) => {
-        const q = { context: [{ kind: "paragraph" as const, pieces: [{ text: "c", ref: "", code: false }] }], question: [{ text: "Q?", ref: "", code: false }], explanations: [], options: [{ label: pieces, description: [] }] };
+        const q = { history: [], context: [{ kind: "paragraph" as const, pieces: [{ text: "c", ref: "", code: false }] }], question: [{ text: "Q?", ref: "", code: false }], explanations: [], options: [{ label: pieces, description: [] }] };
         if (questionProblems(q).length > 0) return true;
         const el = document.createElement("div");
         el.innerHTML = render(piecesMarkdown(pieces));

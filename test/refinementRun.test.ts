@@ -19,7 +19,7 @@ import { fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scrip
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
-const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
+const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
 const REQUIREMENTS = "# Requirements\n\nQ1: A";
 const item: FakeItem = { ...scriptedItem, id: Result.getOrThrow(itemIdOf("120")), title: "Two modes", body: "Make the page two tabs.", state: "unrefined" };
 /** One question, answered, and a summary confirmed: the question review, the interview and the requirements review. */

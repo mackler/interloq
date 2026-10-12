@@ -26,6 +26,8 @@ export type OfferedOption = Readonly<{ label: string; description: string; shown
 export type QuestionDraft = Readonly<{
   origin: QuestionOrigin;
   context: QuestionContextText;
+  /** What happened before that led to the question (issue #133); empty when there is none. */
+  history: readonly ShownBlock[];
   explanations: readonly Explanation[];
   question: readonly Piece[];
   options: readonly OfferedOption[];
@@ -57,6 +59,7 @@ export const presentedQuestion = (draft: QuestionDraft, number: number): Result.
     number,
     origin: draft.origin,
     context: draft.context,
+    history: draft.history,
     explanations,
     question: draft.question,
     options: draft.options.map((o) => ({ label: o.shown.label, description: o.shown.description, answer: o.answer })),
@@ -90,6 +93,7 @@ export const permissionDraft = (tool: string, input: unknown): QuestionDraft => 
   return {
     origin,
     context: programContext(origin),
+    history: [],
     explanations: prompts.toolInputExplanations(input),
     question: plainPieces(prompts.permissionQuestion(tool, input)),
     options: permissionOptions,
@@ -194,7 +198,7 @@ export const askOffering = <E>(
       if (isDecide(answer)) {
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
-        const shown = { context: blocksMarkdown(explained.context.blocks), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
+        const shown = { context: blocksMarkdown(explained.context.blocks), history: "", terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
         const outcome = yield* decider.decide({ question: asked, options, number: question.number, shown });
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });

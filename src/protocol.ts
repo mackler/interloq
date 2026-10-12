@@ -116,6 +116,7 @@ export const PresentedQuestionSchema = Schema.Struct({
   number: Int,
   origin: QuestionOriginSchema,
   context: Schema.Struct({ blocks: Schema.Array(ShownBlockSchema), by: Schema.Literals(["agent", "program"]) }),
+  history: Schema.Array(ShownBlockSchema),
   explanations: Schema.Array(ShownExplanationSchema),
   question: Schema.Array(S.Piece),
   options: Schema.Array(Schema.Struct({ label: Schema.Array(S.Piece), description: Schema.Array(S.Piece), answer: Schema.Union([Schema.Struct({ token: Str }), Schema.Struct({ numeric: Schema.Literal(true) })]) })),

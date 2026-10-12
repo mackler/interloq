@@ -15,6 +15,7 @@ import { opt, para, plain, readBack, readBlocks, term , TEST_ROOT } from "./help
 
 const zod: Explanation = { id: "t1", term: "zod", senses: ["A library that checks that data has the expected shape."] };
 const good: Question = {
+  history: [],
   context: [
     {
       kind: "paragraph",
@@ -95,7 +96,7 @@ test("the data clauses: dangling and unused refs, duplicate ids, blank terms, ex
 
 test("a ref in any part counts: the details, a list item and an option's label", () => {
   const onlyIn = (q: Question) => kinds({ ...q, explanations: [zod] });
-  const bare: Question = { ...good, context: para("Interloq asks this."), question: plain("Should it be declared?"), options: [opt("A"), opt("B")] };
+  const bare: Question = { ...good, context: para("Interloq asks this."), history: [], question: plain("Should it be declared?"), options: [opt("A"), opt("B")] };
   assert.deepEqual(onlyIn(bare), ["unusedExplanation"]);
   assert.deepEqual(onlyIn({ ...bare, details: [{ kind: "list", items: [{ level: 1, pieces: [term("zod", "t1")] }] }] }), []);
   assert.deepEqual(onlyIn({ ...bare, options: [{ label: [term("zod", "t1")], description: [] }, opt("B")] }), []);
@@ -225,6 +226,7 @@ const arbBlock = (refs: readonly string[]): fc.Arbitrary<Block> =>
 /** A question whose refs all resolve, every explanation used, nothing blank: the valid half of the data clauses. */
 const arbValid: fc.Arbitrary<Question> = fc.uniqueArray(fc.constantFrom("a", "b", "c", "d"), { maxLength: 4 }).chain((ids) =>
   fc.record({
+    history: fc.constant([]),
     context: fc.tuple(word, fc.array(arbBlock(ids), { maxLength: 3 })).map(([w, rest]) => [{ kind: "paragraph" as const, pieces: [{ text: w, ref: "", code: false }] }, ...rest]),
     question: fc.array(arbPiece(ids), { maxLength: 4 }).map((ps) => [...ps, ...ids.map((ref) => ({ text: `w${ref}`, ref, code: false })), { text: "?", ref: "", code: false }]),
     // Issue #112: one to three senses per explanation, so that the properties over valid questions cover several senses.
@@ -272,7 +274,7 @@ test("S8: executePrompt states the relayed shape with the rules, and parseRelaye
   assert.ok(prompts.RELAYED_SHAPE.includes(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE)), "the prompt's example is the composer's");
   const options = prompts.RELAYED_EXAMPLE.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
   assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE), options), prompts.RELAYED_EXAMPLE);
-  const parts = { context: good.context as readonly Block[], question: good.question, explanations: good.explanations, options: good.options };
+  const parts = { context: good.context as readonly Block[], history: good.history as readonly Block[], question: good.question, explanations: good.explanations, options: good.options };
   const toolOptions = good.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
   assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(parts), toolOptions), parts);
   assert.deepEqual(parseRelayedQuestion(`\n  ${prompts.relayedQuestionText(parts)}\n`, toolOptions), parts, "surrounding whitespace is allowed");
@@ -280,7 +282,7 @@ test("S8: executePrompt states the relayed shape with the rules, and parseRelaye
 
 test("S8: a relayed text that is not the shape, breaks a rule, or has other options than the tool's is not read as one", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
-  const parts = { context: good.context as readonly Block[], question: good.question, explanations: good.explanations, options: good.options };
+  const parts = { context: good.context as readonly Block[], history: good.history as readonly Block[], question: good.question, explanations: good.explanations, options: good.options };
   const toolOptions = good.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
   assert.equal(parseRelayedQuestion(piecesText(good.question), toolOptions), null, "plain text");
   assert.equal(parseRelayedQuestion(`Context.\n\n${prompts.TERMS_HEADING}\nzod: a library\n\nShould it?`, toolOptions), null, "the former Terms block");
@@ -294,7 +296,7 @@ test("property S8: any valid question encoded as the shape parses back to itself
   const { parseRelayedQuestion } = await import("../src/question.ts");
   fc.assert(
     fc.property(arbValid, (q) => {
-      const parts = { context: q.context as readonly Block[], question: q.question, explanations: q.explanations, options: q.options };
+      const parts = { context: q.context as readonly Block[], history: q.history as readonly Block[], question: q.question, explanations: q.explanations, options: q.options };
       const toolOptions = q.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
       const parsed = parseRelayedQuestion(prompts.relayedQuestionText(parts), toolOptions);
       return questionProblems(q).length > 0 ? parsed === null : JSON.stringify(parsed) === JSON.stringify(parts);

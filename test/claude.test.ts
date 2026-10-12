@@ -612,7 +612,7 @@ test("a relayed question with options offers Help me decide, presents the questi
   const [{ shown, ...request }] = requests as { shown: { context: string; terms: string; details: string } }[];
   assert.deepEqual(request, { question: "A or B?", options: questions[0].options, number: 1 });
   // S37: the analysis is given the question as the user was shown it.
-  assert.deepEqual(shown, { context: prompts.fallbackContext({ kind: "relayed" }), terms: "", details: "" });
+  assert.deepEqual(shown, { context: prompts.fallbackContext({ kind: "relayed" }), history: "", terms: "", details: "" });
   assert.ok(fake.ui.asked.every((a) => a.startsWith(prompts.OFFER_LINE)));
   assert.equal(fake.ui.notified.filter((e) => e._tag === "QuestionPresented").length, 2, "the question is presented again after the analysis");
   assert.ok(fake.ui.notified.some((e) => e._tag === "DecisionAnalyzed"));
@@ -898,6 +898,7 @@ test("a relayed question in the shape is presented from its own parts, with no c
   const options = [{ label: "Declare it", description: "add it to package.json" }, { label: "Leave it", description: "keep it the SDK's" }];
   const text = prompts.relayedQuestionText({
     context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, checks the input of a tool with "), term("Zod", "z"), ...plain(", a library, now, while it carries out the plan, so that bad input is refused.")] }],
+    history: [],
     question: [...plain("Should "), term("zod", "z"), ...plain(" be declared as a dependency?")],
     explanations: [zod],
     options: [{ label: plain("Declare it"), description: [...plain("add it to package.json")] }, { label: plain("Leave it"), description: plain("keep it the SDK's") }],
@@ -992,7 +993,7 @@ test("an unknown field keeps its own name, explained as a term, with and without
   assert.deepEqual(dryRun.q.explanations, [{ id: "setting-1", term: "dry_run", senses: [prompts.unknownSettingExplanation] }]);
   // The context call rewrites the explanation of the same id, which the name's code piece keeps referring to.
   const agent = await permissionAsked("FutureTool", { overwrite: true }, () =>
-    Effect.succeed({ context: { blocks: plainBlocks("Written by Claude Code."), by: "agent" as const }, explanations: [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }] }),
+    Effect.succeed({ context: { blocks: plainBlocks("Written by Claude Code."), by: "agent" as const }, history: [], explanations: [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }] }),
   );
   assert.deepEqual(agent.q.explanations, [{ id: "setting-1", term: "overwrite", senses: ["Replaces the file if it exists."] }]);
   const named = (agent.q.attached?.blocks ?? []).flatMap((b) => (b.kind === "list" ? b.items.flatMap((i) => i.pieces) : [])).find((p) => p.code && p.ref !== "");

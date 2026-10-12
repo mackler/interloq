@@ -11,7 +11,7 @@ import { piecesText } from "../src/pieces.ts";
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const noQuestions = { questions_for_user: [] };
 const q = (id: string, defaultAnswer = "A"): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: defaultAnswer });
-const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
+const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
 
 test("a turn that is complete with a blank summary continues the conversation instead of proposing a summary", async () => {
@@ -119,7 +119,7 @@ const db: QuestionEntry = questionEntry(
 const dbQuestion = piecesText(db.question);
 const labels = db.proposed_answers.map((a) => piecesText(a.label));
 /** A turn that asks the agreed question by its id alone (S16, S18). */
-const asksAgreed = (id: string, text = "") => ({ ...turn("Next question.", false, ""), current_question: { id, context: [], text: plain(text), explanations: [], options: [] }, asked_ids: [id] });
+const asksAgreed = (id: string, text = "") => ({ ...turn("Next question.", false, ""), current_question: { id, context: [], history: [], text: plain(text), explanations: [], options: [] }, asked_ids: [id] });
 const el = { text: "t", counterarguments: [] };
 const entry = (id: string) => ({ id, title: id, comparative_condition: el, starting_cause: el, intermediate_steps: el, threshold: el, effect_on_persons: el, reason_the_effect_matters: el, extent: { per_person: el, persons_affected: el, likelihood: el, timing: el } });
 const analysis = { decision: "d", columns: labels.map((option, i) => ({ kind: "argued", option, advantages: [entry(`E${i + 1}`)], disadvantages: [] })), recommendation: { option: "", reason: "" } };
@@ -188,7 +188,7 @@ test("a turn without a current question asks for the user's reply, its message t
 // agreed question, skips the questions that the choice removes, says so to the user, to Claude Code and in
 // conversation.md, counts over the questions that remain, and holds the turns to it with the validation repair turn.
 const premised = (): readonly QuestionEntry[] => [q("Q1"), { ...q("Q2"), skip_if: { question: "Q1", answer: "A" } }];
-const asking = (id: string, asked: string[], answered: string[]) => ({ ...turn(`${id}?`, false, ""), current_question: { id, context: [], text: [], explanations: [], options: [] }, asked_ids: asked, answered_ids: answered });
+const asking = (id: string, asked: string[], answered: string[]) => ({ ...turn(`${id}?`, false, ""), current_question: { id, context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: asked, answered_ids: answered });
 const completing = (summary: string, asked: string[], answered: string[]) => ({ ...turn("Complete.", true, summary), asked_ids: asked, answered_ids: answered });
 const SUMMARY = "# Requirements\n\nQ1: A\n\n## Skipped questions\n\nQ2: not asked, since Q1 was answered A.";
 const skipped = [{ id: "Q2", question: "Q1", answer: "A", cause: "answered" as const }];

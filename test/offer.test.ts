@@ -66,7 +66,7 @@ test("the cycle limit: p proceeds, 0 stops, and More cycles takes a typed number
 
 test("presentedQuestion numbers the draft and keeps each option's answer, not its matcher", () => {
   const origin = { kind: "relayed" } as const;
-  const presented = presentedQuestion({ origin, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain("Which?"), options: permissionOptions, decision: null }, 7);
+  const presented = presentedQuestion({ origin, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: permissionOptions, decision: null }, 7);
   assert.ok(Result.isSuccess(presented));
   const q = presented.success;
   assert.equal(q.number, 7);

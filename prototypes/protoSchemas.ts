@@ -27,11 +27,12 @@ const Block = Schema.Union([
 ]);
 const Blocks = Schema.Array(Block);
 const PieceOption = Schema.Struct({ label: Pieces, description: Pieces });
-const UserQuestion = Schema.Struct({ context: Blocks, question: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) });
+const UserQuestion = Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) });
 const plannerFields = { dispositions: Schema.Array(Disposition), self_corrections: Schema.Array(SelfCorrection), reviewer_feedback: Str, questions_for_user: Schema.Array(UserQuestion) };
 const QuestionEntry = Schema.Struct({
   id: Str,
   context: Blocks,
+  history: Blocks,
   question: Pieces,
   reason: Blocks,
   proposed_answers: Schema.Array(PieceOption),
@@ -39,7 +40,7 @@ const QuestionEntry = Schema.Struct({
   // Issue #99 (6 Oct 2026): the answer of another entry that makes this question unnecessary, or null.
   skip_if: Schema.NullOr(Schema.Struct({ question: Str, answer: Str })),
 });
-const TermsEntry = Schema.Struct({ id: Str, explanations: Schema.Array(Explanation), context: Blocks, question: Pieces, reason: Blocks, proposed_answers: Schema.Array(PieceOption) });
+const TermsEntry = Schema.Struct({ id: Str, explanations: Schema.Array(Explanation), context: Blocks, history: Blocks, question: Pieces, reason: Blocks, proposed_answers: Schema.Array(PieceOption) });
 
 // Decision support (28 Sep 2026): the representation of docs/decision-making.md, recursive through Schema.suspend.
 type Argument = { readonly id: string; readonly text: string; readonly equivalent_to: string; readonly replies: readonly Argument[] };
@@ -80,7 +81,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   execReport: Schema.Struct({ status: Schema.Literals(["finished", "needs_input", "blocked"]), summary: Str, question: Str, remaining_work: Str }),
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
   questionListResponse: Schema.Struct({ ...plannerFields, questions: Schema.Array(QuestionEntry) }),
-  interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
+  interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
   decisionAnalysis: DecisionAnalysis,
   decisionResponse: Schema.Struct({ ...plannerFields, analysis: DecisionAnalysis }),
   decisionApplied: Schema.Struct({ analysis: DecisionAnalysis }),
@@ -88,7 +89,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   planResponse: Schema.Struct({ ...plannerFields, plan: Plan }),
   // S9: the reply of the call that writes the context paragraph of a question the program composes, with the whole
   // question as pieces (issue #36, decisions G-R1-1 and F1).
-  questionContext: Schema.Struct({ context: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),
+  questionContext: Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),
   // S17: the explanations of the agreed questions' terms, each question divided into pieces (issue #36, decision Q1).
   termsWrite: Schema.Struct({ entries: Schema.Array(TermsEntry) }),
   termsResponse: Schema.Struct({ ...plannerFields, entries: Schema.Array(TermsEntry) }),

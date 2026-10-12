@@ -196,9 +196,10 @@ export const term = (text: string, ref: string): Piece => ({ text, ref, code: fa
 export const userQuestion = (
   question: string | readonly Piece[],
   options: readonly (string | readonly [string, string])[] = [],
-  extra: Partial<Readonly<{ context: readonly Block[]; explanations: readonly Explanation[] }>> = {},
+  extra: Partial<Readonly<{ context: readonly Block[]; history: readonly Block[]; explanations: readonly Explanation[] }>> = {},
 ): S.UserQuestion => ({
   context: extra.context ?? para("Interloq, the orchestrator, asks this question on behalf of the run."),
+  history: extra.history ?? [],
   question: typeof question === "string" ? plain(question) : question,
   explanations: extra.explanations ?? [],
   options: options.map((o) => (typeof o === "string" ? opt(o, "") : opt(o[0], o[1]))),
@@ -223,7 +224,7 @@ const piecesOfWords = (w: Words, text: string) => {
   const question = withTerms(text, terms);
   const options = w.options.map((o) => ({ label: withTerms(o.label, terms), description: withTerms(o.description, terms) }));
   const used = [...context, ...question, ...options.flatMap((o) => [...o.label, ...o.description])];
-  return { context: context.length === 0 ? [] : [{ kind: "paragraph" as const, pieces: context }], question, options, explanations: explanationsOf(terms, used) };
+  return { context: context.length === 0 ? [] : [{ kind: "paragraph" as const, pieces: context }], history: [], question, options, explanations: explanationsOf(terms, used) };
 };
 /** A question for the user (UserQuestion) from words written as strings; each term's words become pieces that refer to it. */
 export const questionOf = (w: Words & Readonly<{ question: string }>): S.UserQuestion => piecesOfWords(w, w.question);
@@ -236,6 +237,7 @@ export const currentOf = (w: Words & Readonly<{ id: string; text: string }>): S.
 export const entryOf = (w: Readonly<{ id: string; context: string; question: string; reason: string; proposed_answers: readonly Readonly<{ label: string; description: string }>[]; default_answer: string }>): S.QuestionEntry => ({
   id: w.id,
   context: para(w.context),
+  history: [],
   question: plain(w.question),
   reason: para(w.reason),
   proposed_answers: w.proposed_answers.map((a) => opt(a.label, a.description)),
@@ -243,9 +245,10 @@ export const entryOf = (w: Readonly<{ id: string; context: string; question: str
   skip_if: null,
 });
 /** An agreed question-list entry of plain words. */
-export const questionEntry = (id: string, question: string, answers: readonly (readonly [string, string])[] = [], extra: Partial<Readonly<{ context: string; reason: string; default_answer: string; skip_if: S.SkipCondition | null }>> = {}): S.QuestionEntry => ({
+export const questionEntry = (id: string, question: string, answers: readonly (readonly [string, string])[] = [], extra: Partial<Readonly<{ context: string; history: string; reason: string; default_answer: string; skip_if: S.SkipCondition | null }>> = {}): S.QuestionEntry => ({
   id,
   context: para(extra.context ?? `Context of ${id}.`),
+  history: extra.history === undefined ? [] : para(extra.history),
   question: plain(question),
   reason: para(extra.reason ?? "r"),
   proposed_answers: answers.map(([l, d]) => opt(l, d)),
@@ -281,8 +284,8 @@ export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks thi
  * options, the details and the explanations as the prompt gives them, unchanged.
  */
 export const scriptedContextReply = (prompt: string): S.QuestionContext => {
-  const data = JSON.parse(prompt.slice(prompt.indexOf(CONTEXT_REQUEST_HEADING) + CONTEXT_REQUEST_HEADING.length)) as Omit<S.QuestionContext, "context">;
-  return { context: para(SCRIPTED_CONTEXT.context), question: data.question, options: data.options, details: data.details, explanations: data.explanations };
+  const data = JSON.parse(prompt.slice(prompt.indexOf(CONTEXT_REQUEST_HEADING) + CONTEXT_REQUEST_HEADING.length)) as Omit<S.QuestionContext, "context" | "history">;
+  return { context: para(SCRIPTED_CONTEXT.context), history: [], question: data.question, options: data.options, details: data.details, explanations: data.explanations };
 };
 
 export class ScriptedPlanner implements PlannerShape {

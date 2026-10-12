@@ -173,7 +173,7 @@ test("the Decider of a phase runs a decision loop recorded in that phase", async
 // Decision support, plan step 3.4 (D2, P1-R1-3, P1-R1-4): the ask that carries the offer.
 const offered = numberedOptions(question.options);
 /** A question as askOffering takes it (S7): a relayed question with the given text and options. */
-const draftOf = (q: Readonly<{ question: string; options: readonly OfferedOption[] }>): QuestionDraft => ({ origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, explanations: [], question: plain(q.question), options: q.options, decision: null });
+const draftOf = (q: Readonly<{ question: string; options: readonly OfferedOption[] }>): QuestionDraft => ({ origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain(q.question), options: q.options, decision: null });
 const offering = (layer: Layer.Layer<Services>, q: Readonly<{ question: string; options: readonly OfferedOption[] }>, prompt = "Pick > ") =>
   Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
@@ -511,13 +511,14 @@ test("a relayed question in the shape gives the analysis its context paragraph a
   const { parseRelayedQuestion } = await import("../src/question.ts");
   const text = prompts.relayedQuestionText({
     context: [{ kind: "paragraph", pieces: [...plain("The "), term("service", "s"), ...plain(" keeps its data in a database, which Interloq, the orchestrator, starts with it.")] }],
+    history: [],
     question: plain("Which database should the service use?"),
     explanations: [{ id: "s", term: "service", senses: ["The program this task builds."] }],
     options: question.options.map((o) => opt(o.label, o.description)),
   });
   const parsed = parseRelayedQuestion(text, question.options);
   assert.ok(parsed !== null);
-  const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: parsed.context, by: "agent" }, explanations: parsed.explanations, question: parsed.question, options: offered, decision: null });
+  const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: parsed.context, by: "agent" }, history: [], explanations: parsed.explanations, question: parsed.question, options: offered, decision: null });
   assert.ok(prompt.includes("The service keeps its data in a database"), prompt.slice(-1500));
   assert.ok(prompt.includes("service: The program this task builds."));
   const { shown: _shown, ...recorded } = json(probe.dir, "decision-1/question.json");
@@ -528,7 +529,7 @@ test("an agreed question gives the analysis its reviewed context, reason and ter
   const { turnDraft } = await import("../src/conversation.ts");
   const { normalizeTurn } = await import("../src/schemaNormalize.ts");
   const agreed = questionEntry("Q1", "Which database?", question.options.map((o) => [o.label, o.description] as const), { context: "The service stores orders in a database.", reason: "the schema depends on it", default_answer: "SQLite" });
-  const turn = normalizeTurn({ message_to_user: "", current_question: { id: "Q1", context: [], text: [], explanations: [], options: [] }, asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" });
+  const turn = normalizeTurn({ message_to_user: "", current_question: { id: "Q1", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" });
   const divided = { ...agreed, explanations: [{ id: "o", term: "orders", senses: ["What customers buy."] }], context: [{ kind: "paragraph" as const, pieces: [...plain("The service stores "), term("orders", "o"), ...plain(" in a database.")] }] };
   const draft = turnDraft(turn, { questions: [agreed], terms: [divided] });
   const { prompt } = await decideOn(draft);
@@ -576,7 +577,7 @@ test("W1-R1-2: the analysis prompt carries the terms as the items of the record'
   const { shownExplanations } = await import("../src/question.ts");
   const explanations = [{ id: "s", term: "service", senses: ["The program this task builds.\n\nIt runs as a server.", "In this task, the web server."] }];
   const offered = numberedOptions(question.options);
-  const { prompt } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: para("The service keeps its data."), by: "agent" }, explanations, question: [...plain("Which database should the "), term("service", "s"), ...plain(" use?")], options: offered, decision: null });
+  const { prompt } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: para("The service keeps its data."), by: "agent" }, history: [], explanations, question: [...plain("Which database should the "), term("service", "s"), ...plain(" use?")], options: offered, decision: null });
   const shown = shownExplanations(explanations);
   assert.ok(shown._tag === "Success");
   assert.ok(prompt.includes(termItem(shown.success[0], "")), prompt.slice(-1500));

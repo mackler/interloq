@@ -17,6 +17,8 @@ export type { Explanation, Piece, PieceOption } from "./schema.ts";
  */
 export type Question = Readonly<{
   context: readonly ShownBlock[];
+  /** What happened before that led to the question (issue #133, decision Q1); empty when there is none. */
+  history: readonly ShownBlock[];
   question: readonly Piece[];
   explanations: readonly Explanation[];
   options: readonly PieceOption[];
@@ -269,6 +271,8 @@ export type QuestionContextText = Readonly<{ blocks: readonly ShownBlock[]; by: 
  */
 export type ContextWritten = Readonly<{
   context: QuestionContextText;
+  /** The history the context call wrote (issue #133); empty when the program's own paragraph stands. */
+  history: readonly ShownBlock[];
   explanations: readonly Explanation[];
   question?: readonly Piece[];
   options?: readonly PieceOption[];
@@ -298,6 +302,8 @@ export type PresentedQuestion = Readonly<{
   number: number;
   origin: QuestionOrigin;
   context: QuestionContextText;
+  /** What happened before that led to the question (issue #133); always an agent's, empty when there is none. */
+  history: readonly ShownBlock[];
   explanations: readonly ShownExplanation[];
   question: readonly Piece[];
   options: readonly PresentedOption[];
@@ -314,6 +320,7 @@ export type PresentedQuestion = Readonly<{
  */
 export const RelayedQuestion = Schema.Struct({
   context: Schema.Array(Block),
+  history: Schema.Array(Block),
   question: Schema.Array(Piece),
   explanations: Schema.Array(Explanation),
   options: Schema.Array(PieceOption),

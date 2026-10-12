@@ -24,7 +24,7 @@ export type StoreError = FileSystemError | StateFileInvalid | GitError;
  * What the user was shown with a question beside its text and options (S37, W1-R1-5): its context paragraph, its terms
  * and its details. The analysis prompt carries it; decision-<k>/question.json does not.
  */
-export type ShownWithQuestion = Readonly<{ context: string; terms: string; details: string }>;
+export type ShownWithQuestion = Readonly<{ context: string; history: string; terms: string; details: string }>;
 export type DecisionQuestion = Readonly<{ phase: Phase; label: string; question: string; options: readonly QuestionOption[]; shown?: ShownWithQuestion }>;
 /** The user's answer after an analysis, and the option it chose (null for free text; decision Q4). */
 export type Choice = Readonly<{ answer: string; option: string | null }>;

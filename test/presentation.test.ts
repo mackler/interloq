@@ -172,9 +172,9 @@ test("the summary's confirmation carries the summary as its attached material", 
 // S18: an agreed question is presented from the reviewed records alone: questions.json and terms.json.
 test("S18: an agreed question is presented as reviewed: its context, text, proposed answers and reason, and the terms of terms.json", async () => {
   const zod = { id: "z", term: "zod", senses: ["A library that checks the shape of data."] };
-  const entryZod = { ...entry("Q1"), context: para("Claude Code checks the input of a tool with zod, a library, when the tool is called."), question: plain("Should zod be declared?"), reason: para("package.json does not list zod") };
+  const entryZod = { ...entry("Q1"), context: para("Claude Code checks the input of a tool with zod, a library, when the tool is called."), history: [], question: plain("Should zod be declared?"), reason: para("package.json does not list zod") };
   const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(zod)/).filter((t) => t !== "").map((t) => (t === "zod" ? term(t, "z") : { text: t, ref: "", code: false })));
-  const divided: TermsEntry = { id: "Q1", explanations: [zod], context: entryZod.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), question: divide(entryZod.question), reason: entryZod.reason, proposed_answers: entryZod.proposed_answers };
+  const divided: TermsEntry = { id: "Q1", explanations: [zod], context: entryZod.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), history: [], question: divide(entryZod.question), reason: entryZod.reason, proposed_answers: entryZod.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [
@@ -242,6 +242,7 @@ test("S18: an accepted requirements issue in the second interview is validated, 
 // S5 of the task of issue #36: a question of the plan writer reaches the user with its pieces and its explanations.
 test("S5: a plan writer's question with a piece that refers to an explanation reaches QuestionPresented intact", async () => {
   const asked = {
+    history: [],
     context: [{ kind: "paragraph" as const, pieces: [...plain("The service keeps its "), term("Orders", "o"), ...plain(" in a database.")] }],
     question: [...plain("Where should the "), term("orders", "o"), ...plain(" be kept?")],
     explanations: [{ id: "o", term: "order", senses: ["What a customer buys."] }],
@@ -269,6 +270,7 @@ test("S5: a plan writer's question with a piece that refers to an explanation re
 test("S37: a plain piece's backtick and trailing backslash reach conversation.md as characters", async () => {
   const code = (text: string): Piece => ({ text, ref: "", code: true });
   const asked = {
+    history: [],
     context: [{ kind: "paragraph" as const, pieces: plain("Claude Code, the planning agent, needs a command.") }],
     question: [...plain("Should the step run `"), code("ls"), ...plain(" or C:\\"), code("dir"), ...plain(" first?")],
     explanations: [],
@@ -295,8 +297,8 @@ test("S37: a plain piece's backtick and trailing backslash reach conversation.md
 // Issue #94: an agreed question whose context begins with a list marker and whose question begins with four spaces
 // reaches conversation.md as text: the context stays a paragraph inside its block quote, the question a paragraph.
 test("issue #94: a plain piece that would open a block reaches conversation.md as text", async () => {
-  const opening = { ...entry("Q1"), context: para("- not a list, the context of Q1."), question: plain("    not code, the question?") };
-  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
+  const opening = { ...entry("Q1"), context: para("- not a list, the context of Q1."), history: [], question: plain("    not code, the question?") };
+  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
@@ -320,7 +322,7 @@ test("issue #94: a plain piece that would open a block reaches conversation.md a
 test("W1-R1-1: a context whose link label spans two lines reaches conversation.md as text", async () => {
   const context = "[a\n]: b";
   const opening = { ...entry("Q1"), context: para(context) };
-  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
+  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
@@ -343,7 +345,7 @@ test("W1-R1-1: a context whose link label spans two lines reaches conversation.m
 test("work review 2: a context whose link label has a backslash before its line break reaches conversation.md as text", async () => {
   const context = "[a\\\nb]: c";
   const opening = { ...entry("Q1"), context: para(context) };
-  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
+  const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
@@ -364,9 +366,9 @@ test("work review 2: a context whose link label has a backslash before its line 
 // numbered, under the term once.
 test("issue #112: an agreed question whose term has two senses is presented with both, in order, and recorded numbered", async () => {
   const port = { id: "p", term: "port", senses: ["The number in the address of the page, as in localhost:8090.", "The socket on which the web server listens."] };
-  const entryPort = { ...entry("Q1"), context: para("The web server listens on a port when it starts."), question: plain("Which port should the server use?"), reason: para("the task names none") };
+  const entryPort = { ...entry("Q1"), context: para("The web server listens on a port when it starts."), history: [], question: plain("Which port should the server use?"), reason: para("the task names none") };
   const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(port)/).filter((t) => t !== "").map((t) => (t === "port" ? term(t, "p") : { text: t, ref: "", code: false })));
-  const divided: TermsEntry = { id: "Q1", explanations: [port], context: entryPort.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), question: divide(entryPort.question), reason: entryPort.reason, proposed_answers: entryPort.proposed_answers };
+  const divided: TermsEntry = { id: "Q1", explanations: [port], context: entryPort.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), history: [], question: divide(entryPort.question), reason: entryPort.reason, proposed_answers: entryPort.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
     steps: [{ output: { questions: [entryPort] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
@@ -412,12 +414,13 @@ test("property (issue #112): re-dividing an agreed question's pieces keeps its w
     fc.property(fc.array(word, { minLength: 1, maxLength: 5 }), fc.array(word, { minLength: 1, maxLength: 5 }), sensesArb, sensesArb, fc.array(fc.boolean(), { maxLength: 8 }), (ctx, qs, sensesA, sensesB, cuts) => {
       const contextText = `${ctx.join(" ")} zod and cache.`;
       const questionText = `Should ${qs.join(" ")} zod?`;
-      const agreed = { ...entry("Q1"), context: para(contextText), question: plain(questionText) };
+      const agreed = { ...entry("Q1"), context: para(contextText), history: [], question: plain(questionText) };
       const senses = { a: sensesA, b: sensesB };
       const divided: TermsEntry = {
         id: "Q1",
         explanations: TERMS.map((t) => ({ ...t, senses: senses[t.id] })),
         context: [{ kind: "paragraph", pieces: divide(contextText, cuts) }],
+        history: [],
         question: divide(questionText, cuts),
         reason: agreed.reason,
         proposed_answers: agreed.proposed_answers,
