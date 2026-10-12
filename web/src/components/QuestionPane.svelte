@@ -49,6 +49,14 @@
   $effect(() => {
     if (confirming !== null && currentIdentity !== confirming.identity) confirming = null;
   });
+  // W1-R1-1 of work review 1: the pane is one scrolling region, and App reuses it for another tab's prompt, so it
+  // returns to its top for each new prompt: the question and its first answer in view (the developer's decision of
+  // 9 Oct 2026). Svelte runs the effect after the DOM shows the new prompt.
+  let paneElement = $state<HTMLElement | null>(null);
+  $effect(() => {
+    void currentIdentity;
+    if (paneElement !== null) paneElement.scrollTop = 0;
+  });
   let returnFocus: HTMLElement | null = null;
   const send = (value: string) => {
     if (widget === null) return;
@@ -99,7 +107,7 @@
 {/snippet}
 
 {#if widget !== null}
-  <section class="pane" class:answers-only={answersOnly} aria-label={question === null ? "Your answer" : questionTitle(question.number)}>
+  <section class="pane" bind:this={paneElement} class:answers-only={answersOnly} aria-label={question === null ? "Your answer" : questionTitle(question.number)}>
     {#if !answersOnly}
     <div class="head">
       {#if question === null}

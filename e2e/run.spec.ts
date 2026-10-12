@@ -771,6 +771,22 @@ test.describe("the tests of the twoModes server, in order", () => {
     // Both tabs' runs wait: each tab carries the waiting mark.
     await expect(tabOf(page, "refinement")).toHaveText(waitingTabName(TAB_TEXTS.refinement.tab));
     await expect(tabOf(page, "implementation")).toHaveText(waitingTabName(TAB_TEXTS.implementation.tab));
+    // W1-R1-1 of work review 1 of issue #137: the pane is one scrolling region and App reuses it across the tabs, so a
+    // pane scrolled in one tab must show the other tab's question and first answer in view (the developer's decision
+    // of 9 Oct 2026: the question and its first answer in view in windows 450 px high and taller). At 390 × 844 the
+    // pane holds this question with its context open without scrolling (396 px of content in a 540 px pane), so the
+    // test runs at 390 × 600, where the pane is 296 px high and scrolls.
+    await page.setViewportSize({ width: 390, height: 600 });
+    await openSection(page, CONTEXT_HEADING);
+    await pane(page).evaluate((e) => { e.scrollTop = e.scrollHeight; });
+    expect(await pane(page).evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+    await tabOf(page, "refinement").click();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await expect(pane(page).locator("h2")).toBeInViewport();
+    await expect(option(page, /PostgreSQL/)).toBeInViewport();
+    expect(await pane(page).evaluate((e) => e.scrollTop)).toBe(0);
+    await tabOf(page, "implementation").click();
+    await expect(asking(page, DATABASE)).toBeVisible();
     // The implementation's question is answered in its tab; the refinement's still waits.
     await pane(page).locator("input[name=answer], textarea[name=answer]").fill("PostgreSQL");
     await pane(page).locator("input[name=answer], textarea[name=answer]").press("Enter");
