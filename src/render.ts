@@ -2,7 +2,7 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
-import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, questionTitle, TERMS_HEADING } from "./prompts.ts";
+import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, QUESTION_HISTORY_HEADING, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
 import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
@@ -161,9 +161,12 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
   const options = q.options.length === 0 ? "" : `${q.options.map(option).join("\n")}\n\n`;
   const contextText = blocksMarkdown(q.context.blocks);
   const context = contextText.trim() === "" ? "" : `${contextText.split("\n").map((l) => `> ${l}`).join("\n")}${q.context.by === "program" ? ` (${CONTEXT_BY_PROGRAM})` : ""}\n\n`;
+  // Issue #133: the history, apart from the context, under a heading of its own; nothing when it is empty.
+  const historyText = blocksMarkdown(q.history);
+  const history = historyText.trim() === "" ? "" : `**${QUESTION_HISTORY_HEADING}**\n\n${historyText.split("\n").map((l) => `> ${l}`).join("\n")}\n\n`;
   const attachedText = attachedMarkdown(q.attached);
   const attached = attachedText === "" ? "" : `${attachedText}\n\n`;
-  return `### ${questionTitle(q.number)}${id === null ? "" : ` (${id})`}\n\n_${originLine(q.origin, q.decision)}_\n\n${context}${attached}${terms}**${piecesMarkdown(q.question)}**\n\n${options}`;
+  return `### ${questionTitle(q.number)}${id === null ? "" : ` (${id})`}\n\n_${originLine(q.origin, q.decision)}_\n\n${context}${history}${attached}${terms}**${piecesMarkdown(q.question)}**\n\n${options}`;
 };
 // ---- a pause's facts as prose (S11, issue #19) -------------------------------------------------------------------------
 

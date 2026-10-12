@@ -90,7 +90,7 @@ export const decisionDraft = (heading: string, asks: Asks, options: readonly Opt
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
 export const plannerDraft = (question: UserQuestion, heading: string, decision: number | null): QuestionDraft => {
   const origin: QuestionOrigin = { kind: "planner", heading };
-  return { origin, context: agentContext(question.context, origin), history: [], explanations: question.explanations, question: question.question, options: numberedOptions(question.options), decision };
+  return { origin, context: agentContext(question.context, origin), history: question.history, explanations: question.explanations, question: question.question, options: numberedOptions(question.options), decision };
 };
 
 /** Asks one decision (S7): the question presented, the offer where it has options; an answer that is an option's number stands for that option. */

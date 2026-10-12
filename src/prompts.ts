@@ -1553,13 +1553,14 @@ export type DecisionPromptQuestion = Readonly<{
    * What the user was shown with the question (S37): its context, details and terms as Markdown, the terms as the items
    * of conversation.md's Terms block (termItem of src/render.ts; W1-R1-2 of work review 1).
    */
-  shown?: Readonly<{ context: string; terms: string; details: string }>;
+  shown?: Readonly<{ context: string; history: string; terms: string; details: string }>;
 }>;
 /** What the user was shown with a question, as the analysis prompt carries it under the options (S37); "" when nothing. */
 export function shownWithQuestion(shown: DecisionPromptQuestion["shown"]): string {
   if (shown === undefined) return "";
   const parts = [
     ...(shown.context.trim() === "" ? [] : [`The context paragraph:\n${shown.context.trim()}`]),
+    ...(shown.history.trim() === "" ? [] : [`The history:\n${shown.history.trim()}`]),
     ...(shown.details.trim() === "" ? [] : [shown.details.trim()]),
     ...(shown.terms.trim() === "" ? [] : [`${TERMS_HEADING}\n${shown.terms}`]),
   ];
@@ -2472,6 +2473,12 @@ export function userDecisionLine(round: number, rationale: string): string {
   return `In cycle ${round}, you decided: ${rationale.trim()}`;
 }
 export const HISTORY_HEADING = "What happened to this point before:";
+/**
+ * The heading of a question's history (issue #133, decision Q1): in conversation.md, and on the question page and the
+ * decision page, where it heads a collapsed section of its own. Not HISTORY_HEADING, which heads an issue's history in a
+ * pause's facts.
+ */
+export const QUESTION_HISTORY_HEADING = "History";
 export const CODEX_SAYS = "Codex says:";
 export function claudeAnswers(action: string, rationale: string): string {
   return `Claude Code ${action}: ${rationale.trim()}`;

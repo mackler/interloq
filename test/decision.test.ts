@@ -507,20 +507,22 @@ const decideOn = async (draft: QuestionDraft) => {
   return { prompt: analysisPromptOf(probe.planner.prompts), probe };
 };
 
-test("a relayed question in the shape gives the analysis its context paragraph and its terms", async () => {
+test("a relayed question in the shape gives the analysis its context paragraph, its history and its terms", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
   const text = prompts.relayedQuestionText({
     context: [{ kind: "paragraph", pieces: [...plain("The "), term("service", "s"), ...plain(" keeps its data in a database, which Interloq, the orchestrator, starts with it.")] }],
-    history: [],
+    history: para("You chose SQLite for the prototype on 9 Oct 2026."),
     question: plain("Which database should the service use?"),
     explanations: [{ id: "s", term: "service", senses: ["The program this task builds."] }],
     options: question.options.map((o) => opt(o.label, o.description)),
   });
   const parsed = parseRelayedQuestion(text, question.options);
   assert.ok(parsed !== null);
-  const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: parsed.context, by: "agent" }, history: [], explanations: parsed.explanations, question: parsed.question, options: offered, decision: null });
+  const { prompt, probe } = await decideOn({ origin: { kind: "relayed" }, context: { blocks: parsed.context, by: "agent" }, history: parsed.history, explanations: parsed.explanations, question: parsed.question, options: offered, decision: null });
   assert.ok(prompt.includes("The service keeps its data in a database"), prompt.slice(-1500));
   assert.ok(prompt.includes("service: The program this task builds."));
+  // Issue #133 (S4): the history the user was shown reaches the analysis under its own name.
+  assert.ok(prompt.includes("The history:\nYou chose SQLite for the prototype on 9 Oct 2026."), prompt.slice(-1500));
   const { shown: _shown, ...recorded } = json(probe.dir, "decision-1/question.json");
   assert.deepEqual(Object.keys(recorded).sort(), ["decision", "label", "options", "phase", "question", "version"]);
 });

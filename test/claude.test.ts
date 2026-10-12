@@ -19,7 +19,7 @@ import { runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
-import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, plain, term , TEST_ROOT } from "./helpers.ts";
+import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
 
@@ -898,7 +898,7 @@ test("a relayed question in the shape is presented from its own parts, with no c
   const options = [{ label: "Declare it", description: "add it to package.json" }, { label: "Leave it", description: "keep it the SDK's" }];
   const text = prompts.relayedQuestionText({
     context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, checks the input of a tool with "), term("Zod", "z"), ...plain(", a library, now, while it carries out the plan, so that bad input is refused.")] }],
-    history: [],
+    history: para("You kept the library out of package.json on 9 Oct 2026."),
     question: [...plain("Should "), term("zod", "z"), ...plain(" be declared as a dependency?")],
     explanations: [zod],
     options: [{ label: plain("Declare it"), description: [...plain("add it to package.json")] }, { label: plain("Leave it"), description: plain("keep it the SDK's") }],
@@ -919,6 +919,8 @@ test("a relayed question in the shape is presented from its own parts, with no c
   assert.match(blocksMarkdown(q.context.blocks), /^Claude Code, the coding agent/);
   assert.deepEqual(q.explanations, [zod]);
   assert.deepEqual(q.options.map((o) => piecesText(o.label)), ["Declare it", "Leave it"]);
+  // Issue #133 (S4): the relayed history reaches the page.
+  assert.deepEqual(q.history, para("You kept the library out of package.json on 9 Oct 2026."));
 });
 
 test("a relayed question without the shape is not denied: a context call writes its context from the question and the plan", async () => {

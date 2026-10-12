@@ -142,6 +142,7 @@ export const limitOptions = (proceed: string | null): readonly OfferedOption[] =
 export const withContext = (draft: QuestionDraft, written: ContextWritten): QuestionDraft => ({
   ...draft,
   context: written.context,
+  history: written.history,
   explanations: written.explanations,
   question: written.question ?? draft.question,
   options: written.options === undefined ? draft.options : draft.options.map((o, i) => ({ ...o, shown: written.options?.[i] ?? o.shown })),
@@ -198,7 +199,7 @@ export const askOffering = <E>(
       if (isDecide(answer)) {
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
-        const shown = { context: blocksMarkdown(explained.context.blocks), history: "", terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
+        const shown = { context: blocksMarkdown(explained.context.blocks), history: blocksMarkdown(explained.history), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
         const outcome = yield* decider.decide({ question: asked, options, number: question.number, shown });
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });

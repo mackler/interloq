@@ -68,7 +68,7 @@ export const writeContext = (task: string, request: ContextRequest): Effect.Effe
     // S33: it may read the project and change nothing; the project and the guarded records are compared after the call.
     const written = yield* planningCall(contextPrompt(task, request), S.QuestionContext, "context", "readProject", contextValidation(request)).pipe(Effect.provideService(Planner, planner));
     const reply = written.output;
-    return { context: { blocks: reply.context, by: "agent" as const }, history: [], explanations: reply.explanations, question: reply.question, options: reply.options, details: reply.details };
+    return { context: { blocks: reply.context, by: "agent" as const }, history: reply.history, explanations: reply.explanations, question: reply.question, options: reply.options, details: reply.details };
   }).pipe(
     Effect.catch((error: RunError): Effect.Effect<ContextWritten, RunError, Store> =>
       error._tag === "UserStopped" || error._tag === "Interrupted" || error._tag === "ProjectChanged" || error._tag === "RecordsChanged" || error._tag === "ClaudeSessionTooLong"

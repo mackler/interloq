@@ -67,7 +67,7 @@ const questionRules =
  * presents exactly such a turn as a reply to Claude Code's message, and turnValidation checks every other one.
  */
 export const asksNothing = (current: S.InterviewTurn["current_question"]): boolean =>
-  current.id.trim() === "" && blocksText(current.context).join("").trim() === "" && piecesText(current.text).trim() === "" && current.explanations.length === 0 && current.options.length === 0;
+  current.id.trim() === "" && blocksText(current.context).join("").trim() === "" && blocksText(current.history).join("").trim() === "" && piecesText(current.text).trim() === "" && current.explanations.length === 0 && current.options.length === 0;
 
 /** The reviewed records an interview presents its agreed questions from (S18): questions.json and terms.json. */
 export type AgreedRecords = Readonly<{ questions: QuestionsFile["questions"]; terms: readonly TermsEntry[] }>;
@@ -95,11 +95,11 @@ export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDr
     const divided = records.terms.find((t) => t.id === agreed.id);
     const entry = divided ?? { ...agreed, explanations: [] };
     const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description })));
-    return { origin, context: agentContext(entry.context, origin), history: [], explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", entry.reason), decision: null };
+    return { origin, context: agentContext(entry.context, origin), history: entry.history, explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", entry.reason), decision: null };
   }
   if (asksNothing(current)) return { origin: { kind: "reply" }, context: { blocks: [{ kind: "document", markdown: turn.message }], by: "agent" }, history: [], explanations: [], question: plainPieces(prompts.REPLY_QUESTION), options: [], decision: null };
   const origin: QuestionOrigin = { kind: "followUp", id: current.id };
-  return { origin, context: agentContext(current.context, origin), history: [], explanations: current.explanations, question: current.text, options: numberedOptions(current.options), decision: null };
+  return { origin, context: agentContext(current.context, origin), history: current.history, explanations: current.explanations, question: current.text, options: numberedOptions(current.options), decision: null };
 };
 
 /**
