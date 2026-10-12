@@ -162,7 +162,7 @@ const explain = (draft: QuestionDraft, facts: string) =>
  * Asks a question (S7), the one way a question reaches the user: it takes the question's number in the run, presents
  * the question (the page's event) and records it in conversation.md, then asks with the
  * kind's input hint. With two or more options the hint carries the offer of decision support (D2): "/decide" runs a
- * decision loop, shows its analysis, presents the question again and asks again. Any other answer is returned as
+ * decision loop, shows its analysis, presents the question again and asks again, without the offer (issue #133). Any other answer is returned as
  * typed; after an analysis it is recorded as the choice of every decision made for this question (decision Q4), with
  * the option it chose. An answer that `acceptable` rejects (a blank reply where one is required) is neither returned
  * nor recorded: the question is presented again and asked again (W1-R1-1, W1-R1-2), with or without options.
@@ -195,8 +195,11 @@ export const askOffering = <E>(
     const options = explained.options.map((o) => ({ label: piecesText(o.shown.label), description: piecesText(o.shown.description) }));
     const decisions: number[] = [];
     for (;;) {
-      const answer = yield* ask(prompts.withOffer(hint));
-      if (isDecide(answer)) {
+      // Issue #133 (S6): the offer stands until a decision is made; the question asked beside its own analysis carries
+      // none, and "/decide" there is an answer like any other.
+      const offered = decisions.length === 0;
+      const answer = yield* ask(offered ? prompts.withOffer(hint) : hint);
+      if (offered && isDecide(answer)) {
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
         const shown = { context: blocksMarkdown(explained.context.blocks), history: blocksMarkdown(explained.history), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };

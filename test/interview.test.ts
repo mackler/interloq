@@ -135,7 +135,10 @@ const decided = (answers: string[], current = asksAgreed("Q1")) =>
 test("an agreed question with proposed answers offers Help me decide; after the analysis the number is the answer", async () => {
   const { layer, probe } = decided(["/decide", "2", ""]);
   await runRefinement(layer);
-  assert.ok(probe.ui.asked.filter((p) => p.endsWith("You > ")).every((p) => p.startsWith(prompts.OFFER_LINE)));
+  // Issue #133: the offer on the first ask alone; the question asked beside its analysis carries none.
+  const asks = probe.ui.asked.filter((p) => p.endsWith("You > "));
+  assert.ok(asks[0].startsWith(prompts.OFFER_LINE));
+  assert.ok(asks.slice(1).every((p) => !p.startsWith(prompts.OFFER_LINE)));
   const question = JSON.parse(read(probe.dir, "decision-1/question.json"));
   assert.deepEqual(question.phase, { kind: "questions" });
   assert.deepEqual(question.options.map((o: { label: string }) => o.label), labels);

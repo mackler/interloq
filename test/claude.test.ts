@@ -613,7 +613,9 @@ test("a relayed question with options offers Help me decide, presents the questi
   assert.deepEqual(request, { question: "A or B?", options: questions[0].options, number: 1 });
   // S37: the analysis is given the question as the user was shown it.
   assert.deepEqual(shown, { context: prompts.fallbackContext({ kind: "relayed" }), history: "", terms: "", details: "" });
-  assert.ok(fake.ui.asked.every((a) => a.startsWith(prompts.OFFER_LINE)));
+  // Issue #133: the offer on the first ask alone; the question asked beside its analysis carries none.
+  assert.ok(fake.ui.asked[0].startsWith(prompts.OFFER_LINE));
+  assert.ok(fake.ui.asked.slice(1).every((a) => !a.startsWith(prompts.OFFER_LINE)));
   assert.equal(fake.ui.notified.filter((e) => e._tag === "QuestionPresented").length, 2, "the question is presented again after the analysis");
   assert.ok(fake.ui.notified.some((e) => e._tag === "DecisionAnalyzed"));
   assert.deepEqual(relayed[0], { behavior: "allow", updatedInput: { questions, answers: { "A or B?": "B" } } });

@@ -186,7 +186,8 @@ const analyzed = (probe: { ui: { notified: { _tag: string }[] } }) => probe.ui.n
 test("/decide runs a decision, shows it, restores the presentation and asks again; the answer is recorded as the chosen option", async () => {
   const { layer, probe } = await setUp({ answers: ["/decide", "2"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
   assert.equal(await offering(layer, { question: question.question, options: offered }), "2");
-  assert.deepEqual(probe.ui.asked, [withOffer("Pick > "), withOffer("Pick > ")]);
+  // Issue #133 (S6): the question asked beside its own analysis carries no offer.
+  assert.deepEqual(probe.ui.asked, [withOffer("Pick > "), "Pick > "]);
   assert.equal(presentations(probe), 2, "presented first, and again before the reask, once");
   const shown = analyzed(probe);
   assert.equal(shown.length, 1);
@@ -197,6 +198,27 @@ test("/decide runs a decision, shows it, restores the presentation and asks agai
   assert.equal(presented.number, 1);
   assert.deepEqual(json(probe.dir, "decision-1/chosen.json"), { version: 2, decision: 1, answer: "2", option: "PostgreSQL" });
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*User choice\*\* after decision 1: 2 \(PostgreSQL\)/);
+});
+
+// Issue #133 (S6), the developer's instruction of 11 Oct 2026: the question asked beside its own analysis carries no
+// "Help me decide"; the offer line is what the page's promptOf turns into that button.
+test("after an analysis the question is asked without the offer, also after a rejected blank reply; /decide then runs no second decision", async () => {
+  const { promptOf } = await import("../src/userPrompts.ts");
+  const offers = (text: string) => promptOf(text).choices.some((c) => c.label === prompts.HELP_ME_DECIDE);
+  const ask = (layer: Layer.Layer<Services>) => Effect.runPromise(Effect.gen(function* () {
+    const ui = yield* Ui;
+    return yield* askOffering((p) => ui.ask(p), prompts.decisionPrompt, draftOf({ question: question.question, options: offered }), (a) => a.trim() !== "");
+  }).pipe(Effect.provide(layer)));
+  const { layer, probe } = await setUp({ answers: ["/decide", "", "2"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
+  assert.equal(await ask(layer), "2");
+  assert.equal(probe.ui.asked.length, 3);
+  assert.ok(offers(probe.ui.asked[0]), "the first prompt offers Help me decide");
+  for (const later of probe.ui.asked.slice(1)) assert.ok(!offers(later), later);
+  assert.equal(json(probe.dir, "decision-1/chosen.json").option, "PostgreSQL");
+  // "/decide" typed beside the analysis is an answer like any other: returned, since it is acceptable, and no second decision runs.
+  const again = await setUp({ answers: ["/decide", "/decide"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
+  assert.equal(await ask(again.layer), "/decide");
+  assert.equal(analyzed(again.probe).length, 1, "no second decision");
 });
 
 test("free text after an analysis is recorded without an option; q stops and records no choice", async () => {
@@ -265,9 +287,9 @@ test("a disputed pause offers Help me decide; the analysis runs in the phase, an
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finishedExec],
   });
-  // The pause is presented, asked with the offer, presented again after the analysis and asked again.
+  // The pause is presented, asked with the offer, presented again after the analysis and asked again, without the offer (issue #133).
   assert.equal(presentedSubjects(probe.ui).filter((a) => a.includes("raised again")).length, 2);
-  assert.deepEqual(probe.ui.asked.slice(0, 2), [prompts.withOffer(prompts.decisionPrompt), prompts.withOffer(prompts.decisionPrompt)]);
+  assert.deepEqual(probe.ui.asked.slice(0, 2), [prompts.withOffer(prompts.decisionPrompt), prompts.decisionPrompt]);
   // S5: the options are presented with the question, each with the number that chooses it.
   const presented = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "pause" ? [e.question] : []));
   assert.ok(presented.length > 0);
