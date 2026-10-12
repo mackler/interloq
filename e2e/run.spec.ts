@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { NOTHING_TO_SETTLE, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { NOTHING_TO_SETTLE, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -474,6 +474,11 @@ test.describe("the tests of the questionReview server, in order", () => {
   });
 });
 
+/** Issue #133: the decision page is the region named by its heading, "Your Choice:" and the question. */
+const DECISION_REGION = new RegExp(`^${YOUR_CHOICE} `);
+/** A heading of the decision page (issue #133), a Disclosure named by its text. */
+const decisionSection = (analysis: Locator, heading: string) => analysis.locator(".sections button.toggle", { hasText: heading });
+
 test.describe("the tests of the decide server, in order", () => {
   test.describe.configure({ mode: "default" });
 
@@ -482,7 +487,7 @@ test.describe("the tests of the decide server, in order", () => {
     await startTask(page, "decide");
     await expect(asking(page, DATABASE)).toBeVisible();
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    const analysis = page.getByRole("region", { name: DECISION_REGION });
     await expect(analysis).toBeVisible();
     await expect(analysis.locator(".column h3")).toHaveText(["SQLite", "PostgreSQL"]);
     await expect(analysis.getByText("Disadvantages:").first()).toBeVisible();
@@ -507,7 +512,7 @@ test.describe("the tests of the decide server, in order", () => {
     await startTask(page, "decide");
     await expect(asking(page, DATABASE)).toBeVisible();
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysisOf = (p: Page) => p.getByRole("region", { name: /^Decision 1: / });
+    const analysisOf = (p: Page) => p.getByRole("region", { name: DECISION_REGION });
     await expect(analysisOf(page)).toBeVisible();
     const other = await context.newPage();
     await other.goto(url("decide"));
@@ -530,6 +535,20 @@ test.describe("the tests of the decide server, in order", () => {
     await other.reload();
     await expect(advantage(other)).toHaveAttribute("aria-expanded", "true");
     await expect(body(other)).toBeVisible();
+    // Issue #133: which heading of the page is open is the run's shared state too, one at a time: a heading opened in one
+    // tab is open in the other and after a reload, and opening a second closes the first in both.
+    const contextOf = (p: Page) => decisionSection(analysisOf(p), CONTEXT_HEADING);
+    const recommendation = (p: Page) => decisionSection(analysisOf(p), RECOMMENDATION_HEADING);
+    await contextOf(page).click();
+    await expect(contextOf(other)).toHaveAttribute("aria-expanded", "true");
+    await other.reload();
+    await expect(contextOf(other)).toHaveAttribute("aria-expanded", "true");
+    await recommendation(other).click();
+    for (const p of [page, other]) {
+      await expect(recommendation(p)).toHaveAttribute("aria-expanded", "true");
+      await expect(contextOf(p)).toHaveAttribute("aria-expanded", "false");
+    }
+    await other.close();
     await option(page, /PostgreSQL/).click();
     await expect(left(page).getByText(/finished after 1 implementation phase/)).toBeVisible();
   });
@@ -542,7 +561,7 @@ test.describe("the tests of the decideRevise server, in order", () => {
   test("(14) a revised analysis: the decision's response reaches the page, which stays connected and shows the amended analysis", async ({ page }) => {
     await startTask(page, "decideRevise");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    const analysis = page.getByRole("region", { name: DECISION_REGION });
     await expect(analysis).toBeVisible();
     await expect(analysis.getByText("The amended advantage: developers set up the service sooner.")).toBeVisible();
     await expect(page.getByText("connected", { exact: true })).toBeVisible();
@@ -562,17 +581,18 @@ test.describe("the tests of the decideBlank server, in order", () => {
   test("(15) a rejected empty reply keeps the analysis shown; the answer that follows dismisses it", async ({ page }) => {
     await startTask(page, "decideBlank");
     await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
-    const analysis = page.getByRole("region", { name: /^Decision 1: / });
+    const analysis = page.getByRole("region", { name: DECISION_REGION });
     await expect(analysis).toBeVisible();
-    // S46 (W3-R1-3): the agreed question's reason, its details, is shown with its context beside the analysis.
-    const context = analysis.locator(".question-context");
-    await context.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
-    await expect(context).toContainText(attachedHeading("reason"));
-    await expect(context).toContainText("r");
+    // S46 (W3-R1-3); issue #133: the agreed question's reason is under its own heading on the decision page, opened to be read.
+    const reason = decisionSection(analysis, attachedHeading("reason"));
+    await reason.click();
+    await expect(page.locator(`#${await reason.getAttribute("aria-controls")}`)).toContainText("r");
     await page.locator("textarea[name=answer]").press("Enter");
     // The Help me decide answer and the empty one.
     await expect(page.locator("[data-author=user]")).toHaveCount(2);
     await expect(analysis).toBeVisible();
+    // Issue #133: the question asked again beside its own analysis carries no offer.
+    await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
     await expect(analysis.locator(".column h3")).toHaveText(["PostgreSQL", "SQLite"]);
     await option(page, /1\. PostgreSQL/).click();
     await expect(analysis).toBeHidden();
