@@ -13,6 +13,9 @@ import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientRes
 import { type TrackerCredentialMissing, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
 import {
   type Ambiguous,
+  CLOSE_BODY,
+  closedRefusalText,
+  descriptionTooLongText,
   GITLAB_PAGE_SIZE,
   type GitlabIssue,
   GitlabIssue as GitlabIssueSchema,
@@ -25,7 +28,10 @@ import {
   nextPageOf,
   type NoStateLabel,
   noStateLabelText,
+  refinedDescription,
+  relabelBody,
 } from "./gitlabIssues.ts";
+import { OPENING_LINE, type Refinement } from "./refinement.ts";
 import type { GitlabTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
@@ -122,8 +128,34 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
 
     const read = (id: ItemId): Effect.Effect<TrackerItem, TrackerError> => Effect.map(itemIssueOf(id), ({ item }) => item);
 
-    const notBuilt = Effect.fail(new TrackerUnreachable({ tracker: TRACKER, message: "not built" }));
-    const tracker: TrackerShape = { list, read, writeRefinement: () => notBuilt, setState: () => notBuilt };
+    /** One PUT with a JSON body, never query parameters. */
+    const put = (url: string, id: ItemId, body: Readonly<Record<string, unknown>>): Effect.Effect<void, TrackerError> =>
+      Effect.asVoid(send(HttpClientRequest.put(url).pipe(HttpClientRequest.bodyJsonUnsafe(body)), { kind: "item", id }));
+
+    /** A write to a closed issue, refused after its GET and before any PUT: Interloq never reopens a closed issue (the developer's decision G-R1-1). */
+    const closedRefusal = (id: ItemId, issue: GitlabIssue, what: string): Effect.Effect<never, TrackerError> => Effect.fail(new TrackerBodyInvalid({ id, message: closedRefusalText(issue.iid, what) }));
+
+    /** The developer's text is never replaced: withRefinement appends the section or replaces it alone, and a text over GitLab's limit is refused, never truncated. */
+    const writeRefinement = (id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemIssueOf(id), ({ issue, url }) => {
+        if (issue.state === "closed") return closedRefusal(id, issue, "the refinement was not written");
+        const description = refinedDescription(issue.description ?? "", refinement);
+        if (Result.isSuccess(description)) return put(url, id, { description: description.success });
+        const failure = description.failure;
+        return Effect.fail(new TrackerBodyInvalid({ id, message: failure._tag === "DescriptionTooLong" ? descriptionTooLongText(failure) : `the issue's section "${OPENING_LINE}" is malformed: ${failure.reason}` }));
+      });
+
+    /**
+     * Deployed closes an open issue and is already true of a closed one. Any other state on an open issue is one PUT that
+     * adds its label and removes the other state labels, so the change cannot stop half done; on a closed issue it is refused.
+     */
+    const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemIssueOf(id), ({ issue, url }) => {
+        if (state === "deployed") return issue.state === "closed" ? Effect.void : put(url, id, CLOSE_BODY);
+        return issue.state === "closed" ? closedRefusal(id, issue, `its state was not set to ${state}`) : put(url, id, relabelBody(config.labels, state));
+      });
+
+    const tracker: TrackerShape = { list, read, writeRefinement, setState };
     return tracker;
   });
 

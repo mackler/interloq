@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { Effect, Result } from "effect";
-import { gitlabTracker } from "../src/gitlab.ts";
+import { Effect, Layer, Option, Result } from "effect";
+import { trackerFailureText } from "../src/errors.ts";
+import { gitlabTracker, gitlabTrackerFrom } from "../src/gitlab.ts";
+import { GITLAB_DESCRIPTION_LIMIT } from "../src/gitlabIssues.ts";
+import { readRefinement, refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
+import { Tracker } from "../src/services.ts";
 import type { GitlabTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import { type ItemId, itemIdOf } from "../src/tracker.ts";
 import { type GitlabToken, gitlabCredential } from "../src/trackerConfig.ts";
 import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
+import { gitlabServer, serverIssue } from "./fakeGitlab.ts";
 import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stubHttp.ts";
 
 // The GitLab adapter over a stub HTTP client, asserting the requests it sends as well as what it returns.
@@ -155,4 +160,135 @@ test("for any number of open issues, paged 100 at a time with X-Next-Page, the l
     const items = await withTracker(stub, (t) => t.list("implemented"));
     return JSON.stringify(ids(items)) === JSON.stringify(all.map((i) => String(i.iid))) && stub.sent().length === Math.max(1, Math.ceil(n / 100));
   }), { numRuns: 25, seed: 20261012 });
+});
+
+// The writes: one PUT with a JSON body, after the GET that read refuses through; a closed issue is never reopened.
+const refinement = (text: string) => Result.getOrThrow(refinementOf(text));
+const puts = (stub: Stub): readonly SentRequest[] => stub.sent().filter((r) => r.method === "PUT");
+const putBody = (r: SentRequest): Record<string, unknown> => JSON.parse(r.body ?? "null");
+const serverStub = (...issues: Parameters<typeof serverIssue>[]) => {
+  const server = gitlabServer(issues.map((args) => serverIssue(...args)));
+  return { server, stub: makeStub(server.handler) };
+};
+
+test("a state change PUTs one JSON body that adds the state's label and removes the other three, other labels kept", async () => {
+  const { server, stub } = serverStub([4, ["bug", "Unrefined"]]);
+  await withTracker(stub, (t) => t.setState(id("4"), "refined"));
+  assert.deepEqual(stub.sent().map(where), [`GET ${ISSUES}/4`, `PUT ${ISSUES}/4`]);
+  const [put] = puts(stub);
+  assert.equal(put.headers["content-type"], "application/json");
+  assert.deepEqual(putBody(put), { add_labels: "Refined", remove_labels: "Unrefined,Implementing,Implemented" });
+  assert.equal([...put.url.searchParams].length, 0);
+  assert.deepEqual(server.issues().get(4)?.labels, ["bug", "Refined"]);
+});
+
+test("deployed on an open issue PUTs the close alone; on a closed issue it succeeds with one GET and no PUT", async () => {
+  const { server, stub } = serverStub([5, ["Implemented"]], [6, ["Implemented"], { state: "closed" }]);
+  await withTracker(stub, (t) => Effect.andThen(t.setState(id("5"), "deployed"), t.setState(id("6"), "deployed")));
+  assert.deepEqual(stub.sent().map(where), [`GET ${ISSUES}/5`, `PUT ${ISSUES}/5`, `GET ${ISSUES}/6`]);
+  assert.deepEqual(putBody(puts(stub)[0]), { state_event: "close" });
+  assert.equal(server.issues().get(5)?.state, "closed");
+});
+
+test("setState to each state but deployed on a closed issue sends one GET, no PUT, and fails naming the closed issue", async () => {
+  for (const state of ["unrefined", "refined", "implementing", "implemented"] as const) {
+    const { server, stub } = serverStub([42, ["Implementing"], { state: "closed" }]);
+    const error = await failure(stub, (t) => t.setState(id("42"), state));
+    assert.deepEqual(stub.sent().map(where), [`GET ${ISSUES}/42`], state);
+    assert.equal(error._tag, "TrackerBodyInvalid");
+    assert.equal(error._tag === "TrackerBodyInvalid" && error.message, `issue #42 is closed, and Interloq never reopens a closed issue, so its state was not set to ${state}`);
+    assert.equal(server.issues().get(42)?.state, "closed");
+  }
+});
+
+test("writeRefinement on a closed issue sends one GET, no PUT, and fails naming the closed issue", async () => {
+  const { server, stub } = serverStub([43, ["Unrefined"], { state: "closed", description: "Text." }]);
+  const error = await failure(stub, (t) => t.writeRefinement(id("43"), refinement("r")));
+  assert.deepEqual(stub.sent().map(where), [`GET ${ISSUES}/43`]);
+  assert.equal(error._tag === "TrackerBodyInvalid" && error.message, "issue #43 is closed, and Interloq never reopens a closed issue, so the refinement was not written");
+  assert.equal(server.issues().get(43)?.description, "Text.");
+});
+
+test("a refinement is PUT as the description after the developer's text, which stays intact, and reads back", async () => {
+  const developer = "What the developer wrote.\r\n\r\nTrailing spaces   ";
+  const { stub } = serverStub([12, ["Unrefined"], { description: developer }]);
+  const r = refinement("## Plan\n\n- one\n- two");
+  await withTracker(stub, (t) => t.writeRefinement(id("12"), r));
+  const [put] = puts(stub);
+  assert.equal(where(put), `PUT ${ISSUES}/12`);
+  assert.deepEqual(Object.keys(putBody(put)), ["description"]);
+  const body = String(putBody(put).description);
+  assert.deepEqual(Result.getOrThrow(readRefinement(body)), Option.some(r));
+  assert.equal(Result.getOrThrow(withoutRefinement(body)), developer);
+  assert.equal(await withTracker(stub, (t) => Effect.map(t.read(id("12")), (item) => item.body)), body);
+});
+
+test("a second refinement replaces the first; a null description takes the section alone", async () => {
+  const first = Result.getOrThrow(withRefinement("text", refinement("first")));
+  const { stub } = serverStub([1, ["Unrefined"], { description: first }], [2, ["Unrefined"], { description: null }]);
+  await withTracker(stub, (t) => Effect.andThen(t.writeRefinement(id("1"), refinement("second")), t.writeRefinement(id("2"), refinement("only"))));
+  const [one, two] = puts(stub).map((p) => String(putBody(p).description));
+  assert.deepEqual(Result.getOrThrow(readRefinement(one)), Option.some(refinement("second")));
+  assert.equal(Result.getOrThrow(withoutRefinement(one)), "text");
+  assert.equal(Result.getOrThrow(withoutRefinement(two)), "");
+});
+
+test("a malformed section and a description over GitLab's limit are TrackerBodyInvalid and nothing is PUT", async () => {
+  const { stub } = serverStub([3, ["Unrefined"], { description: "x\n\n## Refined using Interloq\nno end" }], [4, ["Unrefined"], { description: "d".repeat(GITLAB_DESCRIPTION_LIMIT) }]);
+  const malformed = await failure(stub, (t) => t.writeRefinement(id("3"), refinement("r")));
+  assert.match(malformed._tag === "TrackerBodyInvalid" ? malformed.message : "", /Refined using Interloq/u);
+  const long = await failure(stub, (t) => t.writeRefinement(id("4"), refinement("r")));
+  assert.match(long._tag === "TrackerBodyInvalid" ? long.message : "", /more than GitLab's limit of 1000000/u);
+  assert.equal(puts(stub).length, 0);
+});
+
+test("writes on an ambiguous or an unlabeled open issue PUT nothing", async () => {
+  const { stub } = serverStub([8, ["Implementing", "Refined"]], [9, ["bug"]]);
+  for (const n of ["8", "9"]) {
+    assert.notEqual((await failure(stub, (t) => t.writeRefinement(id(n), refinement("r"))))._tag, "TrackerUnreachable");
+    assert.notEqual((await failure(stub, (t) => t.setState(id(n), "implementing")))._tag, "TrackerUnreachable");
+  }
+  assert.equal(puts(stub).length, 0);
+});
+
+test("a PUT refused for the token is TrackerAuthRefused", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, ["Refined"])), [`PUT ${ISSUES}/7`]: json({ message: "403 Forbidden" }, 403) }));
+  assert.equal((await failure(stub, (t) => t.setState(id("7"), "implementing")))._tag, "TrackerAuthRefused");
+});
+
+test("gitlabTrackerFrom refuses an absent or blank INTERLOQ_GITLAB_TOKEN before any request, naming the variable", () => {
+  for (const env of [{}, { INTERLOQ_GITLAB_TOKEN: " " }]) {
+    const refused = gitlabTrackerFrom(CONFIG, env);
+    assert.ok(Result.isFailure(refused));
+    assert.equal(refused.failure.variable, "INTERLOQ_GITLAB_TOKEN");
+  }
+});
+
+test("the four operations in sequence through Tracker, built from the config and the environment, over one stub GitLab", async () => {
+  const { server, stub } = serverStub([1, ["Unrefined", "bug"], { description: "Do it." }], [2, ["Refined"]]);
+  const layer = Layer.provide(Result.getOrThrow(gitlabTrackerFrom(CONFIG, { INTERLOQ_GITLAB_TOKEN: SECRET })), stub.layer);
+  const program = Effect.gen(function* () {
+    const tracker = yield* Tracker;
+    const before = yield* tracker.list("unrefined");
+    const item = yield* tracker.read(before[0].id);
+    yield* tracker.writeRefinement(item.id, refinement("Refined."));
+    yield* tracker.setState(item.id, "refined");
+    return { before, after: yield* tracker.list("refined"), unrefined: yield* tracker.list("unrefined") };
+  });
+  const { before, after, unrefined } = await Effect.runPromise(Effect.provide(program, layer));
+  assert.deepEqual(ids(before), ["1"]);
+  assert.deepEqual(ids(after), ["1", "2"]);
+  assert.deepEqual(unrefined, []);
+  assert.deepEqual(Result.getOrThrow(readRefinement(after[0].body)), Option.some(refinement("Refined.")));
+  assert.ok(after[0].body.startsWith("Do it."));
+  assert.deepEqual(server.issues().get(1)?.labels, ["bug", "Refined"]);
+  for (const r of stub.sent()) assert.equal(r.headers["private-token"], SECRET);
+});
+
+test("the token is in no error the adapter produced", () => {
+  assert.ok(errors.length >= 20);
+  for (const error of errors) {
+    const shown = `${JSON.stringify(error)} ${String(error)} ${error.message} ${trackerFailureText(error)}`;
+    assert.ok(!shown.includes("SECRET123"), JSON.stringify(error));
+  }
 });
