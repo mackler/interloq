@@ -161,3 +161,25 @@ export const stripOf = (closedColumnsHeight: number, tenLines: number): number =
  */
 export const closedHeightOf = (columns: readonly Readonly<{ content: number; openBodies: readonly number[] }>[]): number =>
   columns.reduce((tallest, c) => Math.max(tallest, c.content - c.openBodies.reduce((n, h) => n + h, 0)), 0);
+
+// ---- the decision page's opened heading (issue #133, decisions Q2 and G-R1-1) -------------------------------------------
+
+/**
+ * What the allotment of an opened heading's text is computed from: `shared`, the height left for the columns' region and
+ * the opened text together, measured independently of the split; `content`, the text's full height with its padding.
+ * Beside the columns (`BesideColumns`) the text takes at most half; below 390 px there are no columns (`Alone`).
+ */
+export type OpenedInput = Readonly<{ _tag: "BesideColumns" | "Alone"; shared: number; content: number }>;
+/** The heights the opened text and the columns' region take, in whole pixels, together the shared height. */
+export type OpenedHeights = Readonly<{ text: number; columns: number }>;
+/**
+ * The height an opened heading's text takes from the columns (the open point's default: at most half the shared height,
+ * the text scrolling inside itself beyond that; the columns keep the rest). The inputs are normalized first, the shared
+ * height floored and the content ceiled, none below zero.
+ */
+export const allotOpened = (input: OpenedInput): OpenedHeights => {
+  const shared = Math.max(0, Math.floor(input.shared));
+  const content = Math.max(0, Math.ceil(input.content));
+  const text = Math.min(content, input._tag === "BesideColumns" ? Math.floor(shared / 2) : shared);
+  return { text, columns: shared - text };
+};
