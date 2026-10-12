@@ -53,10 +53,14 @@ const historyLines = (history: readonly ShownBlock[], indent: string): string | 
   const text = blocksMarkdown(history);
   return text.trim() === "" ? null : [`**${QUESTION_HISTORY_HEADING}**`, "", ...text.split("\n").map((l) => `> ${l}`)].map((l) => `${indent}${l}`).join("\n");
 };
-/** The history inside an item of a list, after a line break; nothing when it is empty. */
-const historyInItem = (history: readonly ShownBlock[]): string => {
+/**
+ * The history inside an item of a list, after a line break; nothing when it is empty. Where more of the item follows
+ * (`"continues"`), the quote ends with an empty line, since a line right after it would continue the quoted paragraph
+ * (W2-R1-2); where the item ends there (`"ends"`), the next item's list marker ends the quote.
+ */
+const historyInItem = (history: readonly ShownBlock[], item: "continues" | "ends"): string => {
   const lines = historyLines(history, "  ");
-  return lines === null ? "" : `\n${lines}`;
+  return lines === null ? "" : `\n${lines}${item === "continues" ? "\n" : ""}`;
 };
 
 export function renderQuestions(list: RenderableQuestions): string {
@@ -66,7 +70,7 @@ export function renderQuestions(list: RenderableQuestions): string {
       .map((q) => {
         const answers = q.proposed_answers.map((a) => `  - ${piecesMarkdown(a.label)}: ${piecesMarkdown(a.description)}${piecesText(a.label) === q.default_answer ? " (default)" : ""}`).join("\n");
         const condition = q.skip_if === null ? "" : `\n  ${words.skipIfLine(q.skip_if)}`;
-        return `- **[${q.id}]** ${piecesMarkdown(q.question)}${historyInItem(q.history)}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}${condition}`;
+        return `- **[${q.id}]** ${piecesMarkdown(q.question)}${historyInItem(q.history, "continues")}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}${condition}`;
       })
       .join("\n") + "\n"
   );
@@ -82,7 +86,7 @@ export const renderTerms = (entries: readonly TermsEntry[]): Result.Result<strin
     Result.all(entries.map((e) => shownExplanations(e.explanations, e.id))),
     (shown) =>
       shown
-        .map((terms, i) => `${terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n")}${historyInItem(entries[i].history)}`)
+        .map((terms, i) => `${terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n")}${historyInItem(entries[i].history, "ends")}`)
         .join("\n") + "\n",
   );
 

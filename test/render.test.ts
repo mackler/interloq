@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
+import { marked } from "marked";
 import { attachedMarkdown, renderQuestionRecord as recordOf, interviewSays, recordHeading, renderTerms, termItem, renderDecision, renderResponse, renderReview, renderFeedback, renderQuestions, renderRound, subjectHeading } from "../src/render.ts";
 import { issue, para, plain, questionEntry, readTerms, respond, senseRead, shownOf, term } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
@@ -292,4 +293,30 @@ test("W1-R1-2: the three renderings write the same history heading line", () => 
   const terms = renderTerms([{ id: "Q1", explanations: [], context: para("c"), history, question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
   assert.ok(Result.isSuccess(terms));
   for (const text of [record, list, terms.success]) assert.ok(text.split("\n").some((l) => l.trim() === HISTORY_LINE), text);
+});
+
+// Issue #133, W2-R1-2: the history's block quote ends before what follows it in the item, read back as Markdown.
+const quoteOf = (html: string): string => html.slice(html.indexOf("<blockquote>"), html.indexOf("</blockquote>") + "</blockquote>".length);
+
+test("W2-R1-2: renderQuestions ends the history quote before the Reason line", () => {
+  const rendered = renderQuestions({ questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." })] });
+  const html = marked.parse(rendered, { async: false });
+  const quote = quoteOf(html);
+  assert.ok(quote.includes("You chose B on 9 Oct."), html);
+  assert.ok(!quote.includes("Reason:"), html);
+  assert.ok(html.indexOf("Reason:") > html.indexOf("</blockquote>"), html);
+});
+
+test("W2-R1-2: renderTerms keeps the next entry out of the first entry's history quote", () => {
+  const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: ["A number."] }], context: para("c"), history: para("You chose B on 9 Oct."), question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
+  const rendered = renderTerms([entry, { ...entry, id: "Q2", history: [] }]);
+  assert.ok(Result.isSuccess(rendered));
+  const html = marked.parse(rendered.success, { async: false });
+  assert.ok(quoteOf(html).includes("You chose B on 9 Oct."), html);
+  assert.ok(!quoteOf(html).includes("[Q2]"), html);
+});
+
+test("W2-R1-2: an entry with an empty history renders as before", () => {
+  const list = { questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]])] };
+  assert.ok(renderQuestions(list).startsWith("- **[Q1]** A or B?\n  Reason: "), renderQuestions(list));
 });
