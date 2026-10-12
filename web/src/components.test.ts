@@ -1293,6 +1293,19 @@ describe("DecisionView", () => {
     expect(document.getElementById(context.getAttribute("aria-controls")!)).toBe(null);
   });
 
+  // The task: the opened text is set in text columns, two or three at the tested widths and one below the compact
+  // breakpoint. jsdom lays out no columns (e2e/layout.spec.ts counts them), so this checks that the opened body's inner
+  // wrapper carries the class the rule targets, and reads the rule from the component's source.
+  test("the opened text's inner wrapper carries the text-columns class, which sets 16rem columns and one below 600 px", async () => {
+    const { default: DecisionView } = await import("./components/DecisionView.svelte");
+    const root = show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, ...newProps, openSection: "context" });
+    const inner = one(root, ".body > *");
+    expect(inner.classList.contains("text-columns")).toBe(true);
+    const source = (await import("./components/DecisionView.svelte?raw")).default;
+    expect(source).toMatch(/\.text-columns \{[^}]*columns: 16rem/);
+    expect(source).toMatch(/@media \(max-width: 599\.98px\) \{[^}]*\.text-columns \{[^}]*columns: auto 1/);
+  });
+
   // The task: an equivalence symbol is a link to the entry it names, and the target says what it is when reached.
   test("an equivalence symbol is a link to the entry it names, which takes the focus and says what it is", async () => {
     const { default: DecisionView } = await import("./components/DecisionView.svelte");

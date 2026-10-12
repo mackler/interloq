@@ -210,7 +210,7 @@
   </div>
   {#if shownSection !== null}
     <div class="body m3-font-body-medium" id={sectionId(shownSection)} bind:this={body} style:height={textHeight === null ? null : `${textHeight}px`}>
-      <div class="body-inner" bind:this={bodyInner}>
+      <div class="body-inner text-columns" bind:this={bodyInner}>
         {#if shownSection === "context"}
           <QuestionText class="markdown" blocks={presented.context.blocks} explanations={presented.explanations} />
           {#if presented.context.by === "program"}<p class="by">({CONTEXT_BY_PROGRAM})</p>{/if}
@@ -271,6 +271,16 @@
   /* An opened heading's text: its height from allotOpened, scrolling inside itself beyond it. */
   .body { box-sizing: border-box; overflow-y: auto; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-small); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
   .body .by { margin: 0.25rem 0 0; font-style: italic; }
+  /* The task: the opened text in columns of 16rem, so two at 640 px wide (a body of about 570 px) and three at 1280 px
+     (about 970 px), more as the window widens. The columns are on the inner wrapper, which has no height of its own: a
+     multi-column box of fixed height would overflow sideways into further columns instead of scrolling. No code block
+     or list item is split across two columns. */
+  .text-columns { columns: 16rem; column-gap: 1.5rem; }
+  .text-columns :global(pre), .text-columns :global(li) { break-inside: avoid; }
+  /* M3's compact window class, below 600 px: one column. */
+  @media (max-width: 599.98px) {
+    .text-columns { columns: auto 1; }
+  }
   .body :global(.markdown pre) { overflow-x: auto; }
   .recommendation h3 { margin: 0; }
   .recommendation p { margin: 0.5rem 0 0; }
