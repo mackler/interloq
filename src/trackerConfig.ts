@@ -8,9 +8,16 @@ export const GITHUB_TOKEN_VARIABLE = "INTERLOQ_GITHUB_TOKEN";
 /** The Trello tracker's API key and token, with read and write scope on the board; read by trelloCredential. */
 export const TRELLO_KEY_VARIABLE = "INTERLOQ_TRELLO_KEY";
 export const TRELLO_TOKEN_VARIABLE = "INTERLOQ_TRELLO_TOKEN";
+/**
+ * The GitLab tracker's token: a project access token of the one GitLab project, with the `api` scope and the Planner
+ * role (the developer's answer Q1 in the requirements of the GitLab adapter); read by gitlabCredential.
+ */
+export const GITLAB_TOKEN_VARIABLE = "INTERLOQ_GITLAB_TOKEN";
 
 /** A GitHub token: a text with a character other than whitespace, built by githubCredential alone. */
 export type GithubToken = Brand.Branded<string, "GithubToken">;
+/** A GitLab token: a text with a character other than whitespace, built by gitlabCredential alone. */
+export type GitlabToken = Brand.Branded<string, "GitlabToken">;
 /** A Trello API key and a Trello token: texts with a character other than whitespace, built by trelloCredential alone. */
 export type TrelloKey = Brand.Branded<string, "TrelloKey">;
 export type TrelloToken = Brand.Branded<string, "TrelloToken">;
@@ -30,3 +37,6 @@ export const githubCredential = (env: Environment): Result.Result<GithubToken, T
 /** The Trello key and token from the environment; the key is read first, and an absent or blank variable is refused with its name. */
 export const trelloCredential = (env: Environment): Result.Result<TrelloCredential, TrackerCredentialMissing> =>
   Result.flatMap(nonBlankVariable(env, TRELLO_KEY_VARIABLE), (key) => Result.map(nonBlankVariable(env, TRELLO_TOKEN_VARIABLE), (token) => ({ key: key as TrelloKey, token: token as TrelloToken })));
+
+/** The GitLab token from the environment; an absent or blank variable is refused with its name. */
+export const gitlabCredential = (env: Environment): Result.Result<GitlabToken, TrackerCredentialMissing> => Result.map(nonBlankVariable(env, GITLAB_TOKEN_VARIABLE), (value) => value as GitlabToken);
