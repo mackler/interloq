@@ -24,6 +24,7 @@
   import { allot, type Allotment, type AnalysisMinimum, boundedMinimum, closedHeightOf, questionFloorOf, regionsRoom, type Room, stripOf, UNBOUNDED_ROOM } from "../layout.ts";
   import type { UiEvent } from "../../../src/uiEvents.ts";
   import QuestionText from "./QuestionText.svelte";
+  import Disclosure from "./Disclosure.svelte";
 
   /** `open` and `onToggle` (issue #87): whether an entry of this decision is open in the run's shared state, and the change asked for. */
   /**
@@ -157,12 +158,11 @@
     <!-- Issue #87: the row is the entry's label and whole title (decision Q2), a native button, so that Enter and Space
          open it [flexibility and efficiency of use]; its body is rendered only while it is open [aesthetic and
          minimalist design]. The mark says that a text inside argues the other side [visibility of system status]. -->
-    <button type="button" class="toggle" aria-expanded={expanded} aria-controls={bodyId} aria-label={entryToggleName(entry.label, entry.title, expanded)} onclick={() => onToggle(entry.id, !expanded)}>
-      <span class="chevron" class:expanded aria-hidden="true"></span>
-      <span class="title m3-font-title-small" class:opposes={entry.opposes} data-opposes={entry.opposes}><span class="label">{entry.label}</span> {marked(entry.title, entry.symbol)}</span>
-      {#if entry.disputed}<span class="disputed" role="img" aria-label={ENTRY_DISPUTED_LABEL}>⚠</span>{/if}
-    </button>
-    {#if expanded}
+    <Disclosure {expanded} controls={bodyId} name={entryToggleName(entry.label, entry.title, expanded)} onToggle={(o) => onToggle(entry.id, o)}>
+      {#snippet title()}
+        <span class="title m3-font-title-small" class:opposes={entry.opposes} data-opposes={entry.opposes}><span class="label">{entry.label}</span> {marked(entry.title, entry.symbol)}</span>
+        {#if entry.disputed}<span class="disputed" role="img" aria-label={ENTRY_DISPUTED_LABEL}>⚠</span>{/if}
+      {/snippet}
       <ul class="elements" id={bodyId}>
         {#each entry.elements as element, i (i)}
           <li class="element">
@@ -177,7 +177,7 @@
           </li>
         {/each}
       </ul>
-    {/if}
+    </Disclosure>
   </div>
 {/snippet}
 
@@ -280,23 +280,12 @@
   .label { font-weight: 600; }
   /* flow-root: an open body's margins stay inside its entry, so its height is what closing it takes away. */
   .entry { display: flow-root; margin-bottom: 0.25rem; }
-  /* Issue #87: the disclosure, hand-built after M3's list item: a state layer of the on-surface color on hover (8 %),
-     focus (10 %) and press (10 %), a focus ring, and the standard easing for the chevron and the body; none of it under
-     reduced motion. It asserts that the entry is open or closed and nothing more (docs/ui-review.md). The title wraps
-     whole (decision Q2). */
-  .toggle { position: relative; box-sizing: border-box; display: flex; align-items: flex-start; gap: 0.5rem; width: 100%; margin: 0; padding: 0.375rem 0.5rem; border: 0; border-radius: var(--m3-shape-small); background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; overflow: hidden; }
-  .toggle::before { content: ""; position: absolute; inset: 0; background: var(--m3c-on-surface); opacity: 0; transition: opacity 200ms cubic-bezier(0.2, 0, 0, 1); pointer-events: none; }
-  .toggle:hover::before { opacity: 0.08; }
-  .toggle:focus-visible::before, .toggle:active::before { opacity: 0.1; }
-  .toggle:focus-visible { outline: 3px solid var(--m3c-secondary); outline-offset: 2px; }
-  .chevron { flex: none; width: 0.5rem; height: 0.5rem; margin-top: 0.4rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform 200ms cubic-bezier(0.2, 0, 0, 1); }
-  .chevron.expanded { transform: rotate(45deg); }
+  /* Issue #87: the disclosure itself is Disclosure.svelte (issue #137); the entry's title and body are styled here. */
   .title { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .disputed { flex: none; color: var(--m3c-error); font-weight: 700; }
   .elements { animation: reveal 200ms cubic-bezier(0.2, 0, 0, 1); }
   @keyframes reveal { from { opacity: 0; transform: translateY(-0.25rem); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) {
-    .toggle::before, .chevron { transition: none; }
     .elements { animation: none; }
   }
   .elements { margin: 0.25rem 0 0.5rem; padding-left: 2.25rem; }
