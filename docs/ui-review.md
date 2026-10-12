@@ -35,7 +35,7 @@ as CLAUDE.md's section "User interface" requires. "Changed" names what this revi
   - *The marks of phases and steps* are text glyphs rather than Material Symbols, because an icon set would be another dependency: ✓ done, ● in progress, ■ stopped, ○ ahead, a muted ○ not reached, – not needed (a step whose phase ended without it: the dash asserts that the phase ended without needing the step, not that the step was done, nor that anything is left to do); for a step of the plan ✓ done, ● in progress, ◐ begun and not finished, ○ not begun; and since issue #114 for a stage of the plan, in its steps' vocabulary, ○ none of its steps begun, ◐ begun and not all finished, ✓ all done. Each asserts the state its accessible name gives, the same state an icon would, and nothing more: no count, no progress within a step. A step is marked in progress only while an execution call runs; a step the last call began and did not finish is marked as such, not as current. Since issue #110 the leading position of a row holds exactly one glyph: a row with nothing beneath it shows its mark alone, named by its state, and is not a control; on a row with something beneath it the mark is also the disclosure control, and asserts besides, through `aria-expanded` and the container the glyph sits in, whether the row is open (issue #115, below). Its state is then in the button's accessible name. Done is expressed by the on-surface-variant color and not reached by that color made translucent (it shares ahead's hollow glyph), never by an opacity on the row (issue #109): an opacity below 1 dims the whole subtree as one group, which drew a done step's tooltip at 80 %.
   - *The rich tooltip of a plan step* is written by hand after M3's rich tooltip, which m3-svelte lacks (`StepTooltip.svelte`): the surface container role, elevation level 2, the medium shape, a size limit with its own scrolling, placed inside the viewport, opened by hover and by keyboard focus, kept open by a click or tap, closed by Escape or leaving. Opened by hover, it stays open while the pointer moves from the step into it (a grace delay of 150 ms, W1-R1-1), so that a long text can be scrolled with the mouse. It asserts what the specified component asserts: supplementary text about the step it describes (the step's full text from the plan, rendered from Markdown and sanitized). It has no actions, so it claims no control the rich tooltip would offer.
   - *The disclosures of the progress rail* (issue #63, 7 Oct 2026) are written by hand after the disclosure of a decision's entry (issue #87): each phase, step of Gather Requirements and stage of the plan that has something beneath it is a native button holding its mark (in place of the chevron, issue #110) and its label, `aria-expanded` and `aria-controls`, the same state layer and focus ring, and, since issue #115 (8 Oct 2026), the mark in the container of M3's outlined toggle icon button, which m3-svelte lacks: a 1 px outline ring while closed, the selected toggle's filled container (inverse surface, the glyph in inverse on-surface) while open, and while held open a flat on-surface container at 12 % with no ring and no state layer; none of the motion under reduced motion. The ring asserts that the row can be opened, the filled container that it is open and can be closed, the flat one that it is open and cannot be closed now; none asserts anything about what the row holds. One deviation from M3's disabled toggle: the held glyph keeps its full state color, not 38 %, because it states the row's status and issue #109 forbids dimming by opacity. The row keeps one glyph, issue #110's decision. Whether the ring is seen and read as a control is covered by no test. Issue #116: a stage's steps are drawn 1rem deeper than the stage, mark and label, so nesting is read from position, not numbering; less than a full level (1.5rem), for the width of the 14rem column; a row with nothing beneath it is no control, and becomes one when its first child arrives. Everything is collapsed at the start; the run opens a phase when it begins (and never closes it when it ends), a step when it begins, and a stage when one of its steps is reported. The user's choice wins over that opening for every node he has touched, except that a node is held open while something inside it needs him: a prompt, or a halt, which holds the stage of the step the run was at even after the execution call that worked on it has ended. A halt holds the phase the run was in even when that phase had already ended, as it has while the question after an execution call waits. A held row is `aria-disabled` and says why. Each row's button always names its container through `aria-controls`: the children when the row is open, the collapsed summary when it is closed. A collapsed row asserts, in its glyphs and in its accessible name, three things. First, that an agent works on a step inside it, with the circular indicator and that step's label. Second, the branch's condition in one word: not started, partially completed, completed, given since issue #110 by a stage's glyph and in the row's accessible name, not as a line of its own. Third, once a step is complete, how many of its steps are complete, as m3-svelte's determinate `LinearProgress` with one equal division per step; at zero the bar is not shown, since it would repeat the glyph. Its accessible name and value text count steps, never time, and it asserts no estimate of when the branch ends. A collapsed row hides the cycle lines. A phase's own time stays on its row, open or closed. Which nodes are open is shared by every tab of the run, held by the server for as long as it runs.
-  - *The disclosure of a decision's entry* (issue #87, 6 Oct 2026) is written by hand after M3's list item with an expand affordance, which m3-svelte lacks: a native button holding a chevron, the entry's label and its whole title (wrapped, never cut), a state layer of the on-surface color on hover (8 %), focus and press (10 %), a focus ring, and the standard easing for the chevron's turn and the body's appearance, none of it under reduced motion. It asserts that the entry is open or closed, through `aria-expanded` and the chevron, and nothing more. The warning mark beside an entry, in the error color and named "Contains an argument against this entry", asserts only that a text inside the entry argues the other side; it does not say how strong that text is. Which entries are open is shared by every tab of the run, held by the server for as long as it runs. Beside the analysis (issues #79 and #81), the question's context and the recommendation take the room the columns' strip leaves and scroll only when there is none; each column scrolls on its own, and the strip does not move when entries open. In a window 1280 × 800 the context scrolls, by the developer's decision to keep that rule.
+  - *The disclosure of a decision's entry* (issue #87, 6 Oct 2026) is written by hand after M3's list item with an expand affordance, which m3-svelte lacks: a native button holding a chevron, the entry's label and its whole title (wrapped, never cut), a state layer of the on-surface color on hover (8 %), focus and press (10 %), a focus ring, and the standard easing for the chevron's turn and the body's appearance, none of it under reduced motion. It asserts that the entry is open or closed, through `aria-expanded` and the chevron, and nothing more. The warning mark beside an entry, in the error color and named "Contains an argument against this entry", asserts only that a text inside the entry argues the other side; it does not say how strong that text is. Which entries are open is shared by every tab of the run, held by the server for as long as it runs. Each column scrolls on its own, and the answers and the row of headings do not move when entries open. Issue #133 replaced the regions that took the room the columns' strip left (issues #79 and #81) with collapsed headings; see "The decision page" under the layout.
   - *The answer fields* are m3-svelte's outlined text fields with persistent labels, not substitutes; the deviation is their key behaviour: Enter sends, Shift+Enter adds a line in a message, and a filled Send button sits beside them. The fields assert what an outlined text field asserts, a place to type an answer; the hint under them states the keys, so the behaviour is not left to be guessed.
   - *The type family* (issue #73, 6 Oct 2026) is Liberation Sans for text and Liberation Mono for code, not M3's Roboto Flex (nor m3-svelte's default, Google Sans Flex). `web/src/theme.css` names them through `--m3-font` and `--m3-font-mono`, which m3-svelte's components read, with Arial and Courier New, metric-compatible with them, as the fallbacks; code keeps the size it had under the bare `monospace` family, 13/16 of its parent's. What it asserts: the typography recorded is the typography that renders, the same faces and metrics in the developer's browser, the CI runner and the development container, with bold and italic as real faces, because Liberation Sans, Mono and Serif are installed in all three in Regular, Bold, Italic and Bold Italic; end-to-end test L28 reads the faces the renderer used. What it does not assert: M3's type family. The reason: the page served no font, so naming Roboto Flex, which it did not ship, left the M3 claim untrue in every environment, each of which fell through to a different face. Serving Roboto Flex as a webfont remains the open option of issue #73.
 
@@ -62,12 +62,39 @@ layout now follows M3's window size classes (`web/src/layout.ts`, `App.svelte`, 
   counting what arrived; the latest notice stands above the panels in a compact window, so the server's end or a
   withdrawn draft is seen whichever panel is shown [visibility of system status]; a new prompt is recognised by its
   full identity, so a new run's first prompt selects "You and Interloq" after a reconnection too.
-- **The heading of a decision's analysis** (6 Oct 2026, the developer's decision in the task of L21): it stays on one
-  line beside its "Show conversation" button, its words cut with an ellipsis where the line is too narrow, so that in
-  a short window the analysis's heading and its question fit the room left beside the question's first answer
-  [visibility of system status]. Its whole text is its title, shown on hover, and the analysis region's name, so a
-  screen reader reads it whole [recognition rather than recall]. It is the one text of the analysis that is cut; an
-  entry's title is wrapped, never cut. `e2e/layout.spec.ts` checks it as L29, at 640 × 400, 390 × 844 and 1280 × 800.
+- **The decision page** (issue #133, the developer's instruction of 11 Oct 2026 and his decision of 12 Oct 2026). It
+  supersedes the analysis that yielded its columns, then its recommendation, then its context so that the question and
+  its first answer stayed in view (the task of L21), and the heading kept on one line with an ellipsis.
+  - *The order.* Top to bottom: the question as the heading, after "Your Choice:", in title-medium and wrapped, never
+    cut; the choices, side by side; the columns of advantages and disadvantages; then the collapsed headings. When the
+    page appears, the reader has already read the context, the history and the reason on the question page, so the
+    arguments are the one new thing and take the page [aesthetic and minimalist design], and what he has read is one
+    click away [recognition rather than recall]. The heading names his decision rather than Interloq's numbering of it
+    [match between the system and the real world].
+  - *Every control stays, and the run area scrolls.* The fixed choices, the answer field and Send stay under the option
+    cards, so he answers with no extra click [flexibility and efficiency of use]. Where the window cannot hold the
+    answers and the columns, the run area scrolls, and nothing is clipped. The columns are never lower than 15rem, ten
+    lines (`COLUMNS_FLOOR_REM`, `floorPx` in `web/src/layout.ts`). The developer chose this on 12 Oct 2026 over hiding
+    controls or shrinking the top bar. The columns are the tallest region at 1280 × 800, where the page does not
+    scroll; in lower windows they keep the floor, which the answers may exceed. The question
+    and its option cards are at the top of the page when it appears [visibility of system status].
+  - *The headings.* Technical Context, History, the question's attached material under its own heading (for an agreed
+    question "Why You're Being Asked This", for a permission its request), and Recommendation, each present only with
+    its text. Each is `Disclosure`, the control issue #137 settled for the question page, sized to its content, in one
+    row that wraps onto as few rows as fit [consistency and standards: one control for opening and closing]. One is open
+    at a time, and which one is shared by every tab of the run, like the entries. A heading asserts only that its text
+    is open or closed.
+  - *An opened text.* Where the window has room, it takes at most half the height it shares with the columns, never
+    the columns' floor, so the page does not scroll (`allotWithFloor`); in a lower window it keeps at least five lines,
+    half the floor, and the run scrolls. It scrolls inside itself beyond its height. Its text is set in columns 16rem
+    wide, two or three at the tested widths and more as the window widens, and one below 600 px, M3's compact window
+    class, so a line stays short enough to read in a wide window [aesthetic and minimalist design].
+  - *The equivalence symbol* (`*`, `†`, ...) is a link that moves the focus to the entry it names, whose name says
+    which entry it is (`equivalenceLinkName`), so the correspondence it marks can be followed rather than searched for
+    [recognition rather than recall].
+  - *No "Help me decide"* beside the question's own analysis: the question asked again after the analysis carries no
+    offer, since the page is the decision's help [aesthetic and minimalist design; error prevention: no second analysis
+    of the same question by mistake].
 
 `e2e/layout.spec.ts` checks, at 390 × 844 and at 640 × 400, that nothing overflows sideways, that the shown panel is
 at least 300 px wide (and 400 or 200 px high) and the answer field at least 280 px wide, the panel switch, the badge
@@ -138,12 +165,10 @@ choices directly under the question, the question and its first option stay in v
 and taller (`e2e/layout.spec.ts`, L19 and L32), and a long transcript cannot scroll the question out of view (issue
 #20). The transcript is one click away ("Show the conversation") and back ("Back to the question"), and an answer gives
 the column back to the transcript [user control and freedom]. The question joins the transcript with its answer once
-it is answered. Beside a decision's analysis, which shows the question with its context and terms, the pane keeps only
-the answers, side by side as elsewhere, so the question is not shown twice [aesthetic and minimalist design]. What the
-question is about follows the context in the analysis's context region (W3-R1-3), under the same heading. There only the
-context scrolls, in a region of its own about one and a half
-lines high (2.75rem), and the question text follows it outside any scrolled region, so a long context cannot push the question
-out of view while its answers are shown (W2-R1-2; L20 at 390 × 844 and 640 × 400).
+it is answered. Beside a decision's analysis, which shows the question as its heading, the pane keeps only
+the answers, side by side as elsewhere, so the question is not shown twice [aesthetic and minimalist design]; the fixed
+choices, the field and Send share as few rows as fit. What the question is about is under the decision page's
+collapsed headings (issue #133).
 
 A permission request's tool input is shown literally (W3-R1-2, P4-R1-1, 30 Sep 2026): every text value is set as code,
 its delimiters chosen so that no character of it is read as Markdown or HTML and no space at its edges is lost. The
@@ -225,8 +250,7 @@ elements, in the question pane, beside an analysis and in the transcript, so tha
 labels alone [recognition rather than recall]. To keep a card of three lines as tall as one of two was, a card's
 vertical padding is 12 dp in the pane and 8 dp beside an analysis, instead of the card's 16 dp; this changes only
 spacing and asserts nothing the card does not. The question pane's bottom region is at least 6rem high, so that such a
-card is seen whole in a short window (L23), and beside an analysis the answers scroll within 15 % of the window's height,
-at least 3.75rem and at most 7rem (L14, L20, L21).
+card is seen whole in a short window (L23), and beside an analysis the answers take their own height under the question (issue #133).
 
 The answered question in the transcript keeps the exact text of its plain fields (S62, W9-R1-1 of work review 9): the
 question, the options and the terms are plain text in the pane, and they are encoded so that no character of them is
@@ -306,8 +330,6 @@ Q1 in the interview of 9 Oct 2026).
   above the run while a run is shown, once in either case.
 - **The 450 px limit.** The tab bar takes 48 px. By the developer's decision of 9 Oct 2026, at the stop of execution
   phase 1, the question a run waits on and its first answer stay in view without the run area scrolling in windows 450
-  pixels high and taller; below that, the run area scrolls to the first answer, and the analysis of a decision keeps
-  its heading and the whole question (`IN_VIEW_MIN_HEIGHT` and `QuestionFloor` in `web/src/layout.ts`). By his
-  decision at the stop of execution phase 2, the same day, a notice line in a window 450 pixels high keeps the first
-  answer in view, and the last line of the question beside the analysis may be clipped by about 10 px until the notice
-  goes.
+  pixels high and taller; below that, the run area scrolls to the first answer (`IN_VIEW_MIN_HEIGHT` in `web/src/layout.ts`). Since issue
+  #133 the decision page holds its question and option cards at its top, so they are in view when it appears, and the
+  run area scrolls to what lies below them in a low window (his decision of 12 Oct 2026).
