@@ -36,7 +36,7 @@ test("stateOf: two stage labels are ambiguous, naming them", () => {
 
 test("itemOf: the id is the decimal number, a null body the empty string", () => {
   const item = itemOf(LABELS, decode({ number: 42, title: "title", body: null, state: "open", labels: [] }));
-  assert.deepEqual(item, Result.succeed({ id: id("42"), title: "title", body: "", state: "unrefined" }));
+  assert.deepEqual(item, Result.succeed({ id: id("42"), title: "title", body: "", state: "unrefined", url: Option.none() }));
 });
 
 test("nextPage finds rel=\"next\" in a Link header as GitHub sends it", () => {

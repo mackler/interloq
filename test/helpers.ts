@@ -623,7 +623,7 @@ export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag
 export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string; tracker: FakeTracker | null };
 
 /** The item of every scripted run (issue #120): its title is the scripted task and its body is empty, so taskTextOf gives scriptedTask. */
-export const scriptedItem: FakeItem = { id: Result.getOrThrow(itemIdOf("1")), title: "task", body: "", state: "refined", open: true };
+export const scriptedItem: FakeItem = { id: Result.getOrThrow(itemIdOf("1")), title: "task", body: "", state: "refined", open: true, url: Option.none() };
 /** The start of a scripted run from scriptedItem (or another item) in a project. */
 export const scriptedStart = (project: string, mode: RunMode = "implementation", item: ItemId = scriptedItem.id, terms: TermsMode = "checked"): RunStart => (mode === "refinement" ? { mode, item, project, terms } : { mode, item, project });
 /**

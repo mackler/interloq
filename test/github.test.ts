@@ -55,7 +55,7 @@ test("unrefined lists the labeled and the unlabeled open issues, and no issue of
 test("a labeled state asks GitHub for open issues with its label", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(5, [LABELS.implementing, "bug"])]) }));
   const items = await withTracker(stub, (t) => t.list("implementing"));
-  assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state: "implementing" }]);
+  assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state: "implementing", url: Option.none() }]);
   const params = stub.sent()[0].url.searchParams;
   assert.equal(params.get("state"), "open");
   assert.equal(params.get("labels"), LABELS.implementing);
@@ -111,7 +111,7 @@ test("a client failing with a DecodeError or an EmptyBodyError is TrackerBodyInv
 
 test("read gives an issue with its state; a closed issue with one stage label has it", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [LABELS.implemented], { body: null, state: "closed" })) }));
-  assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implemented" });
+  assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implemented", url: Option.none() });
 });
 
 test("read of a pull request, a 404, a 410 and an id not in GitHub's format is TrackerItemNotFound", async () => {

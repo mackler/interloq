@@ -41,10 +41,10 @@ test("an open issue with two state labels is Ambiguous, naming both in the issue
 test("an issue's item: its iid in decimal, its title, its description or the empty string, its state", () => {
   const item = itemOfIssue(GITLAB_LABELS, issue({ labels: ["Refined"] }));
   assert.ok(Result.isSuccess(item));
-  assert.deepEqual(item.success, { id: "42", title: "A task", body: "The text.", state: "refined" });
+  assert.deepEqual(item.success, { id: "42", title: "A task", body: "The text.", state: "refined", url: Option.none() });
   const nullBody = itemOfIssue(GITLAB_LABELS, issue({ description: null, state: "closed" }));
   assert.ok(Result.isSuccess(nullBody));
-  assert.deepEqual(nullBody.success, { id: "42", title: "A task", body: "", state: "deployed" });
+  assert.deepEqual(nullBody.success, { id: "42", title: "A task", body: "", state: "deployed", url: Option.none() });
 });
 
 test("iidOf takes a positive decimal integer without leading zeros that is a safe integer", () => {

@@ -19,8 +19,24 @@ export type InvalidItemId = Readonly<{ _tag: "InvalidItemId"; text: string }>;
 export const itemIdOf = (text: string): Result.Result<ItemId, InvalidItemId> =>
   text.trim() === "" ? Result.fail({ _tag: "InvalidItemId", text }) : Result.succeed(text as ItemId);
 
-/** What every tracker's item has in common: its id, title, body (a GitHub body of null is "") and state. */
-export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState }>;
+/**
+ * The address of an item's own page in its tracker (issue #125): an absolute https address, built by itemUrlOf alone.
+ * The page puts it in a link's href, so no other scheme (javascript:, data:, http:) is a value of the type. All three
+ * trackers serve their pages over https.
+ */
+export type ItemUrl = Brand.Branded<string, "ItemUrl">;
+/** Why a text is not an item's address: it is not an absolute https address. */
+export type InvalidItemUrl = Readonly<{ _tag: "InvalidItemUrl"; text: string }>;
+/** The text as given, never the URL's normalized href, so the page links to exactly what the tracker sent. */
+export const itemUrlOf = (text: string): Result.Result<ItemUrl, InvalidItemUrl> =>
+  URL.canParse(text) && new URL(text).protocol === "https:" ? Result.succeed(text as ItemUrl) : Result.fail({ _tag: "InvalidItemUrl", text });
+
+/**
+ * What every tracker's item has in common: its id, title, body (a GitHub body of null is ""), state, and url, the item's
+ * own page in its tracker as the tracker's response gives it (issue #125), none where the response has none or it is
+ * not an https address.
+ */
+export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState; url: Option.Option<ItemUrl> }>;
 
 /**
  * A positive decimal integer without leading zeros that is a safe integer, or none: the one rule of a GitHub issue

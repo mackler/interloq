@@ -1,3 +1,4 @@
+import { Option } from "effect";
 import type { RunMode } from "../src/runMode.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { FakeItem } from "../test/fakeTracker.ts";
@@ -32,6 +33,6 @@ export const modeOf = (scenario: string): RunMode => (REFINEMENT_SCENARIOS.inclu
  * earlier test has moved on.
  */
 export const E2E_ITEMS: readonly FakeItem[] = Array.from({ length: 40 }, (_, i) => i + 1).flatMap((n): FakeItem[] => [
-  { id: `${n}` as ItemId, title: `Refined item ${n}`, body: "", state: "refined", open: true },
-  { id: `${100 + n}` as ItemId, title: `Unrefined item ${100 + n}`, body: "", state: "unrefined", open: true },
+  { id: `${n}` as ItemId, title: `Refined item ${n}`, body: "", state: "refined", open: true, url: Option.none() },
+  { id: `${100 + n}` as ItemId, title: `Unrefined item ${100 + n}`, body: "", state: "unrefined", open: true, url: Option.none() },
 ]);

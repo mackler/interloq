@@ -42,7 +42,7 @@ export const stateOfCard = (config: TrelloTrackerConfig, card: Pick<TrelloCard, 
 /** The item of a card: its id, its name as the title, its description as the body, and its state. */
 export const itemOfCard = (config: TrelloTrackerConfig, card: TrelloCard): Result.Result<TrackerItem, NoCardState> =>
   // A TrelloId is 24 hexadecimal characters, never blank, which is all itemIdOf requires.
-  Result.map(stateOfCard(config, card), (state) => ({ id: card.id as string as ItemId, title: card.name, body: card.desc, state }));
+  Result.map(stateOfCard(config, card), (state) => ({ id: card.id as string as ItemId, title: card.name, body: card.desc, state, url: Option.none() }));
 
 /** The body of a state change: the state's list, so one request moves the card and cannot stop half done. */
 export const moveBody = (lists: TrelloLists, to: ItemState): Readonly<{ idList: string }> => ({ idList: lists[to] });

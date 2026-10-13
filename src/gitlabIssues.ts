@@ -46,7 +46,7 @@ export const stateOfIssue = (labels: GitlabLabels, issue: Pick<GitlabIssue, "sta
 
 /** The item of an issue: its id the issue's number in decimal, a null description the empty string. */
 export const itemOfIssue = (labels: GitlabLabels, issue: GitlabIssue): Result.Result<TrackerItem, NoStateLabel | Ambiguous> =>
-  Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state }));
+  Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state, url: Option.none() }));
 
 /** The body of a state change: the target's label added and every other state label removed, in one request. */
 export const relabelBody = (labels: GitlabLabels, to: GitlabLabeledState): Readonly<{ add_labels: string; remove_labels: string }> => ({

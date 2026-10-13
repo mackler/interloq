@@ -37,7 +37,7 @@ test("stateOfCard: another board before archived before an unmapped list", () =>
 });
 
 test("itemOfCard maps the id, name, description and list", () => {
-  assert.deepEqual(itemOfCard(CONFIG, card({ idList: LISTS.implementing })), Result.succeed({ id: CARD_ID, title: "Title", body: "Body", state: "implementing" }));
+  assert.deepEqual(itemOfCard(CONFIG, card({ idList: LISTS.implementing })), Result.succeed({ id: CARD_ID, title: "Title", body: "Body", state: "implementing", url: Option.none() }));
 });
 
 test("moveBody is the state's list id alone", () => {

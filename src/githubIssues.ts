@@ -51,6 +51,7 @@ export const itemOf = (labels: GithubLabels, issue: GithubIssue): Result.Result<
     title: issue.title,
     body: issue.body ?? "",
     state,
+    url: Option.none(),
   }));
 
 const LINK_ENTRY = /<([^>]*)>((?:\s*;\s*[^;,]*)*)/gu;

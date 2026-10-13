@@ -9,10 +9,10 @@ import { type FakeItem, makeFakeTracker } from "./fakeTracker.ts";
 // Issue #120, part 1: the tracker in memory that the later tasks' tests use.
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 const ITEMS: readonly FakeItem[] = [
-  { id: id("1"), title: "one", body: "first", state: "unrefined", open: true },
-  { id: id("2"), title: "two", body: "", state: "refined", open: true },
-  { id: id("3"), title: "three", body: "closed", state: "unrefined", open: false },
-  { id: id("4"), title: "four", body: "", state: "unrefined", open: true },
+  { id: id("1"), title: "one", body: "first", state: "unrefined", open: true, url: Option.none() },
+  { id: id("2"), title: "two", body: "", state: "refined", open: true, url: Option.none() },
+  { id: id("3"), title: "three", body: "closed", state: "unrefined", open: false, url: Option.none() },
+  { id: id("4"), title: "four", body: "", state: "unrefined", open: true, url: Option.none() },
 ];
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
 
