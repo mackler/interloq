@@ -166,8 +166,8 @@ const explain = (draft: QuestionDraft, facts: string) =>
  * typed; after an analysis it is recorded as the choice of every decision made for this question (decision Q4), with
  * the option it chose. An answer that `acceptable` rejects (a blank reply where one is required) is neither returned
  * nor recorded: the question is presented again and asked again (W1-R1-1, W1-R1-2), with or without options.
- * Issue #142: `terms`, where given, is the request for the question's explanations, which yields the same draft with
- * them. While it has not run, the hint carries its line outermost; "/terms" runs it, presents the same question again
+ * Issue #142: `terms`, where given, is the request for the question's explanations, given the question's number, which
+ * yields the same draft with them. While it has not run, the hint carries its line outermost; "/terms" runs it, presents the same question again
  * under the same number with its explanations (QuestionExplained, then QuestionPresented), and asks again without the
  * line. "/terms" is never returned or recorded as a choice; without a request it is an answer like any other.
  */
@@ -176,7 +176,7 @@ export const askOffering = <E, R = never>(
   hint: string,
   draft: QuestionDraft,
   acceptable: (answer: string) => boolean = () => true,
-  terms: Effect.Effect<QuestionDraft, E | RunError, R> | null = null,
+  terms: ((question: number) => Effect.Effect<QuestionDraft, E | RunError, R>) | null = null,
 ): Effect.Effect<string, E | RunError, Decider | Store | Ui | R> =>
   Effect.gen(function* () {
     const ui = yield* Ui;
@@ -197,7 +197,7 @@ export const askOffering = <E, R = never>(
         if (request === null || !isTermsRequest(answer)) return false;
         const run = request;
         request = null;
-        explained = yield* run;
+        explained = yield* run(question.number);
         question = yield* Effect.fromResult(presentedQuestion(explained, question.number));
         yield* ui.notify({ _tag: "QuestionExplained", question });
         yield* present;

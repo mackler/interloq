@@ -348,3 +348,80 @@ test("property: withTermsEntry holds each question once, holds the new entry, ke
     { numRuns: 200 },
   );
 });
+
+// Issue #142 (requirements Q6): in a run whose choice is onRequest, an agreed question without explanations offers the
+// request; it writes that question's explanations in a fresh session, with no review, and the question is presented
+// again from questions.json and terms.json.
+import { blocksText as textOfBlocks } from "../src/pieces.ts";
+
+test("onRequest: /terms writes the question's explanations in a fresh session and presents the same question again with them", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["/terms", "1", ""],
+    steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+    terms: [{ output: terms() }],
+    reviews: [{ issues: [] }, { issues: [] }],
+  });
+  await runRefinement(layer, "task", "onRequest");
+  const requestPrompt = prompts.termsOnRequestPrompt(TEST_ROOT, "task", "Q1");
+  assert.deepEqual(probe.planner.termsPrompts, [requestPrompt]);
+  const session = [...probe.planner.history].find(([, sent]) => sent.includes(requestPrompt))?.[0];
+  assert.ok(session !== undefined && session !== "test-session", `the request ran in ${session}`);
+  assert.ok(!probe.reviewer.prompts.includes(prompts.termsReviewPrompt(TEST_ROOT, 1)));
+  const [first, again] = presentedQuestions(probe.ui);
+  assert.deepEqual([first.number, again.number], [1, 1]);
+  assert.deepEqual(first.explanations, []);
+  assert.deepEqual(again.explanations, [zod]);
+  for (const q of [first, again]) {
+    assert.equal(piecesText(q.question), piecesText(entry.question));
+    assert.deepEqual(textOfBlocks(q.context.blocks as S.Block[]), textOfBlocks(entry.context));
+    assert.deepEqual(q.options.map((o) => piecesText(o.label)), entry.proposed_answers.map((a) => piecesText(a.label)));
+  }
+  assert.ok(probe.ui.notified.some((e) => e._tag === "QuestionExplained"));
+  assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, terms().entries);
+  const conversation = read(probe.dir, "conversation.md");
+  assert.match(conversation, /## Explanations of terms requested for Question 1/);
+  assert.match(conversation, /zod/);
+  assert.ok(probe.ui.said.includes(prompts.termsRequestedLine(1)));
+  assert.ok(probe.planner.prompts.includes(prompts.interviewUserMessage("1")));
+  assert.ok(!probe.planner.prompts.some((p) => p.includes("/terms")));
+});
+
+test("onRequest: a requested reply that fails its validation twice halts with QuestionInvalid", async () => {
+  const { layer } = testLayer(tempRepo(), {
+    answers: ["/terms"],
+    steps: [{ output: { questions: [entry] } }, interviewTurns[0]],
+    terms: [{ output: { entries: [] } }, { output: { entries: [] } }],
+    reviews: [{ issues: [] }],
+  });
+  await refinementFailsWith(layer, "onRequest", "QuestionInvalid", /exactly one/);
+});
+
+test("checked and unchecked: no prompt of the interview offers the terms", async () => {
+  for (const choice of ["checked", "unchecked"] as const) {
+    const { layer, probe } = testLayer(tempRepo(), {
+      answers: ["1", ""],
+      steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+      terms: [{ output: terms() }],
+      reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
+    });
+    await runRefinement(layer, "task", choice);
+    assert.ok(probe.ui.asked.every((a) => !prompts.offersOf(a).terms), choice);
+  }
+});
+
+test("onRequest: an agreed question that has its explanations offers no request", async () => {
+  // A question asked again after its terms were written keeps them and offers nothing further.
+  const twice = [interviewTurns[0], interviewTurns[0], interviewTurns[1]];
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["/terms", "1", "2", ""],
+    steps: [{ output: { questions: [entry] } }, ...twice],
+    terms: [{ output: terms() }],
+    reviews: [{ issues: [] }, { issues: [] }],
+  });
+  await runRefinement(layer, "task", "onRequest");
+  const presented = presentedQuestions(probe.ui).filter((q) => q.origin.kind === "clarification");
+  assert.equal(presented.length, 3);
+  assert.deepEqual(presented[2].explanations, [zod]);
+  assert.equal(probe.planner.termsPrompts.length, 1);
+  assert.deepEqual(probe.ui.asked.map((a) => prompts.offersOf(a).terms).slice(0, 3), [true, false, false]);
+});

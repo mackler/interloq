@@ -1049,6 +1049,10 @@ export const termsChoiceLine = (terms: TermsMode): string => {
       return "Explanations of terms: not written before the first question; you can ask for a question's explanations while it is on the screen.";
   }
 };
+/** Issue #142: the start of a question's explanations written on the user's request, as the run says it. */
+export const termsRequestedLine = (question: number): string => `Claude Code explains the terms of Question ${question} ...`;
+/** Issue #142: the heading in conversation.md of a question's explanations written on the user's request. */
+export const termsRequestedHeading = (question: number): string => `Explanations of terms requested for Question ${question}`;
 /** The "p" choice at the cycle limit of a decision loop (D10 of the decision-support plan). */
 export const PROCEED_TO_CHOICE = "proceed to your choice with the analysis as it is";
 /** The review loop's lines: a cycle's review and response. */

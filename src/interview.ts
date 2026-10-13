@@ -71,7 +71,7 @@ export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<voi
     // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
     yield* termsBeforeInterview(task, agreed, terms);
     yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
-    yield* interview(prompts.interviewOpenPrompt(store.root), "clarification", agreed.map((q) => q.id));
+    yield* interview(prompts.interviewOpenPrompt(store.root), "clarification", agreed.map((q) => q.id), terms === "onRequest" ? { kind: "onRequest", task } : { kind: "never" });
 
     const reviewed = yield* reviewLoop(requirementsSubject());
     yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: reviewed.result });

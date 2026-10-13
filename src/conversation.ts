@@ -6,12 +6,13 @@ import { InterviewTurnInvalid, type RunError } from "./errors.ts";
 import { type AgreedAnswers, mentionsId, skippedQuestions, type TurnSkipProblem, waitingFor } from "./premises.ts";
 import { parseInterviewMessage } from "./input.ts";
 import * as prompts from "./prompts.ts";
-import { interviewSays, recordHeading } from "./render.ts";
+import { interviewSays, recordHeading, renderTerms } from "./render.ts";
+import { requestedTermsValidation, withTermsEntry } from "./termsValidation.ts";
 import { bothValidations, planningCall, questionsValidation, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import type { QuestionsFile, TermsEntry } from "./schema.ts";
 import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNormalize.ts";
-import { type Services, Store, Ui } from "./services.ts";
+import { Planner, type Services, Store, Ui } from "./services.ts";
 import { agentContext, askOffering, numberedOptions, programContext, type QuestionDraft } from "./offer.ts";
 import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
@@ -103,10 +104,36 @@ export const turnDraft = (turn: TurnVariant, records: AgreedRecords): QuestionDr
 };
 
 /**
+ * Issue #142: whether an interview offers the explanations of an agreed question that has none, on the user's request
+ * (the run's choice onRequest, with the task the request's prompt carries), or never.
+ */
+export type TermsOffer = Readonly<{ kind: "never" }> | Readonly<{ kind: "onRequest"; task: string }>;
+
+/**
+ * The request for one agreed question's explanations (issue #142): one Claude Code call in a fresh session, a planning
+ * call under behavior 3 with no review, whose entry joins terms.json; the question is then presented from the records
+ * again, its wording unchanged since requestedTermsValidation refused any change.
+ */
+const requestTerms = (task: string, agreed: QuestionsFile["questions"][number], turn: TurnVariant, questions: QuestionsFile["questions"], number: number): Effect.Effect<QuestionDraft, RunError, Services> =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const ui = yield* Ui;
+    yield* ui.say(prompts.termsRequestedLine(number));
+    const planner = yield* (yield* Planner).fresh;
+    const written = yield* planningCall(prompts.termsOnRequestPrompt(store.root, task, agreed.id), S.TermsWrite, "planning", "records", requestedTermsValidation<S.TermsWrite>(agreed)).pipe(Effect.provideService(Planner, planner));
+    const entries = written.output.entries.filter((e) => e.id === agreed.id);
+    const terms = entries.reduce((all, e) => withTermsEntry(all, e, questions), yield* store.loadTerms());
+    yield* store.saveTerms(terms);
+    yield* store.converse(`## ${prompts.termsRequestedHeading(number)}\n\n${yield* Effect.fromResult(renderTerms(entries))}\n`);
+    return turnDraft(turn, { questions, terms });
+  });
+
+/**
  * A conversation between the user and Claude Code. It ends when Claude Code
  * reports completion and the user confirms the summary, which the program writes to requirements.md.
+ * Issue #142: terms.json is read again before each question, so that explanations written on request stay with it.
  */
-export const interview = (opening: string, stage: InterviewStage, agreed: readonly string[]): Effect.Effect<void, RunError, Services> =>
+export const interview = (opening: string, stage: InterviewStage, agreed: readonly string[], termsOffer: TermsOffer): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -117,8 +144,9 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
     yield* store.converse(`## ${recordHeading(stage)}\n\n`);
     // S16, S18: the questions of questions.json were reviewed, and are presented from the records with their terms; any
     // other question a turn asks is held to the rules here.
-    const records: AgreedRecords = { questions: (yield* store.loadQuestions()).questions, terms: yield* store.loadTerms() };
-    const recorded = records.questions.map((q) => q.id);
+    const questions = (yield* store.loadQuestions()).questions;
+    const records = { questions };
+    const recorded = questions.map((q) => q.id);
     let prompt = opening;
     // Issue #99: the user's choice for each agreed question, replaced after each reply; the first interview alone skips.
     let answers: AgreedAnswers = new Map();
@@ -147,8 +175,14 @@ export const interview = (opening: string, stage: InterviewStage, agreed: readon
       }
 
       // A blank message is asked again inside the offer, so that it is never recorded as the choice (W1-R1-1).
-      const draft = turnDraft(turn, records);
-      const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.interviewMessagePrompt, draft, (m) => m !== ""));
+      const terms = yield* store.loadTerms();
+      const draft = turnDraft(turn, { questions, terms });
+      const asked = draft.origin.kind === "clarification" ? questions.find((q) => draft.origin.kind === "clarification" && q.id === draft.origin.id) : undefined;
+      const request =
+        termsOffer.kind === "onRequest" && asked !== undefined && !terms.some((t) => t.id === asked.id)
+          ? (number: number) => requestTerms(termsOffer.task, asked, turn, questions, number)
+          : null;
+      const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.interviewMessagePrompt, draft, (m) => m !== "", request));
       if (reply.kind === "empty") continue;
       yield* store.converse(`**User:** ${reply.kind === "done" ? "/done" : reply.text}\n\n`);
       if (reply.kind === "done") {
