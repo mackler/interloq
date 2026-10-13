@@ -73,6 +73,20 @@ test("interpretExecution returns the report when it is valid and there is no sto
   assert.deepEqual(outcome, { status: "finished", summary: "all done", question: "", remainingWork: "", userInput: null });
 });
 
+// Issue #154 (Q2): work left and nothing for the user to decide is its own status, which the run continues without asking.
+test("interpretExecution reads a continuing report as a continuation", () => {
+  const outcome = interpretExecution(complete({ status: "continuing", summary: "half", question: "ignored", remaining_work: "S3 and S4" }), null);
+  assert.deepEqual(outcome, { status: "continuing", summary: "half", remainingWork: "S3 and S4" });
+});
+
+test("interpretExecution: a recorded stop takes precedence over a continuing report, and one before a transport fault stands", () => {
+  const stop = { question: "A or B?", input: "A or B? -> A" };
+  const report = { status: "continuing", summary: "s", question: "", remaining_work: "w" };
+  assert.deepEqual(interpretExecution(complete(report), stop), { status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "A or B? -> A" });
+  assert.deepEqual(interpretExecution({ ...complete(report), error: "socket hang up" }, null, true), { status: "continuing", summary: "s", remainingWork: "w" });
+  assert.equal(interpretExecution({ ...complete(report), error: "error_during_execution" }, null, false).status, "aborted");
+});
+
 test("interpretExecution gives a recorded stop precedence over the report, valid or not", () => {
   const stop = { question: "A or B?", input: "A or B? -> A" };
   const valid = interpretExecution(complete({ status: "finished", summary: "s", question: "", remaining_work: "w" }), stop);
@@ -83,13 +97,14 @@ test("interpretExecution gives a recorded stop precedence over the report, valid
 
 test("interpretExecution treats a missing or invalid report and a call error as aborted, keeping the result text", () => {
   const invalid = interpretExecution(complete({ status: "bogus" }, "text only"), null);
-  assert.equal(invalid.status, "aborted");
+  assert.ok(invalid.status === "aborted");
   assert.equal(invalid.summary, "text only");
   assert.match(invalid.question, /ended without a status report: the status report does not match its schema/);
   const missing = interpretExecution(complete(null, "text only"), null);
+  assert.ok(missing.status === "aborted");
   assert.match(missing.question, /ended without a status report: no structured output/);
   const failed = interpretExecution({ ...complete(null), error: "error_during_execution" }, null);
-  assert.equal(failed.status, "aborted");
+  assert.ok(failed.status === "aborted");
   assert.match(failed.question, /ended without a status report: error_during_execution/);
 });
 

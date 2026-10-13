@@ -8,7 +8,7 @@ import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { RunMode } from "./runMode.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
-import type { Config, DecisionAnalysis, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
+import type { Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
@@ -70,7 +70,7 @@ export interface PlannerShape {
   /** A call in which Claude Code implements the plan. */
   /** An execution call; `reporter` answers its report_step calls (issue #6, Q2). */
   /** Declares no TransportFault (issue #26): the adapter retries a transport fault itself, and exhaustion is AgentUnreachable. */
-  executing(prompt: string, reporter: StepReporter): Effect.Effect<ExecOutcome, PlannerError | AgentUnreachable, Decider>;
+  executing(prompt: string, reporter: StepReporter): Effect.Effect<ExecCallOutcome, PlannerError | AgentUnreachable, Decider>;
   readonly sessionId: Effect.Effect<string | null>;
   /** A planner over a new session, with the same hooks and callbacks (a decision loop, D4 of the decision-support plan). */
   readonly fresh: Effect.Effect<PlannerShape>;

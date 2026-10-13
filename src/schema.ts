@@ -251,7 +251,7 @@ export const InterviewTurn = Schema.Struct({
 });
 
 export const ExecReport = Schema.Struct({
-  status: Schema.Literals(["finished", "needs_input", "blocked"]),
+  status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]),
   summary: Schema.String,
   question: Schema.String,
   remaining_work: Schema.String,
@@ -485,6 +485,13 @@ export type DecisionResponse = typeof DecisionResponse.Type;
 export type DecisionApplied = typeof DecisionApplied.Type;
 export type ExecReport = typeof ExecReport.Type;
 export type ExecOutcome = typeof ExecOutcome.Type;
+/**
+ * One execution call that ended with work left and nothing for the user to decide (issue #154, decision Q2): the run
+ * continues the phase's session without asking. Never a phase's outcome, so it is never recorded or decoded.
+ */
+export type ExecContinuation = Readonly<{ status: "continuing"; summary: string; remainingWork: string }>;
+/** The outcome of one execution call: a phase's outcome, or a continuation (issue #154). */
+export type ExecCallOutcome = ExecOutcome | ExecContinuation;
 export type LogEntry = typeof LogEntry.Type;
 export type ReviewEntry = typeof ReviewEntry.Type;
 export type Config = typeof Config.Type;

@@ -942,6 +942,7 @@ test("a relayed question without the shape is not denied: a context call writes 
   assert.match(explained[0].facts, /# The plan\n\n1\. Build it\./);
   const [q] = fake.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
   assert.equal(piecesText(q.question), "A or B?");
+  assert.ok(outcome.status === "needs_input");
   assert.match(outcome.userInput ?? "", /A or B\? -> B/, "the recorded stop and its answer are unchanged");
 });
 

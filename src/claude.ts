@@ -11,7 +11,7 @@ import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, 
 import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
-import type { ExecOutcome } from "./schema.ts";
+import type { ExecCallOutcome } from "./schema.ts";
 import { askOffering, numberedOptions, permissionDraft, programContext, type QuestionDraft } from "./offer.ts";
 import { plainPieces } from "./pieces.ts";
 import { parseRelayedQuestion, type QuestionOrigin } from "./question.ts";
@@ -423,7 +423,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
          * prompt, with the same hooks, stop and report_step server. It fails with TransportFault only for a transport fault
          * without a recorded stop and without a valid report; otherwise the outcome is interpreted.
          */
-        const attempt = (n: number): Effect.Effect<ExecOutcome, CallbackError | ClaudeSessionTooLong | TransportFault | UsageLimited> =>
+        const attempt = (n: number): Effect.Effect<ExecCallOutcome, CallbackError | ClaudeSessionTooLong | TransportFault | UsageLimited> =>
           Effect.gen(function* () {
             const outcome = yield* call(
               session,

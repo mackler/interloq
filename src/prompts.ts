@@ -850,6 +850,13 @@ ${QUESTION_TEXT_FORMAT}
 For example:
 ${relayedQuestionText(RELAYED_EXAMPLE)}`;
 /**
+ * The status of an execution report for work left with nothing for the user to decide (issue #154, decision Q2): the
+ * run continues the phase's session with executionContinuingPrompt and asks the user nothing.
+ */
+export const CONTINUING_STATUS_SENTENCE = "If steps remain and there is no question for the user and no failure you cannot correct, for example when you end your turn before the work is done, return status 'continuing' with the remaining work in remaining_work: Interloq then tells you to go on with the remaining work in this session, without asking the user.";
+/** The status of an execution report for a failure that needs the user (issue #154: no longer for work merely left). */
+export const BLOCKED_STATUS_SENTENCE = "Return status 'blocked' only for a failure you cannot correct and that needs the user, for example a command that fails and that you cannot correct or a denied permission, with the description in the question field.";
+/**
  * The prompt of an execution call. Each execution phase runs in a Claude Code session of its own (issue #117), which has
  * not seen the planning, so the prompt names the task and the records it must follow.
  */
@@ -861,7 +868,8 @@ If you need information or a decision from the user, or if a remaining step prov
 ${RELAYED_SHAPE}
 ${questionWritingRules()}
 ${BACKGROUND_SUITE_SENTENCE}
-If you cannot continue for another reason, for example a command that fails and that you cannot correct or a denied permission, stop and return status 'blocked' with the description in the question field.
+${CONTINUING_STATUS_SENTENCE}
+${BLOCKED_STATUS_SENTENCE}
 When every step is completed and verified, return status 'finished'.
 In every case put a summary of the work done in summary and a description of the steps not yet completed in remaining_work.
 Task: ${task}`;
@@ -2336,6 +2344,18 @@ export const TRANSPORT_WHAT_EXECUTION = "the implementation";
  * The prompt of a resumed execution call after a transport fault (issue #26, Q4): the session continues where it was, and
  * the steps are reported with report_step as before.
  */
+/**
+ * The prompt that continues an execution phase's session after a report with status continuing (issue #154, decision
+ * Q2): the work left, as Claude Code reported it, and the instruction to go on with it without asking the user.
+ */
+export function executionContinuingPrompt(remainingWork: string): string {
+  return `Your status report said that work remains and that there is nothing for the user to decide. Interloq asked the user nothing: continue with the remaining steps of the plan in this session. The remaining work, as you reported it: ${remainingWork.trim() === "" ? "not reported" : remainingWork}
+Call the tool ${REPORT_STEP_TOOL_NAME} as before when a step begins and when it is done. ${resumeStepSentence} Return the status report at the end.`;
+}
+/** The line said on the page and written to conversation.md when an execution call ends with status continuing (issue #154). */
+export function continuingLine(label: string, remainingWork: string): string {
+  return `${label} ended a turn with work remaining and nothing for you to decide; Interloq told Claude Code to continue. Remaining work: ${remainingWork.trim() === "" ? "not reported" : remainingWork}`;
+}
 export const executionContinuePrompt = `The connection to the model dropped during this execution phase. The work done so far is in the project, and the steps you reported so far are recorded. Continue from where you were: call the tool ${REPORT_STEP_TOOL_NAME} as before when a step begins and when it is done, and return the status report at the end.`;
 
 /** The program's retry on the page's activity line, after the agent's name: a count of attempts, not progress. */

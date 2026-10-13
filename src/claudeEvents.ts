@@ -5,7 +5,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
-import type { ExecOutcome, ExecReport } from "./schema.ts";
+import type { ExecCallOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
 import { type ClaudeFailure, rejectionOf } from "./transport.ts";
 
@@ -116,7 +116,7 @@ export const execReport = (structured: unknown): ExecReport | null => {
  * report is treated as a missing one (status aborted). Execution calls never get a repair turn (decision Q5).
  * `transport` is whether the call's error is a transport fault (src/transport.ts): a valid report before one stands.
  */
-export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, transport = false): ExecOutcome => {
+export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, transport = false): ExecCallOutcome => {
   const report = execReport(outcome.structured);
   if (stop !== null) {
     return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input };
@@ -131,6 +131,8 @@ export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, tran
   switch (variant.kind) {
     case "finished":
       return { status: "finished", summary: variant.summary, question: "", remainingWork: variant.remainingWork, userInput: null };
+    case "continuing":
+      return { status: "continuing", summary: variant.summary, remainingWork: variant.remainingWork };
     case "awaiting_input":
       return { status: "needs_input", summary: variant.summary, question: variant.question, remainingWork: variant.remainingWork, userInput: null };
     case "blocked":

@@ -9,13 +9,13 @@ import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
+import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
-import { Decider, Planner, RunConfig, type Services, Store, Tracker, Ui } from "./services.ts";
+import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, Tracker, Ui } from "./services.ts";
 import { countOfKind, foreseenPhases as foreseen, type Phase, phaseName } from "./uiEvents.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
 
@@ -88,6 +88,21 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
  * Planning phase K, execution phase K and work review K, until Claude Code reports 'finished' and the work review
  * converges; succeeds with the number of execution phases. `withRequirements`: the run's requirements.md exists.
  */
+/**
+ * One execution phase's calls on its own planner (issue #154, decisions Q2 and Q3): a call that ends with status
+ * continuing is followed by another in the same session, told to go on with the work it reported left, said on the page
+ * and written to conversation.md, with no question and no limit; the phase's outcome is the first other outcome.
+ */
+const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string): Effect.Effect<S.ExecOutcome, RunError, Decider | Ui | Store> =>
+  Effect.gen(function* () {
+    const outcome = yield* executor.executing(prompt, report);
+    if (outcome.status !== "continuing") return outcome;
+    const line = continuingLine(phaseLabel, outcome.remainingWork);
+    yield* (yield* Ui).say(line);
+    yield* (yield* Store).converse(`${line}\n\n`);
+    return yield* continuedExecution(executor, executionContinuingPrompt(outcome.remainingWork), report, phaseLabel);
+  });
+
 const implementationPhases = (task: string, withRequirements: boolean): Effect.Effect<number, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
@@ -154,7 +169,9 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
         // own, as each planning phase and work review does since issue #122; a transport retry and a usage-limit wait
         // resume this session, which the planner it is called on holds.
         const executor = yield* planner.fresh;
-        const outcome = yield* executor.executing(executePrompt(store.root, task, withRequirements), steps.report).pipe(
+        // Issue #154 (Q2, Q3): a call that reports work left and nothing to decide is continued in this session, without
+        // asking and without limit; the steps' end runs once, when the last call ends.
+        const outcome = yield* continuedExecution(executor, executePrompt(store.root, task, withRequirements), steps.report, label("execution", k)).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;

@@ -98,7 +98,8 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   // Decision Q1: the explaining conversation returns each agreed entry divided into pieces, with its explanations.
   sameType<Equals<DeepMutable<typeof S.TermsEntry.Type>, { id: string; explanations: Explanation[]; context: Block[]; history: Block[]; question: Piece[]; reason: Block[]; proposed_answers: PieceOption[] }>>();
   sameType<Equals<DeepMutable<typeof S.InterviewTurn.Type>, DeepMutable<legacy.InterviewTurn & { asked_ids: readonly string[] } & CurrentQuestion>>>();
-  sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<legacy.ExecReport>>>();
+  // Issue #154 (Q2): the report's fourth status, continuing.
+  sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<Omit<legacy.ExecReport, "status"> & { status: legacy.ExecReport["status"] | "continuing" }>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<legacy.ExecOutcome>>>();
   // Issue #26, Q1: the transport retry budget.
   sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<Omit<legacy.Config, "questionPhase"> & { maxTransportRetries: number; transportRetryDelaySeconds: number; costWarningUsd: number; tracker: GithubTrackerShape | TrelloTrackerShape | GitlabTrackerShape | null; terms: "checked" | "unchecked" | "onRequest" }>>>();

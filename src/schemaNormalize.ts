@@ -22,6 +22,7 @@ export const normalizeTurn = (turn: InterviewTurn): TurnVariant => {
 /** The status report of an execution call, by outcome: the `question` field is a question only when input is awaited, a description when blocked. */
 export type ReportVariant =
   | Readonly<{ kind: "finished"; summary: string; remainingWork: string }>
+  | Readonly<{ kind: "continuing"; summary: string; remainingWork: string }>
   | Readonly<{ kind: "awaiting_input"; question: string; summary: string; remainingWork: string }>
   | Readonly<{ kind: "blocked"; description: string; summary: string; remainingWork: string }>;
 export const normalizeReport = (report: ExecReport): ReportVariant => {
@@ -29,6 +30,8 @@ export const normalizeReport = (report: ExecReport): ReportVariant => {
   switch (report.status) {
     case "finished":
       return { kind: "finished", ...common };
+    case "continuing":
+      return { kind: "continuing", ...common };
     case "needs_input":
       return { kind: "awaiting_input", question: report.question, ...common };
     case "blocked":

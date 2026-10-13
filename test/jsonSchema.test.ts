@@ -52,7 +52,11 @@ const agentSchemas = {
   review: { effect: S.Review, legacy: legacy.reviewSchema },
   plannerResponse: { effect: S.PlannerResponse, legacy: withQuestions(legacy.plannerResponseSchema) },
   planWrite: { effect: S.PlanWriteResult, legacy: withQuestions(legacy.planWriteSchema) },
-  execReport: { effect: S.ExecReport, legacy: legacy.execReportSchema },
+  // Issue #154 (Q2): the report's fourth status, beyond the frozen legacy schema, which stays frozen.
+  execReport: {
+    effect: S.ExecReport,
+    legacy: { ...legacy.execReportSchema, properties: { ...legacy.execReportSchema.properties, status: { type: "string", enum: ["finished", "continuing", "needs_input", "blocked"] } } },
+  },
   questionList: { effect: S.QuestionList, legacy: withContext(legacy.questionListSchema) },
   questionListResponse: { effect: S.QuestionListResponse, legacy: withContext(withQuestions(legacy.questionListResponseSchema)) },
   // Issue #21 (Q6 follow-up): the interview turn has asked_ids beyond the frozen legacy schema, which stays frozen.
