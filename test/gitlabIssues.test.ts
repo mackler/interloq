@@ -119,6 +119,21 @@ test("connectionRefused recognizes ECONNREFUSED in the cause chain and in an agg
   assert.equal(GITLAB_CONNECT_ATTEMPTS, 3);
 });
 
+test("an aggregate carrying Node's own code ECONNREFUSED is judged by its errors alone (W1-R1-1)", () => {
+  const refused = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+  const reset = Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+  const timeout = Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" });
+  const fetchFailed = (cause: unknown) => new TypeError("fetch failed", { cause });
+  const asNode = (errors: readonly Error[]) => Object.assign(new AggregateError(errors), { code: "ECONNREFUSED" });
+  assert.equal(connectionRefused(asNode([refused, reset])), false);
+  assert.equal(connectionRefused(fetchFailed(asNode([refused, reset]))), false);
+  assert.equal(connectionRefused(asNode([refused, timeout])), false);
+  assert.equal(connectionRefused(fetchFailed(asNode([refused, timeout]))), false);
+  assert.equal(connectionRefused(asNode([refused, refused])), true);
+  assert.equal(connectionRefused(fetchFailed(asNode([refused, refused]))), true);
+  assert.equal(connectionRefused(asNode([])), false);
+});
+
 test("descriptionTooLongText names the length and the limit", () => {
   assert.equal(descriptionTooLongText({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: 1_000_001 }), "the refinement would make the issue's description 1000001 characters long, more than GitLab's limit of 1000000");
 });

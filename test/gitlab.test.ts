@@ -318,6 +318,12 @@ test("a transport failure that is not a refused connection is not retried", asyn
   assert.equal(stub.sent().length, 1);
 });
 
+test("a refused connection mixed with a reset, as one aggregate, is sent once and not retried (W1-R1-1)", async () => {
+  const stub = makeStub(() => "refusedMixed");
+  assert.equal((await failure(stub, (t) => t.read(id("1"))))._tag, "TrackerUnreachable");
+  assert.equal(stub.sent().length, 1);
+});
+
 test("the token is in no error the adapter produced", () => {
   assert.ok(errors.length >= 20);
   for (const error of errors) {

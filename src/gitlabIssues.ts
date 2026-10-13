@@ -117,11 +117,12 @@ export const GITLAB_CONNECT_ATTEMPTS = 3;
  * Whether a client's transport failure is a refused connection, which sent nothing and so may be tried again; a reset
  * or a timeout may have reached GitLab and is not. Node's fetch fails with a TypeError whose cause carries the system
  * error's code, or an AggregateError of the addresses it tried; the shape is inferred, not observed against gitlab.com.
- * Only codes are read: nothing of the error is copied anywhere.
+ * Only codes are read: nothing of the error is copied anywhere. An aggregate is judged by its errors alone, because Node
+ * copies its first error's code onto it (W1-R1-1).
  */
 export const connectionRefused = (cause: unknown): boolean => {
   if (typeof cause !== "object" || cause === null) return false;
-  if (errorCode(cause) === "ECONNREFUSED") return true;
   if (cause instanceof AggregateError) return cause.errors.length > 0 && cause.errors.every(connectionRefused);
+  if (errorCode(cause) === "ECONNREFUSED") return true;
   return connectionRefused((cause as { cause?: unknown }).cause);
 };

@@ -9,11 +9,20 @@ export type SentRequest = Readonly<{ method: string; url: URL; headers: Readonly
  * The answer to a request: a web Response; a transport failure (no answer at all); or a failure of the client after an
  * answer, its body undecodable ("decode") or empty ("emptyBody"), as a client may report it (W1-R1-2). "refused" is a
  * connection refused before anything was sent, in the shape Effect's FetchHttpClient gives it: a TransportError whose
- * cause is fetch's TypeError, whose own cause carries the system error's code ECONNREFUSED.
+ * cause is fetch's TypeError, whose own cause carries the system error's code ECONNREFUSED. "refusedMixed" is the same
+ * TypeError over an AggregateError of a refused connection and a reset, carrying the code ECONNREFUSED of its first
+ * error as Node's does (W1-R1-1): one of its attempts may have reached the server.
  */
-export type Answer = Response | "transport" | "refused" | "decode" | "emptyBody";
+export type Answer = Response | "transport" | "refused" | "refusedMixed" | "decode" | "emptyBody";
 
 const refusedCause = (): TypeError => new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED 172.65.251.78:443"), { code: "ECONNREFUSED" }) });
+const refusedMixedCause = (): TypeError =>
+  new TypeError("fetch failed", {
+    cause: Object.assign(
+      new AggregateError([Object.assign(new Error("connect ECONNREFUSED 172.65.251.78:443"), { code: "ECONNREFUSED" }), Object.assign(new Error("socket hang up"), { code: "ECONNRESET" })]),
+      { code: "ECONNREFUSED" },
+    ),
+  });
 /** `filtered`: the client wrapped by HttpClient.filterStatusOk, which fails a non-2xx answer with a StatusCodeError. */
 export type StubOptions = Readonly<{ filtered: boolean }>;
 
@@ -30,6 +39,7 @@ export const makeStub = (handler: (request: SentRequest) => Answer, options: Stu
     const answer = handler(seen);
     if (answer === "transport") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description: "connection reset" }) }));
     if (answer === "refused") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, cause: refusedCause() }) }));
+    if (answer === "refusedMixed") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, cause: refusedMixedCause() }) }));
     if (answer === "decode") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.DecodeError({ request, response: HttpClientResponse.fromWeb(request, new Response("<html>")), description: "not JSON" }) }));
     if (answer === "emptyBody") return Effect.fail(new HttpClientError.HttpClientError({ reason: new HttpClientError.EmptyBodyError({ request, response: HttpClientResponse.fromWeb(request, new Response(null)), description: "empty body" }) }));
     return Effect.succeed(HttpClientResponse.fromWeb(request, answer));
