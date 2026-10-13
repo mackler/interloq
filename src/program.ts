@@ -5,7 +5,7 @@ import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Laye
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
-import { blankItemText, itemStartedLine, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { blankItemText, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
@@ -131,7 +131,7 @@ export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<n
  * `fault` fails when the server meets an error it cannot trace to one run (issue #158): every stage of the run, from the
  * configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever it is.
  */
-const programWith = (start: Started, wiring: Wiring, _fault: Effect.Effect<never, ServerFault> = Effect.never): Effect.Effect<number, never, Scope.Scope> =>
+const programWith = (start: Started, wiring: Wiring, fault: Effect.Effect<never, ServerFault> = Effect.never): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const project = path.resolve(start.project);
     const mode = start.kind.mode;
@@ -155,34 +155,55 @@ const programWith = (start: Started, wiring: Wiring, _fault: Effect.Effect<never
         return 1;
       });
 
-    // The configuration, before any agent exists and before the records are initialised (Q4).
-    const configExit = yield* Effect.exit(loadConfig(project, wiring.sharedConfig).pipe(Effect.provide(wiring.platform)));
-    if (Exit.isFailure(configExit)) {
-      const error = Cause.findErrorOption(configExit.cause);
-      if (Option.isNone(error)) return yield* Effect.die(Cause.squash(configExit.cause));
-      return yield* halted(describe(error.value), null, yield* store(planned, []));
-    }
-    const config = configExit.value;
+    /**
+     * What the run reads before its records exist (issue #158): the configuration, the format and the item. A halt here
+     * is said at once and its code returned. Raced with the server's fault, which may come while the tracker's read
+     * hangs; the records directory is allocated after it, so a fault never leaves the run two directories.
+     */
+    const prepare = Effect.gen(function* () {
+      // The configuration, before any agent exists and before the records are initialised (Q4).
+      const configExit = yield* Effect.exit(loadConfig(project, wiring.sharedConfig).pipe(Effect.provide(wiring.platform)));
+      if (Exit.isFailure(configExit)) {
+        const error = Cause.findErrorOption(configExit.cause);
+        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(configExit.cause));
+        return yield* halted(describe(error.value), null, yield* store(planned, []));
+      }
+      const config = configExit.value;
 
-    // The format of a decision analysis (D7), before any agent exists and before the records are initialized.
-    const formatFile = wiring.decisionFormat ?? DECISION_FORMAT;
-    const formatExit = yield* Effect.exit(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        return yield* fs.readFileString(formatFile);
-      }).pipe(Effect.provide(wiring.platform)),
-    );
-    if (Exit.isFailure(formatExit)) {
-      const error = Cause.findErrorOption(formatExit.cause);
-      if (Option.isNone(error)) return yield* Effect.die(Cause.squash(formatExit.cause));
-      return yield* halted(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), null, yield* store(planned, []));
-    }
-    const decisionFormat = formatExit.value;
+      // The format of a decision analysis (D7), before any agent exists and before the records are initialized.
+      const formatFile = wiring.decisionFormat ?? DECISION_FORMAT;
+      const formatExit = yield* Effect.exit(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          return yield* fs.readFileString(formatFile);
+        }).pipe(Effect.provide(wiring.platform)),
+      );
+      if (Exit.isFailure(formatExit)) {
+        const error = Cause.findErrorOption(formatExit.cause);
+        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(formatExit.cause));
+        return yield* halted(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), null, yield* store(planned, []));
+      }
+      const decisionFormat = formatExit.value;
 
-    // Issue #120: the item and its task text, read from the tracker before any agent exists and before the records exist.
-    const taskRead = yield* start.task(config, ui);
-    if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
-    const { task, tracker, requirements } = taskRead.success;
+      // Issue #120: the item and its task text, read from the tracker before any agent exists and before the records exist.
+      const taskRead = yield* start.task(config, ui);
+      if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
+      const { task, tracker, requirements } = taskRead.success;
+
+      return { config, decisionFormat, task, tracker, requirements } as const;
+    });
+    const prepared = yield* Effect.exit(Effect.raceFirst(prepare, fault));
+    if (Exit.isFailure(prepared)) {
+      const error = Cause.findErrorOption(prepared.cause);
+      if (Option.isNone(error)) return yield* Effect.die(Cause.squash(prepared.cause));
+      // The fault came before the records existed: the run gets its directory, so that its halt is recorded.
+      const allocatedRoot = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
+      const faultRecords = yield* store(Exit.isSuccess(allocatedRoot) ? allocatedRoot.value : planned, []);
+      if (Exit.isSuccess(allocatedRoot)) yield* faultRecords.converse(serverFaultRecord(error.value.message)).pipe(Effect.ignore);
+      return yield* halted(describe(error.value), null, faultRecords);
+    }
+    if (typeof prepared.value === "number") return prepared.value;
+    const { config, decisionFormat, task, tracker, requirements } = prepared.value;
 
     const allocated = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
     if (Exit.isFailure(allocated)) {
@@ -213,7 +234,9 @@ const programWith = (start: Started, wiring: Wiring, _fault: Effect.Effect<never
             Effect.provide(context),
             Effect.map((phases) => ({ mode: "implementation", phases }) as const),
           );
-    const exit = yield* body.pipe(Effect.onInterrupt(() => interrupted), Effect.exit);
+    // The race with the server's fault is inside onInterrupt, so a body ended by the fault does not say INTERRUPTED;
+    // only an interruption of the whole run (Stop task) does.
+    const exit = yield* Effect.raceFirst(body, fault).pipe(Effect.onInterrupt(() => interrupted), Effect.exit);
 
     if (Exit.isSuccess(exit)) {
       if (exit.value.mode === "implementation") {
@@ -230,6 +253,7 @@ const programWith = (start: Started, wiring: Wiring, _fault: Effect.Effect<never
       yield* interrupted;
       return 130;
     }
+    if (error.value._tag === "ServerFault") yield* records.converse(serverFaultRecord(error.value.message)).pipe(Effect.ignore);
     return yield* halted(describe(error.value), yield* sessionId, records);
   });
 

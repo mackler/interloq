@@ -3,14 +3,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Clock, Effect, Exit, Fiber, Result } from "effect";
+import { Clock, Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect";
+import { ServerFault } from "../src/errors.ts";
+import { Reviewer, Tracker } from "../src/services.ts";
 import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { exitCodeOf, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
@@ -291,4 +293,59 @@ test("an execution refused because the session is too long halts with 1, with no
   assert.ok(said(probe).includes(`HALTED: ${sessionTooLongText("Prompt is too long")}`), said(probe));
   assert.equal(fs.existsSync(path.join(probe.dir, "work-review-1")), false);
   assert.deepEqual(probe.ui.asked, []);
+});
+
+// Issue #158 (the user's decision Q1): an error the server cannot trace to one run halts every run in progress with
+// ServerFault, wherever the run is, with its record in conversation.md; the run's code is 1 and nothing says INTERRUPTED.
+const faultWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promise<void>, start = scriptedStart(probe.project)): Promise<Exit.Exit<number, never>> => {
+  const fault = await Effect.runPromise(Deferred.make<never, ServerFault>());
+  const fiber = Effect.runFork(Effect.scoped(program(start, wiring, Deferred.await(fault))));
+  await Promise.race([reached, sleep(30_000).then(() => assert.fail("the program did not reach the point of the fault within 30 s"))]);
+  await sleep(10);
+  await Effect.runPromise(Deferred.fail(fault, new ServerFault({ message: "write EPIPE" })));
+  const ended = await Effect.runPromise(Fiber.await(fiber).pipe(Effect.timeoutOption("10 seconds")));
+  if (Option.isSome(ended)) return ended.value;
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  return assert.fail("the run did not end within 10 s of the server's fault");
+};
+const assertServerFault = (probe: WiringProbe, exit: Exit.Exit<number, never>, dir = probe.dir): void => {
+  assert.equal(exitCodeOf(exit), 1);
+  assert.ok(said(probe).includes(`HALTED: ${serverFaultText("write EPIPE")}`), said(probe));
+  assert.ok(!said(probe).includes("INTERRUPTED"));
+  const record = fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
+  assert.ok(record.endsWith(serverFaultRecord("write EPIPE")), record);
+  assert.ok(!record.includes("**Interrupted by the user.**"));
+};
+
+test("the server's fault while a run waits at a prompt halts it with 1 and its record", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...withQuestion, answers: [{ wait: true }] });
+  const exit = await faultWhen(probe, wiring, probe.ui.nextAsk());
+  assertServerFault(probe, exit);
+  assertTail(probe);
+});
+
+test("the server's fault during a Codex turn halts the run with 1 and its record, the turn ended", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  let ended = false;
+  const hanging = Layer.succeed(Reviewer, {
+    startPhase: Effect.succeed({ review: () => Effect.sync(reach).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Effect.sync(() => void (ended = true)))) }),
+  });
+  const exit = await faultWhen(probe, { ...wiring, agents: Layer.merge(wiring.agents, hanging) }, reached);
+  assertServerFault(probe, exit);
+  assert.ok(ended, "the Codex turn was not ended");
+});
+
+test("the server's fault before the run's records exist (a tracker read that never returns) halts it with 1 and creates its record", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  const { wiring, probe } = testWiring(tempRepo(), { tracker });
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const stuck: Wiring = { ...wiring, tracker: () => Result.succeed(Layer.succeed(Tracker, { ...tracker.tracker, read: () => Effect.sync(reach).pipe(Effect.andThen(Effect.never)) })) };
+  const exit = await faultWhen(probe, stuck, reached);
+  const runs = path.join(probe.project, "plan-review", "runs");
+  const dirs = fs.existsSync(runs) ? fs.readdirSync(runs) : [];
+  assert.equal(dirs.length, 1, "no records directory was created");
+  assertServerFault(probe, exit, path.join(runs, dirs[0]));
 });
