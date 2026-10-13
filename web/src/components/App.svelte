@@ -12,6 +12,7 @@
   import { BACK_TO_LIST, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ClientMessage, ListedItem } from "../../../src/protocol.ts";
+  import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
   import { itemsFrame, startFrame } from "../tabs.ts";
   import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
@@ -259,7 +260,7 @@
            notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
-      <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} onStart={(item: ListedItem) => { noticesSeen = view.notices.length; send(startFrame(mode, item)); }} onRefresh={() => requestItems(mode)} />
+      <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} onStart={(item: ListedItem) => { noticesSeen = view.notices.length; send(mode === "refinement" ? startFrame({ mode, item, terms: (tab.items as { terms?: TermsMode }).terms ?? "unchecked" }) : startFrame({ mode, item })); }} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch

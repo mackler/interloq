@@ -20,6 +20,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
+import { startOf } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
@@ -61,7 +62,7 @@ const eventsOf = (h: Harness, id: number): RunEvent[] => h.received.filter((b) =
 const ended = (h: Harness, id: number) => until(`the end of run ${id}`, () => eventsOf(h, id).some((e) => e._tag === "Ended"));
 const endCode = (h: Harness, id: number): number | undefined => eventsOf(h, id).flatMap((e) => (e._tag === "Ended" ? [e.code] : []))[0];
 const started = async (h: Harness, mode: RunMode = "implementation"): Promise<number> => {
-  const id = await run(h.manager.start(mode, nextItem(h, mode)));
+  const id = await run(h.manager.start(startOf(mode, nextItem(h, mode))));
   assert.equal(typeof id, "number", `refused: ${(id as Refusal).refused}`);
   return id as number;
 };
@@ -115,7 +116,7 @@ test("a second start in a mode is refused with that mode while the other mode ac
   const h = await harness(repo, [{ steps: [{ hang: true }] }, { steps: [{ hang: true }] }]);
   const id = await started(h, "implementation");
   await until("the hanging call", () => eventsOf(h, id).some((e) => e._tag === "Said" && /^Planning: requesting the initial plan/.test(e.text)));
-  const refusedStart = (await run(h.manager.start("implementation", nextItem(h, "implementation")))) as Refusal;
+  const refusedStart = (await run(h.manager.start(startOf("implementation", nextItem(h, "implementation"))))) as Refusal;
   assert.deepEqual(refusedStart, { refused: runInProgressText("implementation"), mode: "implementation" });
   const other = await started(h, "refinement");
   assert.deepEqual(await run(h.manager.current), { refinement: other, implementation: id });
@@ -125,7 +126,7 @@ test("a second start in a mode is refused with that mode while the other mode ac
   }
   for (const [cwd, reason] of [[path.join(repo, "nope"), /does not exist/], [path.join(repo, "a.txt"), /not a directory/], [tempDir("pr-plain-"), /not a git repository/]] as const) {
     const bad = await harness(cwd as string, []);
-    const refused = (await run(bad.manager.start("implementation", "1"))) as Refusal;
+    const refused = (await run(bad.manager.start(startOf("implementation", "1")))) as Refusal;
     assert.match(refused.refused, reason);
     assert.equal(refused.mode, "implementation");
   }
@@ -136,7 +137,7 @@ test("a start for an item whose state changed since the list was shown is refuse
   const h = await harness(repo, [converging]);
   const item = nextItem(h, "implementation");
   await run(h.tracker.tracker.setState(Result.getOrThrow(itemIdOf(item)), "implemented"));
-  const refused = (await run(h.manager.start("implementation", item))) as Refusal;
+  const refused = (await run(h.manager.start(startOf("implementation", item)))) as Refusal;
   assert.deepEqual(refused, { refused: `item ${item} is no longer refined: it is implemented; refresh the list`, mode: "implementation" });
   assert.deepEqual(h.received, []);
 });
@@ -174,9 +175,9 @@ test("a blank item id is refused, before the project check; no run starts and no
   const h = await harness(repo, [converging]);
   const bad = await harness(path.join(repo, "nope"), []);
   for (const item of ["", "   ", "\n\t "]) {
-    const refused = (await run(h.manager.start("refinement", item))) as Refusal;
+    const refused = (await run(h.manager.start(startOf("refinement", item)))) as Refusal;
     assert.deepEqual(refused, { refused: "no item was chosen", mode: "refinement" }, JSON.stringify(item));
-    assert.equal(((await run(bad.manager.start("implementation", item))) as Refusal).refused, "no item was chosen");
+    assert.equal(((await run(bad.manager.start(startOf("implementation", item)))) as Refusal).refused, "no item was chosen");
   }
   assert.deepEqual(await run(h.manager.current), NONE);
   assert.deepEqual(h.received, []);
@@ -271,7 +272,7 @@ test("over the real adapters and the fake SDK, the run reports both agents' acti
 test("a subdirectory of a repository and a bare repository are refused; the root and a link to it are accepted", async () => {
   const repo = tempRepo();
   fs.mkdirSync(path.join(repo, "sub"));
-  const sub = (await run((await harness(path.join(repo, "sub"), [])).manager.start("implementation", "1"))) as Refusal;
+  const sub = (await run((await harness(path.join(repo, "sub"), [])).manager.start(startOf("implementation", "1")))) as Refusal;
   assert.equal(typeof sub, "object", "the subdirectory was started");
   assert.match(sub.refused, /is inside the git repository/);
   assert.ok(sub.refused.includes(fs.realpathSync(repo)), "the refusal names the repository root");
@@ -280,7 +281,7 @@ test("a subdirectory of a repository and a bare repository are refused; the root
 
   const bare = tempDir("pr-bare-");
   execFileSync("git", ["init", "-q", "--bare", bare]);
-  const refusedBare = (await run((await harness(bare, [])).manager.start("implementation", "1"))) as Refusal;
+  const refusedBare = (await run((await harness(bare, [])).manager.start(startOf("implementation", "1")))) as Refusal;
   assert.equal(typeof refusedBare, "object", "the bare repository was started");
   assert.match(refusedBare.refused, /is a bare repository/);
 
@@ -331,7 +332,7 @@ test("start interrupted while Started is being delivered leaves a run that can b
       .subscribe((b) => (b._tag === "event" && b.event._tag === "Started" && b.run === 1 ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))) : Effect.void))
       .pipe(Scope.provide(h.scope)),
   );
-  const starting = Effect.runFork(h.manager.start("implementation", nextItem(h, "implementation")));
+  const starting = Effect.runFork(h.manager.start(startOf("implementation", nextItem(h, "implementation"))));
   await run(Deferred.await(entered));
   const interruption = Effect.runFork(Fiber.interrupt(starting));
   await run(Deferred.succeed(release, undefined));
@@ -394,7 +395,7 @@ test("append and end stamp every event with the Clock's time; the replay holds t
   };
   const repo = tempRepo();
   const h = await harness(repo, [converging]);
-  const id = await run(h.manager.start("implementation", nextItem(h, "implementation")).pipe(Effect.provideService(Clock.Clock, stepping)));
+  const id = await run(h.manager.start(startOf("implementation", nextItem(h, "implementation"))).pipe(Effect.provideService(Clock.Clock, stepping)));
   assert.equal(typeof id, "number");
   await ended(h, id as number);
   const mine = h.received.filter((b) => b.run === id);
@@ -500,17 +501,36 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
   const h = await harness(repo, []);
   for (const mode of ["refinement", "implementation"] as const) {
     const listed = await run(h.manager.listItems(mode));
-    assert.deepEqual(listed, { _tag: "Listed", items: ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "" })) });
+    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "" }));
+    // Issue #142: the Refinement tab's listing carries the configured choice of terms, which its control starts at.
+    assert.deepEqual(listed, mode === "refinement" ? { mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { mode, result: { _tag: "Listed", items } });
   }
   await run(h.tracker.failNext("list", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset" })));
-  assert.deepEqual(await run(h.manager.listItems("refinement")), { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: connection reset" });
+  assert.deepEqual(await run(h.manager.listItems("refinement")), { mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: connection reset" } });
 
   const shared = path.join(tempDir("pr-shared-"), "config.json");
   fs.writeFileSync(shared, "{}");
   const none = await run(makeRunManager(() => testWiring(repo).wiring, repo, [], "test", { sharedConfig: shared, tracker: () => Result.fail(new NoTracker()) }).pipe(Effect.provide(platformLayer)));
-  const notice = await run(none.listItems("implementation"));
+  const notice = (await run(none.listItems("implementation"))).result;
   assert.equal(notice._tag, "Unavailable");
   assert.match(notice._tag === "Unavailable" ? notice.notice : "", /no issue tracker is configured/);
-  const refused = (await run(none.start("implementation", "1"))) as Refusal;
+  const refused = (await run(none.start({ mode: "implementation", item: "1" }))) as Refusal;
   assert.deepEqual([refused.mode, /no issue tracker is configured/.test(refused.refused)], ["implementation", true]);
+});
+
+// Issue #142 (requirements Q3): the listing reads the configuration each time, so an edited file shows on the next Refresh.
+test("the Refinement listing carries the configured choice of terms; an unknown value is a notice", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, []);
+  const terms = async () => {
+    const listed = await run(h.manager.listItems("refinement"));
+    return listed.mode === "refinement" && listed.result._tag === "Listed" ? listed.result.terms : listed.result;
+  };
+  assert.equal(await terms(), "unchecked");
+  fs.mkdirSync(path.join(repo, "plan-review"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "plan-review", "config.json"), JSON.stringify({ terms: "checked" }));
+  assert.equal(await terms(), "checked");
+  fs.writeFileSync(path.join(repo, "plan-review", "config.json"), JSON.stringify({ terms: "sometimes" }));
+  const invalid = await terms();
+  assert.ok(typeof invalid !== "string" && invalid._tag === "Unavailable" && /not a valid configuration.*\(at terms\)/.test(invalid.notice), JSON.stringify(invalid));
 });

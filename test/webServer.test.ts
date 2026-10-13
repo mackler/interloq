@@ -8,15 +8,15 @@ import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
-import { ServerMessageSchema } from "../src/protocol.ts";
+import { decodeClient as decodeClientMessage, ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
-import { fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf } from "./helpers.ts";
+import { fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
 import { itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
-import { runInProgressText } from "../src/prompts.ts";
+import { runInProgressText, termsChoiceLine } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 
@@ -286,7 +286,7 @@ test("a start in a project that does not exist is refused with the reason and it
   const repo = tempRepo();
   await serve(await managerOf(path.join(repo, "missing"), []), dist(), async (port) => {
     const a = await connect(port);
-    a.send({ type: "start", mode: "refinement", item: "11" });
+    a.send({ type: "start", mode: "refinement", item: "11", terms: "checked" });
     await until("the refusal", () => refusals(a).length > 0);
     assert.match(refusals(a)[0], /does not exist/);
     assert.deepEqual(a.messages.filter((m) => m.type === "refused").map((m) => (m.type === "refused" ? m.mode : "?")), ["refinement"]);
@@ -296,7 +296,7 @@ test("a start in a project that does not exist is refused with the reason and it
     const a = await connect(port);
     a.send(itemsFrame("refinement"));
     await until("the items", () => a.messages.some((m) => m.type === "items"));
-    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "" })) } });
+    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "" })), terms: "unchecked" } });
     a.close();
   });
 });
@@ -312,7 +312,7 @@ for (const mode of ["refinement", "implementation"] as const) {
     await serve(await managerOf(repo, [{ steps: [{ hang: true }] }], [], tracker), dist(), async (port) => {
       const a = await connect(port);
       await until("the replay", () => a.messages.some((m) => m.type === "replay"));
-      a.send(pageStartFrame(mode, listed));
+      a.send(mode === "refinement" ? pageStartFrame({ mode, item: listed, terms: "checked" }) : pageStartFrame({ mode, item: listed }));
       await until("Started", () => (perRun(a).get(1) ?? []).length > 0);
       const started = perRun(a).get(1)![0].event;
       assert.ok(started._tag === "Started");
@@ -325,6 +325,24 @@ for (const mode of ["refinement", "implementation"] as const) {
     });
   });
 }
+// Issue #142, the seam of the choice of terms: the frame the page builds with the choice its control shows reaches the
+// refinement run, which records that choice; an implementation frame carrying a choice is no frame of the protocol.
+test("the page's refinement start frame with onRequest starts a run whose choice is onRequest", async () => {
+  const repo = tempRepo();
+  const fixture = MANAGER_ITEMS.find((i) => i.state === "unrefined")!;
+  await serve(await managerOf(repo, [{ steps: [{ hang: true }] }]), dist(), async (port) => {
+    const a = await connect(port);
+    await until("the replay", () => a.messages.some((m) => m.type === "replay"));
+    a.send(pageStartFrame({ mode: "refinement", item: { id: fixture.id, title: fixture.title, excerpt: "" }, terms: "onRequest" }));
+    await until("the choice recorded", () => runDirsOf(repo).length > 0 && fs.existsSync(path.join(runDirOf(repo), "conversation.md")) && fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8").includes(termsChoiceLine("onRequest")));
+    a.send({ type: "stop", incarnation: "test", run: 1 });
+    await until("the end", () => hasEnded(a, 1));
+    a.close();
+  });
+  assert.ok(Result.isFailure(decodeClientMessage(JSON.stringify({ type: "start", mode: "implementation", item: "1", terms: "checked" }))));
+  assert.ok(Result.isFailure(decodeClientMessage(JSON.stringify({ type: "start", mode: "refinement", item: "1" }))));
+  assert.ok(Result.isSuccess(decodeClientMessage(JSON.stringify({ type: "start", mode: "refinement", item: "1", terms: "unchecked" }))));
+});
 // W2-R1-3 of work review 2 (issue #120, S21): a tracker that never answers a listing holds back no later frame of the
 // tab: the server forks the items and start frames, as it forks a stop, so the read loop returns to the next frame at once.
 const stalledListing = (): FakeTracker => {
@@ -465,7 +483,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     replay: Effect.succeed({ runs: [{ id: 1, events }], ui: [] }),
     current: Effect.succeed({ refinement: null, implementation: 1 }),
     start: () => Effect.succeed({ refused: "not in this test", mode: null }),
-    listItems: () => Effect.succeed({ _tag: "Unavailable", notice: "not in this test" }),
+    listItems: () => Effect.succeed({ mode: "implementation", result: { _tag: "Unavailable", notice: "not in this test" } }),
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),

@@ -7,13 +7,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
 import { loadConfig } from "./config.ts";
+import type { Config } from "./schema.ts";
 import { describe, trackerFailureText } from "./errors.ts";
 import { excerptOf, listedState, RUN_MODES, type RunMode } from "./runMode.ts";
 import { ITEM_ID_EMPTY, itemMovedText, runInProgressText } from "./prompts.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import { itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
-import type { ItemsResult, RunEvent, RunRecord, RunUi, Stamped } from "./protocol.ts";
+import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
 
@@ -42,9 +43,9 @@ export type RunManager = Readonly<{
   /** The id of each mode's run in progress, or null. */
   current: Effect.Effect<Readonly<Record<RunMode, number | null>>>;
   /** Starts a run of the mode in the project from the item with that id (issue #120); its id, or why not. */
-  start: (mode: RunMode, item: string) => Effect.Effect<number | Refusal>;
+  start: (request: StartRequest) => Effect.Effect<number | Refusal>;
   /** The items a mode's tab lists, or the notice of why the tracker cannot list them (issue #120). */
-  listItems: (mode: RunMode) => Effect.Effect<ItemsResult>;
+  listItems: (mode: RunMode) => Effect.Effect<ItemsAnswer>;
   /** Interrupts the run with that id of that incarnation, like Ctrl+C (behaviour 11). */
   stop: (incarnation: string, run: number) => Effect.Effect<Refusal | null>;
   /** The answer to a pending prompt of the run with that id of that incarnation. */
@@ -168,7 +169,7 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
      * One operation of the project's tracker, from the configuration of `cwd` (issue #120): the server makes every tracker
      * call, never the page. Every failure is the text the page shows, which names a variable and never a credential.
      */
-    const withTracker = <A>(use: (tracker: TrackerShape) => Effect.Effect<A, TrackerError>): Effect.Effect<Result.Result<A, string>> =>
+    const withTracker = <A>(use: (tracker: TrackerShape, config: Config) => Effect.Effect<A, TrackerError>): Effect.Effect<Result.Result<A, string>> =>
       Effect.gen(function* () {
         const invalid = yield* invalidProject(cwd);
         if (invalid !== null) return Result.fail(invalid);
@@ -176,18 +177,18 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
         if (Result.isFailure(config)) return Result.fail(describe(config.failure));
         const layer = access.tracker(config.success);
         if (Result.isFailure(layer)) return Result.fail(trackerFailureText(layer.failure));
-        const used = yield* Effect.result(Effect.flatMap(Tracker, use).pipe(Effect.provide(layer.success)));
+        const used = yield* Effect.result(Effect.flatMap(Tracker, (t) => use(t, config.success)).pipe(Effect.provide(layer.success)));
         return Result.mapError(used, trackerFailureText);
       });
 
-    const listItems = (mode: RunMode): Effect.Effect<ItemsResult> =>
-      withTracker((t) => t.list(listedState(mode))).pipe(
-        Effect.map(
-          Result.match({
-            onFailure: (notice): ItemsResult => ({ _tag: "Unavailable", notice }),
-            onSuccess: (items): ItemsResult => ({ _tag: "Listed", items: items.map((i) => ({ id: i.id, title: i.title, excerpt: excerptOf(i.body) })) }),
-          }),
-        ),
+    /** Issue #142: the Refinement tab's listing carries the configured choice of terms, read with the configuration. */
+    const listItems = (mode: RunMode): Effect.Effect<ItemsAnswer> =>
+      withTracker((t, config) => Effect.map(t.list(listedState(mode)), (items) => ({ items: items.map((i) => ({ id: i.id, title: i.title, excerpt: excerptOf(i.body) })), terms: config.terms }))).pipe(
+        Effect.map((listed): ItemsAnswer => {
+          const unavailable = (notice: string) => ({ _tag: "Unavailable", notice }) as const;
+          if (mode === "refinement") return { mode, result: Result.isFailure(listed) ? unavailable(listed.failure) : { _tag: "Listed", ...listed.success } };
+          return { mode, result: Result.isFailure(listed) ? unavailable(listed.failure) : ({ _tag: "Listed", items: listed.success.items } satisfies ItemsResult) };
+        }),
       );
 
     /** The run with that id, if it is a mode's run in progress, with its mode. */
@@ -199,8 +200,9 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
         }),
       );
 
-    const start = (mode: RunMode, itemText: string): Effect.Effect<number | Refusal> =>
+    const start = (request: StartRequest): Effect.Effect<number | Refusal> =>
       Effect.gen(function* () {
+        const { mode, item: itemText } = request;
         const refused = (text: string): Refusal => ({ refused: text, mode });
         // The refusals, in order (issue #120): they prevent errors and ask no confirmation (behavior 1).
         const id = itemIdOf(itemText);
@@ -216,7 +218,8 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
         // The ui's sink needs the id, and the id is taken with the reservation of the run.
         const idRef = yield* Ref.make(0);
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
-        const runStart: RunStart = mode === "refinement" ? { mode, item: item.id, project: cwd, terms: "checked" } : { mode, item: item.id, project: cwd };
+        // Issue #142: the run takes the choice the page sent, which is what its control showed.
+        const runStart: RunStart = request.mode === "refinement" ? { mode: request.mode, item: item.id, project: cwd, terms: request.terms } : { mode: request.mode, item: item.id, project: cwd };
         // The ownership transfer (finding 11 of docs/gui-review.md) is one uninterruptible region: the fiber exists
         // before the run is reserved, the run is reserved with its fiber in one step, and the gate is released after
         // Started, so no interruption can leave a run reserved without a fiber or a fiber that never starts.

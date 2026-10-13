@@ -42,9 +42,15 @@ export type RunUi = Readonly<{ run: number; state: RunUiState }>;
  * The incarnation (finding 12 of docs/gui-review.md) names one start of the server: run and prompt numbers restart
  * with the server, so an answer or a stop carries the incarnation it was made in, and the hello says which one is live.
  */
+/**
+ * What starts a run (issue #120): the mode and the id of its item, the server reading the item, never the page. Issue #142:
+ * a refinement carries the choice of terms the page's control shows; an implementation run has no question phase, so
+ * no choice.
+ */
+export type StartRequest = Readonly<{ mode: "refinement"; item: string; terms: S.TermsMode }> | Readonly<{ mode: "implementation"; item: string }>;
 export type ClientMessage =
-  /** Start a run of the mode from the item of that id (issue #120): the server reads the item, never the page. */
-  | Readonly<{ type: "start"; mode: RunMode; item: string }>
+  /** Start a run of the mode from the item of that id. */
+  | (Readonly<{ type: "start" }> & StartRequest)
   /** The items a mode's tab lists (issue #120): the server asks the tracker and answers with an items frame. */
   | Readonly<{ type: "items"; mode: RunMode }>
   | Readonly<{ type: "answer"; incarnation: string; run: number; prompt: number; text: string }>
@@ -54,7 +60,17 @@ export type ClientMessage =
 /** An item as a tab lists it (issue #120): its id, its title, and enough of its text to choose by. No credential. */
 export type ListedItem = Readonly<{ id: string; title: string; excerpt: string }>;
 /** A tab's items, or the notice of why the tracker could not list them; never both. */
-export type ItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Readonly<{ _tag: "Unavailable"; notice: string }>;
+export type ItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Unavailable;
+/** Why the tracker or the configuration could not list a tab's items. */
+export type Unavailable = Readonly<{ _tag: "Unavailable"; notice: string }>;
+/**
+ * The Refinement tab's items (issue #142) carry the configured choice of terms, which the tab's control starts at; read
+ * with the configuration at each listing, so an edited file shows on the next one. Unavailable has none, and no
+ * refinement starts from it.
+ */
+export type RefinementItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[]; terms: S.TermsMode }> | Unavailable;
+/** A tab's answer to its items frame, by its mode. */
+export type ItemsAnswer = Readonly<{ mode: "refinement"; result: RefinementItemsResult }> | Readonly<{ mode: "implementation"; result: ItemsResult }>;
 export type ServerMessage =
   | Readonly<{
       type: "hello";
@@ -66,7 +82,7 @@ export type ServerMessage =
     }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
-  | Readonly<{ type: "items"; mode: RunMode; result: ItemsResult }>
+  | (Readonly<{ type: "items" }> & ItemsAnswer)
   /** Why an action was not carried out, with the mode of the tab whose action it was, or null where it belongs to none (issue #120). */
   | Readonly<{ type: "refused"; mode: RunMode | null; reason: string }>
   /** The run's whole shared state after a change (issue #87); a tab keeps the state of the higher version. */
@@ -181,8 +197,12 @@ const UiFlagSchema = Schema.Struct({ scope: UiScopeSchema, open: Schema.Boolean 
 const RunUiStateSchema = Schema.Struct({ version: Int, choices: Schema.Array(UiFlagSchema) });
 const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });
 
+const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str }));
+const UnavailableSchema = tagged("Unavailable", { notice: Str });
+
 export const ClientMessageSchema = Schema.Union([
-  typed("start", { mode: RunMode, item: Str }),
+  typed("start", { mode: Schema.Literal("refinement"), item: Str, terms: S.TermsMode }),
+  typed("start", { mode: Schema.Literal("implementation"), item: Str }),
   typed("items", { mode: RunMode }),
   typed("answer", { incarnation: Str, run: Int, prompt: Int, text: Str }),
   typed("stop", { incarnation: Str, run: Int }),
@@ -192,7 +212,8 @@ export const ServerMessageSchema = Schema.Union([
   typed("hello", { location: Str, current: Schema.Struct({ refinement: Schema.NullOr(Int), implementation: Schema.NullOr(Int) }), incarnation: Str }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
-  typed("items", { mode: RunMode, result: Schema.Union([tagged("Listed", { items: Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str })) }), tagged("Unavailable", { notice: Str })]) }),
+  typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
+  typed("items", { mode: Schema.Literal("implementation"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema }), UnavailableSchema]) }),
   typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("closing", {}),

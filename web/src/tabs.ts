@@ -3,8 +3,12 @@
 // test/webServer.test.ts).
 import type { ClientMessage, ListedItem } from "../../src/protocol.ts";
 import type { RunMode } from "../../src/runMode.ts";
+import type { TermsMode } from "../../src/schema.ts";
 
+/** What a tab starts (issue #142): a refinement with the choice of terms its control shows, an implementation with none. */
+export type TabStart = Readonly<{ mode: "refinement"; item: ListedItem; terms: TermsMode }> | Readonly<{ mode: "implementation"; item: ListedItem }>;
 /** The frame that starts a run of the tab's mode from a listed item. */
-export const startFrame = (mode: RunMode, item: ListedItem): ClientMessage => ({ type: "start", mode, item: item.id });
+export const startFrame = (start: TabStart): ClientMessage =>
+  start.mode === "refinement" ? { type: "start", mode: start.mode, item: start.item.id, terms: start.terms } : { type: "start", mode: start.mode, item: start.item.id };
 /** The frame that asks the server for a tab's items; the server, never the page, calls the tracker. */
 export const itemsFrame = (mode: RunMode): ClientMessage => ({ type: "items", mode });

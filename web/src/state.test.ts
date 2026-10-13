@@ -450,10 +450,10 @@ describe("runs, replay and gaps", () => {
 
   test("a hello turns a mode's Loading items Unasked and leaves a listed mode as it is (S16)", () => {
     const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
-    const listed = fold([hello(null), { type: "items", mode: "refinement", result: { _tag: "Listed", items } }]);
+    const listed = fold([hello(null), { type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }]);
     const s = fold([hello(null)], itemsRequested(listed, "implementation"));
     expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
-    expect(s.modes.refinement.items).toEqual({ _tag: "Listed", items });
+    expect(s.modes.refinement.items).toEqual({ _tag: "Listed", items, terms: "unchecked" });
   });
 
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
@@ -461,7 +461,7 @@ describe("runs, replay and gaps", () => {
   const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
 
   test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
-    const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems } }, helloAt("/projects/new", "b")]);
+    const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } }, helloAt("/projects/new", "b")]);
     expect(s.modes.refinement.items).toEqual({ _tag: "Unasked" });
     expect(s.location).toBe("/projects/new");
   });
@@ -479,12 +479,12 @@ describe("runs, replay and gaps", () => {
   test("a hello of the same incarnation, a reconnection, keeps the items, the notice and the refusal (W3-R1-1)", () => {
     const before = fold([
       helloAt("/p", "a"),
-      { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems } },
+      { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } },
       { type: "items", mode: "implementation", result: { _tag: "Unavailable", notice: "no tracker" } },
       { type: "refused", mode: "implementation", reason: "r" },
     ]);
     const s = fold([helloAt("/p", "a")], before);
-    expect([s.modes.refinement.items, s.modes.implementation.items, s.modes.implementation.refusal]).toEqual([{ _tag: "Listed", items: listedItems }, { _tag: "Unavailable", notice: "no tracker" }, "r"]);
+    expect([s.modes.refinement.items, s.modes.implementation.items, s.modes.implementation.refusal]).toEqual([{ _tag: "Listed", items: listedItems, terms: "unchecked" }, { _tag: "Unavailable", notice: "no tracker" }, "r"]);
   });
 
   // Each listed item's id names the incarnation it was received under, so a read under another one is visible.
@@ -502,9 +502,12 @@ describe("runs, replay and gaps", () => {
       case "hello":
         return reduce(state, helloAt(`/projects/${step.incarnation}`, step.incarnation));
       case "listed":
-        return reduce(state, { type: "items", mode: step.mode, result: { _tag: "Listed", items: Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e" })) } });
+      {
+        const items = Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e" }));
+        return reduce(state, step.mode === "refinement" ? { type: "items", mode: step.mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { type: "items", mode: step.mode, result: { _tag: "Listed", items } });
+      }
       case "unavailable":
-        return reduce(state, { type: "items", mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } });
+        return reduce(state, step.mode === "refinement" ? { type: "items", mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } } : { type: "items", mode: step.mode, result: { _tag: "Unavailable", notice: `${state.incarnation}` } });
       case "refused":
         return reduce(state, { type: "refused", mode: step.mode, reason: "r" });
       case "request":

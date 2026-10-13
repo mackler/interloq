@@ -126,10 +126,10 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
           // settled by the manager's reservation; two listings of one mode may answer out of order, and the page keeps the
           // last one received, as after a second Refresh.
           case "start":
-            return Effect.forkScoped(manager.start(message.mode, message.item).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))))).pipe(Effect.asVoid);
+            return Effect.forkScoped(manager.start(message).pipe(Effect.flatMap((r) => (typeof r === "number" ? Effect.void : refuse(r))))).pipe(Effect.asVoid);
           case "items":
             // Issue #120: the server makes the tracker call; the page receives ids, titles and excerpts alone.
-            return Effect.forkScoped(manager.listItems(message.mode).pipe(Effect.flatMap((result) => send({ type: "items", mode: message.mode, result })))).pipe(Effect.asVoid);
+            return Effect.forkScoped(manager.listItems(message.mode).pipe(Effect.flatMap((answer) => send({ type: "items", ...answer })))).pipe(Effect.asVoid);
           case "answer":
             return manager.answer(message.incarnation, message.run, message.prompt, message.text).pipe(Effect.flatMap(refuse));
           case "stop":

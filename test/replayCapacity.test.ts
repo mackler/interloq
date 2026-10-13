@@ -71,7 +71,7 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
   const dist = tempDir("pr-dist-");
   const before = heap();
   const manager = await Effect.runPromise(makeRunManager(wiringOf, repo, [], "measure", trackerAccessOf(tracker)).pipe(Effect.provide(platformLayer)));
-  await Effect.runPromise(manager.start("implementation", MANAGER_ITEMS[0].id));
+  await Effect.runPromise(manager.start({ mode: "implementation", item: MANAGER_ITEMS[0].id }));
   const running = async () => (await Effect.runPromise(manager.current)).implementation !== null;
   for (let i = 0; i < 6000 && (await running()); i++) await sleep(10);
   assert.equal(await running(), false, "the run did not end");

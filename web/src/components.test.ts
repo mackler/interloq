@@ -648,7 +648,7 @@ describe("App and the draft", () => {
       select(root, "implementation");
       ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
       one(root, `button[name=start][data-item="${fixture.id}"]`).click();
-      expect(sentOf(ws).at(-1)).toEqual(startFrame("implementation", fixture));
+      expect(sentOf(ws).at(-1)).toEqual(startFrame({ mode: "implementation", item: fixture }));
       expect(sentOf(ws).at(-1)).toEqual({ type: "start", mode: "implementation", item: fixture.id });
     });
 

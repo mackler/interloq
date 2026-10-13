@@ -9,6 +9,7 @@ import { type ClientMessage, PresentedQuestionSchema, decodeClient, decodeServer
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
+import { TERMS_MODES } from "../src/schema.ts";
 import { decisionSubject, planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { DECISION_SECTIONS, type RunUiState, type UiScope } from "../src/uiState.ts";
@@ -150,7 +151,8 @@ const uiScope: fc.Arbitrary<UiScope> = fc.oneof(
 );
 const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, choices: fc.array(fc.record({ scope: uiScope, open: fc.boolean() }), { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(
-  fc.record({ type: fc.constant("start" as const), mode, item: text }),
+  fc.record({ type: fc.constant("start" as const), mode: fc.constant("refinement" as const), item: text, terms: fc.constantFrom(...TERMS_MODES) }),
+  fc.record({ type: fc.constant("start" as const), mode: fc.constant("implementation" as const), item: text }),
   fc.record({ type: fc.constant("items" as const), mode }),
   fc.record({ type: fc.constant("answer" as const), incarnation: text, run: nat, prompt: nat, text }),
   fc.record({ type: fc.constant("stop" as const), incarnation: text, run: nat }),
@@ -164,7 +166,12 @@ const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   fc.record({ type: fc.constant("event" as const), run: nat, seq: nat, time: text, event: runEvent }),
   fc.record({
     type: fc.constant("items" as const),
-    mode,
+    mode: fc.constant("refinement" as const),
+    result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(fc.record({ id: text, title: text, excerpt: text }), { maxLength: 3 }), terms: fc.constantFrom(...TERMS_MODES) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
+  }),
+  fc.record({
+    type: fc.constant("items" as const),
+    mode: fc.constant("implementation" as const),
     result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(fc.record({ id: text, title: text, excerpt: text }), { maxLength: 3 }) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
   }),
   fc.record({ type: fc.constant("refused" as const), mode: fc.option(mode, { nil: null }), reason: text }),
@@ -179,7 +186,8 @@ const decoded = <A>(r: Result.Result<A, string>): A => {
 
 // Issue #120: a run is started from a mode and an item; the page sends no project and no task text.
 test("a start message decodes with its mode and item; one with a project and a task, or an unknown mode, is refused", () => {
-  for (const m of RUN_MODES) assert.deepEqual(decoded(decodeClient(JSON.stringify({ type: "start", mode: m, item: "120" }))), { type: "start", mode: m, item: "120" });
+  // Issue #142: a refinement's start carries its choice of terms, an implementation's none.
+  for (const frame of [{ type: "start", mode: "refinement", item: "120", terms: "onRequest" }, { type: "start", mode: "implementation", item: "120" }]) assert.deepEqual(decoded(decodeClient(JSON.stringify(frame))), frame);
   for (const frame of [{ type: "start", project: "/p", task: "t" }, { type: "start", mode: "review", item: "1" }, { type: "items", mode: "deployment" }, { type: "list", path: "/" }]) {
     assert.ok(Result.isFailure(decodeClient(JSON.stringify(frame))), JSON.stringify(frame));
   }

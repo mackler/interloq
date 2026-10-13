@@ -29,6 +29,7 @@ import type { RunMode } from "../src/runMode.ts";
 import { refinementRun, run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
 import type { Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
+import type { StartRequest } from "../src/protocol.ts";
 import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
@@ -785,3 +786,6 @@ export const readTerms = (markdown: string): ReadonlyMap<string, readonly string
 };
 /** A sense as readTerms gives it back: its whitespace collapsed. */
 export const senseRead = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** Issue #142: a run manager's start of the mode from an item; a refinement with the choice of terms `checked`, as every existing scenario scripts. */
+export const startOf = (mode: RunMode, item: string, terms: TermsMode = "checked"): StartRequest => (mode === "refinement" ? { mode, item, terms } : { mode, item });
