@@ -339,6 +339,20 @@ describe("the steps of Gather Requirements", () => {
     ]);
   });
 
+  // Issue #142: terms written before the first question without a review open their step by TermsBegan; a review after it
+  // adds its cycles to the same step.
+  test("TermsBegan opens the terms step after the first; a terms review then adds its cycles to that one step", () => {
+    const begun = [started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), notified({ _tag: "TermsBegan" })];
+    expect(steps(fold(live(begun)))).toEqual([
+      [prompts.stepLabel("formulate"), "done", null, "Question review:1"],
+      [prompts.stepLabel("terms"), "active", null, ""],
+    ]);
+    expect(steps(fold(live([...begun, notified({ _tag: "RoundBegan", subject: "terms", round: 1, limit: 5 })])))).toEqual([
+      [prompts.stepLabel("formulate"), "done", null, "Question review:1"],
+      [prompts.stepLabel("terms"), "active", null, "Terms review:1"],
+    ]);
+  });
+
   // Issue #113, the seam: the heading above the conversation and the rail's step name one activity, from one source.
   test("the conversation's heading and the rail's step name one activity, User Decisions", () => {
     const heading = prompts.clarificationHeading("clarification");

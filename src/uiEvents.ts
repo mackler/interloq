@@ -43,6 +43,11 @@ export type UiEvent =
   | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; waitedMs: number }>
   /** `answered` of `total` questions so far (issue #21): the agreed ones and the follow-ups Claude reports asking. */
   | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
+  /**
+   * Claude Code begins writing the explanations of the agreed questions' terms before the first question (issue #142),
+   * reviewed or not; never notified for one question's terms written on request.
+   */
+  | Readonly<{ _tag: "TermsBegan" }>
   /** The interview begins; each interface renders its own help (finding 8 of docs/gui-review.md). */
   | Readonly<{ _tag: "InterviewOpened"; heading: string; stage: InterviewStage; total: number }>
   /** Claude Code's prose during an execution call, attributed as data (issue #5); the page shows it as Claude's message. */
@@ -128,6 +133,8 @@ export const describeEvent = (event: UiEvent): string => {
       return usageLimitLiftedLine(event.agent, event.waitedMs);
     case "InterviewTurn":
       return `${event.heading} (${event.answered} of ${event.total} answered): ${event.message}`;
+    case "TermsBegan":
+      return "explanations of terms begun";
     case "InterviewOpened":
       return `${event.heading} opened, ${plural(event.total, "question")}`;
     case "ClaudeSaid":
