@@ -4,8 +4,10 @@ import type { RunError } from "../src/errors.ts";
 import { describe } from "../src/errors.ts";
 import { pauseProse } from "../src/render.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
-import { advance, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, subjectOf, type Transition } from "../src/reviewState.ts";
-import type { LogEntry } from "../src/schema.ts";
+import { Result } from "effect";
+import { advance as advanceState, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, roundCheckOf, subjectOf, type Transition } from "../src/reviewState.ts";
+import { validateReview, type ValidatedRound } from "../src/round.ts";
+import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
 import { issue, respond, questionOf } from "./helpers.ts";
 import * as prompts from "../src/prompts.ts";
 import { piecesText } from "../src/pieces.ts";
@@ -34,12 +36,33 @@ const halt = (t: Transition): RunError => {
   assert.equal(c.kind, "Halt", `expected Halt, got ${kinds(t).join(",")}`);
   return (c as { error: RunError }).error;
 };
+/**
+ * An event as these tests write it: a decoded review or response without its validated value, which the interpreter
+ * computes before the state machine sees the reply (issue #151) and `advance` below computes the same way.
+ */
+type TestEvent =
+  | Exclude<ReviewEvent, Readonly<{ kind: "ReviewDecoded" | "ResponseDecoded" | "CorrectionDecoded" }>>
+  | Readonly<{ kind: "ReviewDecoded"; review: Review }>
+  | Readonly<{ kind: "ResponseDecoded" | "CorrectionDecoded"; response: PlannerResponse; resultText: string; costUsd: number | null }>;
+const complete = (s: ReviewState, e: TestEvent): ReviewEvent => {
+  switch (e.kind) {
+    case "ReviewDecoded":
+      return { ...e, validated: Result.getOrThrow(validateReview(e.review)) };
+    case "ResponseDecoded":
+    case "CorrectionDecoded":
+      // A response the state machine ignores (sent at another step) has no review to be validated against.
+      return { ...e, round: s.current.validatedReview === null ? (null as unknown as ValidatedRound) : Result.getOrThrow(roundCheckOf(s)(e.response)) };
+    default:
+      return e;
+  }
+};
+const advance = (s: ReviewState, e: TestEvent): Transition => advanceState(s, complete(s, e));
 /** Applies the events in order, returning the last transition. */
-const run = (first: Transition, ...events: ReviewEvent[]): Transition => events.reduce((t, e) => advance(t.state, e), first);
+const run = (first: Transition, ...events: TestEvent[]): Transition => events.reduce((t, e) => advance(t.state, e), first);
 const noQuestions = { questions_for_user: [] };
 const entry = (id: string, action: string, round = 1): LogEntry =>
   ({ id, phase: 1, round, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false }) as LogEntry;
-const response = (dispositions: [string, "accepted" | "rejected" | "partially_accepted" | "no_change_needed" | "clarification_requested"][], extra = {}): ReviewEvent => ({ kind: "ResponseDecoded", response: respond(dispositions, extra), resultText: "", costUsd: 0.1 });
+const response = (dispositions: [string, "accepted" | "rejected" | "partially_accepted" | "no_change_needed" | "clarification_requested"][], extra = {}): TestEvent => ({ kind: "ResponseDecoded", response: respond(dispositions, extra), resultText: "", costUsd: 0.1 });
 void noQuestions;
 
 test("Begin: round 1 starts with the Codex review and the initial observation is recorded", () => {
@@ -60,10 +83,11 @@ test("a review with no counted issue converges; with countMinor off, minor issue
   assert.deepEqual(last(minor), { kind: "Finish", result: "converged" });
 });
 
-test("a review with duplicate ids halts before anything is counted", () => {
-  const t = run(start(), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("A")] } });
-  assert.equal(halt(t)._tag, "RoundInvalid");
-  assert.deepEqual(t.state.counts, []);
+// Issue #151: a review with duplicate ids never reaches the state machine; the interpreter's validation refuses it.
+test("a review with duplicate ids is refused by the review's validation before the state machine sees it", () => {
+  const refused = validateReview({ issues: [issue("A"), issue("A")] });
+  assert.ok(Result.isFailure(refused));
+  assert.deepEqual(refused.failure.duplicateIssues, ["A"]);
 });
 
 test("a counted review saves the review, reports the count, and asks about each reraised id before the response", () => {
@@ -88,9 +112,10 @@ test("a counted review saves the review, reports the count, and asks about each 
 
 const afterReview = (log: LogEntry[] = [], issues = [issue("A")]): Transition => run(start({}, log), { kind: "ReviewDecoded", review: { issues } });
 
-test("an invalid response halts; a valid one is saved, rendered, and the round goes to the log and the file is observed", () => {
-  const invalid = run(afterReview(), response([["A", "accepted"], ["A", "rejected"]]));
-  assert.equal(halt(invalid)._tag, "RoundInvalid");
+test("roundCheckOf refuses an invalid response; a valid one is saved, rendered, and the round goes to the log and the file is observed", () => {
+  const invalid = roundCheckOf(afterReview().state)(respond([["A", "accepted"], ["A", "rejected"]]));
+  assert.ok(Result.isFailure(invalid));
+  assert.deepEqual(invalid.failure.duplicateDispositions, ["A"]);
   const valid = run(afterReview(), response([["A", "accepted"]]));
   assert.deepEqual(kinds(valid).filter((k) => k !== "Say"), ["SaveResponse", "SaveRound", "Converse", "Checkpoint", "SaveLog", "Checkpoint", "ObserveFile"]);
   assert.deepEqual(last(valid), { kind: "ObserveFile", stage: "response" });
@@ -203,7 +228,7 @@ test("every batch has at most one event-producing command, and it is the last", 
   };
   let t = start({ maxIdleRounds: 1 });
   check(t);
-  for (const e of [{ kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "rejected"]]), { kind: "FileObserved", hash: "h1", text: "" }, { kind: "DecisionGiven", text: "" }, { kind: "DecisionGiven", text: "" }] as ReviewEvent[]) {
+  for (const e of [{ kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "rejected"]]), { kind: "FileObserved", hash: "h1", text: "" }, { kind: "DecisionGiven", text: "" }, { kind: "DecisionGiven", text: "" }] as TestEvent[]) {
     t = advance(t.state, e);
     check(t);
   }
@@ -471,9 +496,9 @@ test("an unmeasured subject (the work review) logs file_change null and observes
 // the corrective reply is validated and its dispositions re-evaluated against the log as the round began.
 const correctiveStart = (log: LogEntry[] = []): Transition =>
   advance(initialState(measured, { maxRounds: 5, maxIdleRounds: 2, countMinor: true }), { kind: "Begin", hash: "h0", text: "a\n", log });
-const corrected = (dispositions: Parameters<typeof respond>[0], extra = {}): ReviewEvent => ({ kind: "CorrectionDecoded", response: respond(dispositions, extra), resultText: "", costUsd: 0.2 });
-const unchanged: ReviewEvent = { kind: "FileObserved", hash: "h0", text: "a\n" };
-const amended: ReviewEvent = { kind: "FileObserved", hash: "h1", text: "a\nb\n" };
+const corrected = (dispositions: Parameters<typeof respond>[0], extra = {}): TestEvent => ({ kind: "CorrectionDecoded", response: respond(dispositions, extra), resultText: "", costUsd: 0.2 });
+const unchanged: TestEvent = { kind: "FileObserved", hash: "h0", text: "a\n" };
+const amended: TestEvent = { kind: "FileObserved", hash: "h1", text: "a\nb\n" };
 
 test("(a) an accepted issue with the file unchanged gets a corrective turn; its amendment ends the round as usual", () => {
   const unchangedAfter = run(correctiveStart(), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "accepted"]]), unchanged);

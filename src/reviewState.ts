@@ -9,7 +9,7 @@ import { parseExtraRounds } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import * as log from "./issueLog.ts";
 import { renderRound } from "./render.ts";
-import { type IssueId, validateReview, validateRound, type ValidatedReview, type ValidatedRound } from "./round.ts";
+import { type IssueId, validateRound, type ValidatedReview, type ValidatedRound } from "./round.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { Config, FileChange, LogEntry, PlannerResponse, Review, UserQuestion } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
@@ -60,9 +60,11 @@ export type ReviewEvent =
   | Readonly<{ kind: "Begin"; hash: string; text: string; log: readonly LogEntry[] }>
   | Readonly<{ kind: "LimitAnswer"; answer: string }>
   | Readonly<{ kind: "UnchangedAnswer"; answer: "retry" | "proceed" | "stop" }>
-  | Readonly<{ kind: "ReviewDecoded"; review: Review }>
-  | Readonly<{ kind: "ResponseDecoded"; response: PlannerResponse; resultText: string; costUsd: number | null }>
-  | Readonly<{ kind: "CorrectionDecoded"; response: PlannerResponse; resultText: string; costUsd: number | null }>
+  // Issue #151: a decoded review or response carries the value the interpreter validated, with its repair turn, before
+  // the state machine sees it (reviewValidation, roundValidation of src/round.ts), so no transition refuses one.
+  | Readonly<{ kind: "ReviewDecoded"; review: Review; validated: ValidatedReview }>
+  | Readonly<{ kind: "ResponseDecoded"; response: PlannerResponse; round: ValidatedRound; resultText: string; costUsd: number | null }>
+  | Readonly<{ kind: "CorrectionDecoded"; response: PlannerResponse; round: ValidatedRound; resultText: string; costUsd: number | null }>
   | Readonly<{ kind: "DecisionGiven"; text: string }>
   | Readonly<{ kind: "DecisionsApplied" }>
   | Readonly<{ kind: "Amended" }>
@@ -299,16 +301,14 @@ const askEach = (s: ReviewState, queue: readonly Ask[], step: (asking: Ask, rest
   return ask(s, step(asking, rest), asking, before);
 };
 
-const onReviewDecoded = (s: ReviewState, review: Review): Transition => {
+const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedReview): Transition => {
   const { heading, fileLabel, countMinor } = s.setup;
   const n = s.round;
-  const checked = validateReview(review);
-  if (Result.isFailure(checked)) return halt(s, checked.failure);
   const counted = log.countedIssues(review, countMinor);
-  const state: ReviewState = { ...s, counts: [...s.counts, counted], current: { ...freshRound, startText: s.current.startText, startLog: s.current.startLog, review, validatedReview: checked.success } };
+  const state: ReviewState = { ...s, counts: [...s.counts, counted], current: { ...freshRound, startText: s.current.startText, startLog: s.current.startLog, review, validatedReview: validated } };
   const before: ReviewCommand[] = [
     { kind: "SaveReview", round: n, review },
-    { kind: "SaveRound", record: { kind: "no_response", subject: s.setup.dirName, phase: s.setup.phase, round: n, reconstructed: false, review: checked.success } },
+    { kind: "SaveRound", record: { kind: "no_response", subject: s.setup.dirName, phase: s.setup.phase, round: n, reconstructed: false, review: validated } },
     notify({ _tag: "ReviewReceived", subject: s.setup.subject, round: n, review, counted }),
     status(`Issues: ${review.issues.length} total, ${counted} counted toward convergence.`),
   ];
@@ -359,19 +359,17 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
 };
 
 /**
- * A response, or a corrective turn's reply (issue #30), validated against the round's review and the log as the round
- * began (P2-R1-1), recorded, and followed by the pauses it raises that were not asked for this round before.
+ * A response, or a corrective turn's reply (issue #30), with its round as the interpreter validated it against the round's
+ * review and the log as the round began (P2-R1-1, roundCheckOf), recorded, and followed by the pauses it raises that were
+ * not asked for this round before.
  */
-const onResponseDecoded = (s: ReviewState, response: PlannerResponse, resultText: string, costUsd: number | null, corrective = false): Transition => {
+const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: ValidatedRound, resultText: string, costUsd: number | null, corrective = false): Transition => {
   const { heading, phase } = s.setup;
   const n = s.round;
   const review = s.current.review!;
   const history = s.current.startLog;
-  const checked = validateRound(s.current.validatedReview!, response, history, phase, n, idPrefixOf(s.setup.subject), s.setup.idNumber);
   // The costs are the session's running totals: a corrective turn's replaces the round's.
   const withCost: ReviewState = { ...s, costs: corrective ? [...s.costs.slice(0, -1), costUsd] : [...s.costs, costUsd] };
-  if (Result.isFailure(checked)) return halt(withCost, checked.failure);
-  const round = checked.success;
   const pauses = disposedPauses(history, review, round, response).filter((a) => !s.current.asked.includes(a.key ?? ""));
   const state: ReviewState = { ...withCost, current: { ...s.current, round, response, resultText, asked: [...s.current.asked, ...pauses.map((a) => a.key ?? "")] } };
   const { asked, settled } = askedOrSettled(state, pauses);
@@ -615,11 +613,11 @@ export const advance = (state: ReviewState, event: ReviewEvent): Transition => {
     case "UnchangedAnswer":
       return state.step.name === "askingUnchanged" ? onUnchangedAnswer(state, state.step.hash, event.answer) : noop(state);
     case "ReviewDecoded":
-      return state.step.name === "awaitingReview" ? onReviewDecoded(state, event.review) : noop(state);
+      return state.step.name === "awaitingReview" ? onReviewDecoded(state, event.review, event.validated) : noop(state);
     case "ResponseDecoded":
-      return state.step.name === "awaitingResponse" ? onResponseDecoded(state, event.response, event.resultText, event.costUsd) : noop(state);
+      return state.step.name === "awaitingResponse" ? onResponseDecoded(state, event.response, event.round, event.resultText, event.costUsd) : noop(state);
     case "CorrectionDecoded":
-      return state.step.name === "correcting" ? onResponseDecoded(state, event.response, event.resultText, event.costUsd, true) : noop(state);
+      return state.step.name === "correcting" ? onResponseDecoded(state, event.response, event.round, event.resultText, event.costUsd, true) : noop(state);
     case "DecisionGiven":
       return onDecisionGiven(state, event.text);
     case "DecisionsApplied":

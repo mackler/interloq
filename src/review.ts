@@ -11,13 +11,13 @@ import { piecesText, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
-import { correctiveValidation } from "./round.ts";
+import { correctiveValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
 import { agentContext, askOffering, limitOptions, numberedOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
 import { answerOf, parseUnchangedAnswer } from "./input.ts";
-import { advance, type Asks, initialState, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
+import { advance, type Asks, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
+import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
@@ -171,6 +171,7 @@ export const decodeValidating = <Out extends Schema.Decoder<unknown>, E, R>(
     // At most three steps: the reply, one schema repair and one validation repair.
     const step = (value: unknown, schemaFile: string | null, validationUsed: boolean): Effect.Effect<Readonly<{ value: Out["Type"]; notes: readonly string[] }>, E | RunError, R | Store> =>
       Effect.gen(function* () {
+        if (onReply !== null) yield* onReply(value);
         const decoded = decode(value);
         if (!decoded.ok) {
           const file = yield* keep(value);
@@ -255,8 +256,8 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
  * The corrective turn (issue #30) as a Repair of its own: a planning call in the current session whose reply has fresh
  * schema and validation budgets, so it takes neither's turn and neither takes its.
  */
-export const repairTurn = <Out extends Schema.Decoder<unknown>>(repair: Repair, schema: Out, capability: PlanningCapability, validate: Validation<Out["Type"]> | null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
-  planningCall(repair.prompt, schema, "planning", capability, validate);
+export const repairTurn = <Out extends Schema.Decoder<unknown>>(repair: Repair, schema: Out, capability: PlanningCapability, validate: Validation<Out["Type"]> | null, onReply: OnReply | null = null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
+  planningCall(repair.prompt, schema, "planning", capability, validate, onReply);
 
 /**
  * The validation of the questions a reply puts to the user (S2): `questionsOf` names each with where it is; a failure
@@ -350,6 +351,22 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
         return yield* withTransportRetry("codex", transportReviewWhat(heading), attempt, check);
       });
 
+    /** Every reply of a round as it arrived, written to the round's file before it is decoded or validated (issue #151). */
+    const rawSave = (round: number, kind: RawReplyKind): OnReply => (raw) => store.saveRawReply(id, round, kind, raw);
+    /**
+     * The round's validation of a response in the state it answers (issue #151): `after` appends it to the subject's own
+     * validation, so that it sees the value the loop records and shares the call's one validation repair turn; `of` gives
+     * the validated round of the accepted reply, which that validation has already accepted.
+     */
+    const roundOf = (state: ReviewState) => {
+      const check = roundCheckOf(state);
+      const validation = roundValidation<R>(check, state.current.review!.issues.map((i) => i.id));
+      return {
+        after: (first: Validation<R> | null): Validation<R> => (first === null ? validation : bothValidations(first, validation)),
+        of: (response: PlannerResponse) => Effect.fromResult(check(response)),
+      };
+    };
+
     type Outcome = ReviewEvent | { finished: LoopResult };
     /** Executes one command; the commands that yield an event return it. */
     const execute = (command: ReviewCommand, state: ReviewState): Effect.Effect<Outcome | null, RunError, Services> =>
@@ -411,8 +428,9 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           case "CallReviewer": {
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
-            const review: Review = yield* decodeWithRepair("codex", ReviewText, yield* reviewCall(subject.reviewPrompt(store.root, command.round)), (r) => reviewCall(r.prompt));
-            return { kind: "ReviewDecoded", review };
+            // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
+            const { value: review } = yield* decodeValidating("codex", ReviewText, yield* reviewCall(subject.reviewPrompt(store.root, command.round)), (r) => reviewCall(r.prompt), reviewValidation, rawSave(command.round, "review"));
+            return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {
             // A read-only response cannot read the records, so they are in its prompt (decision Q1 of the stage-A task).
@@ -423,20 +441,22 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
                 ? { changes: yield* store.readChangeRecord(id.work), requirements: (yield* store.readContext()).requirements, decisions: yield* store.readUserDecisions() }
                 : null;
             const context: RespondContext = { review: state.current.review!, log: state.log, records };
-            const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, subject.respond.validate);
-            return { kind: "ResponseDecoded", response: call.output, resultText: call.resultText, costUsd: call.costUsd };
+            const round = roundOf(state);
+            const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, round.after(subject.respond.validate), rawSave(command.round, "response"));
+            return { kind: "ResponseDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
           }
           case "CallCorrective": {
             // Issue #30: the corrective turn, a Repair of its own in the same session, validated against the reply it
             // corrects and then by the subject's own validation; its raw reply is kept, and its output written.
             const previous = state.current.response!;
             const acceptedIds = state.current.round!.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
-            const validate = bothValidations(correctiveValidation<R>(previous, acceptedIds), subject.respond.validate);
+            const round = roundOf(state);
+            const validate = round.after(bothValidations(correctiveValidation<R>(previous, acceptedIds), subject.respond.validate));
             const repair: Repair = { kind: "corrective", prompt: correctivePrompt(store.root, fileLabel, command.round, acceptedIds) };
-            const call = yield* repairTurn(repair, subject.respond.schema, subject.respond.capability, validate);
+            const call = yield* repairTurn(repair, subject.respond.schema, subject.respond.capability, validate, rawSave(command.round, { corrective: command.attempt }));
             yield* store.saveCorrection(id, command.round, command.attempt, call.reply);
             if (subject.respond.after !== null) yield* subject.respond.after(call.output);
-            return { kind: "CorrectionDecoded", response: call.output, resultText: call.resultText, costUsd: call.costUsd };
+            return { kind: "CorrectionDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
           }
           case "ApplyDecisions":
             yield* applyDecisions(subject as Subject<PlannerResponse, D>);

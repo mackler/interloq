@@ -261,9 +261,9 @@ test("q at a decision prompt stops with UserStopped", async () => {
   await runFails(layer, "UserStopped", /stopped by the user/);
 });
 
-test("a missing disposition stops with RoundInvalid naming the id", async () => {
+test("a missing disposition, after its repair turn, stops with RoundInvalid naming the id", async () => {
   const { layer } = testLayer(tempRepo(), {
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("A"), issue("B")] }],
   });
   await runFails(layer, "RoundInvalid", /Claude Code returned no disposition for: B/);
@@ -311,46 +311,47 @@ test("the identical-content message names the round after which the content was 
 });
 
 // Finding 3 of docs/functional-design-review.md: duplicate or extra dispositions and duplicate review ids passed
-// the presence check, so counts and the recorded actions could disagree. Decision Q3: a structural halt.
-test("two dispositions for one issue halt the run with RoundInvalid naming the id", async () => {
+// the presence check, so counts and the recorded actions could disagree. Decision Q3: a structural halt, since issue #151
+// after one validation repair turn.
+test("two dispositions for one issue, twice, halt the run with RoundInvalid naming the id", async () => {
   const { layer } = testLayer(tempRepo(), {
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "rejected"], ["A", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "rejected"], ["A", "accepted"]]), plan: "v2" }, { output: respond([["A", "rejected"], ["A", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("A")] }],
   });
   await runFails(layer, "RoundInvalid", /\bA\b/);
 });
 
-test("a disposition for an id that is not in the review halts the run with RoundInvalid naming the id", async () => {
+test("a disposition for an id that is not in the review, twice, halts the run with RoundInvalid naming the id", async () => {
   const { layer } = testLayer(tempRepo(), {
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"], ["B", "accepted"]]), plan: "v2" }, { output: respond([["A", "accepted"], ["B", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("A")] }],
   });
   await runFails(layer, "RoundInvalid", /\bB\b/);
 });
 
-test("a review with two issues of the same id halts the run with RoundInvalid before any response", async () => {
+test("a review with two issues of the same id, twice, halts the run with RoundInvalid before any response", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [issue("A", "first"), issue("A", "second")] }],
+    reviews: [{ issues: [issue("A", "first"), issue("A", "second")] }, { issues: [issue("A", "first"), issue("A", "second")] }],
   });
   await runFails(layer, "RoundInvalid", /\bA\b/);
   assert.equal(probe.planner.prompts.length, 1, "Claude Code was asked to respond to an invalid review");
 });
 
-test("a review with two minor issues of the same id halts instead of converging when minor issues do not count", async () => {
+test("a review with two minor issues of the same id, twice, halts instead of converging when minor issues do not count", async () => {
   const minor = (id: string) => ({ ...issue(id), severity: "minor" as const });
   const { layer } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [minor("A"), minor("A")] }, { issues: [] }],
+    reviews: [{ issues: [minor("A"), minor("A")] }, { issues: [minor("A"), minor("A")] }, { issues: [] }],
     execs: [finished],
     config: { countMinor: false },
   });
   await runFails(layer, "RoundInvalid", /\bA\b/);
 });
 
-test("a missing disposition still halts, now as RoundInvalid, naming the id", async () => {
+test("a missing disposition still halts after its repair turn, as RoundInvalid, naming the id", async () => {
   const { layer } = testLayer(tempRepo(), {
-    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
     reviews: [{ issues: [issue("A"), issue("B")] }],
   });
   await runFails(layer, "RoundInvalid", /returned no disposition for: B/);
@@ -396,7 +397,7 @@ test("the checkpoint names the last committed transition: the execution phase af
 
   const halted = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }],
-    reviews: [{ issues: [issue("A")] }, { issues: [issue("B"), issue("B")] }],
+    reviews: [{ issues: [issue("A")] }, { issues: [issue("B"), issue("B")] }, { issues: [issue("B"), issue("B")] }],
   });
   await runFails(halted.layer, "RoundInvalid", /B/);
   assert.deepEqual(point(halted.probe.dir), { subject: "planning-1", phase: 1, round: 1, stage: "logged" });

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { advance, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, subjectOf, type Transition } from "../src/reviewState.ts";
+import { Result } from "effect";
+import { advance, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, roundCheckOf, subjectOf, type Transition } from "../src/reviewState.ts";
+import { validateReview } from "../src/round.ts";
 import type { Action, Review } from "../src/schema.ts";
 import { issue, respond } from "./helpers.ts";
 
@@ -59,14 +61,21 @@ const drive = (scripts: readonly Script[], use: ReviewSetup = setup) => {
         currentRound = command.round;
         reviewerCalls.push(command.round);
         const review: Review = { issues: Array.from({ length: script.issueCount }, (_, i) => issue(`R${command.round}-${i}`)) };
-        event = { kind: "ReviewDecoded", review };
+        // The interpreter validates the review before the state machine sees it (issue #151); a generated review is valid.
+        event = { kind: "ReviewDecoded", review, validated: Result.getOrThrow(validateReview(review)) };
         break;
       }
       case "CallPlanner": {
         plannerCalls.push(command.round);
         const ids = Array.from({ length: script.issueCount }, (_, i) => `R${command.round}-${i}`);
         const response = respond(ids.map((id, i) => [id, script.actions[i]] as [string, Action]), script.selfCorrection ? { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "e" }] } : {});
-        event = { kind: "ResponseDecoded", response, resultText: "", costUsd: 0.2 };
+        // As the interpreter does (issue #151): a response the round's validation refuses would halt after its repair turn.
+        const round = roundCheckOf(t.state)(response);
+        if (Result.isFailure(round)) {
+          finished = "RoundInvalid";
+          break;
+        }
+        event = { kind: "ResponseDecoded", response, round: round.success, resultText: "", costUsd: 0.2 };
         break;
       }
       case "AskDecision":
