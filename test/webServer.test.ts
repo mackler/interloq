@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Deferred, Effect, Exit, Fiber, Option, Result, Schema } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Result, Schema } from "effect";
 import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { identify, type MountTable } from "../src/hostDir.ts";
@@ -19,6 +19,10 @@ import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
+import { codexReviewerLayer } from "../src/codex.ts";
+import { codexThread } from "../src/codexExec.ts";
+import type { AgentSdk } from "../src/sdk.ts";
+import { FakeSdk } from "./fakeSdk.ts";
 
 const run = Effect.runPromise;
 // Plan step 3.4: the server over NodeHttpServer.layerTest, with Node's WebSocket as the scripted client.
@@ -674,5 +678,71 @@ test("the identification the server sends in hello and on Started, decoded and f
     assert.equal(state.modes.implementation.run?.location, identify(mounts, repo));
     assert.equal(state.modes.implementation.run?.project, repo);
     c.close();
+  });
+});
+
+// Issue #158: a Codex CLI that exits before its prompt is written failed the write with EPIPE, an uncaught exception
+// that ended the server and both runs. Now the turn fails as a transport fault and is retried, and the server serves on.
+test("a Codex CLI that exits before reading its prompt: the turn is retried, the run ends 0, and the server still serves", async () => {
+  const repo = tempRepo();
+  const bin = tempDir("pr-codex-");
+  const marker = path.join(bin, "first-done");
+  const cli = path.join(bin, "codex");
+  const review = JSON.stringify({ type: "item.completed", item: { id: "m", type: "agent_message", text: JSON.stringify({ issues: [] }) } });
+  fs.writeFileSync(
+    cli,
+    `#!/bin/sh
+if [ ! -e ${marker} ]; then : > ${marker}; exit 3; fi
+cat > /dev/null
+echo '{"type":"thread.started","thread_id":"th-1"}'
+echo '${review}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    { mode: 0o755 },
+  );
+  // The prompt padded beyond a pipe's buffer, so the first write is still pending when the CLI exits.
+  const padding = " ".repeat(2 * 1024 * 1024);
+  const fake = new FakeSdk();
+  const sdk: AgentSdk = {
+    inheritedEnv: fake.inheritedEnv,
+    query: (p) => fake.query(p),
+    stepReporter: (h) => fake.stepReporter(h),
+    startThread: (options) => {
+      const thread = codexThread(Result.succeed({ path: cli, pathDirs: [] }), options ?? {}, process.env);
+      return {
+        get id() {
+          return thread.id;
+        },
+        runStreamed: (input, turnOptions) => thread.runStreamed(input + padding, turnOptions),
+      };
+    },
+  };
+  const tracker = fakeTrackerOf(MANAGER_ITEMS);
+  const manager = await Effect.runPromise(
+    makeRunManager(
+      (ui) => {
+        const { wiring } = testWiring(repo, { tracker, mode: "refinement", steps: [{ output: { questions: [] } }], config: { transportRetryDelaySeconds: 0.01 } });
+        return { ...wiring, ui: Effect.succeed(ui), sdk, agents: Layer.merge(wiring.agents, codexReviewerLayer) };
+      },
+      repo,
+      [],
+      "test",
+      trackerAccessOf(tracker),
+    ).pipe(Effect.provide(platformLayer)),
+  );
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    a.send({ type: "start", mode: "refinement", item: "11", terms: "checked" });
+    await until("the run's end", () => [...perRun(a).values()].some((events) => events.some((e) => e.event._tag === "Ended")));
+    const events = [...perRun(a).values()][0].map((e) => e.event);
+    const retry = events.find((e) => e._tag === "Notified" && e.event._tag === "TransportRetrying");
+    assert.ok(retry !== undefined && retry._tag === "Notified" && retry.event._tag === "TransportRetrying" && retry.event.agent === "codex", "the Codex turn was retried");
+    assert.match(retry.event.fault, /EPIPE/);
+    assert.deepEqual(events.find((e) => e._tag === "Ended"), { _tag: "Ended", code: 0 });
+    a.close();
+    assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
+    const b = await connect(port);
+    await until("hello", () => b.messages.some((m) => m.type === "hello"));
+    b.close();
   });
 });
