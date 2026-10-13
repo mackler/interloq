@@ -342,6 +342,21 @@ test("the server's fault during a Codex turn halts the run with 1 and its record
   assert.ok(ended, "the Codex turn was not ended");
 });
 
+test("the server's fault while the run's services are built (a layer that never finishes) halts it with 1 and its record in the directory allocated", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const building = Layer.effectDiscard(Effect.sync(reach).pipe(Effect.andThen(Effect.never)));
+  const signal = Effect.runSync(makeFaultSignal);
+  const exit = await faultWhen(probe, { ...wiring, agents: Layer.merge(wiring.agents, building) }, reached, scriptedStart(probe.project), signal);
+  const runs = path.join(probe.project, "plan-review", "runs");
+  const dirs = fs.existsSync(runs) ? fs.readdirSync(runs) : [];
+  assert.equal(dirs.length, 1, `one records directory expected: ${dirs.join(", ")}`);
+  assertServerFault(probe, exit, path.join(runs, dirs[0]));
+  assertTail(probe);
+  assert.ok(Effect.runSync(Deferred.isDone(signal.recorded)), "the record was not marked written");
+});
+
 test("the server's fault before the run's records exist (a tracker read that never returns) halts it with 1 and creates its record", async () => {
   const tracker = fakeTrackerOf([scriptedItem]);
   const { wiring, probe } = testWiring(tempRepo(), { tracker });

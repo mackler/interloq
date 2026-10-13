@@ -1,7 +1,7 @@
 // The program: arguments, configuration, the live services, the run, and what is printed at the
 // end. The run manager runs it for the page (src/runManager.ts); the tests run it with scripted services.
 
-import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
+import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
@@ -204,30 +204,65 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
 
       return { config, decisionFormat, task, tracker, requirements } as const;
     });
-    const prepared = yield* Effect.exit(Effect.raceFirst(prepare, fault));
-    if (Exit.isFailure(prepared)) {
-      const error = Cause.findErrorOption(prepared.cause);
-      if (Option.isNone(error)) return yield* Effect.die(Cause.squash(prepared.cause));
-      // The fault came before the records existed: the run gets its directory, so that its halt is recorded.
-      const allocatedRoot = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
-      const faultRecords = yield* store(Exit.isSuccess(allocatedRoot) ? allocatedRoot.value : planned, []);
-      if (Exit.isSuccess(allocatedRoot)) yield* faultRecords.converse(serverFaultRecord(error.value.message)).pipe(Effect.ignore);
-      return yield* halted(describe(error.value), null, faultRecords);
-    }
+    // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
+    const rootRef = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
+    /** A stage raced with the server's fault: its own value, or the fault (W1-R1-1 of issue #158). */
+    const orFault = <A, R>(stage: Effect.Effect<A, never, R>): Effect.Effect<Exit.Exit<A, ServerFault>, never, R> => Effect.exit(Effect.raceFirst(stage, fault));
+    /** Writes the server-fault record and marks it written; a write that fails leaves it unmarked. */
+    const recordFault = (records: StoreShape, message: string) =>
+      records.converse(serverFaultRecord(message)).pipe(Effect.andThen(Deferred.succeed(signal.recorded, undefined)), Effect.ignore);
+    /**
+     * The halt of a fault that came before the body: recorded in the run's directory if it was allocated, otherwise in
+     * one allocated now, so that the halt is recorded; the planned store if that allocation fails.
+     */
+    const faultHalted = (error: ServerFault, ignorePaths: readonly string[]) =>
+      Effect.gen(function* () {
+        const known = yield* Ref.get(rootRef);
+        const root = Option.isSome(known) ? Exit.succeed(known.value) : yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
+        const faultRecords = yield* store(Exit.isSuccess(root) ? root.value : planned, ignorePaths);
+        if (Exit.isSuccess(root)) yield* recordFault(faultRecords, error.message);
+        return yield* halted(describe(error), null, faultRecords);
+      });
+    /** The fault's halt, or the defect, from a stage's failed exit. */
+    const stageFailed = (cause: Cause.Cause<ServerFault>, ignorePaths: readonly string[]) =>
+      Effect.gen(function* () {
+        const error = Cause.findErrorOption(cause);
+        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(cause));
+        return yield* faultHalted(error.value, ignorePaths);
+      });
+
+    const prepared = yield* orFault(prepare);
+    if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []);
     if (typeof prepared.value === "number") return prepared.value;
     const { config, decisionFormat, task, tracker, requirements } = prepared.value;
 
-    const allocated = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
-    if (Exit.isFailure(allocated)) {
-      const error = Cause.findErrorOption(allocated.cause);
-      if (Option.isNone(error)) return yield* Effect.die(Cause.squash(allocated.cause));
-      return yield* halted(describe(error.value), null, yield* store(planned, []));
-    }
-    const records = yield* store(allocated.value, config.ignorePaths);
-    const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk));
-    // Built once, so that the planner whose session id is printed is the one the run used.
-    // Decision support (D3): the Decider runs its loops over the same services as the run.
-    const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));
+    /**
+     * The run's directory, its store and its services, raced with the fault (W1-R1-1 of issue #158). The allocation
+     * and the setting of rootRef are one uninterruptible step, so a fault never leaves a directory rootRef does not
+     * name. Layer.build acquires into the program's scope, which releases what it acquired when the run ends.
+     */
+    const setup = Effect.gen(function* () {
+      const allocated = yield* Effect.uninterruptible(
+        Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform))).pipe(
+          Effect.tap((exit) => (Exit.isSuccess(exit) ? Ref.set(rootRef, Option.some(exit.value)) : Effect.void)),
+        ),
+      );
+      if (Exit.isFailure(allocated)) {
+        const error = Cause.findErrorOption(allocated.cause);
+        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(allocated.cause));
+        return yield* halted(describe(error.value), null, yield* store(planned, []));
+      }
+      const records = yield* store(allocated.value, config.ignorePaths);
+      const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk));
+      // Built once, so that the planner whose session id is printed is the one the run used.
+      // Decision support (D3): the Decider runs its loops over the same services as the run.
+      const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));
+      return { records, context } as const;
+    });
+    const built = yield* orFault(setup);
+    if (Exit.isFailure(built)) return yield* stageFailed(built.cause, config.ignorePaths);
+    if (typeof built.value === "number") return built.value;
+    const { records, context } = built.value;
     const sessionId = Context.get(context, Planner).sessionId;
 
     const interrupted = Effect.gen(function* () {
@@ -265,7 +300,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       yield* interrupted;
       return 130;
     }
-    if (error.value._tag === "ServerFault") yield* records.converse(serverFaultRecord(error.value.message)).pipe(Effect.ignore);
+    if (error.value._tag === "ServerFault") yield* recordFault(records, error.value.message);
     return yield* halted(describe(error.value), yield* sessionId, records);
   });
 
