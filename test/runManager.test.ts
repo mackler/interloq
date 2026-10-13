@@ -12,12 +12,12 @@ import { platformLayer } from "../src/platform.ts";
 import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
-import { runInProgressText } from "../src/prompts.ts";
-import { Tracker } from "../src/services.ts";
+import { runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
+import { Reviewer, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
 import type { RunEvent } from "../src/protocol.ts";
-import { type Broadcast, type EventBroadcast, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
+import { type Broadcast, type EventBroadcast, type HaltBounds, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
 import { startOf } from "./helpers.ts";
@@ -41,10 +41,17 @@ const nextItem = (h: Harness, mode: RunMode): string => {
 };
 
 /** A manager over `cwd` whose runs use, in turn, the scripted wiring of each options object; a listener collects the broadcast. */
-const harness = async (repo: string, scripts: TestOptions[], wiringOf = (options: TestOptions) => testWiring(repo, options).wiring, mounts: MountTable = [], tracker: FakeTracker = fakeTrackerOf(ITEMS)): Promise<Harness> => {
+const harness = async (
+  repo: string,
+  scripts: TestOptions[],
+  wiringOf = (options: TestOptions) => testWiring(repo, options).wiring,
+  mounts: MountTable = [],
+  tracker: FakeTracker = fakeTrackerOf(ITEMS),
+  bounds?: HaltBounds,
+): Promise<Harness> => {
   const queue = [...scripts];
   const access = trackerAccessOf(tracker);
-  const manager = await run(makeRunManager((ui) => ({ ...wiringOf({ tracker, ...(queue.shift() ?? {}) }), ui: Effect.succeed(ui) }), repo, mounts, "test", access).pipe(Effect.provide(platformLayer)));
+  const manager = await run(makeRunManager((ui) => ({ ...wiringOf({ tracker, ...(queue.shift() ?? {}) }), ui: Effect.succeed(ui) }), repo, mounts, "test", access, bounds).pipe(Effect.provide(platformLayer)));
   const received: EventBroadcast[] = [];
   const uiReceived: UiBroadcast[] = [];
   const scope = await run(Scope.make());
@@ -535,4 +542,93 @@ test("the Refinement listing carries the configured choice of terms; an unknown 
   fs.writeFileSync(path.join(repo, "plan-review", "config.json"), JSON.stringify({ terms: "sometimes" }));
   const invalid = await terms();
   assert.ok(typeof invalid !== "string" && invalid._tag === "Unavailable" && /not a valid configuration.*\(at terms\)/.test(invalid.notice), JSON.stringify(invalid));
+});
+
+// Issue #158 (the user's decision Q1): after an error the server cannot trace to one run, the manager refuses every new
+// start, halts every run in progress with its record, and returns within its bounds even when a run does not end.
+const SHORT: HaltBounds = { graceMs: 400, interruptMs: 1_000 };
+const asking = (q: string): TestOptions => ({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] });
+const refiningAsk: TestOptions = {
+  steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }, { output: { message_to_user: "Which cache?", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: false, summary: "" } }],
+  reviews: [{ issues: [] }],
+};
+
+test("haltAll halts the run of each mode with code 1 and its record, and returns once both ended", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [asking("Which database?"), refiningAsk], undefined, [], undefined, SHORT);
+  const implementation = await started(h, "implementation");
+  await pendingAsk(h, implementation);
+  const refinement = await started(h, "refinement");
+  await pendingAsk(h, refinement);
+  const report = await run(h.manager.haltAll("write EPIPE"));
+  assert.deepEqual([...report.halted].sort(), [implementation, refinement].sort());
+  assert.deepEqual(report.unconfirmed, []);
+  assert.equal(endCode(h, implementation), 1);
+  assert.equal(endCode(h, refinement), 1);
+  for (const dir of runDirsOf(repo)) assert.ok(fs.readFileSync(path.join(dir, "conversation.md"), "utf8").endsWith(serverFaultRecord("write EPIPE")), dir);
+  assert.deepEqual(await run(h.manager.current), NONE);
+  assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id).sort(), [implementation, refinement].sort());
+});
+
+test("haltAll with no run in progress returns at once with empty lists, and every later start is refused", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [converging], undefined, [], undefined, SHORT);
+  assert.deepEqual(await run(h.manager.haltAll("write EPIPE")), { halted: [], unconfirmed: [] });
+  for (const mode of ["implementation", "refinement"] as const) {
+    assert.deepEqual(await run(h.manager.start(startOf(mode, nextItem(h, mode)))), { refused: serverEndingText, mode });
+  }
+  assert.deepEqual(h.received, []);
+});
+
+test("a start whose tracker read is pending when haltAll is called is refused at its reservation", async () => {
+  const repo = tempRepo();
+  const fake = fakeTrackerOf(ITEMS);
+  const gate = await run(Deferred.make<void>());
+  let reach = (): void => undefined;
+  const reading = new Promise<void>((resolve) => (reach = resolve));
+  const slow: FakeTracker = { ...fake, tracker: { ...fake.tracker, read: (id) => Effect.sync(reach).pipe(Effect.andThen(Deferred.await(gate)), Effect.andThen(fake.tracker.read(id))) } };
+  const h = await harness(repo, [converging], undefined, [], slow, SHORT);
+  const pending = Effect.runPromise(h.manager.start(startOf("implementation", nextItem(h, "implementation"))));
+  await reading;
+  assert.deepEqual(await run(h.manager.haltAll("write EPIPE")), { halted: [], unconfirmed: [] });
+  await run(Deferred.succeed(gate, undefined));
+  assert.deepEqual(await pending, { refused: serverEndingText, mode: "implementation" });
+  assert.deepEqual(await run(h.manager.current), NONE);
+  assert.deepEqual(h.received, []);
+});
+
+/** A wiring whose Codex turn signals `reached` and then runs `turn`. */
+const reviewing = (repo: string, reach: () => void, turn: Effect.Effect<string>) => (options: TestOptions) => {
+  const wiring = testWiring(repo, options).wiring;
+  const reviewer = Layer.succeed(Reviewer, { startPhase: Effect.succeed({ review: () => Effect.sync(reach).pipe(Effect.andThen(turn)) }) });
+  return { ...wiring, agents: Layer.merge(wiring.agents, reviewer) };
+};
+
+test("a run that never ends does not hold haltAll: past its bounds the manager publishes its end with 1 and names it", async () => {
+  const repo = tempRepo();
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => reach(), Effect.uninterruptible(Effect.never)), [], undefined, SHORT);
+  const id = await started(h);
+  await reached;
+  const began = Date.now();
+  const report = await run(h.manager.haltAll("write EPIPE"));
+  assert.ok(Date.now() - began < SHORT.graceMs + SHORT.interruptMs + 2_000, `haltAll took ${Date.now() - began} ms`);
+  assert.deepEqual(report, { halted: [], unconfirmed: [id] });
+  assert.equal(endCode(h, id), 1);
+  assert.deepEqual(await run(h.manager.current), NONE);
+});
+
+test("a faulted run that ends by interruption is recorded with code 1, not 130", async () => {
+  const repo = tempRepo();
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  // The turn cannot be interrupted for longer than the grace, so haltAll interrupts the run from outside.
+  const turn = Effect.uninterruptible(Effect.sleep(`${SHORT.graceMs + 200} millis`)).pipe(Effect.andThen(Effect.never));
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => reach(), turn), [], undefined, SHORT);
+  const id = await started(h);
+  await reached;
+  const report = await run(h.manager.haltAll("write EPIPE"));
+  assert.deepEqual(report, { halted: [id], unconfirmed: [] });
+  assert.equal(endCode(h, id), 1);
 });

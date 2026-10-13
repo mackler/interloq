@@ -2,15 +2,15 @@
 // project's tracker, answered and stopped from the page on its own; the events of each mode's current run and of its last
 // finished one, broadcast to every connected tab.
 
-import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Ref, Result, type Scope, Semaphore, Stream } from "effect";
+import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
-import { describe, type ServerFault, trackerFailureText } from "./errors.ts";
+import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { ITEM_ID_EMPTY, itemMovedText, runInProgressText } from "./prompts.ts";
+import { ITEM_ID_EMPTY, itemMovedText, runInProgressText, serverEndingText } from "./prompts.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import { itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
@@ -121,7 +121,7 @@ export const makeRunManager = (
   mounts: MountTable,
   incarnation: string,
   access: TrackerAccess,
-  _bounds: HaltBounds = LIVE_BOUNDS,
+  bounds: HaltBounds = LIVE_BOUNDS,
 ): Effect.Effect<RunManager, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -234,7 +234,9 @@ export const makeRunManager = (
         if (Result.isFailure(id)) return refused(ITEM_ID_EMPTY);
         const invalid = yield* invalidProject(cwd);
         if (invalid !== null) return refused(invalid);
-        if ((yield* Ref.get(state)).runs[mode].current !== null) return refused(runInProgressText(mode));
+        const before = yield* Ref.get(state);
+        if (before.closing) return refused(serverEndingText);
+        if (before.runs[mode].current !== null) return refused(runInProgressText(mode));
         const read = yield* withTracker((t) => t.read(id.success));
         if (Result.isFailure(read)) return refused(read.failure);
         const item = read.success;
@@ -255,16 +257,21 @@ export const makeRunManager = (
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode)))),
-              Effect.onExit((exit: Exit.Exit<number>) => Ref.get(idRef).pipe(Effect.flatMap((rid) => end(rid, exitCodeOf(exit))))),
+              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), Deferred.await(fault)))),
+              // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
+              Effect.onExit((exit: Exit.Exit<number>) =>
+                Effect.all([Ref.get(idRef), Deferred.isDone(fault)]).pipe(Effect.flatMap(([rid, faulted]) => end(rid, faulted ? 1 : exitCodeOf(exit)))),
+              ),
               Effect.forkDetach({ startImmediately: true }),
             );
-            const reserved = yield* Ref.modify(state, (s): readonly [number | null, State] =>
-              s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState, fault } })],
+            // The reservation is the one atomic check of closing (issue #158): a start that waited on the tracker while
+            // haltAll ran is refused here.
+            const reserved = yield* Ref.modify(state, (s): readonly [number | string | null, State] =>
+              s.closing ? [serverEndingText, s] : s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState, fault } })],
             );
-            if (reserved === null) {
+            if (typeof reserved !== "number") {
               yield* Fiber.interrupt(fiber);
-              return refused(runInProgressText(mode));
+              return refused(reserved ?? runInProgressText(mode));
             }
             yield* Ref.set(idRef, reserved);
             yield* append(reserved, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item), () => item.title), mode, item: { id: item.id, title: item.title } });
@@ -272,6 +279,30 @@ export const makeRunManager = (
             return reserved;
           }),
         );
+      });
+
+    /**
+     * Issue #158 (the user's decision Q1). The closing and the snapshot of the runs are one step, so no run is reserved
+     * after the snapshot. Each run's fault is failed and its fiber awaited for `graceMs`; a fiber still running is then
+     * interrupted by a detached fiber that is never awaited, because an interruption waits for the run's uninterruptible
+     * regions and finalizers, which after an uncaught exception need not end. A run still in its slot after
+     * `interruptMs` more is published as ended with 1 by the manager, and named as unconfirmed, since its record may
+     * not have been written.
+     */
+    const haltAll = (message: string): Effect.Effect<HaltReport> =>
+      Effect.gen(function* () {
+        const runs = yield* Ref.modify(state, (s): readonly [readonly Run[], State] => [RUN_MODES.flatMap((m) => (s.runs[m].current === null ? [] : [s.runs[m].current])), { ...s, closing: true }]);
+        yield* Effect.forEach(runs, (r) => Deferred.fail(r.fault, new ServerFault({ message })), { discard: true });
+        const within = (ms: number) => (r: Run) => Fiber.await(r.fiber).pipe(Effect.timeoutOption(`${ms} millis`), Effect.map(Option.isSome));
+        const graced = yield* Effect.forEach(runs, within(bounds.graceMs), { concurrency: "unbounded" });
+        const late = runs.filter((_, i) => !graced[i]);
+        yield* Effect.forEach(late, (r) => Effect.forkDetach(Fiber.interrupt(r.fiber)), { discard: true });
+        const interrupted = yield* Effect.forEach(late, within(bounds.interruptMs), { concurrency: "unbounded" });
+        const stuck = late.filter((_, i) => !interrupted[i]);
+        // Every tab sees a stuck run ended; its own onExit, if it ever comes, then finds no run to end.
+        yield* Effect.forEach(stuck, (r) => end(r.id, 1), { discard: true });
+        const unconfirmed = stuck.map((r) => r.id);
+        return { halted: runs.map((r) => r.id).filter((id) => !unconfirmed.includes(id)), unconfirmed };
       });
 
     /** The refusal of an action naming a run that no mode holds now: it belongs to no tab. */
@@ -295,7 +326,7 @@ export const makeRunManager = (
       current: Ref.get(state).pipe(Effect.map((s) => ({ refinement: s.runs.refinement.current?.id ?? null, implementation: s.runs.implementation.current?.id ?? null }))),
       start,
       listItems,
-      haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
+      haltAll,
       stop: (of, id) =>
         currentRun(id).pipe(
           Effect.flatMap((found) => {
