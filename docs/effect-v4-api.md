@@ -134,7 +134,7 @@ new name. Material online describes v3 in most cases and is not a source.
 |---|---|---|
 | `Deferred.make` | 146 | `<A, E = never>() => Effect<Deferred<A, E>>`; `export * as Deferred` in index.d.ts:121 |
 | `Deferred.fail` | 551 | dual: `(self, error: E) => Effect<boolean>` (false when already completed: the first failure wins) |
-| `Deferred.isDone` | 1285 | `(self) => Effect<boolean>` |
+| `Deferred.isDone` | 1285 | `(self) => Effect<boolean>` | Deferred has no `poll` in 4.0.1 (read 13 Oct 2026, issue #158): a completed Deferred is read by `isDone` and then `await`, which returns at once. |
 | `Deferred.succeed` (read 26 Sep, web GUI stage 3.2) | 1363 | dual: `(self, value: A) => Effect<boolean>` (false when already completed: the first answer to a prompt wins) |
 | `Deferred.await` | 147 (`_await`, exported as `await` at 183) | `(self) => Effect<A, E>`: fails with the kept error. The typed channel for a callback failure in `src/claude.ts` (finding 10) |
 | `Effect.as` / `Effect.andThen` | Effect.d.ts:3726 / 2780 | `as(value)` replaces the success value; `andThen(effect)` sequences |
@@ -240,6 +240,7 @@ declarations unchanged apart from their relative imports and service keys (`"eff
 | `Effect.timeoutOption` (read 13 Oct 2026, issue #158) | Effect.d.ts:7899 | `timeoutOption(duration)`: `Option.some` of the value, or `Option.none` when the effect has not completed in time (it is interrupted). `haltAll` bounds its waits for the faulted runs with it (src/runManager.ts) |
 | `Stream.runDrain` (read 26 Sep, gui-review stage C) | Stream.d.ts:15437 | `(self) => Effect<void, E, R>`; drains the stderr of `git rev-parse` in src/runManager.ts so the child cannot block on a full pipe |
 | `Effect.all([a, b], { concurrency: "unbounded" })` | Effect.d.ts:388 | stdout and stderr are drained together |
+| `Effect.all({ a, b })` (read 13 Oct 2026, issue #158) | Effect.d.ts:388 | a record of effects gives a record of their values: `makeFaultSignal` in src/program.ts |
 | `Effect.andThen` / `Effect.flatMap` / `Effect.mapError` / `Effect.tap` | — / 2525 / 5769 / 3161 | `tap` runs a side effect on the success value and keeps it (the repair call of `planningCall` records itself in a `Ref`) |
 | `FileSystem` methods used | FileSystem.d.ts:103–285 | `exists`, `makeDirectory(path, { recursive })`, `readDirectory`, `readFileString`, `readFile`, `writeFileString(path, text, { flag: "a" })` (OpenFlag, line 321), `rename`, `stat` → `Info.size: ByteSize` (a branded bigint: compare with `0n`) |
 | `PlatformError` | PlatformError.d.ts:141 | `_tag: "PlatformError"`, `message` getter; mapped to `FileSystemError` / `GitError` in src/store.ts |

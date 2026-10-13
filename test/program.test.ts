@@ -9,7 +9,7 @@ import { Reviewer, Tracker } from "../src/services.ts";
 import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
-import { exitCodeOf, program, type Wiring } from "../src/program.ts";
+import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import { serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
@@ -297,12 +297,17 @@ test("an execution refused because the session is too long halts with 1, with no
 
 // Issue #158 (the user's decision Q1): an error the server cannot trace to one run halts every run in progress with
 // ServerFault, wherever the run is, with its record in conversation.md; the run's code is 1 and nothing says INTERRUPTED.
-const faultWhen = async (probe: WiringProbe, wiring: Wiring, reached: Promise<void>, start = scriptedStart(probe.project)): Promise<Exit.Exit<number, never>> => {
-  const fault = await Effect.runPromise(Deferred.make<never, ServerFault>());
-  const fiber = Effect.runFork(Effect.scoped(program(start, wiring, Deferred.await(fault))));
+const faultWhen = async (
+  probe: WiringProbe,
+  wiring: Wiring,
+  reached: Promise<void>,
+  start = scriptedStart(probe.project),
+  signal: FaultSignal = Effect.runSync(makeFaultSignal),
+): Promise<Exit.Exit<number, never>> => {
+  const fiber = Effect.runFork(Effect.scoped(program(start, wiring, signal)));
   await Promise.race([reached, sleep(30_000).then(() => assert.fail("the program did not reach the point of the fault within 30 s"))]);
   await sleep(10);
-  await Effect.runPromise(Deferred.fail(fault, new ServerFault({ message: "write EPIPE" })));
+  await Effect.runPromise(Deferred.fail(signal.fault, new ServerFault({ message: "write EPIPE" })));
   const ended = await Effect.runPromise(Fiber.await(fiber).pipe(Effect.timeoutOption("10 seconds")));
   if (Option.isSome(ended)) return ended.value;
   await Effect.runPromise(Fiber.interrupt(fiber));

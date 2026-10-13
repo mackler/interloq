@@ -1,7 +1,7 @@
 // The program: arguments, configuration, the live services, the run, and what is printed at the
 // end. The run manager runs it for the page (src/runManager.ts); the tests run it with scripted services.
 
-import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
+import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DecisionFormatUnreadable, describe, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
@@ -83,6 +83,15 @@ type StartedKind = Readonly<{ mode: "refinement"; terms: TermsMode }> | Readonly
 type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null }>;
 
 /**
+ * The server's fault as a run sees it (issue #158): `fault` is failed with ServerFault when the server meets an error it
+ * cannot trace to one run, and `recorded` is succeeded by the program once it has written `serverFaultRecord` to the
+ * run's conversation.md, so that the run manager knows which halts were recorded.
+ */
+export type FaultSignal = Readonly<{ fault: Deferred.Deferred<never, ServerFault>; recorded: Deferred.Deferred<void> }>;
+/** A fresh signal; its fault comes only if someone fails it. */
+export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: Deferred.make<never, ServerFault>(), recorded: Deferred.make<void>() });
+
+/**
  * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
  * Issue #120: the run reads its item from the project's tracker, before any agent call, and its task text is the item's
  * (taskTextOf); a tracker that is not configured or cannot be reached, an item it cannot read, a malformed section or a
@@ -92,7 +101,7 @@ type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requ
  * fiber interrupted; `exitCodeOf` turns that into 130. In every case the main Claude Code session id and the usage
  * summary are said last.
  */
-export const program = (start: RunStart, wiring: Wiring, fault: Effect.Effect<never, ServerFault> = Effect.never): Effect.Effect<number, never, Scope.Scope> =>
+export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal): Effect.Effect<number, never, Scope.Scope> =>
   programWith(
     {
       project: start.project,
@@ -120,7 +129,7 @@ export const program = (start: RunStart, wiring: Wiring, fault: Effect.Effect<ne
         }),
     },
     wiring,
-    fault,
+    signal,
   );
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
@@ -128,11 +137,14 @@ export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<n
   programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null })) }, wiring);
 
 /**
- * `fault` fails when the server meets an error it cannot trace to one run (issue #158): every stage of the run, from the
- * configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever it is.
+ * The signal's fault fails when the server meets an error it cannot trace to one run (issue #158): every stage of the
+ * run, from the configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever
+ * it is. Without a signal, the run makes one that no one fails.
  */
-const programWith = (start: Started, wiring: Wiring, fault: Effect.Effect<never, ServerFault> = Effect.never): Effect.Effect<number, never, Scope.Scope> =>
+const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
+    const signal = given ?? (yield* makeFaultSignal);
+    const fault = Deferred.await(signal.fault);
     const project = path.resolve(start.project);
     const mode = start.kind.mode;
     const ui = yield* wiring.ui;

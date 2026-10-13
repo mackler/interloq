@@ -5,7 +5,7 @@
 import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
-import { exitCodeOf, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
+import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
@@ -90,7 +90,7 @@ export const makePublisher = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readon
   );
 
 /** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
-type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; fault: Deferred.Deferred<never, ServerFault> }>;
+type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal }>;
 /** A mode's run in progress, and its last finished run (issue #120: one run per mode). */
 type Slot = Readonly<{ current: Run | null; last: Run | null }>;
 /**
@@ -242,7 +242,7 @@ export const makeRunManager = (
         const item = read.success;
         if (item.state !== listedState(mode)) return refused(itemMovedText(item.id, listedState(mode), item.state));
         const gate = yield* Deferred.make<void>();
-        const fault = yield* Deferred.make<never, ServerFault>();
+        const signal = yield* makeFaultSignal;
         // The ui's sink needs the id, and the id is taken with the reservation of the run.
         const idRef = yield* Ref.make(0);
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
@@ -257,17 +257,17 @@ export const makeRunManager = (
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), Deferred.await(fault)))),
+              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal))),
               // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
               Effect.onExit((exit: Exit.Exit<number>) =>
-                Effect.all([Ref.get(idRef), Deferred.isDone(fault)]).pipe(Effect.flatMap(([rid, faulted]) => end(rid, faulted ? 1 : exitCodeOf(exit)))),
+                Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault)]).pipe(Effect.flatMap(([rid, faulted]) => end(rid, faulted ? 1 : exitCodeOf(exit)))),
               ),
               Effect.forkDetach({ startImmediately: true }),
             );
             // The reservation is the one atomic check of closing (issue #158): a start that waited on the tracker while
             // haltAll ran is refused here.
             const reserved = yield* Ref.modify(state, (s): readonly [number | string | null, State] =>
-              s.closing ? [serverEndingText, s] : s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState, fault } })],
+              s.closing ? [serverEndingText, s] : s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState, signal } })],
             );
             if (typeof reserved !== "number") {
               yield* Fiber.interrupt(fiber);
@@ -292,7 +292,7 @@ export const makeRunManager = (
     const haltAll = (message: string): Effect.Effect<HaltReport> =>
       Effect.gen(function* () {
         const runs = yield* Ref.modify(state, (s): readonly [readonly Run[], State] => [RUN_MODES.flatMap((m) => (s.runs[m].current === null ? [] : [s.runs[m].current])), { ...s, closing: true }]);
-        yield* Effect.forEach(runs, (r) => Deferred.fail(r.fault, new ServerFault({ message })), { discard: true });
+        yield* Effect.forEach(runs, (r) => Deferred.fail(r.signal.fault, new ServerFault({ message })), { discard: true });
         const within = (ms: number) => (r: Run) => Fiber.await(r.fiber).pipe(Effect.timeoutOption(`${ms} millis`), Effect.map(Option.isSome));
         const graced = yield* Effect.forEach(runs, within(bounds.graceMs), { concurrency: "unbounded" });
         const late = runs.filter((_, i) => !graced[i]);
