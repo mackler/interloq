@@ -567,6 +567,34 @@ describe("App and the draft", () => {
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
   });
 
+  // Issue #142: "Explain the terms" is a text button of the question page; the text typed beside the question stays in
+  // the field when the same question is asked again with its explanations, and the button is then gone.
+  test("Explain the terms sends the request, and the typed text survives the question asked again", async () => {
+    const { root, ws } = await openPage();
+    const question = { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Which database?"), options: [{ label: plainPieces("SQLite"), description: [], answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], answer: { token: "2" } }], attached: null, decision: null };
+    const explainedQuestion = { ...question, explanations: [{ id: "t", term: "database", senses: ["A program that keeps data."] }] };
+    const first = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.interviewMessagePrompt))) };
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, first]) }] });
+    const button = () => [...root.querySelectorAll<HTMLButtonElement>(".choices button")].find((b) => b.textContent?.trim() === prompts.EXPLAIN_TERMS);
+    expect(button()?.classList.contains("text")).toBe(true);
+    const field = () => one(root, "[name=answer]") as HTMLTextAreaElement;
+    field().value = "half an answer";
+    field().dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    button()!.click();
+    flushSync();
+    expect(JSON.parse(ws.sent.at(-1)!)).toEqual({ type: "answer", incarnation: "a", run: 1, prompt: 1, text: "/terms" });
+    const events = [
+      { _tag: "Answered", prompt: 1, text: "/terms" },
+      { _tag: "Notified", event: { _tag: "QuestionExplained", question: explainedQuestion } },
+      { _tag: "Notified", event: { _tag: "QuestionPresented", question: explainedQuestion } },
+      { _tag: "Asked", prompt: 2, ...promptOf(prompts.withOffer(prompts.interviewMessagePrompt)) },
+    ];
+    events.forEach((event, i) => ws.receive({ type: "event", run: 1, seq: 3 + i, time: TIME, event }));
+    expect(field().value).toBe("half an answer");
+    expect(button()).toBe(undefined);
+  });
+
   // W1-R1-1: above the list, the bar names the server's project, not the ended run's.
   test("after a run has ended, Back to the list shows the server's identification in the top bar and the title", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);

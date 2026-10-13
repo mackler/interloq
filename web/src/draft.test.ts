@@ -3,7 +3,10 @@ import * as prompts from "../../src/prompts.ts";
 import type { RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
-import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "./draft.ts";
+import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "./draft.ts";
+import fc from "fast-check";
+import { plainPieces } from "../../src/pieces.ts";
+import type { UiEvent } from "../../src/uiEvents.ts";
 import { initialState, reduce, type Shown, shownRun, type ViewState } from "./state.ts";
 
 // Finding 5 of docs/gui-review.md: a draft belongs to (incarnation, run, prompt).
@@ -17,7 +20,7 @@ const fold = (messages: readonly ServerMessage[], from: ViewState = initialState
 const liveState = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", ui: [], runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
 /** The implementation tab's run, as the page keys its draft by (issue #120). */
 const live = (events: readonly RunEvent[]): Shown => shownRun(liveState(events), "implementation");
-const draft: Draft = { key: { incarnation: "a", run: 1, prompt: 1 }, text: "my unsent answer" };
+const draft: Draft = { _tag: "Held", key: { incarnation: "a", run: 1, prompt: 1 }, text: "my unsent answer" };
 
 describe("draft", () => {
   test("the pending prompt's key, and the draft's text only for its own key", () => {
@@ -57,18 +60,18 @@ describe("an answer not sent", () => {
   const answer = (text: string, prompt = 1): ClientMessage => ({ type: "answer", incarnation: "a", run: 1, prompt, text });
 
   test("goes back to the pending prompt's empty field", () => {
-    expect(restoreUnsent(null, view, answer("A"))).toEqual({ draft: { key, text: "A" }, quoted: null });
-    expect(restoreUnsent({ key, text: "" }, view, answer("A"))).toEqual({ draft: { key, text: "A" }, quoted: null });
+    expect(restoreUnsent(null, view, answer("A"))).toEqual({ draft: { _tag: "Held" as const, key, text: "A" }, quoted: null });
+    expect(restoreUnsent({ _tag: "Held" as const, key, text: "" }, view, answer("A"))).toEqual({ draft: { _tag: "Held" as const, key, text: "A" }, quoted: null });
   });
 
   test("leaves newer text in the field and is quoted", () => {
-    expect(restoreUnsent({ key, text: "B" }, view, answer("A"))).toEqual({ draft: { key, text: "B" }, quoted: "A" });
+    expect(restoreUnsent({ _tag: "Held" as const, key, text: "B" }, view, answer("A"))).toEqual({ draft: { _tag: "Held" as const, key, text: "B" }, quoted: "A" });
   });
 
   test("two, in queue order: the first fills the empty field, the second is quoted", () => {
     const first = restoreUnsent(null, view, answer("A"));
     const second = restoreUnsent(first.draft, view, answer("C"));
-    expect([first.quoted, second.draft, second.quoted]).toEqual([null, { key, text: "A" }, "C"]);
+    expect([first.quoted, second.draft, second.quoted]).toEqual([null, { _tag: "Held" as const, key, text: "A" }, "C"]);
   });
 
   test("an answer to a prompt no longer pending is quoted", () => {
@@ -76,11 +79,46 @@ describe("an answer not sent", () => {
   });
 
   test("an answer equal to the field's text, which was kept, quotes nothing", () => {
-    expect(restoreUnsent({ key, text: "same" }, view, answer("same"))).toEqual({ draft: { key, text: "same" }, quoted: null });
+    expect(restoreUnsent({ _tag: "Held" as const, key, text: "same" }, view, answer("same"))).toEqual({ draft: { _tag: "Held" as const, key, text: "same" }, quoted: null });
   });
 
   test("a stop, a start and an items request leave the draft and quote nothing", () => {
-    const d: Draft = { key, text: "B" };
+    const d: Draft = { _tag: "Held" as const, key, text: "B" };
     for (const m of [{ type: "stop", incarnation: "a", run: 1 }, { type: "start", mode: "implementation", item: "1" }, { type: "items", mode: "refinement" }] as const) expect(restoreUnsent(d, view, m)).toEqual({ draft: d, quoted: null });
+  });
+});
+
+// Issue #142: the text typed beside a question whose terms the user asked for stays in the field when the same question is
+// asked again with its explanations; for another question it is withdrawn with a notice, never dropped silently.
+describe("a draft carried across the request for terms", () => {
+  const presented = (number: number): RunEvent => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null } } satisfies UiEvent });
+  const termsAnswer = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "/terms" });
+  const key = { incarnation: "a", run: 1, prompt: 1 };
+  const carriedDraft = carried({ _tag: "Held", key, text: "half an answer" }, 3);
+
+  test("it waits while the request runs and moves to the prompt that asks the same question again", () => {
+    expect(draftFor(carriedDraft, key)).toBe("");
+    expect(reconcile(carriedDraft, live([started, presented(3), asked(1), termsAnswer(1)]))).toEqual({ draft: carriedDraft, notice: null });
+    const again = live([started, presented(3), asked(1), termsAnswer(1), presented(3), asked(2)]);
+    const moved = reconcile(carriedDraft, again);
+    expect(moved).toEqual({ draft: { _tag: "Held", key: { ...key, prompt: 2 }, text: "half an answer" }, notice: null });
+    expect(draftFor(moved.draft, pendingKey(again))).toBe("half an answer");
+  });
+
+  test("it is withdrawn with a notice when another question is asked, or the server is another", () => {
+    expect(reconcile(carriedDraft, live([started, presented(3), asked(1), termsAnswer(1), presented(4), asked(2)]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("half an answer") });
+    const other = shownRun(fold([hello("b"), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, presented(3), asked(2)]) }] }], liveState([started])), "implementation");
+    expect(reconcile(carriedDraft, other)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("half an answer") });
+  });
+
+  test("property: a non-empty carried draft is never dropped without a notice", () => {
+    fc.assert(
+      fc.property(fc.string({ minLength: 1 }).filter((t) => t.trim() !== ""), fc.integer({ min: 1, max: 5 }), fc.integer({ min: 1, max: 5 }), fc.boolean(), (text, number, next, answeredFirst) => {
+        const d = carried({ _tag: "Held", key, text }, number);
+        const events = answeredFirst ? [started, presented(number), asked(1), termsAnswer(1), presented(next), asked(2)] : [started, presented(number), asked(1), termsAnswer(1)];
+        const result = reconcile(d, live(events));
+        return result.draft !== null ? result.draft.text === text : result.notice === prompts.draftWithdrawnNotice(text);
+      }),
+    );
   });
 });

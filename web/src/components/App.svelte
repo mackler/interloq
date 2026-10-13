@@ -15,7 +15,8 @@
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
   import { itemsFrame, startFrame } from "../tabs.ts";
-  import { type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
+  import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
+  import { isTermsRequest } from "../../../src/input.ts";
   import { connect, type Connection } from "../socket.ts";
   import { tabTitle } from "../title.ts";
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
@@ -23,7 +24,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { type RunView, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -35,6 +36,17 @@
   import TopBar from "./TopBar.svelte";
 
   let view = $state<ViewState>(initialState);
+  /**
+   * An answer to the shown run's prompt. Issue #142: the request for the question's terms keeps the text typed beside
+   * it, carried to the prompt that asks the same question again with its explanations.
+   */
+  const answer = (target: RunView, prompt: number, text: string) => {
+    const tabMode: RunMode = view.runModes[target.id] ?? view.selected;
+    const own = drafts[tabMode];
+    const number = target.pending?.question?.number;
+    if (isTermsRequest(text) && own !== null && own._tag === "Held" && own.key.prompt === prompt && number !== undefined) drafts = { ...drafts, [tabMode]: carried(own, number) };
+    send({ type: "answer", incarnation: view.incarnation ?? "", run: target.id, prompt, text });
+  };
   /** Issue #142: a refinement starts with the choice of terms its tab's control shows. */
   const startItem = (mode: RunMode, item: ListedItem) => {
     noticesSeen = view.notices.length;
@@ -302,8 +314,8 @@
               identity={pendingKey(shownTab)}
               answersOnly
               {offline}
-              bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { key, text } }; }}
-              onAnswer={(prompt, text) => send({ type: "answer", incarnation: view.incarnation ?? "", run: run.id, prompt, text })} />
+              bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { _tag: "Held", key, text } }; }}
+              onAnswer={(prompt, text) => answer(run, prompt, text)} />
           {/snippet}
           <!-- Issue #133: the answers are the decision page's own, under its heading; its open heading is the run's shared state. -->
           <DecisionView {answers} scroller={runArea} openSection={openSectionOf(run.ui, analysis.event.decision)} onSection={(section, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionSection", decision: analysis.event.decision, section }, open } }); }} event={analysis.event} narrow={width < NARROW_WIDTH} open={(entry) => run !== null && isOpen(run.ui, { _tag: "DecisionEntry", decision: analysis.event.decision, entry })} onToggle={(entry, open) => { if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope: { _tag: "DecisionEntry", decision: analysis.event.decision, entry }, open } }); }} onShowConversation={() => { conversationFor = analysisKey; conversationForPrompt = promptKey; }} />
@@ -329,8 +341,8 @@
             identity={pendingKey(shownTab)}
             onShowConversation={() => (conversationForPrompt = promptKey)}
             {offline}
-            bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { key, text } }; }}
-            onAnswer={(prompt, text) => send({ type: "answer", incarnation: view.incarnation ?? "", run: run.id, prompt, text })} />
+            bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { _tag: "Held", key, text } }; }}
+            onAnswer={(prompt, text) => answer(run, prompt, text)} />
         {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}

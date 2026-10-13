@@ -7,7 +7,13 @@ import type { ClientMessage } from "../../src/protocol.ts";
 import type { Shown } from "./state.ts";
 
 export type DraftKey = Readonly<{ incarnation: string; run: number; prompt: number }>;
-export type Draft = Readonly<{ key: DraftKey; text: string }>;
+/**
+ * The text of a prompt: held for the prompt of its key, or, issue #142, carried: the text of a prompt answered by a
+ * request for its question's terms, waiting for that question, by its number, to be asked again.
+ */
+export type Draft = Readonly<{ _tag: "Held"; key: DraftKey; text: string }> | Readonly<{ _tag: "Carried"; key: DraftKey; text: string; question: number }>;
+/** The held draft of a prompt answered by a request for the terms of the question with that number (issue #142). */
+export const carried = (draft: Draft, question: number): Draft => ({ _tag: "Carried", key: draft.key, text: draft.text, question });
 export type Reconciled = Readonly<{ draft: Draft | null; notice: string | null }>;
 
 
@@ -19,7 +25,7 @@ export const pendingKey = (view: Shown): DraftKey | null =>
 export const sameKey = (a: DraftKey, b: DraftKey): boolean => a.incarnation === b.incarnation && a.run === b.run && a.prompt === b.prompt;
 
 /** The draft's text for that key; "" for another key or no draft. */
-export const draftFor = (draft: Draft | null, key: DraftKey | null): string => (draft !== null && key !== null && sameKey(draft.key, key) ? draft.text : "");
+export const draftFor = (draft: Draft | null, key: DraftKey | null): string => (draft !== null && draft._tag === "Held" && key !== null && sameKey(draft.key, key) ? draft.text : "");
 
 /**
  * The draft after a reduction of the view, and the notice when it was withdrawn. It is kept while its prompt is
@@ -28,13 +34,27 @@ export const draftFor = (draft: Draft | null, key: DraftKey | null): string => (
  */
 export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
   if (draft === null) return { draft, notice: null };
+  if (draft._tag === "Carried") return reconcileCarried(draft, view);
   const pending = pendingKey(view);
   if (pending !== null && sameKey(pending, draft.key)) return { draft, notice: null };
   const sameRun = view.incarnation === draft.key.incarnation && view.run !== null && view.run.id === draft.key.run;
   const overtaken = !sameRun || view.run!.answered.includes(draft.key.prompt);
   // A prompt neither pending nor answered in the same run (for example not yet replayed): the draft waits.
   if (!overtaken) return { draft, notice: null };
-  return { draft: null, notice: draft.text.trim() === "" ? null : draftWithdrawnNotice(draft.text) };
+  return withdrawn(draft);
+};
+const withdrawn = (draft: Draft): Reconciled => ({ draft: null, notice: draft.text.trim() === "" ? null : draftWithdrawnNotice(draft.text) });
+/**
+ * A carried draft (issue #142): it waits while no prompt is pending or its own still is; it is held for the next prompt
+ * that asks the same question again; it is withdrawn, with a notice, for another question, run or start of the server.
+ */
+const reconcileCarried = (draft: Extract<Draft, { _tag: "Carried" }>, view: Shown): Reconciled => {
+  const sameRun = view.incarnation === draft.key.incarnation && view.run !== null && view.run.id === draft.key.run;
+  if (!sameRun) return withdrawn(draft);
+  const pending = pendingKey(view);
+  if (pending === null || pending.prompt === draft.key.prompt) return { draft, notice: null };
+  if (view.run?.pending?.question?.number === draft.question) return { draft: { _tag: "Held", key: pending, text: draft.text }, notice: null };
+  return withdrawn(draft);
 };
 
 /**
@@ -49,7 +69,7 @@ export const restoreUnsent = (draft: Draft | null, view: Shown, message: ClientM
   const own = pending !== null && sameKey(pending, { incarnation: message.incarnation, run: message.run, prompt: message.prompt });
   if (!own) return { draft, quoted: message.text.trim() === "" ? null : message.text };
   const current = draftFor(draft, pending);
-  if (current === "") return { draft: { key: pending, text: message.text }, quoted: null };
+  if (current === "") return { draft: { _tag: "Held", key: pending, text: message.text }, quoted: null };
   if (current === message.text || message.text.trim() === "") return { draft, quoted: null };
   return { draft, quoted: message.text };
 };

@@ -15,10 +15,10 @@
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import { answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, EXPLAIN_TERMS, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
   import type { Widget } from "../state.ts";
   import type { DraftKey } from "../draft.ts";
-  import { type Ending, endingOf } from "../../../src/input.ts";
+  import { type Ending, endingOf, isTermsRequest } from "../../../src/input.ts";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
   import { blocksText, piecesText } from "../../../src/pieces.ts";
   import QuestionText from "./QuestionText.svelte";
@@ -37,7 +37,8 @@
   let { widget, identity = null, text = $bindable(""), offline = false, answersOnly = false, onAnswer, onShowConversation }: Props = $props();
   const deliver = (value: string) => {
     if (widget === null) return;
-    if (!offline) text = "";
+    // Issue #142: the request for the terms keeps the field's text for the same question asked again.
+    if (!offline && !isTermsRequest(value)) text = "";
     onAnswer(widget.asked.prompt, value);
   };
   // S25: a submission that ends the run, clicked or typed, is confirmed first by the one predicate of src/input.ts.
@@ -79,7 +80,8 @@
   const isQuit = (label: string) => label === END_RUN_LABEL;
   // "Help me decide" is an offer beside the answer, never the answer itself: tonal wherever it stands (decision support)
   // [consistency and standards: the filled button stays the program's primary action].
-  const variantOf = (label: string, i: number): "filled" | "tonal" | "outlined" => (isQuit(label) ? "outlined" : label === HELP_ME_DECIDE ? "tonal" : i === 0 ? "filled" : "tonal");
+  // Issue #142: "Explain the terms" asks for help reading the question, never an answer: a text button.
+  const variantOf = (label: string, i: number): "filled" | "tonal" | "outlined" | "text" => (isQuit(label) ? "outlined" : label === EXPLAIN_TERMS ? "text" : label === HELP_ME_DECIDE ? "tonal" : i === 0 ? "filled" : "tonal");
   // An input method uses Enter to accept a candidate; that Enter is not an answer (finding 6) [error prevention].
   const composing = (e: KeyboardEvent) => e.isComposing || e.keyCode === 229;
   const question = $derived(widget?.question ?? null);
