@@ -1806,18 +1806,25 @@ test("the activity line shows retry 2 of 3", () => {
 
 // Issue #63 (replacing W1-R1-4's indeterminate bar): the wait before a retry is known exactly, so the activity line counts
 // it down with the determinate indicator of the usage-limit wait, and the time remaining beside it.
+// The clock is fixed: the fraction and the time remaining are read when the component renders, so on the real clock
+// whatever time passed between the test reading Date.now() and that render was added to the elapsed fraction. On a
+// loaded machine (the CI runner, or npm test here) 100 ms of it was enough to read 22 where the test allowed 21.
 test("the activity line counts down the wait before a retry with a determinate progressbar, and no indeterminate bar remains", () => {
-  const now = Date.now();
-  const retrying = show(ActivityLine, { text: "Codex — connection lost, retry 1 of 3 (x)", retry: { fromMs: now - 1000, untilMs: now + 4000 } });
-  const bar = one(retrying, "[role=progressbar]");
-  expect(bar.getAttribute("aria-label")).toBe(prompts.RETRY_WAITING_LABEL);
-  const value = Number(bar.getAttribute("aria-valuenow"));
-  expect(value).toBeGreaterThanOrEqual(19);
-  expect(value).toBeLessThanOrEqual(21);
-  expect(one(retrying, "[data-remaining]").textContent).toMatch(/^0:0[34] left$/);
-  expect(retrying.querySelector(".indeterminate, [data-waiting]")).toBe(null);
-  const idle = show(ActivityLine, { text: "Codex — review" });
-  expect(idle.querySelector("[role=progressbar]")).toBe(null);
+  vi.useFakeTimers();
+  try {
+    const now = Date.UTC(2026, 9, 7, 12, 0, 0);
+    vi.setSystemTime(now);
+    const retrying = show(ActivityLine, { text: "Codex — connection lost, retry 1 of 3 (x)", retry: { fromMs: now - 1000, untilMs: now + 4000 } });
+    const bar = one(retrying, "[role=progressbar]");
+    expect(bar.getAttribute("aria-label")).toBe(prompts.RETRY_WAITING_LABEL);
+    expect(Number(bar.getAttribute("aria-valuenow"))).toBe(20);
+    expect(one(retrying, "[data-remaining]").textContent).toBe("0:04 left");
+    expect(retrying.querySelector(".indeterminate, [data-waiting]")).toBe(null);
+    const idle = show(ActivityLine, { text: "Codex — review" });
+    expect(idle.querySelector("[role=progressbar]")).toBe(null);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 // P1-R1-2: the countdown goes at the wait's end, between two ticks and with no further event (a wait received late, as
