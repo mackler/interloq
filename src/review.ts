@@ -9,6 +9,7 @@ import type { LoopResult } from "./uiEvents.ts";
 import { attachedOf, pauseOriginOf, type Question, type QuestionOrigin, validateQuestions } from "./question.ts";
 import { piecesText, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
+import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
 import { correctiveValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
@@ -111,16 +112,6 @@ export const askPlannerQuestion = (question: UserQuestion, heading: string, phas
   });
 
 const AGENT_LABEL = { claude: "Claude Code", codex: "Codex" } as const;
-
-/** The text kept for an invalid reply. Total: a reply that JSON cannot represent is kept as a note of that failure. */
-export const serializeReply = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value ?? null, null, 2);
-  } catch (e) {
-    return `<reply not serializable: ${e instanceof Error ? e.message : String(e)}>`;
-  }
-};
 
 /**
  * A second turn spent on a defective reply, in the same session or thread (decision S2 of issues #26, #30 and #31):

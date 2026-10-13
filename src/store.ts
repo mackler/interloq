@@ -10,7 +10,7 @@ import { FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
-import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, readLog, readQuestions, readUsage, VERSION } from "./records.ts";
+import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
@@ -245,8 +245,9 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       saveCorrection: (subject, round, attempt, reply) => saveRecord(replyArtifact(subject, round, { corrective: attempt }), reply),
       saveRawReply: (subject, round, kind, raw) => {
         const file = at(replyArtifact(subject, round, kind));
-        // A reply that arrived as text (Codex's) is kept as it is: it is the JSON the agent wrote, or what it wrote instead.
-        return typeof raw === "string" ? writeRecordText(file, raw) : writeJson(file, raw);
+        // serializeReply's text, as invalid-replies/ keeps it: a reply that arrived as text (Codex's) as it is, and a value
+        // JSON cannot represent as a note of that failure, so the raw save never ends the run before a repair turn (W1-R1-1).
+        return writeRecordText(file, serializeReply(raw));
       },
       saveRound: (subject, record) => saveRecord({ kind: "round", subject, round: record.round }, { version: VERSION, ...record }),
       savePlanWrite: (phase, result) => saveRecord({ kind: "planWrite", phase }, result),

@@ -1,6 +1,7 @@
 // The program's own records on disk (findings 6, 7, 9, 15 and 16 of docs/functional-design-review.md;
 // decisions Q5 and Q6). The value schemas of the entries are in src/schema.ts; this module holds the file
-// shapes, the readers, and the checkpoint. Every file carries `version: 2`; nothing else is read.
+// shapes, the readers, the checkpoint, and the text an agent's reply is kept as (`serializeReply`). Every file carries
+// `version: 2`; nothing else is read.
 
 import { Effect, FileSystem, Path, type PlatformError, Result, Schema } from "effect";
 import { type Artifact, LOG_SUBJECTS, pathOf, type SubjectId, subjectOf } from "./artifacts.ts";
@@ -11,6 +12,17 @@ import { decodeRecord, decodeText, parseJson } from "./state.ts";
 
 /** The version of every record file. */
 export const VERSION = 2;
+
+/** The text kept for an agent's reply, in its round file and in `invalid-replies/`. Total: a reply that JSON cannot represent is kept as a note of that failure. */
+export const serializeReply = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value ?? null, null, 2);
+  } catch (e) {
+    return `<reply not serializable: ${e instanceof Error ? e.message : String(e)}>`;
+  }
+};
+
 const V2 = Schema.Literal(2);
 const Strings = Schema.Array(Schema.String);
 

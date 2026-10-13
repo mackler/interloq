@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Result } from "effect";
 import { reviewRepairPrompt, roundRepairPrompt } from "../src/prompts.ts";
+import { serializeReply } from "../src/records.ts";
 import { validateReview, validateRound } from "../src/round.ts";
 import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
 import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, type ScriptedPlanner } from "./helpers.ts";
@@ -137,6 +138,35 @@ test("a reply that fails its schema is in its round file before its schema repai
   assert.equal(await runTask(layer), 1);
   assert.equal((atRepair as { dispositions: unknown } | null)?.dispositions, "none");
 });
+
+// W1-R1-1: a reply JSON cannot represent is written to its round file as serializeReply's text, as invalid-replies/ keeps
+// it, so the raw save never ends the run before the reply's repair turn.
+for (const [what, extra] of [["a BigInt", 1n], ["a cycle", (() => { const c: Record<string, unknown> = { name: "x" }; c.self = c; return c; })()]] as const) {
+  test(`a refused response containing ${what} is in its round file and invalid-replies/ as serializeReply's text before its repair turn`, async () => {
+    const refused = { ...respond([["A", "accepted"]]), extra };
+    let atRepair: { cc: string; kept: string } | null = null;
+    const { layer, probe } = testLayer(tempRepo(), {
+      steps: [
+        { output: noQuestions, plan: "v1" },
+        { output: refused, plan: "v2" },
+        {
+          output: respond([["A", "accepted"], ["B", "rejected"]]),
+          plan: "v2",
+          onCall: () => (atRepair = { cc: fs.readFileSync(path.join(probe.dir, "planning-1/cc-1.json"), "utf8"), kept: fs.readFileSync(path.join(probe.dir, "invalid-replies/claude-1.json"), "utf8") }),
+        },
+      ],
+      reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [] }, { issues: [] }],
+      execs: [finished],
+    });
+    assert.equal(await runTask(layer), 1);
+    assert.ok(atRepair !== null, "the repair turn was not reached");
+    const seen = atRepair as { cc: string; kept: string };
+    const expected = serializeReply({ ...refused, plan: json(probe.dir, "planning-1/cc-1.json").plan });
+    assert.equal(seen.cc.trimEnd(), expected, "cc-1.json held serializeReply's text of the refused reply");
+    assert.equal(seen.kept.trimEnd(), expected, "invalid-replies/ kept the same text");
+    assert.deepEqual(json(probe.dir, "planning-1/cc-1.json").dispositions, respond([["A", "accepted"], ["B", "rejected"]]).dispositions);
+  });
+}
 
 /** Each review defect of RoundInvalid. */
 const REVIEW_CASES: readonly Readonly<{ name: string; refused: Review }>[] = [
