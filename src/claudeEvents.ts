@@ -187,7 +187,7 @@ export const waitingOn = (state: BackgroundState): boolean => state.pending.size
 /**
  * An execution call's outcome checked against its background tasks (issue #154): a call that ended while a task was
  * still pending ended with its result lost, so its report is not taken as its end, however the SDK came to end it (a
- * hook cancelled at its timeout, structured-output retries exhausted, hooks never called); the outcome is aborted,
+ * hook canceled at its timeout, structured-output retries exhausted, hooks never called); the outcome is aborted,
  * which takes the stop's path. A recorded stop takes precedence.
  */
 export const checkBackground = (result: ExecCallOutcome, stop: Stop | null, state: BackgroundState, nameOf: (id: string) => string): ExecCallOutcome => {

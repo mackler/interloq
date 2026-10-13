@@ -88,7 +88,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Cause.pretty` | Cause.d.ts:1192 | `(cause) => string` |
 | `Ref.make` / `get` / `set` / `update` | Ref.d.ts:149 / 175 / 210 / 587 | `make(value) => Effect<Ref<A>>`; `set(self, value)`; `update(self, f)` |
 | `Ref.updateAndGet` (read 29 Sep, S6 of issues #46 and #59) | Ref.d.ts:617 | dual: `(self, f: (a) => A) => Effect<A>`: the new value; the run's question counter in `src/webUi.ts` |
-| `Ref.modify` (read 26 Sep, web GUI stage 3.2) | Ref.d.ts:397 | dual: `(self, f: (a) => readonly [B, A]) => Effect<B>`: reads and replaces in one step (the web Ui's prompt table, the run manager's state) |
+| `Ref.modify` (read 26 Sep, web GUI stage 3.2) | Ref.d.ts:397 | dual: `(self, f: (a) => readonly [B, A]) => Effect<B>`: reads and replaces in one step (the web Ui's prompt table, the run manager's state; issue #154: the count of background-task ends already given to Claude Code in `src/claude.ts`) |
 
 ## Services and Layers
 
@@ -143,7 +143,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | Name | Line | Notes |
 |---|---|---|
 | `Clock.Clock` | 186 | `Context.Reference<Clock>`: a service with a default, so `Clock.currentTimeMillis` has no requirement; a test overrides it with `Effect.provideService(Clock.Clock, impl)` (Effect.d.ts:11537, data-last `provideService(key)(impl)(self)`) |
-| `Clock.currentTimeMillis` | 260 | `Effect<number>`; the store's `now` (init's archive name, usage times, the checkpoint), and the run manager's publication time of every event (`append` and `end`, issue #1; test/runManager.test.ts provides a stepping clock around `start`, which the run's fiber and its `end` inherit) |
+| `Clock.currentTimeMillis` | 260 | `Effect<number>`; the store's `now` (init's archive name, usage times, the checkpoint), and the run manager's publication time of every event (`append` and `end`, issue #1; test/runManager.test.ts provides a stepping clock around `start`, which the run's fiber and its `end` inherit); issue #154: the deadline of an execution call's wait for its background commands in `src/claude.ts`, which polls with `Effect.sleep(Duration.millis(…))` inside a hook's callback, on the live Clock |
 | `Clock` interface | 49 | `currentTimeMillisUnsafe()`, `currentTimeMillis`, `currentTimeNanosUnsafe()`, `currentTimeNanos`, `monotonicTimeNanosUnsafe()`, `monotonicTimeNanos`, `sleep(duration)`; a fixed clock in test/state.test.ts implements all seven |
 | `TestClock` | effect/dist/testing/TestClock.d.ts:241 (`layer`), 340 (`setTime`) | present in rc.117 and in 4.0.1; not used (a fixed `Clock` value is enough) |
 | `Clock` interface, `sleep` | 146 | `sleep(duration: Duration) => Effect<void>`; `Effect.sleep` is `clockWith((clock) => clock.sleep(…))` (effect/dist/internal/effect.js:2919), so a Clock provided with `Effect.provideService(Clock.Clock, …)` replaces every sleep: `steppingClock` of test/helpers.ts records each and advances its time instead of waiting (issue #68). `withTransportRetry` reads `Clock.currentTimeMillis` before and after a usage-limit wait |
