@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { countOfKind, describeEvent, foreseenPhases, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { para, plain } from "./helpers.ts";
+import { Result } from "effect";
+import { shownExplanations } from "../src/question.ts";
 import * as prompts from "../src/prompts.ts";
 
 const review = { issues: [] };
@@ -39,6 +41,10 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   QuestionPresented: [
     { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], answer: { token: "1" } }, { label: plain("B"), description: [], answer: { token: "2" } }], attached: null, decision: null } },
     /question 3: Which\? \(2 options\)/,
+  ],
+  QuestionExplained: [
+    { _tag: "QuestionExplained", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: Result.getOrThrow(shownExplanations([{ id: "t", term: "Which", senses: ["a word"] }])), question: plain("Which?"), options: [], attached: null, decision: null } },
+    /question 3 explained: 1 term/,
   ],
   DecisionAnalyzed: [{ _tag: "DecisionAnalyzed", decision: 2, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } }, /decision 2 analyzed: Which\? \(0 columns\)/],
   AnswerRejected: [{ _tag: "AnswerRejected" }, /answer rejected, asked again/],

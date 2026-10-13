@@ -4,7 +4,7 @@
 
 import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
-import { chooseOption, isDecide, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
+import { chooseOption, isDecide, isTermsRequest, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
 import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
@@ -166,40 +166,63 @@ const explain = (draft: QuestionDraft, facts: string) =>
  * typed; after an analysis it is recorded as the choice of every decision made for this question (decision Q4), with
  * the option it chose. An answer that `acceptable` rejects (a blank reply where one is required) is neither returned
  * nor recorded: the question is presented again and asked again (W1-R1-1, W1-R1-2), with or without options.
+ * Issue #142: `terms`, where given, is the request for the question's explanations, which yields the same draft with
+ * them. While it has not run, the hint carries its line outermost; "/terms" runs it, presents the same question again
+ * under the same number with its explanations (QuestionExplained, then QuestionPresented), and asks again without the
+ * line. "/terms" is never returned or recorded as a choice; without a request it is an answer like any other.
  */
-export const askOffering = <E>(
+export const askOffering = <E, R = never>(
   ask: (prompt: string) => Effect.Effect<string, E>,
   hint: string,
   draft: QuestionDraft,
   acceptable: (answer: string) => boolean = () => true,
-): Effect.Effect<string, E | RunError, Decider | Store | Ui> =>
+  terms: Effect.Effect<QuestionDraft, E | RunError, R> | null = null,
+): Effect.Effect<string, E | RunError, Decider | Store | Ui | R> =>
   Effect.gen(function* () {
     const ui = yield* Ui;
     const store = yield* Store;
-    const explained = draft.explain === undefined ? draft : withContext(draft, yield* explain(draft, draft.explain));
-    const question = yield* Effect.fromResult(presentedQuestion(explained, yield* ui.nextQuestion));
-    const present = ui.notify({ _tag: "QuestionPresented", question });
+    // The question as it is shown: replaced, under its number, when its explanations arrive on request (issue #142).
+    let explained = draft.explain === undefined ? draft : withContext(draft, yield* explain(draft, draft.explain));
+    let question = yield* Effect.fromResult(presentedQuestion(explained, yield* ui.nextQuestion));
+    let request = terms;
+    const present = Effect.suspend(() => ui.notify({ _tag: "QuestionPresented", question }));
     yield* present;
     yield* store.converse(renderQuestionRecord(question));
     // The page keeps a decision's analysis for the question asked again (W3-R1-1).
     const rejected = ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present));
+    const askOffered = (prompt: string) => ask(request === null ? prompt : prompts.withTermsOffer(prompt));
+    /** Whether the answer asked for the terms, which then are written and presented: the question is asked again. */
+    const requested = (answer: string) =>
+      Effect.gen(function* () {
+        if (request === null || !isTermsRequest(answer)) return false;
+        const run = request;
+        request = null;
+        explained = yield* run;
+        question = yield* Effect.fromResult(presentedQuestion(explained, question.number));
+        yield* ui.notify({ _tag: "QuestionExplained", question });
+        yield* present;
+        return true;
+      });
     if (draft.options.length < 2) {
       for (;;) {
-        const answer = yield* ask(hint);
+        const answer = yield* askOffered(hint);
+        if (yield* requested(answer)) continue;
         if (acceptable(answer)) return answer;
         yield* rejected;
       }
     }
     const decider = yield* Decider;
     // S10: the analysis is of the question as the user was shown it, its options' words as displayed, paired by position.
-    const options = explained.options.map((o) => ({ label: piecesText(o.shown.label), description: piecesText(o.shown.description) }));
+    const optionsShown = () => explained.options.map((o) => ({ label: piecesText(o.shown.label), description: piecesText(o.shown.description) }));
     const decisions: number[] = [];
     for (;;) {
       // Issue #133 (S6): the offer stands until a decision is made; the question asked beside its own analysis carries
       // none, and "/decide" there is an answer like any other.
       const offered = decisions.length === 0;
-      const answer = yield* ask(offered ? prompts.withOffer(hint) : hint);
+      const answer = yield* askOffered(offered ? prompts.withOffer(hint) : hint);
+      if (yield* requested(answer)) continue;
       if (offered && isDecide(answer)) {
+        const options = optionsShown();
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
         const shown = { context: blocksMarkdown(explained.context.blocks), history: blocksMarkdown(explained.history), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };

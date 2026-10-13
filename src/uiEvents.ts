@@ -58,6 +58,11 @@ export type UiEvent =
    */
   | Readonly<{ _tag: "QuestionPresented"; question: PresentedQuestion }>
   /**
+   * Issue #142: the question the user is answering, presented again with the explanations he asked for: the same number
+   * and words. The page keeps a decision's analysis of that question across it; a QuestionPresented follows.
+   */
+  | Readonly<{ _tag: "QuestionExplained"; question: PresentedQuestion }>
+  /**
    * The analysis of decision k is being prepared (S21, Q4): check 0 while it is written, then the number of Codex's checks
    * so far; `question` is the number of the question it is for. The user reads one plain status, not the loop's cycles.
    */
@@ -141,6 +146,8 @@ export const describeEvent = (event: UiEvent): string => {
       return `Claude Code said: ${event.text}`;
     case "QuestionPresented":
       return `question ${event.question.number}: ${piecesText(event.question.question)} (${plural(event.question.options.length, "option")})`;
+    case "QuestionExplained":
+      return `question ${event.question.number} explained: ${plural(event.question.explanations.length, "term")}`;
     case "DecisionAnalyzed":
       return `decision ${event.decision} analyzed: ${event.question} (${plural(event.analysis.columns.length, "column")})`;
     case "AnswerRejected":

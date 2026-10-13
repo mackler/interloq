@@ -606,3 +606,71 @@ test("W1-R1-2: the analysis prompt carries the terms as the items of the record'
   assert.ok(shown._tag === "Success");
   assert.ok(prompt.includes(termItem(shown.success[0], "")), prompt.slice(-1500));
 });
+
+// Issue #142 (requirements Q6): a question's terms on request. askOffering offers the request while it has not run; the
+// answer /terms runs it and presents the same question again, its number and words unchanged, with its explanations.
+const plainDraft = draftOf({ question: "Which database?", options: offered });
+const explainedDraft: QuestionDraft = {
+  ...plainDraft,
+  question: [...plain("Which "), term("database", "t1"), ...plain("?")],
+  explanations: [{ id: "t1", term: "database", senses: ["A program that keeps data."] }],
+};
+const termsOffered = (text: string) => prompts.offersOf(text).terms;
+const askWithTerms = (layer: Layer.Layer<Services>, terms: Effect.Effect<QuestionDraft> | null, prompt = "Pick > ") =>
+  Effect.runPromise(Effect.gen(function* () {
+    const ui = yield* Ui;
+    return yield* askOffering((p) => ui.ask(p), prompt, plainDraft, () => true, terms);
+  }).pipe(Effect.provide(layer)));
+const tagsOf = (probe: { ui: { notified: UiEvent[] } }) => probe.ui.notified.filter((e) => ["QuestionPresented", "QuestionExplained", "DecisionAnalyzed"].includes(e._tag));
+
+test("issue #142: /terms runs the request, presents the same question again with its explanations, and asks again without the request", async () => {
+  const { layer, probe } = await setUp({ answers: ["/terms", "1"] });
+  let runs = 0;
+  const request = Effect.sync(() => {
+    runs++;
+    return explainedDraft;
+  });
+  assert.equal(await askWithTerms(layer, request), "1");
+  assert.equal(runs, 1);
+  const events = tagsOf(probe);
+  assert.deepEqual(events.map((e) => e._tag), ["QuestionPresented", "QuestionExplained", "QuestionPresented"]);
+  const [first, explained, again] = events.flatMap((e) => (e._tag === "QuestionPresented" || e._tag === "QuestionExplained" ? [e.question] : []));
+  assert.deepEqual([first.number, explained.number, again.number], [1, 1, 1]);
+  assert.deepEqual(first.explanations, []);
+  assert.deepEqual(again, explained);
+  assert.equal(again.explanations.length, 1);
+  assert.equal(piecesText(again.question), piecesText(first.question));
+  assert.deepEqual(again.context, first.context);
+  assert.ok(termsOffered(probe.ui.asked[0]));
+  assert.ok(!termsOffered(probe.ui.asked[1]));
+  assert.ok(prompts.offersOf(probe.ui.asked[1]).decide, "the offer of decision support stands");
+});
+
+test("issue #142: without a request, /terms is an answer like any other, and no prompt offers it", async () => {
+  const { layer, probe } = await setUp({ answers: ["/terms"] });
+  assert.equal(await askWithTerms(layer, null), "/terms");
+  assert.ok(!termsOffered(probe.ui.asked[0]));
+});
+
+test("issue #142: /terms after /decide: the question shown beside its analysis gains its explanations, in the order the page relies on", async () => {
+  const { layer, probe } = await setUp({ answers: ["/decide", "/terms", "2"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
+  assert.equal(await askWithTerms(layer, Effect.succeed(explainedDraft)), "2");
+  assert.deepEqual(tagsOf(probe).map((e) => e._tag), ["QuestionPresented", "DecisionAnalyzed", "QuestionPresented", "QuestionExplained", "QuestionPresented"]);
+  const last = presentedQuestions(probe.ui).at(-1);
+  assert.ok(last !== undefined && last.explanations.length === 1 && last.number === 1);
+  assert.ok(termsOffered(probe.ui.asked[1]), "the request stands beside the analysis");
+  assert.ok(!termsOffered(probe.ui.asked[2]));
+  assert.deepEqual(json(probe.dir, "decision-1/chosen.json"), { version: 2, decision: 1, answer: "2", option: "PostgreSQL" });
+});
+
+test("issue #142: a question with fewer than two options takes the request too", async () => {
+  const { layer, probe } = await setUp({ answers: ["/terms", "ok"] });
+  const one = { ...plainDraft, options: [] };
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const ui = yield* Ui;
+    return yield* askOffering((p) => ui.ask(p), "Pick > ", one, () => true, Effect.succeed({ ...explainedDraft, options: [] }));
+  }).pipe(Effect.provide(layer)));
+  assert.equal(result, "ok");
+  assert.deepEqual(probe.ui.asked.map(termsOffered), [true, false]);
+  assert.deepEqual(tagsOf(probe).map((e) => e._tag), ["QuestionPresented", "QuestionExplained", "QuestionPresented"]);
+});
