@@ -299,3 +299,52 @@ test("unchecked: a terms reply that fails its validation twice halts with Questi
   });
   await refinementFailsWith(layer, "unchecked", "QuestionInvalid", /Q1: the words or blocks of its field "question" differ from the agreed question/);
 });
+
+// Issue #142 (requirements Q6): one question's terms on request. The prompt that asks for them and the validation that
+// checks the reply are written and tested together.
+import { requestedTermsValidation, withTermsEntry } from "../src/subjects.ts";
+
+test("the request's prompt and its validation agree: exactly one entry, for the question asked, its wording kept", () => {
+  const prompt = prompts.termsOnRequestPrompt(TEST_ROOT, "task", "Q1");
+  for (const text of [prompts.KEEP_WORDING, prompts.QUESTION_TEXT_FORMAT, prompts.questionWritingRules(), "exactly one entry, for the question Q1", "Task: task"]) assert.ok(prompt.includes(text), text);
+  const validate = requestedTermsValidation<S.TermsWrite>({ ...entry, default_answer: "Declare it" });
+  assert.ok(Result.isSuccess(validate(terms())));
+  const failing = (output: S.TermsWrite) => {
+    const result = validate(output);
+    assert.ok(Result.isFailure(result));
+    return result.failure;
+  };
+  assert.equal(failing({ entries: [] }).repair, prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "entryCount", subject: "0" }] }]));
+  assert.equal(failing({ entries: [dividedEntry(), dividedEntry()] }).repair, prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "entryCount", subject: "2" }] }]));
+  assert.equal(
+    failing({ entries: [{ ...dividedEntry(), id: "Q9" }] }).repair,
+    prompts.questionRepairPrompt([
+      { where: "Q9", problems: [{ kind: "unknownQuestion", subject: "Q9" }] },
+      { where: "Q1", problems: [{ kind: "entryCount", subject: "0" }] },
+    ]),
+  );
+  assert.match(prompts.questionProblemText({ kind: "entryCount", subject: "2" }), /holds 2 entries for this question; it must hold exactly one/);
+  // The rule the repair prompt cites is the one the prompt states.
+  assert.ok(prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "entryCount", subject: "0" }] }]).includes(prompts.KEEP_WORDING));
+});
+
+test("property: withTermsEntry holds each question once, holds the new entry, keeps every other entry, in the list's order", () => {
+  const ids = ["Q1", "Q2", "Q3", "Q4"];
+  const questions = ids.map((id) => ({ ...entry, id, default_answer: null }));
+  const entryOf = (id: string, sense: string): S.TermsEntry => ({ ...dividedEntry(sense), id });
+  fc.assert(
+    fc.property(fc.subarray(ids), fc.constantFrom(...ids), fc.string(), (present, id, sense) => {
+      const entries = present.map((p) => entryOf(p, `old ${p}`));
+      const added = entryOf(id, sense);
+      const result = withTermsEntry(entries, added, questions);
+      const resultIds = result.map((e) => e.id);
+      return (
+        new Set(resultIds).size === resultIds.length &&
+        result.some((e) => e === added) &&
+        entries.every((e) => e.id === id || result.includes(e)) &&
+        resultIds.join() === ids.filter((x) => x === id || present.includes(x)).join()
+      );
+    }),
+    { numRuns: 200 },
+  );
+});

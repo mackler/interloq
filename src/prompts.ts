@@ -330,6 +330,7 @@ export const QUESTION_PROBLEM_KINDS = [
   "literalChanged",
   "optionsChanged",
   "suppliedRefDropped",
+  "entryCount",
 ] as const;
 export type QuestionProblemKind = (typeof QUESTION_PROBLEM_KINDS)[number];
 export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>> = {
@@ -351,6 +352,7 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   literalChanged: "keepLiterals",
   optionsChanged: "keepOptions",
   suppliedRefDropped: "keepSuppliedRefs",
+  entryCount: "keepWording",
 };
 /** One problem of a question: its kind and what it concerns (an explanation, a field, the bare reference), or "". */
 export type QuestionProblem = Readonly<{ kind: QuestionProblemKind; subject: string }>;
@@ -396,6 +398,8 @@ export function questionProblemText(problem: QuestionProblem): string {
       return "the options were added, removed or reordered";
     case "suppliedRefDropped":
       return `the name ${subject}, which Interloq supplied with its explanation, lost its reference`;
+    case "entryCount":
+      return `the reply holds ${problem.subject} entries for this question; it must hold exactly one, for this question`;
   }
 }
 const questionProblemLines = (questions: QuestionProblems): readonly string[] => questions.map((q) => `${q.where}: ${q.problems.map(questionProblemText).join("; ")}.`);
@@ -576,13 +580,29 @@ const termsRule = (): string => QUESTION_RULES.find((r) => r.id === "terms")?.ru
  * question review has converged, against the final wording. The entry of each question lists its terms.
  */
 export function termsPrompt(root: RunRoot, task: string): string {
-  return `${runDir(root)}/questions.json contains the task and the question list that Claude Code and Codex have agreed. The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.
+  return `${agreedListSentence(root)} The questions will be put to the user, who may never have seen this codebase. Explain the terms of each question. ${READ_ONLY_TERMS}
 ${termsRule()}
-Return in 'entries' one entry per question of the list: its id; its explanations; and its context, history, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it. A term may occur in any of these fields; each question carries all of its own explanations, since each question is read on its own. The explanations are shown on the words themselves.
-${KEEP_WORDING}
-${QUESTION_TEXT_FORMAT}
-${questionWritingRules()}
+Return in 'entries' one entry per question of the list: ${TERMS_ENTRY_FIELDS} A term may occur in any of these fields; each question carries all of its own explanations, since each question is read on its own. The explanations are shown on the words themselves.
+${termsWritingRules()}
 An entry whose question needs no explanation has an empty explanations list and its fields as they are.
+Task: ${task}`;
+}
+const agreedListSentence = (root: RunRoot): string => `${runDir(root)}/questions.json contains the task and the question list that Claude Code and Codex have agreed.`;
+const READ_ONLY_TERMS = "You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.";
+const TERMS_ENTRY_FIELDS = "its id; its explanations; and its context, history, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it.";
+const termsWritingRules = (): string => `${KEEP_WORDING}
+${QUESTION_TEXT_FORMAT}
+${questionWritingRules()}`;
+/**
+ * Issue #142: the call that writes one agreed question's explanations on the user's request, while the question is on
+ * the screen (the choice onRequest): a fresh session, no review. requestedTermsValidation checks its reply.
+ */
+export function termsOnRequestPrompt(root: RunRoot, task: string, id: string): string {
+  return `${agreedListSentence(root)} The user is reading the question ${id} of that list now and has asked for the explanations of its terms; he may never have seen this codebase. Explain the terms of that question alone. ${READ_ONLY_TERMS}
+${termsRule()}
+Return in 'entries' exactly one entry, for the question ${id}: ${TERMS_ENTRY_FIELDS} A term may occur in any of these fields. The explanations are shown on the words themselves.
+${termsWritingRules()}
+If the question needs no explanation, its entry has an empty explanations list and its fields as they are.
 Task: ${task}`;
 }
 /** Codex's review of the explanations (S17): the criteria of every question, as they apply to the terms. */

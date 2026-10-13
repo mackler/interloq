@@ -11,7 +11,7 @@ import * as S from "./schema.ts";
 import type { DecisionAnalysis, DecisionApplied, DecisionResponse, Plan, PlannerResponse, PlanResponse, PlanWrite, PlanWriteResult, QuestionList, QuestionListResponse, QuestionsFile, RecordedPlan, TermsEntry, TermsResponse, TermsWrite } from "./schema.ts";
 import { QuestionInvalid, SkipConditionInvalid } from "./errors.ts";
 import { skipConditionProblems } from "./premises.ts";
-import type { QuestionProblem } from "./prompts.ts";
+import type { QuestionProblem, QuestionProblems } from "./prompts.ts";
 import { sameBlocks, samePieces } from "./pieces.ts";
 import { questionProblems } from "./question.ts";
 import { validatePlan } from "./plan.ts";
@@ -88,19 +88,44 @@ const wordingChanges = (agreed: QuestionsFile["questions"][number], entry: Terms
  */
 export const termsValidation =
   <T extends Readonly<{ entries: readonly TermsEntry[] }>>(questions: QuestionsFile["questions"]): Validation<T> =>
+  (output) => questionsChecked(output, termsProblems(questions, output.entries));
+
+/** The problems of the terms entries against the agreed questions they name: an unknown id, a changed wording, a rule. */
+const termsProblems = (questions: QuestionsFile["questions"], entries: readonly TermsEntry[]): QuestionProblems =>
+  entries.flatMap((entry): QuestionProblems => {
+    const q = questions.find((x) => x.id === entry.id);
+    if (q === undefined) return [{ where: entry.id, problems: [{ kind: "unknownQuestion", subject: entry.id }] }];
+    const problems = [
+      ...wordingChanges(q, entry),
+      ...questionProblems({ context: entry.context, history: entry.history, question: entry.question, explanations: entry.explanations, options: entry.proposed_answers, details: entry.reason }).filter((p) => !LIST_PROBLEMS.includes(p.kind)),
+    ];
+    return problems.length === 0 ? [] : [{ where: entry.id, problems }];
+  });
+
+/** A reply accepted where no question has a problem, otherwise QuestionInvalid with its repair prompt. */
+const questionsChecked = <T>(output: T, failing: QuestionProblems) =>
+  failing.length === 0 ? Result.succeed({ value: output, notes: [] }) : Result.fail({ error: new QuestionInvalid({ questions: failing }), repair: prompts.questionRepairPrompt(failing) });
+
+/**
+ * Issue #142: the reply to a request for one agreed question's terms (termsOnRequestPrompt): termsValidation over that
+ * question alone, and exactly one entry for it (`entryCount`).
+ */
+export const requestedTermsValidation =
+  <T extends Readonly<{ entries: readonly TermsEntry[] }>>(agreed: QuestionsFile["questions"][number]): Validation<T> =>
   (output) => {
-    const failing = output.entries.flatMap((entry): { where: string; problems: readonly QuestionProblem[] }[] => {
-      const q = questions.find((x) => x.id === entry.id);
-      if (q === undefined) return [{ where: entry.id, problems: [{ kind: "unknownQuestion", subject: entry.id }] }];
-      const problems = [
-        ...wordingChanges(q, entry),
-        ...questionProblems({ context: entry.context, history: entry.history, question: entry.question, explanations: entry.explanations, options: entry.proposed_answers, details: entry.reason }).filter((p) => !LIST_PROBLEMS.includes(p.kind)),
-      ];
-      return problems.length === 0 ? [] : [{ where: entry.id, problems }];
-    });
-    if (failing.length === 0) return Result.succeed({ value: output, notes: [] });
-    return Result.fail({ error: new QuestionInvalid({ questions: failing }), repair: prompts.questionRepairPrompt(failing) });
+    const count = output.entries.filter((e) => e.id === agreed.id).length;
+    const counted: QuestionProblems = count === 1 ? [] : [{ where: agreed.id, problems: [{ kind: "entryCount", subject: String(count) }] }];
+    return questionsChecked(output, [...termsProblems([agreed], output.entries), ...counted]);
   };
+
+/** Issue #142: the terms entries with `entry` in place of the one of its id, or added, in the agreed list's order. */
+export const withTermsEntry = (entries: readonly TermsEntry[], entry: TermsEntry, questions: QuestionsFile["questions"]): readonly TermsEntry[] => {
+  const byId = new Map([...entries.map((e): [string, TermsEntry] => [e.id, e]), [entry.id, entry]]);
+  return questions.flatMap((q) => {
+    const found = byId.get(q.id);
+    return found === undefined ? [] : [found];
+  });
+};
 /** Writes the explanations to terms.json. */
 export const saveTerms = (entries: readonly TermsEntry[]): Effect.Effect<void, RunError, Store> =>
   Effect.gen(function* () {
