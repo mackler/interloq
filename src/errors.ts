@@ -25,7 +25,11 @@ export class RoundInvalid extends Data.TaggedError("RoundInvalid")<{
   /** Generated self-correction ids that already exist in the log. */
   readonly collidingIds: readonly string[];
 }> {}
-/** A question list whose structure is invalid (duplicate or empty ids): a halt without a repair turn, by analogy with Q3 (step 4.6). */
+/**
+ * A question list whose structure is invalid (duplicate or empty ids, found by normalizeQuestionList after the list's
+ * validation accepted it): a halt without a repair turn, by analogy with Q3 (step 4.6). Since issue #151 that analogy no
+ * longer holds, RoundInvalid having its repair turn; recorded in CLAUDE.md under "Not yet known or not yet built".
+ */
 export class QuestionListInvalid extends Data.TaggedError("QuestionListInvalid")<{ readonly duplicateIds: readonly string[]; readonly emptyIds: number; readonly cycle: readonly string[] }> {}
 export class RoundLimitStop extends Data.TaggedError("RoundLimitStop")<{ readonly heading: string }> {}
 export class ClaudeCallFailed extends Data.TaggedError("ClaudeCallFailed")<{ readonly message: string }> {}
@@ -65,7 +69,7 @@ export class ConfigInvalid extends Data.TaggedError("ConfigInvalid")<{ readonly 
 export class StateFileInvalid extends Data.TaggedError("StateFileInvalid")<{ readonly file: string; readonly message: string }> {}
 export class FileSystemError extends Data.TaggedError("FileSystemError")<{ readonly operation: string; readonly path: string; readonly message: string }> {}
 export class GitError extends Data.TaggedError("GitError")<{ readonly args: string[]; readonly message: string }> {}
-/** A decision analysis whose structure is invalid (decision support, D9): a halt without a repair turn, like RoundInvalid. */
+/** A decision analysis whose structure is invalid (decision support, D9): one validation repair turn (issue #37), then a halt. */
 export class AnalysisInvalid extends Data.TaggedError("AnalysisInvalid")<{
   readonly columns: Readonly<{ expected: readonly string[]; got: readonly string[] }> | null;
   readonly duplicateIds: readonly string[];
