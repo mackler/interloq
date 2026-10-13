@@ -23,7 +23,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -35,6 +35,13 @@
   import TopBar from "./TopBar.svelte";
 
   let view = $state<ViewState>(initialState);
+  /** Issue #142: a refinement starts with the choice of terms its tab's control shows. */
+  const startItem = (mode: RunMode, item: ListedItem) => {
+    noticesSeen = view.notices.length;
+    if (mode === "implementation") return send(startFrame({ mode, item }));
+    const terms = shownTerms(view);
+    if (terms !== null) send(startFrame({ mode, item, terms }));
+  };
   let connection: Connection | null = null;
   // Issue #120: after a tab's run has ended, its list is shown again once the user asks for it.
   let listWanted = $state<Record<RunMode, boolean>>({ refinement: false, implementation: false });
@@ -260,7 +267,7 @@
            notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
-      <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} onStart={(item: ListedItem) => { noticesSeen = view.notices.length; send(mode === "refinement" ? startFrame({ mode, item, terms: (tab.items as { terms?: TermsMode }).terms ?? "unchecked" }) : startFrame({ mode, item })); }} onRefresh={() => requestItems(mode)} />
+      <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch

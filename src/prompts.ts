@@ -1149,6 +1149,9 @@ export const TABS_LABEL = "Modes";
 /** A tab whose run waits for the user's answer: its name with the title's waiting mark in front (issue #16's mark). */
 export const waitingTabName = (name: string): string => `${TITLE_WAITING_MARK} ${name}`;
 export const ITEMS_REFRESH = "Refresh";
+/** Issue #142: the name of the Refinement tab's control of the choice of terms, and the words of its three values. */
+export const TERMS_CHOICE_LABEL = "Explanations of terms";
+export const TERMS_CHOICE_TEXTS: Readonly<Record<TermsMode, string>> = { checked: "Written and checked", unchecked: "Written, not checked", onRequest: "On request" };
 export const ITEMS_RETRY = "Try again";
 export const ITEMS_LOADING = "Asking the issue tracker for the items …";
 /** The way back from a tab's ended run to its list. */

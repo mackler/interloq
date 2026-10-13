@@ -8,6 +8,7 @@ import { viewOf } from "../../src/analysisView.ts";
 import QuestionPane from "./components/QuestionPane.svelte";
 import ItemList from "./components/ItemList.svelte";
 import { startFrame } from "./tabs.ts";
+import { TERMS_MODES } from "../../src/schema.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
 import type { RunMode } from "../../src/runMode.ts";
 import TimelineRail from "./components/TimelineRail.svelte";
@@ -650,6 +651,32 @@ describe("App and the draft", () => {
       one(root, `button[name=start][data-item="${fixture.id}"]`).click();
       expect(sentOf(ws).at(-1)).toEqual(startFrame({ mode: "implementation", item: fixture }));
       expect(sentOf(ws).at(-1)).toEqual({ type: "start", mode: "implementation", item: fixture.id });
+    });
+
+    // Issue #142 (requirements Q3): the Refinement tab's control of the choice of terms starts at the configured value
+    // and changes the choice for the next refinement; the Implementation tab has none.
+    test("the Refinement tab shows the choice of terms at the listing's value; a choice is sent with the next start", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      flushSync();
+      const choice = one(root, `[role=radiogroup][aria-label="${prompts.TERMS_CHOICE_LABEL}"]`);
+      const radio = (m: string) => one(choice, `input[type=radio][value=${m}]`) as HTMLInputElement;
+      expect([...choice.querySelectorAll("label")].map((l) => l.textContent?.trim())).toEqual(TERMS_MODES.map((m) => prompts.TERMS_CHOICE_TEXTS[m]));
+      expect(radio("checked").checked).toBe(true);
+      expect(root.querySelector("ul [role=radiogroup]")).toBe(null);
+      radio("onRequest").click();
+      flushSync();
+      expect(radio("onRequest").checked).toBe(true);
+      one(root, `button[name=start][data-item="${fixture.id}"]`).click();
+      expect(sentOf(ws).at(-1)).toEqual(startFrame({ mode: "refinement", item: fixture, terms: "onRequest" }));
+    });
+
+    test("the Implementation tab has no choice of terms", async () => {
+      const { root, ws } = await begin();
+      select(root, "implementation");
+      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      flushSync();
+      expect(root.querySelector(`[aria-label="${prompts.TERMS_CHOICE_LABEL}"]`)).toBe(null);
     });
 
     test("a tab whose run waits carries the mark; the other tab shows its own run without an answer field", async () => {
