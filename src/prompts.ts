@@ -901,7 +901,11 @@ export const ROUND_REPAIR = {
   unknownDispositions: (ids: readonly string[], reviewIds: readonly string[]): string =>
     `Remove the dispositions for ${ids.join(", ")}: a disposition answers an issue of this review, whose ids are ${reviewIds.join(", ")}. Report a correction of an earlier issue in self_corrections instead.`,
   emptyDispositionId: "Give every disposition the id of the issue of this review that it answers; no disposition id may be empty.",
-  collidingIds: (ids: readonly string[]): string => "",
+  /** A generated id cannot be changed by Claude Code, so the repair asks for an explicit id of the generated form, which validateRound keeps as given (S8). */
+  collidingIds: (ids: readonly string[]): string => {
+    const forms = [...new Set(ids.map((id) => `${id.replace(/\d+$/, "")}<k>`))];
+    return `The program generated ${ids.join(", ")} for self-corrections with an empty id, and an entry of the issue log already has that id. Give each of those self-corrections an id of your own of the form ${forms.join(" or ")}, with a k that appears neither in the issue log nor elsewhere in your reply, and keep its new_action and explanation unchanged; it still concerns no issue.`;
+  },
 } as const;
 
 /** What a review or a response did wrong (RoundInvalid), one sentence per field: the halt's text and the repair prompts state it from here. */

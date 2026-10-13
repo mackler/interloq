@@ -8,7 +8,8 @@ import { Result } from "effect";
 import { describe, RoundInvalid } from "../src/errors.ts";
 import { cycleInvalidText, reviewRepairPrompt, roundInvalidParts, roundRepairPrompt, ROUND_REPAIR } from "../src/prompts.ts";
 import { reviewValidation, roundValidation, validateReview, validateRound, type ValidatedReview } from "../src/round.ts";
-import type { PlannerResponse } from "../src/schema.ts";
+import type { LogEntry, PlannerResponse } from "../src/schema.ts";
+import { appendRound } from "../src/issueLog.ts";
 import { issue, respond } from "./helpers.ts";
 
 type Fields = ConstructorParameters<typeof RoundInvalid>[0];
@@ -102,4 +103,36 @@ test("property: each prompt names every id of every field it covers", () => {
     }),
     { numRuns: 200 },
   );
+});
+
+// S8: a generated self-correction id that collides with an entry of the log. Claude Code cannot change a generated id, so the
+// repair asks for an explicit new id of the generated form, which validateRound keeps as given.
+test("the collision instruction names each colliding id, its form, and what to keep", () => {
+  const instruction = ROUND_REPAIR.collidingIds(["P1-S1-1", "P1-S1-2"]);
+  for (const id of ["P1-S1-1", "P1-S1-2"]) assert.ok(instruction.includes(id), id);
+  assert.ok(instruction.includes("P1-S1-<k>"), instruction);
+  assert.match(instruction, /new_action and explanation unchanged/);
+  assert.match(instruction, /neither in the issue log nor elsewhere in your reply/);
+});
+
+test("seam: a plan_error self-correction given the instructed free id validates and is logged as a new entry", () => {
+  const unrelated = { id: "P1-S1-1", phase: 1, round: 1, source: "self_correction", problem: "another error", action: "plan_error", rationale: "earlier", superseded: false } as LogEntry;
+  const reviewed = validateReview({ issues: [issue("P1-R1-1")] });
+  assert.ok(Result.isSuccess(reviewed));
+  const refused = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "", new_action: "plan_error", explanation: "x" }] });
+  const failure = validateRound(reviewed.success, refused, [unrelated], 1, 1, "P");
+  assert.ok(Result.isFailure(failure));
+  assert.deepEqual(failure.failure.collidingIds, ["P1-S1-1"]);
+  assert.ok(roundRepairPrompt(failure.failure, ["P1-R1-1"]).includes(ROUND_REPAIR.collidingIds(failure.failure.collidingIds)));
+
+  const repaired = respond([["P1-R1-1", "accepted"]], { self_corrections: [{ id: "P1-S1-2", new_action: "plan_error", explanation: "x" }] });
+  const round = validateRound(reviewed.success, repaired, [unrelated], 1, 1, "P");
+  assert.ok(Result.isSuccess(round));
+  assert.deepEqual(round.success.selfCorrections, [{ id: "P1-S1-2", newAction: "plan_error", explanation: "x", generated: false }]);
+  const logged = appendRound([unrelated], round.success, null);
+  assert.deepEqual(logged[0], unrelated);
+  const added = logged.filter((e) => e.id === "P1-S1-2");
+  assert.equal(added.length, 1);
+  assert.equal(added[0].action, "plan_error");
+  assert.equal(added[0].superseded, false);
 });
