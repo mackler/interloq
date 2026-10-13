@@ -14,7 +14,13 @@ import type { RunMode } from "../../src/runMode.ts";
 import TimelineRail from "./components/TimelineRail.svelte";
 import CircularIndeterminate from "./components/CircularIndeterminate.svelte";
 import ActivityLine from "./components/ActivityLine.svelte";
-import type { ServerMessage } from "../../src/protocol.ts";
+import { decodeServer, listedItemOf, type ServerMessage } from "../../src/protocol.ts";
+import { Result, Schema } from "effect";
+import { GithubIssue, itemOf } from "../../src/githubIssues.ts";
+import { itemOfCard, TrelloCard } from "../../src/trelloCards.ts";
+import { GitlabIssue, itemOfIssue } from "../../src/gitlabIssues.ts";
+import type { TrelloTrackerConfig } from "../../src/schema.ts";
+import type { TrackerItem } from "../../src/tracker.ts";
 import { countOfKind, foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import type { Block } from "../../src/schema.ts";
@@ -200,6 +206,30 @@ describe("ItemList", () => {
     // The CSS is the component's own: a row's minimum height is M3's one- or two-line height.
     expect(getComputedStyle(one(root, "ul > li")).minHeight).not.toBe("");
   });
+
+  // Issue #125, the seam of the address: what an adapter reads from its tracker's response, listed by the server's own
+  // listedItemOf, sent as the server sends a frame (JSON.stringify) and decoded as the page decodes it, is the href of
+  // the row's link. Both sides derive from one source object per tracker.
+  const LABELS = { unrefined: "u", refined: "r", implementing: "i", implemented: "d", deployed: "x" } as const;
+  const BOARD = "5f0000000000000000000b0a";
+  const LISTS = { unrefined: "5f0000000000000000000a01", refined: "5f0000000000000000000a02", implementing: "5f0000000000000000000a03", implemented: "5f0000000000000000000a04", deployed: "5f0000000000000000000a05" };
+  const githubSource = { number: 42, title: "GitHub issue", body: "Its body.", state: "open", labels: [{ name: "r" }], html_url: "https://github.com/mackler/interloq/issues/42" };
+  const trelloSource = { id: "5f00000000000000000000c1", name: "Trello card", desc: "Its description.", idList: LISTS.refined, idBoard: BOARD, closed: false, url: "https://trello.com/c/AbCd1234/7-trello-card" };
+  const gitlabSource = { iid: 9, title: "GitLab issue", description: "Its description.", state: "opened", labels: ["r"], web_url: "https://gitlab.com/adammackler/iou-notes/-/issues/9" };
+  const sources: readonly (readonly [string, () => TrackerItem, string])[] = [
+    ["GitHub", () => Result.getOrThrow(itemOf(LABELS, Schema.decodeUnknownSync(GithubIssue)(githubSource))), githubSource.html_url],
+    ["Trello", () => Result.getOrThrow(itemOfCard({ kind: "trello", board: BOARD, lists: LISTS } as TrelloTrackerConfig, Schema.decodeUnknownSync(TrelloCard)(trelloSource))), trelloSource.url],
+    ["GitLab", () => Result.getOrThrow(itemOfIssue({ unrefined: "u", refined: "r", implementing: "i", implemented: "d" }, Schema.decodeUnknownSync(GitlabIssue)(gitlabSource))), gitlabSource.web_url],
+  ];
+  for (const [tracker, itemFrom, address] of sources) {
+    test(`the address ${tracker}'s adapter reads is the href the page's row links to`, () => {
+      const sent: ServerMessage = { type: "items", mode: "implementation", result: { _tag: "Listed", items: [listedItemOf(itemFrom())] } };
+      const received = Result.getOrThrow(decodeServer(JSON.stringify(sent)));
+      if (received.type !== "items" || received.result._tag !== "Listed") throw new Error("not a listing");
+      const root = show(ItemList, { mode: "implementation", items: received.result, running: false, onStart: () => undefined, onRefresh: () => undefined });
+      expect(one(root, "ul > li a").getAttribute("href")).toBe(address);
+    });
+  }
 
   test("while the mode's run is in progress, or offline, no item can be started", () => {
     for (const props of [{ running: true }, { offline: true }]) expect([...listed(props).querySelectorAll<HTMLButtonElement>("button[name=start]")].every((b) => b.disabled)).toBe(true);
