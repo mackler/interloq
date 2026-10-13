@@ -525,8 +525,11 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       if (isDecision(event.subject)) return run;
       return { ...run, timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
     case "QuestionExplained":
-      // Issue #142: the page's handling is S15's; the QuestionPresented that follows sets the question shown.
-      return run;
+      // Issue #142 (S15): "/terms" answered the prompt the analysis belongs to, and the same question is asked again with
+      // its explanations: the analysis it dismissed goes to the next prompt, beside the explained question.
+      return run.dismissed !== null && run.dismissed.event.presented.number === event.question.number
+        ? { ...run, analysis: { ...run.dismissed, event: { ...run.dismissed.event, presented: event.question }, prompt: null }, dismissed: null }
+        : run;
     case "TermsBegan":
       // Issue #142: terms written before the first question open their step, whether or not a review follows.
       return { ...run, timeline: inQuestionPhase(run.timeline, termsStep) };

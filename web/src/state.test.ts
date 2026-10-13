@@ -9,7 +9,8 @@ const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
 import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
-import { attachedOf, type PresentedQuestion } from "../../src/question.ts";
+import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src/question.ts";
+import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
@@ -1932,5 +1933,41 @@ describe("the choice of terms", () => {
     const impl = fold([helloAt("a"), { type: "items", mode: "implementation", result: { _tag: "Listed", items } }]);
     expect(impl.modes.implementation.items).toEqual({ _tag: "Listed", items });
     expect(shownTerms(impl)).toBe(null);
+  });
+});
+
+// Issue #142 (S15): "/terms" answers the prompt a decision's analysis belongs to, yet the same question is asked again
+// with its explanations; the analysis stays for the next prompt, and its question is the explained one.
+describe("an analysis across the request for terms", () => {
+  const options = [{ label: "A", description: "" }, { label: "B", description: "" }];
+  const plainQuestion = presentedOf(presentedEvent("A or B?", options));
+  const explained: PresentedQuestion = { ...plainQuestion, explanations: Result.getOrThrow(shownExplanations([{ id: "t", term: "A", senses: ["the first"] }])) };
+  const analyzedEvent: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: plainQuestion, options, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } };
+  const offered = prompts.withTermsOffer(prompts.withOffer(prompts.optionOrTextPrompt));
+  const upTo = (again: PresentedQuestion): RunEvent[] => [
+    started,
+    notified({ _tag: "QuestionPresented", question: plainQuestion }),
+    asked(1, offered),
+    { _tag: "Answered", prompt: 1, text: "/decide" },
+    notified(analyzedEvent),
+    notified({ _tag: "QuestionPresented", question: plainQuestion }),
+    asked(2, prompts.withTermsOffer(prompts.optionOrTextPrompt)),
+    { _tag: "Answered", prompt: 2, text: "/terms" },
+    notified({ _tag: "QuestionExplained", question: again }),
+    notified({ _tag: "QuestionPresented", question: again }),
+    asked(3, prompts.optionOrTextPrompt),
+  ];
+
+  test("the analysis is held for the prompt after the request, with the explained question", () => {
+    for (const s of [fold(live(upTo(explained))), replayed(upTo(explained))]) {
+      const analysis = s.modes.implementation.run?.analysis;
+      expect(analysis?.prompt).toBe(3);
+      expect(analysis?.event.presented.explanations).toEqual(explained.explanations);
+    }
+  });
+
+  test("a QuestionExplained of another question restores nothing", () => {
+    const other = { ...explained, number: 2 };
+    expect(fold(live(upTo(other))).modes.implementation.run?.analysis).toBe(null);
   });
 });
