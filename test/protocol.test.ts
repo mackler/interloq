@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ATTACHED_KINDS, type Sense, type Senses } from "../src/question.ts";
-import { Result } from "effect";
+import { Option, Result } from "effect";
 import fc from "fast-check";
 import { Schema } from "effect";
-import { RUN_MODES } from "../src/runMode.ts";
-import { type ClientMessage, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import { excerptOf, RUN_MODES } from "../src/runMode.ts";
+import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
+import { type ClientMessage, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
@@ -158,6 +159,9 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
   fc.record({ type: fc.constant("stop" as const), incarnation: text, run: nat }),
   fc.record({ type: fc.constant("ui" as const), incarnation: text, run: nat, flag: fc.record({ scope: uiScope, open: fc.boolean() }) }),
 );
+/** Issue #125: an https address, as an adapter's itemUrlOf accepts. */
+const httpsUrl = fc.tuple(fc.stringMatching(/^[a-z0-9]{1,10}$/u), fc.stringMatching(/^[a-z0-9/]{0,12}$/u)).map(([host, path]) => `https://${host}.example/${path}`);
+const listedItem = fc.record({ id: text, title: text, excerpt: text, url: fc.option(httpsUrl, { nil: null }) });
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.option(nat, { nil: null }), implementation: fc.option(nat, { nil: null }) }), incarnation: text }),
   fc.constant({ type: "closing" as const }),
@@ -167,12 +171,12 @@ const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   fc.record({
     type: fc.constant("items" as const),
     mode: fc.constant("refinement" as const),
-    result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(fc.record({ id: text, title: text, excerpt: text }), { maxLength: 3 }), terms: fc.constantFrom(...TERMS_MODES) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
+    result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(listedItem, { maxLength: 3 }), terms: fc.constantFrom(...TERMS_MODES) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
   }),
   fc.record({
     type: fc.constant("items" as const),
     mode: fc.constant("implementation" as const),
-    result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(fc.record({ id: text, title: text, excerpt: text }), { maxLength: 3 }) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
+    result: fc.oneof(fc.record({ _tag: fc.constant("Listed" as const), items: fc.array(listedItem, { maxLength: 3 }) }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
   }),
   fc.record({ type: fc.constant("refused" as const), mode: fc.option(mode, { nil: null }), reason: text }),
 );
@@ -183,6 +187,22 @@ const decoded = <A>(r: Result.Result<A, string>): A => {
   assert.ok(Result.isSuccess(r), `not decoded: ${Result.isFailure(r) ? r.failure : ""}`);
   return r.success;
 };
+
+// Issue #125: an item's address reaches the page only as an https address, or null where the tracker gave none.
+test("an items frame whose item's address is not https does not decode; one with an https address or null does", () => {
+  const frame = (url: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "1", title: "t", excerpt: "", url }] } });
+  assert.ok(Result.isFailure(decodeServer(frame("javascript:alert(1)"))));
+  assert.ok(Result.isFailure(decodeServer(frame("http://github.com/x"))));
+  assert.ok(Result.isSuccess(decodeServer(frame("https://github.com/mackler/interloq/issues/125"))));
+  assert.ok(Result.isSuccess(decodeServer(frame(null))));
+});
+
+test("listedItemOf: the id, the title, the excerpt of the body, and the address or null", () => {
+  const item = { id: Result.getOrThrow(itemIdOf("7")), title: "Seven", body: "The body.", state: "refined" as const };
+  const page = Result.getOrThrow(itemUrlOf("https://github.com/mackler/interloq/issues/7"));
+  assert.deepEqual(listedItemOf({ ...item, url: Option.some(page) }), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: page });
+  assert.deepEqual(listedItemOf({ ...item, url: Option.none() }), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: null });
+});
 
 // Issue #120: a run is started from a mode and an item; the page sends no project and no task text.
 test("a start message decodes with its mode and item; one with a project and a task, or an unknown mode, is refused", () => {

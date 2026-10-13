@@ -144,8 +144,8 @@ test("every author's message carries its author as class and data-author", () =>
 // Issue #120: a tab's items, each with a button that starts the tab's run; the page never calls the tracker.
 describe("ItemList", () => {
   const items = [
-    { id: "120", title: "Two modes", excerpt: "Make the page two tabs." },
-    { id: "121", title: "Trello", excerpt: "" },
+    { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120" },
+    { id: "121", title: "Trello", excerpt: "", url: null },
   ];
   const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, running: false, onStart: () => undefined, onRefresh: () => undefined, ...props });
 
@@ -619,7 +619,7 @@ describe("App and the draft", () => {
       flushSync();
     };
     const startedIn = (mode: RunMode, id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode, item: { id, title: "t" } });
-    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs." };
+    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null };
     const begin = async () => {
       vi.stubGlobal("WebSocket", FakeWebSocket);
       const { default: App } = await import("./components/App.svelte");

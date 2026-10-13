@@ -3,12 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Deferred, Effect, Exit, Fiber, Result, Schema } from "effect";
+import { Deferred, Effect, Exit, Fiber, Option, Result, Schema } from "effect";
 import { HttpServer } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { identify, type MountTable } from "../src/hostDir.ts";
 import { platformLayer } from "../src/platform.ts";
-import { decodeClient as decodeClientMessage, ServerMessageSchema } from "../src/protocol.ts";
+import { decodeClient as decodeClientMessage, listedItemOf, ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
@@ -296,7 +296,7 @@ test("a start in a project that does not exist is refused with the reason and it
     const a = await connect(port);
     a.send(itemsFrame("refinement"));
     await until("the items", () => a.messages.some((m) => m.type === "items"));
-    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "" })), terms: "unchecked" } });
+    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url) })), terms: "unchecked" } });
     a.close();
   });
 });
@@ -307,7 +307,7 @@ for (const mode of ["refinement", "implementation"] as const) {
   test(`the page's start frame for a listed ${mode} item starts a ${mode} run of that item, which reads that item`, async () => {
     const repo = tempRepo();
     const fixture = MANAGER_ITEMS.find((i) => i.state === listedState(mode))!;
-    const listed: ListedItem = { id: fixture.id, title: fixture.title, excerpt: "" };
+    const listed: ListedItem = listedItemOf(fixture);
     const tracker = fakeTrackerOf(MANAGER_ITEMS);
     await serve(await managerOf(repo, [{ steps: [{ hang: true }] }], [], tracker), dist(), async (port) => {
       const a = await connect(port);
@@ -333,7 +333,7 @@ test("the page's refinement start frame with onRequest starts a run whose choice
   await serve(await managerOf(repo, [{ steps: [{ hang: true }] }]), dist(), async (port) => {
     const a = await connect(port);
     await until("the replay", () => a.messages.some((m) => m.type === "replay"));
-    a.send(pageStartFrame({ mode: "refinement", item: { id: fixture.id, title: fixture.title, excerpt: "" }, terms: "onRequest" }));
+    a.send(pageStartFrame({ mode: "refinement", item: listedItemOf(fixture), terms: "onRequest" }));
     await until("the choice recorded", () => runDirsOf(repo).length > 0 && fs.existsSync(path.join(runDirOf(repo), "conversation.md")) && fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8").includes(termsChoiceLine("onRequest")));
     a.send({ type: "stop", incarnation: "test", run: 1 });
     await until("the end", () => hasEnded(a, 1));

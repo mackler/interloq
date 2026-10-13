@@ -24,7 +24,7 @@ import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/in
 import { type RunStart, type Task, taskOf, type Wiring } from "../src/program.ts";
 import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifacts.ts";
 import { type FakeItem, type FakeTracker, makeFakeTracker } from "./fakeTracker.ts";
-import { itemIdOf, type ItemId } from "../src/tracker.ts";
+import { itemIdOf, type ItemId, type ItemUrl, itemUrlOf } from "../src/tracker.ts";
 import type { RunMode } from "../src/runMode.ts";
 import { refinementRun, run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
@@ -632,9 +632,13 @@ export const scriptedStart = (project: string, mode: RunMode = "implementation",
  * the scripted task.
  */
 export const MANAGER_ITEMS: readonly FakeItem[] = [1, 2, 3, 4, 5, 6].flatMap((n): FakeItem[] => [
-  { ...scriptedItem, id: Result.getOrThrow(itemIdOf(`${n}`)), state: "refined" },
-  { ...scriptedItem, id: Result.getOrThrow(itemIdOf(`${10 + n}`)), state: "unrefined" },
+  { ...scriptedItem, id: Result.getOrThrow(itemIdOf(`${n}`)), state: "refined", url: managerItemUrl(n) },
+  { ...scriptedItem, id: Result.getOrThrow(itemIdOf(`${10 + n}`)), state: "unrefined", url: managerItemUrl(10 + n) },
 ]);
+/** Issue #125: an odd-numbered item has its page in the tracker, an even-numbered one none, so a listing shows both. */
+function managerItemUrl(n: number): Option.Option<ItemUrl> {
+  return n % 2 === 1 ? Option.some(Result.getOrThrow(itemUrlOf(`https://tracker.example/items/${n}`))) : Option.none();
+}
 /** How a run manager under test reaches its tracker: an empty shared config and the fake. */
 export const trackerAccessOf = (tracker: FakeTracker) => {
   const shared = path.join(tempDir("pr-shared-"), "config.json");

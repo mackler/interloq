@@ -1,12 +1,13 @@
 // The messages between the web page and the server (plan step 3.1), as Effect schemas so that both sides decode
 // the same way. Pure: no Node import (the browser imports this module).
 
-import { Result, Schema } from "effect";
+import { Option, Result, Schema } from "effect";
 import * as S from "./schema.ts";
 import type { UiEvent } from "./uiEvents.ts";
 import { DECISION_SECTIONS, type RunUiState, type UiFlag } from "./uiState.ts";
 import type { Choice, PromptKind } from "./userPrompts.ts";
-import { RunMode } from "./runMode.ts";
+import { excerptOf, RunMode } from "./runMode.ts";
+import { itemUrlOf, type TrackerItem } from "./tracker.ts";
 import { ATTACHED_KINDS } from "./question.ts";
 
 
@@ -57,8 +58,13 @@ export type ClientMessage =
   | Readonly<{ type: "stop"; incarnation: string; run: number }>
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>;
-/** An item as a tab lists it (issue #120): its id, its title, and enough of its text to choose by. No credential. */
-export type ListedItem = Readonly<{ id: string; title: string; excerpt: string }>;
+/**
+ * An item as a tab lists it (issue #120): its id, its title, enough of its text to choose by, and (issue #125) the
+ * address of its page in its tracker, null where the tracker gave none. No credential.
+ */
+export type ListedItem = Readonly<{ id: string; title: string; excerpt: string; url: string | null }>;
+/** The one way the server lists an item (issue #125): the page links to exactly the address the adapter read. */
+export const listedItemOf = (item: TrackerItem): ListedItem => ({ id: item.id, title: item.title, excerpt: excerptOf(item.body), url: Option.getOrNull(item.url) });
 /** A tab's items, or the notice of why the tracker could not list them; never both. */
 export type ItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Unavailable;
 /** Why the tracker or the configuration could not list a tab's items. */
@@ -197,7 +203,9 @@ const UiFlagSchema = Schema.Struct({ scope: UiScopeSchema, open: Schema.Boolean 
 const RunUiStateSchema = Schema.Struct({ version: Int, choices: Schema.Array(UiFlagSchema) });
 const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });
 
-const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str }));
+/** An item's address as the page receives it: what itemUrlOf accepts, so a frame naming another scheme never decodes. */
+const ItemUrlStr = Str.check(Schema.makeFilter((text: string) => Result.isSuccess(itemUrlOf(text)) || "an item's address must be an absolute https address"));
+const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str, url: Schema.NullOr(ItemUrlStr) }));
 const UnavailableSchema = tagged("Unavailable", { notice: Str });
 
 export const ClientMessageSchema = Schema.Union([

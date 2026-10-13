@@ -450,7 +450,7 @@ describe("runs, replay and gaps", () => {
   });
 
   test("a hello turns a mode's Loading items Unasked and leaves a listed mode as it is (S16)", () => {
-    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
+    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null }];
     const listed = fold([hello(null), { type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }]);
     const s = fold([hello(null)], itemsRequested(listed, "implementation"));
     expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
@@ -459,7 +459,7 @@ describe("runs, replay and gaps", () => {
 
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
   const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", location, current: { refinement: null, implementation: null }, incarnation });
-  const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
+  const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null }];
 
   test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
     const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } }, helloAt("/projects/new", "b")]);
@@ -504,7 +504,7 @@ describe("runs, replay and gaps", () => {
         return reduce(state, helloAt(`/projects/${step.incarnation}`, step.incarnation));
       case "listed":
       {
-        const items = Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e" }));
+        const items = Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e", url: null }));
         return reduce(state, step.mode === "refinement" ? { type: "items", mode: step.mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { type: "items", mode: step.mode, result: { _tag: "Listed", items } });
       }
       case "unavailable":
@@ -547,7 +547,7 @@ describe("runs, replay and gaps", () => {
   });
 
   test("an items frame sets its mode's items alone and clears its refusal; a request shows the tab loading", () => {
-    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs." }];
+    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null }];
     const loading = itemsRequested(fold([hello(null), { type: "refused", mode: "implementation", reason: "r" }]), "implementation");
     expect(loading.modes.implementation.items).toEqual({ _tag: "Loading" });
     const s = fold([{ type: "items", mode: "implementation", result: { _tag: "Listed", items } }], loading);
@@ -1910,7 +1910,7 @@ describe("the tab shown before the user chooses one", () => {
 // Issue #142 (requirements Q3): the Refinement tab's control shows the configured choice of terms until the user changes
 // it; his choice applies to the next refinement alone, and the next shows the configured value again.
 describe("the choice of terms", () => {
-  const items = [{ id: "11", title: "t", excerpt: "e" }];
+  const items = [{ id: "11", title: "t", excerpt: "e", url: null }];
   const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms } });
   const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", location: "/p", current: { refinement: null, implementation: null }, incarnation });
   const startedRefinement: RunEvent = { ...started, mode: "refinement", item: { id: "11", title: "t" } } as RunEvent;

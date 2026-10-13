@@ -9,12 +9,13 @@ import { exitCodeOf, program, type RunStart, taskTextOf, type Wiring } from "./p
 import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, trackerFailureText } from "./errors.ts";
-import { excerptOf, listedState, RUN_MODES, type RunMode } from "./runMode.ts";
+import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
 import { ITEM_ID_EMPTY, itemMovedText, runInProgressText } from "./prompts.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import { itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
+import { listedItemOf } from "./protocol.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
 
@@ -183,7 +184,7 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
 
     /** Issue #142: the Refinement tab's listing carries the configured choice of terms, read with the configuration. */
     const listItems = (mode: RunMode): Effect.Effect<ItemsAnswer> =>
-      withTracker((t, config) => Effect.map(t.list(listedState(mode)), (items) => ({ items: items.map((i) => ({ id: i.id, title: i.title, excerpt: excerptOf(i.body) })), terms: config.terms }))).pipe(
+      withTracker((t, config) => Effect.map(t.list(listedState(mode)), (items) => ({ items: items.map(listedItemOf), terms: config.terms }))).pipe(
         Effect.map((listed): ItemsAnswer => {
           const unavailable = (notice: string) => ({ _tag: "Unavailable", notice }) as const;
           if (mode === "refinement") return { mode, result: Result.isFailure(listed) ? unavailable(listed.failure) : { _tag: "Listed", ...listed.success } };
