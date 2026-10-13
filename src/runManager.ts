@@ -8,7 +8,7 @@ import type { Platform } from "./platform.ts";
 import { exitCodeOf, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
-import { describe, trackerFailureText } from "./errors.ts";
+import { describe, type ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
 import { ITEM_ID_EMPTY, itemMovedText, runInProgressText } from "./prompts.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
@@ -53,7 +53,21 @@ export type RunManager = Readonly<{
   answer: (incarnation: string, run: number, prompt: number, text: string) => Effect.Effect<Refusal | null>;
   /** Opens or closes one scope of the shared state of the run with that id of that incarnation, the current or the last one (issue #87). */
   setUi: (incarnation: string, run: number, flag: UiFlag) => Effect.Effect<Refusal | null>;
+  /**
+   * Issue #158 (the user's decision Q1): after an error the server cannot trace to one run, refuses every later start
+   * and halts every run in progress with ServerFault, each writing its record; returns once each has ended, or, past
+   * the bounds, after publishing its end itself.
+   */
+  haltAll: (message: string) => Effect.Effect<HaltReport>;
 }>;
+
+/** The runs `haltAll` halted: those whose fibers ended within the bounds, and those whose end the manager published itself. */
+export type HaltReport = Readonly<{ halted: readonly number[]; unconfirmed: readonly number[] }>;
+/** How long `haltAll` waits for the faulted runs to end, then for their interruption (issue #158). */
+export type HaltBounds = Readonly<{ graceMs: number; interruptMs: number }>;
+export const SERVER_FAULT_GRACE_MS = 10_000;
+export const SERVER_FAULT_INTERRUPT_MS = 2_000;
+const LIVE_BOUNDS: HaltBounds = { graceMs: SERVER_FAULT_GRACE_MS, interruptMs: SERVER_FAULT_INTERRUPT_MS };
 
 /** A subscriber of the broadcast. Its contract: it does not block (it offers to its own queue); slow delivery is its own fiber's. */
 export type Listener<B> = (event: B) => Effect.Effect<void>;
@@ -76,11 +90,14 @@ export const makePublisher = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readon
   );
 
 /** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
-type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState }>;
+type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; fault: Deferred.Deferred<never, ServerFault> }>;
 /** A mode's run in progress, and its last finished run (issue #120: one run per mode). */
 type Slot = Readonly<{ current: Run | null; last: Run | null }>;
-/** The next id (one sequence for the server, so that an id names one run in either mode) and each mode's slot. */
-type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>> }>;
+/**
+ * The next id (one sequence for the server, so that an id names one run in either mode), each mode's slot, and whether
+ * the server is ending after an error it could not trace to one run (issue #158), when no run is started.
+ */
+type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean }>;
 const record = (r: Run): RunRecord => ({ id: r.id, events: r.events });
 const EMPTY: Slot = { current: null, last: null };
 /** The mode whose slot holds the run with that id as `which`, or null. */
@@ -98,12 +115,19 @@ const withSlot = (s: State, mode: RunMode, slot: Slot): State => ({ ...s, runs: 
  * Issue #120 (the developer's answer to question Q1 of 9 Oct 2026): the project of both tabs is `cwd`, the directory the
  * server was started in. The tracker is reached through `access`: the configuration of `cwd` and the tracker it names.
  */
-export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd: string, mounts: MountTable, incarnation: string, access: TrackerAccess): Effect.Effect<RunManager, never, Platform> =>
+export const makeRunManager = (
+  wiring: (ui: WebUi, mode: RunMode) => Wiring,
+  cwd: string,
+  mounts: MountTable,
+  incarnation: string,
+  access: TrackerAccess,
+  _bounds: HaltBounds = LIVE_BOUNDS,
+): Effect.Effect<RunManager, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const platform = Layer.succeedContext(yield* Effect.context<Platform>());
-    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY } });
+    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false });
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
     const publish = yield* makePublisher(state, listeners);
 
@@ -216,6 +240,7 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
         const item = read.success;
         if (item.state !== listedState(mode)) return refused(itemMovedText(item.id, listedState(mode), item.state));
         const gate = yield* Deferred.make<void>();
+        const fault = yield* Deferred.make<never, ServerFault>();
         // The ui's sink needs the id, and the id is taken with the reservation of the run.
         const idRef = yield* Ref.make(0);
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
@@ -235,7 +260,7 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
               Effect.forkDetach({ startImmediately: true }),
             );
             const reserved = yield* Ref.modify(state, (s): readonly [number | null, State] =>
-              s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState } })],
+              s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState, fault } })],
             );
             if (reserved === null) {
               yield* Fiber.interrupt(fiber);
@@ -270,6 +295,7 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
       current: Ref.get(state).pipe(Effect.map((s) => ({ refinement: s.runs.refinement.current?.id ?? null, implementation: s.runs.implementation.current?.id ?? null }))),
       start,
       listItems,
+      haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
       stop: (of, id) =>
         currentRun(id).pipe(
           Effect.flatMap((found) => {

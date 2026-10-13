@@ -3,7 +3,7 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
-import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, analysisInvalidText, sessionTooLongText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, analysisInvalidText, sessionTooLongText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -114,6 +114,11 @@ export class UnknownStep extends Data.TaggedError("UnknownStep")<{ readonly id: 
 export class DecisionFormatUnreadable extends Data.TaggedError("DecisionFormatUnreadable")<{ readonly file: string; readonly message: string }> {}
 export class Interrupted extends Data.TaggedError("Interrupted")<{ readonly where: string }> {}
 /**
+ * An error the server could not trace to one run, an uncaught exception or an unhandled rejection (issue #158, the
+ * user's decision Q1): every run in progress halts with it, its record written, and the server then ends.
+ */
+export class ServerFault extends Data.TaggedError("ServerFault")<{ readonly message: string }> {}
+/**
  * A step of the tracker at the start or the end of a run failed (issue #120): the records stand, and the halt says what
  * was done and what was not, so that no state that was not written is claimed. `cause` is the tracker's failure as
  * trackerFailureText says it, never a credential; `done` what the run did before, or null.
@@ -166,6 +171,7 @@ export type RunError =
   | InterviewTurnInvalid
   | AgentUnreachable
   | TrackerStepFailed
+  | ServerFault
   | Interrupted;
 
 const indent = (changes: readonly Change[]): string => changes.map((change) => `\n  ${renderChange(change)}`).join("");
@@ -242,6 +248,8 @@ export const describe = (error: RunErrorFields): string => {
       return interviewTurnInvalidText(error.problems);
     case "TrackerStepFailed":
       return trackerStepFailedText(error.item, error.step, error.cause, error.done);
+    case "ServerFault":
+      return serverFaultText(error.message);
     case "Interrupted":
       return `interrupted during ${error.where}`;
   }
@@ -302,6 +310,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnSkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String) }),
+  Schema.Struct({ _tag: Schema.Literal("ServerFault"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);
 /** The fields of one of the program's errors; every `RunError` instance is one. */

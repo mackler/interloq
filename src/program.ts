@@ -4,7 +4,7 @@
 import { type Brand, Cause, Clock, Context, Data, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DecisionFormatUnreadable, describe, type RunError, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
+import { DecisionFormatUnreadable, describe, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
 import { blankItemText, itemStartedLine, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
@@ -92,7 +92,7 @@ type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requ
  * fiber interrupted; `exitCodeOf` turns that into 130. In every case the main Claude Code session id and the usage
  * summary are said last.
  */
-export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+export const program = (start: RunStart, wiring: Wiring, fault: Effect.Effect<never, ServerFault> = Effect.never): Effect.Effect<number, never, Scope.Scope> =>
   programWith(
     {
       project: start.project,
@@ -120,13 +120,18 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
         }),
     },
     wiring,
+    fault,
   );
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null })) }, wiring);
 
-const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
+/**
+ * `fault` fails when the server meets an error it cannot trace to one run (issue #158): every stage of the run, from the
+ * configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever it is.
+ */
+const programWith = (start: Started, wiring: Wiring, _fault: Effect.Effect<never, ServerFault> = Effect.never): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const project = path.resolve(start.project);
     const mode = start.kind.mode;

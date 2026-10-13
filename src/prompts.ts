@@ -2336,6 +2336,22 @@ export function sessionTooLongText(message: string): string {
   return `Claude Code refused the request because its session's history was too long for Claude Code to accept (${message})`;
 }
 
+/**
+ * Issue #158 (the user's decision Q1): the halt of every run in progress after an error the server could not trace
+ * to one run, its record in conversation.md, the refusal of a start while the server ends, and the server's line
+ * naming the runs whose halt it could not confirm in their records.
+ */
+export function serverFaultText(message: string): string {
+  return `the server met an error it could not trace to one run (${message}). Every run in progress was halted and the server is ending; start it again with bin/ilcli web.`;
+}
+export function serverFaultRecord(message: string): string {
+  return `**Halted: the server met an error it could not trace to one run (${message}), halted every run in progress and ended.**\n`;
+}
+export const serverEndingText = "the server is ending after an error it could not trace to one run; start it again with bin/ilcli web";
+export function unrecordedHaltLine(ids: readonly number[]): string {
+  return `Interloq: the halt of run${ids.length === 1 ? "" : "s"} ${ids.join(", ")} could not be confirmed in ${ids.length === 1 ? "its records" : "their records"}; each was published to the page as ended with code 1.`;
+}
+
 export function agentUnreachableText(agent: "claude" | "codex", attempts: number, lastFault: string): string {
   return `${agentName(agent)} could not be reached after ${attempts} attempts: ${lastFault}. The records are preserved.`;
 }

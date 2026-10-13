@@ -491,6 +491,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
+    haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
   };
   await run(
     Effect.scoped(
