@@ -1,6 +1,7 @@
-import { Option } from "effect";
+import { type Option, Result } from "effect";
 import type { RunMode } from "../src/runMode.ts";
-import type { ItemId } from "../src/tracker.ts";
+import { type ItemId, type ItemUrl, itemUrlOf } from "../src/tracker.ts";
+import { LONG_ITEM_BODY, LONG_ITEM_TITLE } from "./longAnswers.ts";
 import type { FakeItem } from "../test/fakeTracker.ts";
 
 // The scenario servers of the end-to-end tests and their ports, the one source for playwright.config.ts (which starts
@@ -30,9 +31,19 @@ export const modeOf = (scenario: string): RunMode => (REFINEMENT_SCENARIOS.inclu
 /**
  * The items of every scenario server's tracker (issue #120): 40 refined ones (1 to 40) and 40 unrefined ones (101 to
  * 140), each with a title of its own and an empty body, so that every test of a server can start a run from an item no
- * earlier test has moved on.
+ * earlier test has moved on; then (issue #125) one refined (41) and one unrefined (141) item whose title and excerpt
+ * wrap at every tested width, last, so that a test starting the first item listed starts the same item as before.
+ * Every item has its page in the tracker.
  */
-export const E2E_ITEMS: readonly FakeItem[] = Array.from({ length: 40 }, (_, i) => i + 1).flatMap((n): FakeItem[] => [
-  { id: `${n}` as ItemId, title: `Refined item ${n}`, body: "", state: "refined", open: true, url: Option.none() },
-  { id: `${100 + n}` as ItemId, title: `Unrefined item ${100 + n}`, body: "", state: "unrefined", open: true, url: Option.none() },
-]);
+export const E2E_ITEMS: readonly FakeItem[] = [
+  ...Array.from({ length: 40 }, (_, i) => i + 1).flatMap((n): FakeItem[] => [
+    { id: `${n}` as ItemId, title: `Refined item ${n}`, body: "", state: "refined", open: true, url: e2eItemUrl(n) },
+    { id: `${100 + n}` as ItemId, title: `Unrefined item ${100 + n}`, body: "", state: "unrefined", open: true, url: e2eItemUrl(100 + n) },
+  ]),
+  { id: "41" as ItemId, title: LONG_ITEM_TITLE, body: LONG_ITEM_BODY, state: "refined", open: true, url: e2eItemUrl(41) },
+  { id: "141" as ItemId, title: LONG_ITEM_TITLE, body: LONG_ITEM_BODY, state: "unrefined", open: true, url: e2eItemUrl(141) },
+];
+/** An e2e item's page in its tracker. */
+function e2eItemUrl(n: number): Option.Option<ItemUrl> {
+  return Result.getSuccess(itemUrlOf(`https://tracker.example/issues/${n}`));
+}

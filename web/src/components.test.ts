@@ -160,6 +160,47 @@ describe("ItemList", () => {
     expect(started).toEqual([items[1]]);
   });
 
+  // Issue #125: the headline of an item with an address links to its page in the tracker, in a new tab, apart from the
+  // start button; an item without one shows its headline as plain text.
+  test("an item's headline is a link to its address that opens a new tab; an item without an address has none", () => {
+    const root = listed();
+    const rows = [...root.querySelectorAll("ul > li")];
+    const link = rows[0].querySelector<HTMLAnchorElement>("a");
+    expect(link?.getAttribute("href")).toBe(items[0].url);
+    expect(link?.target).toBe("_blank");
+    expect(link?.rel.split(/\s+/u)).toEqual(expect.arrayContaining(["noopener", "noreferrer"]));
+    expect(link?.textContent?.trim()).toBe(prompts.itemHeadline("120", "Two modes"));
+    expect(rows[1].querySelector("a")).toBeNull();
+    expect(rows[1].querySelector("[data-headline]")?.textContent?.trim()).toBe(prompts.itemHeadline("121", "Trello"));
+  });
+
+  test("following an item's link starts nothing", () => {
+    const started: unknown[] = [];
+    const root = listed({ onStart: (item: unknown) => void started.push(item) });
+    const link = one(root, "ul > li a");
+    link.addEventListener("click", (e) => e.preventDefault());
+    link.click();
+    expect(started).toEqual([]);
+  });
+
+  test("a row grows with its content: no fixed line count, no fixed height, nothing clamped or hidden", () => {
+    const root = listed();
+    expect(root.querySelector(".lines-1, .lines-2, .lines-3")).toBeNull();
+    for (const row of root.querySelectorAll<HTMLElement>("ul > li")) {
+      expect(getComputedStyle(row).height === "" || getComputedStyle(row).height === "auto").toBe(true);
+      const texts = [row.querySelector<HTMLElement>("[data-headline]"), row.querySelector<HTMLElement>("[data-supporting]")].filter((e) => e !== null);
+      expect(texts.length).toBeGreaterThan(0);
+      for (const text of texts) {
+        const style = getComputedStyle(text);
+        expect(style.getPropertyValue("-webkit-line-clamp")).toBe("");
+        expect(style.overflow).not.toBe("hidden");
+        expect(style.textOverflow).not.toBe("ellipsis");
+      }
+    }
+    // The CSS is the component's own: a row's minimum height is M3's one- or two-line height.
+    expect(getComputedStyle(one(root, "ul > li")).minHeight).not.toBe("");
+  });
+
   test("while the mode's run is in progress, or offline, no item can be started", () => {
     for (const props of [{ running: true }, { offline: true }]) expect([...listed(props).querySelectorAll<HTMLButtonElement>("button[name=start]")].every((b) => b.disabled)).toBe(true);
   });

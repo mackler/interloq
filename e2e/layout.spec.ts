@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, startFromTab, test } from "./fixtures.ts";
+import { expect, listOf, startFromTab, test, toTheList } from "./fixtures.ts";
 import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
-import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
+import { LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
@@ -390,6 +390,45 @@ test.describe("the tests of the tabs server, in order", () => {
     await expect(page.locator("[name=answer]")).toBeVisible();
     await other.close();
   });
+
+  // Issue #125: a title that wraps grows its row; no row's text is drawn over the next row, and the whole title shows.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L33) a tab's list at ${width} × ${height}: a wrapping title grows its row, no row drawn over the next, the title whole`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(URL);
+      await expect(page.getByText("connected", { exact: true })).toBeVisible();
+      await toTheList(page, modeOf("tabs"));
+      await expect(listOf(page).locator("ul > li", { hasText: LONG_ITEM_TITLE })).toBeVisible();
+      const problems = await listOf(page).evaluate((section, title) => {
+        const out: string[] = [];
+        const TOLERANCE = 0.5;
+        const rows = [...section.querySelectorAll("ul > li")];
+        rows.forEach((row, i) => {
+          const r = row.getBoundingClientRect();
+          const name = row.textContent?.trim().slice(0, 30) ?? "?";
+          const next = rows[i + 1];
+          if (next !== undefined && r.bottom > next.getBoundingClientRect().top + TOLERANCE) out.push(`${name}: its bottom ${r.bottom} is below the next row's top ${next.getBoundingClientRect().top}`);
+          for (const el of row.querySelectorAll("p, a, span, [data-headline], [data-supporting]")) {
+            const b = el.getBoundingClientRect();
+            if (b.width === 0 && b.height === 0) continue;
+            if (b.top < r.top - TOLERANCE || b.bottom > r.bottom + TOLERANCE || b.left < r.left - TOLERANCE || b.right > r.right + TOLERANCE) out.push(`${name}: a text (${el.textContent?.trim().slice(0, 30)}) at ${b.top}–${b.bottom} lies outside its row at ${r.top}–${r.bottom}`);
+          }
+        });
+        const long = rows.find((row) => row.textContent?.includes(title));
+        if (long === undefined) return [...out, "no row holds the long title"];
+        const headline = long.querySelector("[data-headline]") ?? long.querySelector(".headline");
+        const supporting = long.querySelector("[data-supporting]") ?? long.querySelector(".supporting");
+        if (headline === null || supporting === null) return [...out, "the long row has no headline or no supporting text"];
+        if (!(headline.textContent ?? "").includes(title)) out.push("the headline does not hold the whole title");
+        const lineHeight = parseFloat(getComputedStyle(headline).lineHeight);
+        if (!(headline.getBoundingClientRect().height > 1.5 * lineHeight)) out.push(`the headline did not wrap: ${headline.getBoundingClientRect().height} px at a line height of ${lineHeight} px`);
+        for (const el of [headline, supporting]) if (el.scrollHeight > el.clientHeight + TOLERANCE || el.scrollWidth > el.clientWidth + TOLERANCE) out.push(`${el === headline ? "the headline" : "the supporting text"} is clipped: ${el.scrollWidth} × ${el.scrollHeight} in ${el.clientWidth} × ${el.clientHeight}`);
+        if (section.scrollWidth > section.clientWidth + TOLERANCE) out.push(`the list overflows sideways: ${section.scrollWidth} > ${section.clientWidth}`);
+        return out;
+      }, LONG_ITEM_TITLE);
+      expect(problems).toEqual([]);
+    });
+  }
 });
 
 test.describe("the tests of the long server, in order", () => {

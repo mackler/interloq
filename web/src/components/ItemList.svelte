@@ -9,7 +9,14 @@
   // explained, M3's connected button group with one choice among three (radio inputs, which m3-svelte's buttons show
   // as toggles): it starts at the configured value and applies to the next refinement [user control and freedom;
   // visibility of system status]. The Implementation tab has none, since an implementation run asks no questions.
-  import { Button, ConnectedButtons, ListItem, LoadingIndicator } from "m3-svelte";
+  // Issue #125: each row is laid out by hand after M3's list item, not m3-svelte's ListItem, which fixes a row's height
+  // from its line count and so drew a wrapped title's text over the next row. The row keeps M3's list item metrics
+  // (padding, gap, the trailing action, the headline's and supporting text's type and colors) and grows with its
+  // content: the whole title and the whole excerpt, nothing clamped (the deviation is recorded in docs/ui-review.md).
+  // The headline links to the item's page in its tracker, in a new tab, apart from the start button, so the developer
+  // reads the whole issue without leaving the list [recognition rather than recall]; an item without an address shows
+  // its headline as plain text.
+  import { Button, ConnectedButtons, LoadingIndicator } from "m3-svelte";
   import type { ListedItem } from "../../../src/protocol.ts";
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
@@ -51,12 +58,16 @@
   {:else}
     <ul>
       {#each items.items as item (item.id)}
-        <li>
-          <ListItem headline={itemHeadline(item.id, item.title)} supporting={item.excerpt} lines={item.excerpt === "" ? 1 : 2}>
-            {#snippet trailing()}
-              <Button variant="text" type="button" name="start" data-item={item.id} disabled={running || offline} onclick={() => onStart(item)}>{texts.action}</Button>
-            {/snippet}
-          </ListItem>
+        <li class:two-line={item.excerpt !== ""}>
+          <div class="body">
+            <p class="headline" data-headline>
+              {#if item.url === null}{itemHeadline(item.id, item.title)}{:else}<a href={item.url} target="_blank" rel="noopener noreferrer">{itemHeadline(item.id, item.title)}</a>{/if}
+            </p>
+            {#if item.excerpt !== ""}<p class="supporting" data-supporting>{item.excerpt}</p>{/if}
+          </div>
+          <div class="trailing">
+            <Button variant="text" type="button" name="start" data-item={item.id} disabled={running || offline} onclick={() => onStart(item)}>{texts.action}</Button>
+          </div>
         </li>
       {/each}
     </ul>
@@ -69,6 +80,18 @@
   h2 { margin: 0; }
   .terms { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
   ul { list-style: none; margin: 0; padding: 0; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
+  /* M3's list item, by hand (issue #125): its padding and gap, its one-line and two-line heights as a minimum only. */
+  li { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1.5rem 0.5rem 1rem; min-height: 3.5rem; box-sizing: border-box; }
+  li.two-line { min-height: 4.5rem; }
+  .body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .trailing { flex: none; }
+  /* Body large and body medium, set here since the m3-font classes are absent from the build. */
+  .headline, .supporting { margin: 0; font-family: var(--m3-font); }
+  .headline { font-size: 1rem; line-height: 1.5; font-weight: 400; color: var(--m3c-on-surface); }
+  .supporting { font-size: 0.875rem; line-height: 1.429; color: var(--m3c-on-surface-variant); }
+  .headline a { color: inherit; text-decoration: none; border-radius: 0.25rem; }
+  .headline a:hover, .headline a:focus-visible { text-decoration: underline; }
+  .headline a:focus-visible { outline: 3px solid var(--m3c-secondary); outline-offset: 2px; }
   .loading, .unavailable { display: flex; align-items: center; gap: 0.75rem; padding: 1rem; }
   .unavailable { color: var(--m3c-error); flex-wrap: wrap; }
   .unavailable p, .empty { margin: 0; }
