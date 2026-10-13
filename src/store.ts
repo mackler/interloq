@@ -12,7 +12,7 @@ import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
 import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, readLog, readQuestions, readUsage, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
-import { type ProjectPath, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
+import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
 import type { LimitWait, UsageLine } from "./usage.ts";
@@ -108,6 +108,9 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
     const writeJson = (file: string, value: unknown) => serialize(file, value, 2).pipe(Effect.flatMap((text) => writeRecordText(file, text)));
     /** plan-review/checkpoint.json: the last committed transition, replaced atomically. */
     const checkpoint = (point: CheckpointPoint) => now.pipe(Effect.flatMap((time) => writeJson(at({ kind: "checkpoint" }), { version: VERSION, ...point, time })));
+    /** The file of a reply of a round: the raw save before validation and the accepted value after it are one file (issue #151). */
+    const replyArtifact = (subject: SubjectId, round: number, kind: RawReplyKind): Artifact =>
+      kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : { kind: "correction", subject, round, attempt: kind.corrective };
     /** One record of the catalog, as JSON. */
     const saveRecord = (artifact: Artifact, value: unknown) => writeJson(at(artifact), value);
     /** The entries of a log file; none when it does not exist. */
@@ -237,11 +240,11 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         Effect.gen(function* () {
           yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), time: yield* now });
         }),
-      saveReview: (subject, round, review) => saveRecord({ kind: "review", subject, round }, review),
-      saveResponse: (subject, round, response) => saveRecord({ kind: "response", subject, round }, response),
-      saveCorrection: (subject, round, attempt, reply) => saveRecord({ kind: "correction", subject, round, attempt }, reply),
+      saveReview: (subject, round, review) => saveRecord(replyArtifact(subject, round, "review"), review),
+      saveResponse: (subject, round, response) => saveRecord(replyArtifact(subject, round, "response"), response),
+      saveCorrection: (subject, round, attempt, reply) => saveRecord(replyArtifact(subject, round, { corrective: attempt }), reply),
       saveRawReply: (subject, round, kind, raw) => {
-        const file = at(kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : { kind: "correction", subject, round, attempt: kind.corrective });
+        const file = at(replyArtifact(subject, round, kind));
         // A reply that arrived as text (Codex's) is kept as it is: it is the JSON the agent wrote, or what it wrote instead.
         return typeof raw === "string" ? writeRecordText(file, raw) : writeJson(file, raw);
       },

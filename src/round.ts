@@ -1,5 +1,6 @@
 // A validated round: the review and Claude Code's response as one readonly value whose structure is
-// guaranteed (findings 3, 4 and 7 of docs/functional-design-review.md; decisions Q2 and Q3). Pure.
+// guaranteed (findings 3, 4 and 7 of docs/functional-design-review.md; decisions Q2 and Q3). Pure. A failure was a halt
+// under decision Q3; since issue #151 it gets one validation repair turn first (reviewValidation, roundValidation).
 
 import { Result } from "effect";
 import { CorrectionInvalid, RoundInvalid } from "./errors.ts";
@@ -127,10 +128,11 @@ export const correctiveValidation =
   };
 
 /** A review's validation with its repair turn (issue #151): unique, non-empty issue ids, or Codex's repair prompt. */
-export const reviewValidation: Validation<Review> = (review) => {
-  const checked = validateReview(review);
-  return Result.isFailure(checked) ? Result.fail({ error: checked.failure, repair: reviewRepairPrompt(checked.failure) }) : Result.succeed({ value: review, notes: [] });
-};
+export const reviewValidation: Validation<Review> = (review) => repairable(review, validateReview(review), reviewRepairPrompt);
+
+/** A check's result as a Validation's: the reply unchanged, or the failure with the prompt of its repair turn. */
+const repairable = <T>(reply: T, checked: Result.Result<unknown, RoundInvalid>, repair: (error: RoundInvalid) => string): ReturnType<Validation<T>> =>
+  Result.isFailure(checked) ? Result.fail({ error: checked.failure, repair: repair(checked.failure) }) : Result.succeed({ value: reply, notes: [] });
 
 /**
  * A response's validation with its repair turn (issue #151): `check` is the round's validation against its review and the
@@ -139,7 +141,5 @@ export const reviewValidation: Validation<Review> = (review) => {
  */
 export const roundValidation =
   <R extends PlannerResponse>(check: (response: PlannerResponse) => Result.Result<ValidatedRound, RoundInvalid>, reviewIds: readonly string[]): Validation<R> =>
-  (reply) => {
-    const checked = check(reply);
-    return Result.isFailure(checked) ? Result.fail({ error: checked.failure, repair: roundRepairPrompt(checked.failure, reviewIds) }) : Result.succeed({ value: reply, notes: [] });
-  };
+  (reply) =>
+    repairable(reply, check(reply), (error) => roundRepairPrompt(error, reviewIds));
