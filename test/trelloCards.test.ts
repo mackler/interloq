@@ -11,12 +11,14 @@ import { BOARD, LISTS } from "./trelloLists.ts";
 
 const CONFIG = { kind: "trello" as const, board: BOARD, lists: LISTS };
 const CARD_ID = "5f00000000000000000000c1";
-const card = (over: Partial<TrelloCard> = {}): TrelloCard => ({ id: CARD_ID, name: "Title", desc: "Body", idList: LISTS.refined, idBoard: BOARD, closed: false, ...over }) as TrelloCard;
+const PAGE = "https://trello.com/c/abc/1-title";
+const card = (over: Partial<TrelloCard> = {}): TrelloCard => ({ id: CARD_ID, name: "Title", desc: "Body", idList: LISTS.refined, idBoard: BOARD, closed: false, url: PAGE, ...over }) as TrelloCard;
 const refinement = (text: string): Refinement => Result.getOrThrow(refinementOf(text));
 const hexId = (n: number): string => n.toString(16).padStart(24, "0");
 
-test("CARD_FIELDS names exactly the fields of a card the adapter reads", () => {
+test("CARD_FIELDS names exactly the fields of a card the adapter reads, its url among them", () => {
   assert.deepEqual(CARD_FIELDS.split(","), Object.keys(card()));
+  assert.ok(CARD_FIELDS.split(",").includes("url"));
 });
 
 test("cardIdOf accepts a 24-character lowercase hexadecimal id and nothing else", () => {
@@ -37,7 +39,13 @@ test("stateOfCard: another board before archived before an unmapped list", () =>
 });
 
 test("itemOfCard maps the id, name, description and list", () => {
-  assert.deepEqual(itemOfCard(CONFIG, card({ idList: LISTS.implementing })), Result.succeed({ id: CARD_ID, title: "Title", body: "Body", state: "implementing", url: Option.none() }));
+  assert.deepEqual(itemOfCard(CONFIG, card({ idList: LISTS.implementing })), Result.succeed({ id: CARD_ID, title: "Title", body: "Body", state: "implementing", url: Option.some(PAGE) }));
+});
+
+test("itemOfCard: a card without url, or with an address that is not https, has no address and is still an item", () => {
+  const { url: _, ...withoutUrl } = card();
+  assert.deepEqual(Result.map(itemOfCard(CONFIG, withoutUrl as TrelloCard), (i) => i.url), Result.succeed(Option.none()));
+  assert.deepEqual(Result.map(itemOfCard(CONFIG, card({ url: "http://trello.com/c/abc" })), (i) => i.url), Result.succeed(Option.none()));
 });
 
 test("moveBody is the state's list id alone", () => {

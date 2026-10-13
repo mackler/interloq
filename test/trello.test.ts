@@ -25,7 +25,10 @@ const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 const hexId = (n: number): string => n.toString(16).padStart(24, "0");
 
 /** A Trello card with the fields the adapter asks for and a few more Trello sends. */
-export const card = (cardId: string, list: string, more: Record<string, unknown> = {}): Record<string, unknown> => ({ id: cardId, name: `card ${cardId.slice(-4)}`, desc: `desc ${cardId.slice(-4)}`, idList: list, idBoard: BOARD, closed: false, shortLink: "abc", labels: [], ...more });
+export const card = (cardId: string, list: string, more: Record<string, unknown> = {}): Record<string, unknown> => ({ id: cardId, name: `card ${cardId.slice(-4)}`, desc: `desc ${cardId.slice(-4)}`, idList: list, idBoard: BOARD, closed: false, shortLink: shortLinkOf(cardId), labels: [], url: pageOf(cardId), ...more });
+/** A card's short link and its page, as Trello sends them in `shortLink` and `url`. */
+const shortLinkOf = (cardId: string): string => `s${cardId.slice(-4)}`;
+const pageOf = (cardId: string): string => `https://trello.com/c/${shortLinkOf(cardId)}/${cardId.slice(-4)}-card`;
 const C1 = hexId(0xc1);
 
 const errors: TrackerError[] = [];
@@ -48,8 +51,8 @@ test("a listing asks for the open cards of the state's list, newest first, and r
   const stub = makeStub(route({ [cardsOf("refined")]: json([card(hexId(3), LISTS.refined), card(hexId(2), LISTS.refined, { closed: true }), card(hexId(1), LISTS.refined)]) }));
   const items = await withTracker(stub, (t) => t.list("refined"));
   assert.deepEqual(items, [
-    { id: hexId(3), title: "card 0003", body: "desc 0003", state: "refined", url: Option.none() },
-    { id: hexId(1), title: "card 0001", body: "desc 0001", state: "refined", url: Option.none() },
+    { id: hexId(3), title: "card 0003", body: "desc 0003", state: "refined", url: Option.some(pageOf(hexId(3))) },
+    { id: hexId(1), title: "card 0001", body: "desc 0001", state: "refined", url: Option.some(pageOf(hexId(1))) },
   ]);
   const [request] = stub.sent();
   assert.equal(stub.sent().length, 1);
@@ -99,7 +102,7 @@ test("a listing with a card of another board fails, naming the state's list", as
 
 test("read asks for one card with its fields and gives the item", async () => {
   const stub = makeStub(route({ [`GET ${API}/cards/${C1}`]: json(card(C1, LISTS.implementing)) }));
-  assert.deepEqual(await withTracker(stub, (t) => t.read(id(C1))), { id: C1, title: "card 00c1", body: "desc 00c1", state: "implementing", url: Option.none() });
+  assert.deepEqual(await withTracker(stub, (t) => t.read(id(C1))), { id: C1, title: "card 00c1", body: "desc 00c1", state: "implementing", url: Option.some(pageOf(C1)) });
   const [request] = stub.sent();
   assert.equal(request.method, "GET");
   assert.equal(request.url.searchParams.get("fields"), CARD_FIELDS);

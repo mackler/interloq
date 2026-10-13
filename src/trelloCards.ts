@@ -9,13 +9,16 @@ import { TrackerAuthRefused, TrackerItemNotFound, TrackerUnreachable } from "./e
 import { type Refinement, type SectionMalformed, withRefinement } from "./refinement.ts";
 import { TrelloId, type TrelloLists, type TrelloTrackerConfig } from "./schema.ts";
 import type { TrackerError } from "./services.ts";
-import { ITEM_STATES, type ItemId, type ItemState, type TrackerItem } from "./tracker.ts";
+import { ITEM_STATES, type ItemId, type ItemState, itemUrlFrom, type TrackerItem } from "./tracker.ts";
 import type { TrelloCredential } from "./trackerConfig.ts";
 
 const TRACKER = "Trello";
 
-/** The fields of Trello's card the adapter reads; the many others are ignored. The id is Trello's, so never blank. */
-export const TrelloCard = Schema.Struct({ id: TrelloId, name: Schema.String, desc: Schema.String, idList: Schema.String, idBoard: Schema.String, closed: Schema.Boolean });
+/**
+ * The fields of Trello's card the adapter reads; the many others are ignored. The id is Trello's, so never blank. `url`
+ * is the card's page (issue #125), optional so that a response without it still lists the card.
+ */
+export const TrelloCard = Schema.Struct({ id: TrelloId, name: Schema.String, desc: Schema.String, idList: Schema.String, idBoard: Schema.String, closed: Schema.Boolean, url: Schema.optionalKey(Schema.String) });
 export type TrelloCard = typeof TrelloCard.Type;
 /** Trello's `fields` parameter: the keys of TrelloCard, from the one source, so the request and the schema agree. */
 export const CARD_FIELDS = Object.keys(TrelloCard.fields).join(",");
@@ -39,10 +42,10 @@ export const stateOfCard = (config: TrelloTrackerConfig, card: Pick<TrelloCard, 
   return state === undefined ? Result.fail({ _tag: "UnmappedList", list: card.idList }) : Result.succeed(state);
 };
 
-/** The item of a card: its id, its name as the title, its description as the body, and its state. */
+/** The item of a card: its id, its name as the title, its description as the body, its state, and its url as its address. */
 export const itemOfCard = (config: TrelloTrackerConfig, card: TrelloCard): Result.Result<TrackerItem, NoCardState> =>
   // A TrelloId is 24 hexadecimal characters, never blank, which is all itemIdOf requires.
-  Result.map(stateOfCard(config, card), (state) => ({ id: card.id as string as ItemId, title: card.name, body: card.desc, state, url: Option.none() }));
+  Result.map(stateOfCard(config, card), (state) => ({ id: card.id as string as ItemId, title: card.name, body: card.desc, state, url: itemUrlFrom(card.url) }));
 
 /** The body of a state change: the state's list, so one request moves the card and cannot stop half done. */
 export const moveBody = (lists: TrelloLists, to: ItemState): Readonly<{ idList: string }> => ({ idList: lists[to] });
