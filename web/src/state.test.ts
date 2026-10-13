@@ -1980,4 +1980,47 @@ describe("an analysis across the request for terms", () => {
     const other = { ...explained, number: 2 };
     expect(fold(live(upTo(other))).modes.implementation.run?.analysis).toBe(null);
   });
+
+  // W2-R1-1 of work review 2: the request's call may ask a pause of its own (its retries exhausted) before it succeeds;
+  // the pause's prompts must not lose the analysis the request set aside.
+  const pauseQuestion: PresentedQuestion = { ...presentedOf(presentedEvent("Retry or stop?", options)), number: 2 };
+  const pauseAnalysis: UiEvent = { ...analyzedEvent, decision: 2, question: "Retry or stop?", presented: pauseQuestion } as UiEvent;
+  const requested = upTo(explained).slice(0, 8);
+  const explainedAt = (prompt: number): RunEvent[] => [
+    notified({ _tag: "QuestionExplained", question: explained }),
+    notified({ _tag: "QuestionPresented", question: explained }),
+    asked(prompt, prompts.optionOrTextPrompt),
+  ];
+  const heldFor = (events: readonly RunEvent[], prompt: number): void => {
+    for (const s of [fold(live(events)), replayed(events)]) {
+      const analysis = s.modes.implementation.run?.analysis;
+      expect(analysis?.prompt).toBe(prompt);
+      expect(analysis?.event.presented.number).toBe(1);
+      expect(analysis?.event.presented.explanations).toEqual(explained.explanations);
+    }
+  };
+
+  test("a pause asked during the request keeps the analysis for the question explained after it", () => {
+    heldFor([
+      ...requested,
+      notified({ _tag: "QuestionPresented", question: pauseQuestion }),
+      asked(3, prompts.optionOrTextPrompt),
+      { _tag: "Answered", prompt: 3, text: "1" },
+      ...explainedAt(4),
+    ], 4);
+  });
+
+  test("a pause with an analysis of its own still gives back the outer question's analysis", () => {
+    heldFor([
+      ...requested,
+      notified({ _tag: "QuestionPresented", question: pauseQuestion }),
+      asked(3, prompts.withOffer(prompts.optionOrTextPrompt)),
+      { _tag: "Answered", prompt: 3, text: "/decide" },
+      notified(pauseAnalysis),
+      notified({ _tag: "QuestionPresented", question: pauseQuestion }),
+      asked(4, prompts.optionOrTextPrompt),
+      { _tag: "Answered", prompt: 4, text: "1" },
+      ...explainedAt(5),
+    ], 5);
+  });
 });

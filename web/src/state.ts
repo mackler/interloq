@@ -8,6 +8,7 @@ import type { PresentedQuestion } from "../../src/question.ts";
 import { usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
+import { isTermsRequest } from "../../src/input.ts";
 import { correctionCount } from "../../src/issueLog.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { Choice } from "../../src/userPrompts.ts";
@@ -153,6 +154,12 @@ export type RunView = Readonly<{
   analysis: Readonly<{ event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; prompt: number | null }> | null;
   /** The analysis the last answer dismissed, until the next prompt: restored if the run rejects that answer (W3-R1-1). */
   dismissed: Readonly<{ event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; prompt: number | null }> | null;
+  /**
+   * The analysis set aside when its prompt was answered with the request for terms (issue #142, W2-R1-1), kept until the
+   * QuestionExplained of the same question restores it; no nested prompt, a pause of the request's own call included,
+   * clears or replaces it.
+   */
+  explaining: Readonly<{ event: Extract<UiEvent, { _tag: "DecisionAnalyzed" }>; prompt: number | null }> | null;
   /** The current plan with its statuses and the phase that carries it out (issue #6, Q5 and Q9); null before the first. */
   plan: Readonly<{ phase: number; plan: RecordedPlan }> | null;
   /** The phases known of the run, begun or ahead (issue #6). */
@@ -273,6 +280,7 @@ export const emptyRun = (id: number): RunView => ({
   lastShown: { left: null, right: null },
   analysis: null,
   dismissed: null,
+  explaining: null,
   plan: null,
   foreseen: [],
   ui: emptyUiState,
@@ -525,10 +533,10 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       if (isDecision(event.subject)) return run;
       return { ...run, timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
     case "QuestionExplained":
-      // Issue #142 (S15): "/terms" answered the prompt the analysis belongs to, and the same question is asked again with
-      // its explanations: the analysis it dismissed goes to the next prompt, beside the explained question.
-      return run.dismissed !== null && run.dismissed.event.presented.number === event.question.number
-        ? { ...run, analysis: { ...run.dismissed, event: { ...run.dismissed.event, presented: event.question }, prompt: null }, dismissed: null }
+      // Issue #142 (S15, W2-R1-1): "/terms" answered the prompt the analysis belongs to, and the same question is asked
+      // again with its explanations: the analysis it set aside goes to the next prompt, beside the explained question.
+      return run.explaining !== null && run.explaining.event.presented.number === event.question.number
+        ? { ...run, analysis: { ...run.explaining, event: { ...run.explaining.event, presented: event.question }, prompt: null }, explaining: null }
         : run;
     case "TermsBegan":
       // Issue #142: terms written before the first question open their step, whether or not a review follows.
@@ -664,6 +672,17 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
   }
 };
 
+/**
+ * Where an answer puts the analysis of its prompt: an answer to another prompt leaves it; the request for terms sets it
+ * aside until its question is explained (W2-R1-1); any other answer dismisses it until the next prompt (W3-R1-1).
+ */
+const answeredAnalysis = (r: RunView, prompt: number, text: string): Pick<RunView, "analysis" | "dismissed" | "explaining"> =>
+  r.analysis === null || r.analysis.prompt !== prompt
+    ? { analysis: r.analysis, dismissed: r.dismissed, explaining: r.explaining }
+    : isTermsRequest(text)
+      ? { analysis: null, dismissed: r.dismissed, explaining: r.analysis }
+      : { analysis: null, dismissed: r.analysis, explaining: r.explaining };
+
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
@@ -684,18 +703,16 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       }
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
-        const dismisses = r.analysis !== null && r.analysis.prompt === event.prompt;
-        const analysis = dismisses ? null : r.analysis;
-        const dismissed = dismisses ? r.analysis : r.dismissed;
+        const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
         // S26: the question joins the transcript with its answer, as an ordinary exchange.
         const own = r.pending !== null && r.pending.asked.prompt === event.prompt ? r.pending : null;
         const asked = own === null ? r : own.question !== null ? withLeft(r, { ...message(r, own.presentedAt ?? time, "program", piecesText(own.question.question), "text"), key: `${r.id}-${r.nextSeq}-question`, question: own.question }) : withLeft(r, { ...message(r, own.presentedAt ?? time, "program", own.hint, "text"), key: `${r.id}-${r.nextSeq}-question` });
-        return { ...withLeft(asked, message(asked, time, "user", chosen?.label ?? event.text, "markdown")), pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed };
+        return { ...withLeft(asked, message(asked, time, "user", chosen?.label ?? event.text, "markdown")), pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
       }
       case "Notified":
         return notifiedEvent(r, event.event, time);
       case "Ended": {
-        const ended: RunView = { ...r, ended: event.code, pending: null, activity: "", busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...r, explaining: null, ended: event.code, pending: null, activity: "", busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }
