@@ -7,6 +7,7 @@ import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
+import type { TaskEnd } from "./claudeEvents.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -2344,6 +2345,13 @@ export const TRANSPORT_WHAT_EXECUTION = "the implementation";
  * The prompt of a resumed execution call after a transport fault (issue #26, Q4): the session continues where it was, and
  * the steps are reported with report_step as before.
  */
+/** The reason given to Claude Code when the wait for its background commands ends (issue #154, decision Q1). */
+export function backgroundEndedText(ends: readonly TaskEnd[]): string {
+  const lines = ends.map((end) => `- ${end.taskId}: ${end.status}; its output is in ${end.outputFile}; ${end.summary.trim() === "" ? "no summary" : `summary: ${end.summary}`}`);
+  return `The background command you started has ended:\n${lines.join("\n")}\nRead the output file, then continue the step and call the tool ${REPORT_STEP_TOOL_NAME} and return the status report as before.`;
+}
+/** The denial of a status report returned while a background command Claude Code started is still running (issue #154). */
+export const REPORT_WHILE_RUNNING_DENIED = "Interloq did not accept your status report: a command you started in the background was still running, and its result would have been lost.";
 /**
  * The prompt that continues an execution phase's session after a report with status continuing (issue #154, decision
  * Q2): the work left, as Claude Code reported it, and the instruction to go on with it without asking the user.

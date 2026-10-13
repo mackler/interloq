@@ -139,3 +139,46 @@ export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, tran
       return { status: "blocked", summary: variant.summary, question: variant.description, remainingWork: variant.remainingWork, userInput: null };
   }
 };
+
+// ---- background tasks of an execution call (issue #154, decision Q1) ------------------------------------------------
+
+/** A background task's end, as its task_notification states it. */
+export type TaskEnd = Readonly<{ taskId: string; status: "completed" | "failed" | "stopped"; outputFile: string; summary: string }>;
+/**
+ * The background tasks of one execution call, folded from the SDK's messages: the tasks pending (seen live and not
+ * yet ended), the tasks that are not activity (ambient, never waited on), and the ends seen, in order, one per task.
+ */
+export type BackgroundState = Readonly<{ pending: ReadonlySet<string>; ambient: ReadonlySet<string>; ended: readonly TaskEnd[] }>;
+export const NO_BACKGROUND: BackgroundState = { pending: new Set(), ambient: new Set(), ended: [] };
+/** The task marked ambient: never waited on again, whatever else is said of it (the SDK says the flag can flip while live). */
+const markedAmbient = (state: BackgroundState, id: string): BackgroundState => ({ ...state, ambient: new Set([...state.ambient, id]), pending: new Set([...state.pending].filter((p) => p !== id)) });
+const ended = (state: BackgroundState, id: string): boolean => state.ended.some((e) => e.taskId === id);
+/** The task seen live: pending, unless it is ambient or already ended. */
+const seenLive = (state: BackgroundState, id: string): BackgroundState =>
+  state.ambient.has(id) || ended(state, id) || state.pending.has(id) ? state : { ...state, pending: new Set([...state.pending, id]) };
+/**
+ * The state after one SDK message. Only an explicit ambient marking and a notification end a task's wait: a level
+ * signal without the task never does, because the SDK leaves its order relative to the notification unspecified and in
+ * practice sends it first (P1-R1-1), so its absence would continue the session before the task's output is known.
+ */
+export const foldBackground = (state: BackgroundState, message: SDKMessage): BackgroundState => {
+  if (message.type !== "system") return state;
+  switch (message.subtype) {
+    case "background_tasks_changed":
+      return message.tasks.reduce((s, task) => (task.ambient === true ? markedAmbient(s, task.task_id) : seenLive(s, task.task_id)), state);
+    case "task_started":
+      if (message.ambient === true) return markedAmbient(state, message.task_id);
+      return message.is_backgrounded === true ? seenLive(state, message.task_id) : state;
+    case "task_notification": {
+      if (message.ambient === true) return markedAmbient(state, message.task_id);
+      // A task already ended or ambient is never pending (seenLive refuses both), so there is nothing to remove.
+      if (ended(state, message.task_id) || state.ambient.has(message.task_id)) return state;
+      const pending = new Set([...state.pending].filter((p) => p !== message.task_id));
+      return { ...state, pending, ended: [...state.ended, { taskId: message.task_id, status: message.status, outputFile: message.output_file, summary: message.summary }] };
+    }
+    default:
+      return state;
+  }
+};
+/** Whether a background task is still pending. */
+export const waitingOn = (state: BackgroundState): boolean => state.pending.size > 0;
