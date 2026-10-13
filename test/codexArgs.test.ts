@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import fc from "fast-check";
 import { Codex, type ThreadOptions } from "@openai/codex-sdk";
-import { codexArgs, codexEnv } from "../src/codexArgs.ts";
+import { codexArgs, codexEnv, exitText, turnEnd } from "../src/codexArgs.ts";
 
 // Issue #158: Interloq starts the Codex CLI itself; its arguments and environment are the SDK's.
 
@@ -120,4 +120,17 @@ test("the seam: the SDK's exec and codexArgs give the CLI the same arguments, fi
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("exitText: the SDK's text of a nonzero exit or a signal, none for a clean exit", () => {
+  assert.equal(exitText({ code: 0, signal: null }, "x"), null);
+  assert.equal(exitText({ code: 2, signal: null }, "bad"), "Codex Exec exited with code 2: bad");
+  assert.equal(exitText({ code: null, signal: "SIGTERM" }, ""), "Codex Exec exited with signal SIGTERM: ");
+});
+
+test("turnEnd: a kept error wins over a nonzero exit; otherwise the exit's text or nothing", () => {
+  const epipe = new Error("write EPIPE");
+  assert.deepEqual(turnEnd(epipe, { code: 3, signal: null }, ""), { kind: "kept", error: epipe });
+  assert.deepEqual(turnEnd(null, { code: 3, signal: null }, "e"), { kind: "exited", text: "Codex Exec exited with code 3: e" });
+  assert.equal(turnEnd(null, { code: 0, signal: null }, ""), null);
 });
