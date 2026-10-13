@@ -3,7 +3,7 @@
 
 import { Result } from "effect";
 import { CorrectionInvalid, RoundInvalid } from "./errors.ts";
-import { correctionRepairPrompt } from "./prompts.ts";
+import { correctionRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
 import type { Validation } from "./review.ts";
 import type { Action, LogEntry, PlannerResponse, Review, UserQuestion } from "./schema.ts";
 
@@ -124,4 +124,22 @@ export const correctiveValidation =
     if (changedIds.length === 0 && other.length === 0) return Result.succeed({ value: reply, notes: [] });
     const error = new CorrectionInvalid({ changedIds, other });
     return Result.fail({ error, repair: correctionRepairPrompt(error, acceptedIds) });
+  };
+
+/** A review's validation with its repair turn (issue #151): unique, non-empty issue ids, or Codex's repair prompt. */
+export const reviewValidation: Validation<Review> = (review) => {
+  const checked = validateReview(review);
+  return Result.isFailure(checked) ? Result.fail({ error: checked.failure, repair: reviewRepairPrompt(checked.failure) }) : Result.succeed({ value: review, notes: [] });
+};
+
+/**
+ * A response's validation with its repair turn (issue #151): `check` is the round's validation against its review and the
+ * log as the round began (roundCheckOf of src/reviewState.ts); a failure gets Claude Code's repair prompt, which names the
+ * review's issue ids. The reply is returned unchanged.
+ */
+export const roundValidation =
+  <R extends PlannerResponse>(check: (response: PlannerResponse) => Result.Result<ValidatedRound, RoundInvalid>, reviewIds: readonly string[]): Validation<R> =>
+  (reply) => {
+    const checked = check(reply);
+    return Result.isFailure(checked) ? Result.fail({ error: checked.failure, repair: roundRepairPrompt(checked.failure, reviewIds) }) : Result.succeed({ value: reply, notes: [] });
   };

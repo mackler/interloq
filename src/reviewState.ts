@@ -3,7 +3,7 @@
 // src/review.ts executes the commands against the services and feeds each result back as the next event.
 // The pause order of decided behaviour 7 is the order of the steps below. No I/O, no Effect.
 
-import { AcceptedWithoutChange, RoundLimitStop, type RunError } from "./errors.ts";
+import { AcceptedWithoutChange, type RoundInvalid, RoundLimitStop, type RunError } from "./errors.ts";
 import { lineChange } from "./lineChange.ts";
 import { parseExtraRounds } from "./input.ts";
 import * as prompts from "./prompts.ts";
@@ -218,6 +218,15 @@ const describeObservation = (o: Observation): string => prompts.observedAfter(o.
 // ---- transitions --------------------------------------------------------------------------------
 
 const done = (state: ReviewState, command: ReviewCommand, before: readonly ReviewCommand[] = []): Transition => ({ state: { ...state, step: { name: "finished" } }, commands: [...before, command] });
+/**
+ * The round's validation of a response against the round's review and the log as the round began (issue #151): the
+ * interpreter validates a reply with it, with its repair turn, before the reply reaches the state machine.
+ */
+export const roundCheckOf =
+  (s: ReviewState): ((response: PlannerResponse) => Result.Result<ValidatedRound, RoundInvalid>) =>
+  (response) =>
+    validateRound(s.current.validatedReview!, response, s.current.startLog, s.setup.phase, s.round, idPrefixOf(s.setup.subject), s.setup.idNumber);
+
 const halt = (state: ReviewState, error: RunError): Transition => done(state, { kind: "Halt", error });
 const noop = (state: ReviewState): Transition => ({ state, commands: [] });
 const decisionOf = (s: ReviewState, ask: Ask, text: string): DecisionEvent => ({ subject: subjectOf(s.setup.heading, ask.asks), id: ask.id, decision: text, phase: s.setup.phase, round: s.round });

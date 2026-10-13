@@ -155,6 +155,7 @@ export const decodeValidating = <Out extends Schema.Decoder<unknown>, E, R>(
   reply: unknown,
   repair: (repair: Repair) => Effect.Effect<unknown, E, R>,
   validate: Validation<Out["Type"]> | null,
+  onReply: OnReply | null = null,
 ): Effect.Effect<Readonly<{ value: Out["Type"]; notes: readonly string[] }>, E | RunError, R | Store> =>
   Effect.gen(function* () {
     const store = yield* Store;
@@ -186,6 +187,9 @@ export const decodeValidating = <Out extends Schema.Decoder<unknown>, E, R>(
     return yield* step(reply, null, false);
   });
 
+/** What is done with every reply of a call as it arrived, the first and each repair turn's, before it is decoded (issue #151): the raw save of a review loop's reply. */
+export type OnReply = (raw: unknown) => Effect.Effect<void, StoreError>;
+
 /**
  * The program's validation of a decoded reply beyond its schema (issue #37, decision Q1): the value to use with the notes
  * to record in conversation.md, or the error that ends the run and the prompt of the repair turn.
@@ -200,7 +204,7 @@ export type PlanningCall<Out> = Readonly<{ output: Out; reply: unknown; resultTe
  * response; "readProject", the context call of a question, which may read the project). Halts if the project changed;
  * a call that may change nothing, its repair turn included, also halts if a guarded record under plan-review/ changed (RecordsChanged; the program's own writes are not guarded, src/artifacts.ts).
  */
-export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string, schema: Out, purpose: PlanningPurpose = "planning", capability: PlanningCapability = "records", validate: Validation<Out["Type"]> | null = null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
+export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string, schema: Out, purpose: PlanningPurpose = "planning", capability: PlanningCapability = "records", validate: Validation<Out["Type"]> | null = null, onReply: OnReply | null = null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const planner = yield* Planner;
@@ -240,7 +244,7 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
     const first = yield* call(prompt);
     const repairCall = yield* Ref.make<PlanningResult | null>(null);
     const repair = (r: Repair) => call(r.prompt).pipe(Effect.tap((result) => Ref.set(repairCall, result)), Effect.map((result) => result.output));
-    const { value: output, notes } = yield* decodeValidating("claude", schema, first.output, repair, validate);
+    const { value: output, notes } = yield* decodeValidating("claude", schema, first.output, repair, validate, onReply);
     for (const note of notes) yield* store.converse(note);
     const second = yield* Ref.get(repairCall);
     const used = second ?? first;

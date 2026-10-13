@@ -98,14 +98,14 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
      * Writes one JSON record, creating its directory: the text goes to `<file>.tmp-<pid>` and is renamed into
      * place, so a reader sees the previous record or the new one, never a partial one (finding 16; Q6).
      */
-    const writeJson = (file: string, value: unknown) =>
+    const writeRecordText = (file: string, text: string) =>
       Effect.gen(function* () {
-        const text = yield* serialize(file, value, 2);
         yield* mkdir(path.dirname(file));
         const temporary = `${file}.tmp-${process.pid}`;
         yield* writeText(temporary, text + "\n");
         yield* renameInto(temporary, file);
       });
+    const writeJson = (file: string, value: unknown) => serialize(file, value, 2).pipe(Effect.flatMap((text) => writeRecordText(file, text)));
     /** plan-review/checkpoint.json: the last committed transition, replaced atomically. */
     const checkpoint = (point: CheckpointPoint) => now.pipe(Effect.flatMap((time) => writeJson(at({ kind: "checkpoint" }), { version: VERSION, ...point, time })));
     /** One record of the catalog, as JSON. */
@@ -240,6 +240,11 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       saveReview: (subject, round, review) => saveRecord({ kind: "review", subject, round }, review),
       saveResponse: (subject, round, response) => saveRecord({ kind: "response", subject, round }, response),
       saveCorrection: (subject, round, attempt, reply) => saveRecord({ kind: "correction", subject, round, attempt }, reply),
+      saveRawReply: (subject, round, kind, raw) => {
+        const file = at(kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : { kind: "correction", subject, round, attempt: kind.corrective });
+        // A reply that arrived as text (Codex's) is kept as it is: it is the JSON the agent wrote, or what it wrote instead.
+        return typeof raw === "string" ? writeRecordText(file, raw) : writeJson(file, raw);
+      },
       saveRound: (subject, record) => saveRecord({ kind: "round", subject, round: record.round }, { version: VERSION, ...record }),
       savePlanWrite: (phase, result) => saveRecord({ kind: "planWrite", phase }, result),
       saveExecution: (phase, outcome) => saveRecord({ kind: "execution", phase }, outcome),

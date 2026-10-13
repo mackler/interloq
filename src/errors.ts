@@ -3,7 +3,7 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
-import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, analysisInvalidText, sessionTooLongText, correctionInvalidText, cycleInvalidText, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, analysisInvalidText, sessionTooLongText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -11,7 +11,10 @@ export class ReviewedFileChanged extends Data.TaggedError("ReviewedFileChanged")
 /** A record under plan-review/ changed during a read-only call (a work response; finding 1 of docs/gui-review.md). */
 export class RecordsChanged extends Data.TaggedError("RecordsChanged")<{ readonly changes: readonly Change[] }> {}
 export class AcceptedWithoutChange extends Data.TaggedError("AcceptedWithoutChange")<{ readonly fileLabel: string; readonly accepted: number }> {}
-/** A review or a response whose structure is invalid: decision Q3 of the functional design review, a halt without a repair turn. */
+/**
+ * A review or a response whose structure is invalid (decision Q3 of the functional design review). Since issue #151 the
+ * reply gets one validation repair turn in the same thread or session (behavior 10), and a second failure halts.
+ */
 export class RoundInvalid extends Data.TaggedError("RoundInvalid")<{
   readonly duplicateIssues: readonly string[];
   readonly missing: readonly string[];
@@ -178,16 +181,8 @@ export const describe = (error: RunErrorFields): string => {
       return `a record under plan-review/ changed during a read-only response of Claude Code (a work response may not change any file). Either Claude Code changed it, or another process did.${indent(error.changes)}`;
     case "AcceptedWithoutChange":
       return `Claude Code accepted ${error.accepted} issues in full or in part but ${error.fileLabel} is unchanged`;
-    case "RoundInvalid": {
-      const parts: string[] = [];
-      if (error.duplicateIssues.length > 0) parts.push(`Codex returned more than one issue with the id: ${error.duplicateIssues.join(", ")}`);
-      if (error.missing.length > 0) parts.push(`Claude Code returned no disposition for: ${error.missing.join(", ")}`);
-      if (error.duplicateDispositions.length > 0) parts.push(`Claude Code returned more than one disposition for: ${error.duplicateDispositions.join(", ")}`);
-      if (error.unknownDispositions.length > 0) parts.push(`Claude Code returned a disposition for an id that is not in the review: ${error.unknownDispositions.join(", ")}`);
-      if (error.emptyIds.length > 0) parts.push(`an empty id in ${error.emptyIds.join(" and ")}`);
-      if (error.collidingIds.length > 0) parts.push(`a generated self-correction id already exists in the log: ${error.collidingIds.join(", ")}`);
-      return cycleInvalidText(parts);
-    }
+    case "RoundInvalid":
+      return cycleInvalidText(roundInvalidParts(error));
     case "QuestionListInvalid": {
       const parts: string[] = [];
       if (error.duplicateIds.length > 0) parts.push(`more than one question with the id: ${error.duplicateIds.join(", ")}`);

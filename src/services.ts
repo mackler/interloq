@@ -18,6 +18,8 @@ import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 
+/** Which reply of a round a raw save holds: the review, the response, or corrective turn k (issue #151). */
+export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }>;
 export type StoreError = FileSystemError | StateFileInvalid | GitError;
 /** The question a decision analyzes (decision support): its text and options, the phase in which it was asked and that phase's label (W1-R1-2). */
 /**
@@ -133,6 +135,12 @@ export interface StoreShape {
   saveResponse(subject: SubjectId, round: number, response: PlannerResponse): Effect.Effect<void, StoreError>;
   /** The raw reply of corrective turn `attempt` of a round (issue #30): `<subject dir>/cc-<round>-corrective-<attempt>.json`. */
   saveCorrection(subject: SubjectId, round: number, attempt: number, reply: unknown): Effect.Effect<void, StoreError>;
+  /**
+   * An agent's reply of a round as it arrived, before it is decoded or validated (issue #151): written to the file the
+   * accepted value later replaces, `review-<n>.json`, `cc-<n>.json` or `cc-<n>-corrective-<k>.json`; a text as it is,
+   * anything else as JSON. Journaled, like every write of the store, so a read-only call's records guard passes it.
+   */
+  saveRawReply(subject: SubjectId, round: number, kind: RawReplyKind, raw: unknown): Effect.Effect<void, StoreError>;
   /** The program's validated record of a round (`round-<n>.json`, version 2). */
   saveRound(subject: SubjectId, record: RoundRecord): Effect.Effect<void, StoreError>;
   /** The output of the call that wrote or revised the plan (`planning-<k>/cc-0.json`). */

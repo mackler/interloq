@@ -478,10 +478,7 @@ const turnSkipProblemText = (problem: TurnSkipProblem): string => {
 /** The halt after the repair turn of an interview turn could not correct what it did against the skipped questions. */
 export const interviewTurnInvalidText = (problems: readonly TurnSkipProblem[]): string => `an interview turn is invalid: ${problems.map(turnSkipProblemText).join("; ")}`;
 /** The validation repair turn of an interview turn that asked a skipped question or one before its premise, or omitted one. */
-export const interviewTurnRepairPrompt = (problems: readonly TurnSkipProblem[]): string => `Your structured output matched the schema, but the program cannot accept it:
-${problems.map((p) => `- ${turnSkipProblemText(p)}.`).join("\n")}
-${SKIPPED_RULE}
-Return the complete output again, corrected. Do not modify any file.`;
+export const interviewTurnRepairPrompt = (problems: readonly TurnSkipProblem[]): string => validationRepairPrompt(problems.map(turnSkipProblemText), [SKIPPED_RULE]);
 /** What the interview does with the questions the program skips (issue #99): in the interview's rules and its repair turn. */
 export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
 
@@ -890,6 +887,57 @@ export function correctionRepairPrompt(error: Readonly<{ changedIds: readonly st
 Only the action and the rationale of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
 Return the complete output again, corrected. Do not modify any file.`;
 }
+
+/** The fields of RoundInvalid (src/errors.ts), which imports this module for its texts. */
+export type RoundProblems = Readonly<{ duplicateIssues: readonly string[]; missing: readonly string[]; duplicateDispositions: readonly string[]; unknownDispositions: readonly string[]; emptyIds: readonly string[]; collidingIds: readonly string[] }>;
+
+/** What a repair prompt asks for instead, one instruction per failure of RoundInvalid (issue #151), in the words of the review and response rules. */
+export const ROUND_REPAIR = {
+  duplicateIssues: (ids: readonly string[]): string =>
+    `Give each issue an id of its own: more than one issue has the id ${ids.join(", ")}. Keep that id on one of them and give each of the others a new id of the form the review prompt states.`,
+  emptyIssueId: "Give every issue a non-empty id, of the form the review prompt states.",
+  missing: (ids: readonly string[]): string => `Return exactly one disposition for each issue of the review, including ${ids.join(", ")}, with its action and rationale as the rules state.`,
+  duplicateDispositions: (ids: readonly string[]): string => `Return one disposition per issue id: merge the dispositions given for ${ids.join(", ")} into one each, with one action and one rationale.`,
+  unknownDispositions: (ids: readonly string[], reviewIds: readonly string[]): string =>
+    `Remove the dispositions for ${ids.join(", ")}: a disposition answers an issue of this review, whose ids are ${reviewIds.join(", ")}. Report a correction of an earlier issue in self_corrections instead.`,
+  emptyDispositionId: "Give every disposition the id of the issue of this review that it answers; no disposition id may be empty.",
+  collidingIds: (ids: readonly string[]): string => "",
+} as const;
+
+/** What a review or a response did wrong (RoundInvalid), one sentence per field: the halt's text and the repair prompts state it from here. */
+export const roundInvalidParts = (error: RoundProblems): readonly string[] => [
+  ...(error.duplicateIssues.length > 0 ? [`Codex returned more than one issue with the id: ${error.duplicateIssues.join(", ")}`] : []),
+  ...(error.missing.length > 0 ? [`Claude Code returned no disposition for: ${error.missing.join(", ")}`] : []),
+  ...(error.duplicateDispositions.length > 0 ? [`Claude Code returned more than one disposition for: ${error.duplicateDispositions.join(", ")}`] : []),
+  ...(error.unknownDispositions.length > 0 ? [`Claude Code returned a disposition for an id that is not in the review: ${error.unknownDispositions.join(", ")}`] : []),
+  ...(error.emptyIds.length > 0 ? [`an empty id in ${error.emptyIds.join(" and ")}`] : []),
+  ...(error.collidingIds.length > 0 ? [`a generated self-correction id already exists in the log: ${error.collidingIds.join(", ")}`] : []),
+];
+
+/** A validation repair turn: what the program refused, one line each, then what to return instead. */
+function validationRepairPrompt(problems: readonly string[], instructions: readonly string[]): string {
+  return `Your structured output matched the schema, but the program cannot accept it:
+${problems.map((p) => `- ${p}.`).join("\n")}
+${instructions.join("\n")}
+Return the complete output again, corrected. Do not modify any file.`;
+}
+
+/** The validation repair turn of a review whose issue ids are duplicated or empty (Codex). */
+export const reviewRepairPrompt = (error: RoundProblems): string =>
+  validationRepairPrompt(roundInvalidParts(error), [
+    ...(error.duplicateIssues.length > 0 ? [ROUND_REPAIR.duplicateIssues(error.duplicateIssues)] : []),
+    ...(error.emptyIds.length > 0 ? [ROUND_REPAIR.emptyIssueId] : []),
+  ]);
+
+/** The validation repair turn of a response whose dispositions or generated self-correction ids are invalid (Claude Code); `reviewIds` are the review's issue ids. */
+export const roundRepairPrompt = (error: RoundProblems, reviewIds: readonly string[]): string =>
+  validationRepairPrompt(roundInvalidParts(error), [
+    ...(error.missing.length > 0 ? [ROUND_REPAIR.missing(error.missing)] : []),
+    ...(error.duplicateDispositions.length > 0 ? [ROUND_REPAIR.duplicateDispositions(error.duplicateDispositions)] : []),
+    ...(error.unknownDispositions.length > 0 ? [ROUND_REPAIR.unknownDispositions(error.unknownDispositions, reviewIds)] : []),
+    ...(error.emptyIds.length > 0 ? [ROUND_REPAIR.emptyDispositionId] : []),
+    ...(error.collidingIds.length > 0 ? [ROUND_REPAIR.collidingIds(error.collidingIds)] : []),
+  ]);
 
 // ---- prompts to the user ------------------------------------------------------------------------
 // The texts the program shows when it waits for the user. src/userPrompts.ts maps each to its widget.
