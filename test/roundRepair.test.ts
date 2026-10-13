@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { Result } from "effect";
 import { reviewRepairPrompt, roundRepairPrompt } from "../src/prompts.ts";
 import { serializeReply } from "../src/records.ts";
-import { validateReview, validateRound } from "../src/round.ts";
+import { correctiveValidation, validateReview, validateRound } from "../src/round.ts";
 import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
 import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, type ScriptedPlanner } from "./helpers.ts";
 
@@ -219,7 +219,7 @@ test("one validation repair turn per call: a reply that fails the questions' rul
   assert.equal(probe.planner.prompts.length, 3);
 });
 
-test("a corrective reply is in its round file before its repair turn, and the repaired reply lets the loop go on", async () => {
+test("a corrective reply refused by the corrective validation (CorrectionInvalid) is in its round file before its repair turn, and the repaired reply lets the loop go on", async () => {
   let atRepair: unknown = null;
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [
@@ -234,6 +234,35 @@ test("a corrective reply is in its round file before its repair turn, and the re
   assert.equal(await runTask(layer), 1);
   assert.deepEqual((atRepair as PlannerResponse | null)?.dispositions, []);
   assert.deepEqual(json(probe.dir, "planning-1/cc-1-corrective-1.json").dispositions, respond([["A", "rejected"]]).dispositions);
+});
+
+// W1-R1-2: the corrective validation lets only the action and the rationale of the accepted dispositions change, comparing
+// by position, so [A, B] answered as [A, A] passes it, and the round's validation refuses it (B missing, A duplicated).
+test("a corrective reply the corrective validation accepts but the round's validation refuses gets the round's repair turn", async () => {
+  const response = respond([["A", "accepted"], ["B", "accepted"]]);
+  const refused = respond([["A", "accepted"], ["A", "accepted"]]);
+  const repaired = respond([["A", "rejected"], ["B", "rejected"]]);
+  assert.ok(Result.isSuccess(correctiveValidation<PlannerResponse>(response, ["A", "B"])(refused)), "the corrective validation accepts the refused reply");
+  const failure = roundFailure([issue("A"), issue("B")], refused);
+  let atRepair: { cc: unknown; kept: unknown } | null = null;
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [
+      { output: noQuestions, plan: "v1" },
+      { output: response },
+      { output: refused },
+      { output: repaired, onCall: () => (atRepair = { cc: json(probe.dir, "planning-1/cc-1-corrective-1.json"), kept: json(probe.dir, "invalid-replies/claude-1.json") }) },
+    ],
+    reviews: [{ issues: [issue("A"), issue("B")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  assert.equal(await runTask(layer), 1);
+  assert.equal(probe.planner.prompts[3], roundRepairPrompt(failure, ["A", "B"]));
+  assert.ok(atRepair !== null, "the repair turn was not reached");
+  const seen = atRepair as { cc: PlannerResponse; kept: PlannerResponse };
+  assert.deepEqual(seen.cc.dispositions, refused.dispositions);
+  assert.deepEqual(seen.kept.dispositions, refused.dispositions);
+  assert.deepEqual(json(probe.dir, "planning-1/cc-1-corrective-1.json").dispositions, repaired.dispositions);
+  assert.ok(!/RoundInvalid|CorrectionInvalid|the cycle is invalid/.test(probe.ui.said.join("\n")), "the run did not halt on the corrective reply");
 });
 
 test("a work response with a missing disposition gets its read-only repair turn without halting on its own record write", async () => {
