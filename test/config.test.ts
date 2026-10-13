@@ -265,3 +265,30 @@ test("a costWarningUsd of 0, a negative number, a string or a non-finite number 
     await failsWith(project, shared, "ConfigInvalid", /costWarningUsd/);
   }
 });
+
+// Issue #142 (requirements Q6, Q7): the explanations of the agreed questions' terms in a refinement run, under behavior 9.
+import { mergeConfig } from "../src/config.ts";
+
+test("terms accepts checked, unchecked and onRequest, and refuses any other value with ConfigInvalid at terms", () => {
+  for (const value of ["checked", "unchecked", "onRequest"]) {
+    const decoded = decodeConfigText("/p/config.json", JSON.stringify({ terms: value }));
+    assert.ok(Result.isSuccess(decoded), `terms: ${value} was refused`);
+    assert.deepEqual(decoded.success, { terms: value });
+  }
+  for (const value of ["sometimes", "", true, null]) {
+    const decoded = decodeConfigText("/p/config.json", JSON.stringify({ terms: value }));
+    assert.ok(Result.isFailure(decoded), `terms: ${JSON.stringify(value)} was accepted`);
+    assert.equal(decoded.failure._tag, "ConfigInvalid");
+    assert.equal(decoded.failure.path, "terms");
+  }
+});
+
+test("terms defaults to unchecked, and the project's file replaces the shared one's", async () => {
+  assert.equal(mergeConfig({}, {}).terms, "unchecked");
+  const { project, shared, projectFile } = setup();
+  assert.equal((await load(project, shared)).terms, "unchecked");
+  fs.writeFileSync(shared, JSON.stringify({ terms: "checked" }));
+  assert.equal((await load(project, shared)).terms, "checked");
+  fs.writeFileSync(projectFile, JSON.stringify({ terms: "onRequest" }));
+  assert.equal((await load(project, shared)).terms, "onRequest");
+});

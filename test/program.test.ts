@@ -73,6 +73,16 @@ test("an invalid config prints HALTED with the file and field and exits 1, befor
   assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialised");
 });
 
+// Issue #142: an unknown value of terms halts before any agent call and before the records are initialized (behavior 9).
+test("a terms value other than checked, unchecked or onRequest halts with 1 before any agent call and without records", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
+  fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ terms: "sometimes" }));
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: .*\(at terms\)/);
+  assert.deepEqual(probe.planner.prompts, []);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialized");
+});
+
 // Decision support, plan step 2.1 (D7): the representation's format is read from the program's own directory.
 test("an unreadable decision-making format prints HALTED with the file and exits 1, before any agent call and without records", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });

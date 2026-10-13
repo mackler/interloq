@@ -366,6 +366,11 @@ export type GitlabTrackerConfig = typeof GitlabTrackerConfig.Type;
 export const TrackerConfig = Schema.Union([GithubTrackerConfig, TrelloTrackerConfig, GitlabTrackerConfig]);
 export type TrackerConfig = typeof TrackerConfig.Type;
 
+/** Issue #142: the three ways a refinement run may explain the agreed questions' terms. */
+export const TERMS_MODES = ["checked", "unchecked", "onRequest"] as const;
+export const TermsMode = Schema.Literals(TERMS_MODES);
+export type TermsMode = typeof TermsMode.Type;
+
 export const Config = Schema.Struct({
   /** Paths relative to the project that the change detection ignores. A directory covers everything below it. */
   ignorePaths: Schema.Array(Schema.String),
@@ -386,6 +391,13 @@ export const Config = Schema.Struct({
   codexModel: Schema.NullOr(Schema.String),
   /** The project's issue tracker (issue #120, part 1), or null for none. */
   tracker: Schema.NullOr(TrackerConfig),
+  /**
+   * Issue #142: the explanations of the agreed questions' terms in a refinement run. `checked`: written by Claude Code
+   * and reviewed by Codex in the terms loop before the first question, the behavior before this change; `unchecked`:
+   * written in one Claude Code call before the first question, with no review; `onRequest`: none before the interview,
+   * one question's written when the user asks for them while it is on the screen.
+   */
+  terms: TermsMode,
 });
 
 /** A config file: any subset of the keys of Config. Unknown keys are rejected where it is decoded. */
@@ -502,4 +514,5 @@ export const defaultConfig: Config = {
   claudeModel: null,
   codexModel: null,
   tracker: null,
+  terms: "unchecked",
 };

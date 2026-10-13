@@ -30,6 +30,7 @@ const arbConfig = record<S.Config>({
     fc.record({ owner: nonBlank, repo: nonBlank, labels: fc.uniqueArray(nonBlank, { minLength: 5, maxLength: 5 }) }).map(({ owner, repo, labels }): S.GithubTrackerConfig => ({ kind: "github", owner, repo, labels: { unrefined: labels[0], refined: labels[1], implementing: labels[2], implemented: labels[3], deployed: labels[4] } })),
     { nil: null },
   ),
+  terms: fc.constantFrom(...S.TERMS_MODES),
 });
 const arbIssueId = nonEmpty.map((s) => s as S.IssueId);
 const entryBase = { id: arbIssueId, phase: nonNegativeInt, round: nonNegativeInt, problem: fc.string(), rationale: fc.string(), superseded: fc.boolean() };
