@@ -1,6 +1,6 @@
 // proto-background.ts -- issue #154: can an execution call keep its session open while a background command it started
 // runs, and continue the same session with the command's end, instead of letting the structured output end the query?
-// Usage: node prototypes/proto-background.ts <scratch git repository> stop|structured
+// Usage: node prototypes/proto-background.ts <scratch git repository> stop|structured|denials
 //
 // It runs one query with the options of an execution call (permissionMode "auto", a json_schema output format, env with
 // BASH_MAX_TIMEOUT_MS 1,200,000) and asks Claude Code to start, with run_in_background, a command that writes a computed
@@ -11,6 +11,14 @@
 //               sees and then returns { decision: "block", reason } naming the output file.
 //   structured: a PreToolUse hook on StructuredOutput that, while a task is pending, waits for its notification and then
 //               denies the report once, naming the output file; it reports how Claude Code answers the denial.
+//   denials:    (work review issue W1-R1-2) after how many refused structured outputs does Claude Code end the call
+//               (the terminal reason structured_output_retry_exhausted)? The command runs about 6 minutes, and Claude
+//               Code is asked to return the report at once after starting it. A PreToolUse hook on StructuredOutput
+//               denies every report immediately, without waiting, while the command is pending, and allows one only
+//               when nothing is pending. It prints the number of denials, their times, the result's subtype and
+//               terminal reason, and whether the call ended with the command still running or the command ended first.
+//               The adapter refuses a report once per renewal of the bound of one wait and once per new background
+//               command, so this number is how far a long command or several commands can go before the call ends.
 // Both log, with seconds since the start:
 //   (a) whether the Stop hook fired before the structured-output enforcement, with the task in background_tasks;
 //   (b) whether stream messages (task_notification, background_tasks_changed) reached the loop while a hook was pending;
@@ -18,23 +26,28 @@
 //   (d) whether block or deny with a reason continued the turn with the command alive (the marker in the file and in the
 //       final report);
 //   (e) in "structured", whether Claude Code returns the report again after a denial, and how the call ends.
-// It costs one short Claude Code session per variant and takes two to four minutes.
+// It costs one short Claude Code session per variant and takes two to four minutes, "denials" up to about seven.
 
 import { query, type HookInput, type HookJSONOutput, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 const [repoArg, variant] = process.argv.slice(2);
-if (repoArg === undefined || (variant !== "stop" && variant !== "structured")) {
-  console.error("usage: node prototypes/proto-background.ts <scratch git repository> stop|structured");
+if (repoArg === undefined || (variant !== "stop" && variant !== "structured" && variant !== "denials")) {
+  console.error("usage: node prototypes/proto-background.ts <scratch git repository> stop|structured|denials");
   process.exit(2);
 }
 const cwd = path.resolve(repoArg);
 const OUT = path.join(cwd, "proto-background.out");
 fs.rmSync(OUT, { force: true });
-const COMMAND = `node -e "setTimeout(() => require('fs').writeFileSync('${OUT}', 'background-done-' + 6 * 7), 90000)"`;
+const DURATION_MS = variant === "denials" ? 360000 : 90000;
+const COMMAND = `node -e "setTimeout(() => require('fs').writeFileSync('${OUT}', 'background-done-' + 6 * 7), ${DURATION_MS})"`;
 const MARKER = "background-done-42";
-const prompt = `Start exactly this command with the Bash tool, with run_in_background set to true: ${COMMAND}
+const prompt =
+  variant === "denials"
+    ? `Start exactly this command with the Bash tool, with run_in_background set to true: ${COMMAND}
+Then, at once and without waiting for it, return the status report with the summary "started". If the report is refused, return it again.`
+    : `Start exactly this command with the Bash tool, with run_in_background set to true: ${COMMAND}
 Then end your turn with a short text saying that you are waiting for it, and make no other tool call.
 When you are told that the command has ended, read the file ${OUT} and return the status report with its contents as the summary.`;
 const schema = { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false };
@@ -80,6 +93,33 @@ const structuredHook = async (input: HookInput): Promise<HookJSONOutput> => {
   return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `A command you started in the background was still running; it has ended now. Read ${OUT} and return the status report again with its contents.` } };
 };
 
+// The denials variant: every report refused at once while the command is pending, each refusal with its time.
+const DENIAL_REASON = "A command you started in the background is still running. Return the status report again.";
+const denialTimes: string[] = [];
+let resultSeen = false;
+let endedBeforeResult = false;
+let resultLine = "";
+const denyingHook = async (input: HookInput): Promise<HookJSONOutput> => {
+  if (input.hook_event_name !== "PreToolUse") return {};
+  if (pending.size === 0) {
+    log(`StructuredOutput allowed after ${denialTimes.length} denials`);
+    return {};
+  }
+  denialTimes.push(at());
+  log(`StructuredOutput denial #${denialTimes.length}`);
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: DENIAL_REASON } };
+};
+const hooksOf = (): NonNullable<Parameters<typeof query>[0]["options"]>["hooks"] => {
+  switch (variant) {
+    case "stop":
+      return { Stop: [{ hooks: [stopHook], timeout: 600 }] };
+    case "structured":
+      return { PreToolUse: [{ matcher: "StructuredOutput", hooks: [structuredHook], timeout: 600 }] };
+    default:
+      return { PreToolUse: [{ matcher: "StructuredOutput", hooks: [denyingHook], timeout: 600 }] };
+  }
+};
+
 const iterator = query({
   prompt,
   options: {
@@ -88,7 +128,7 @@ const iterator = query({
     canUseTool: async (_tool, input) => ({ behavior: "allow", updatedInput: input }),
     env: { ...process.env, BASH_MAX_TIMEOUT_MS: "1200000" },
     outputFormat: { type: "json_schema", schema },
-    hooks: variant === "stop" ? { Stop: [{ hooks: [stopHook], timeout: 600 }] } : { PreToolUse: [{ matcher: "StructuredOutput", hooks: [structuredHook], timeout: 600 }] },
+    hooks: hooksOf(),
   },
 });
 let structured: unknown = null;
@@ -101,6 +141,7 @@ for await (const message of iterator as AsyncIterable<SDKMessage>) {
   if (message.type === "system" && message.subtype === "background_tasks_changed") log(`background_tasks_changed ${JSON.stringify(message.tasks)}`);
   if (message.type === "system" && message.subtype === "task_notification") {
     log(`task_notification ${message.task_id} ${message.status} ${message.output_file}`);
+    if (!resultSeen && pending.has(message.task_id)) endedBeforeResult = true;
     if (pending.delete(message.task_id)) ended.push({ id: message.task_id, status: message.status, outputFile: message.output_file });
     if (pending.size === 0) wake();
   }
@@ -116,6 +157,8 @@ for await (const message of iterator as AsyncIterable<SDKMessage>) {
   }
   if (message.type === "result") {
     structured = "structured_output" in message ? message.structured_output : null;
+    resultSeen = true;
+    resultLine = `subtype ${message.subtype}, terminal_reason ${"terminal_reason" in message ? String(message.terminal_reason) : "-"}`;
     log(`result ${message.subtype} terminal ${"terminal_reason" in message ? String(message.terminal_reason) : "-"} structured ${JSON.stringify(structured)}`);
   }
 }
@@ -125,3 +168,8 @@ console.log(`(a) Stop hook calls: ${stopHookCalls}; enforcement seen: ${enforcem
 console.log(`(b) messages that reached the loop while a hook was pending: ${JSON.stringify(messagesDuringHook)}`);
 console.log(`(d) the command survived (marker in the file): ${file.includes(MARKER)}; the final report holds it: ${JSON.stringify(structured ?? "").includes(MARKER)}`);
 if (variant === "structured") console.log(`(e) denials: ${denials}`);
+if (variant === "denials") {
+  console.log(`denials: ${denialTimes.length}, at ${JSON.stringify(denialTimes)}`);
+  console.log(`result: ${resultLine || "none"}`);
+  console.log(endedBeforeResult ? `the command ended first, after ${denialTimes.length} denials` : `the call ended after ${denialTimes.length} denials with the command still running`);
+}
