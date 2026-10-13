@@ -92,3 +92,35 @@ test("the controls' labels are the constants of src/prompts.ts, and none is a li
   const sends = Object.values(HINTS).flatMap((h) => promptOf(h).choices.map((c) => c.sends));
   assert.deepEqual([...new Set(sends)].sort(), ["", "/done", "/quit", "q"]);
 });
+
+// Issue #142: the request for a question's terms travels as "Help me decide" does: a line of the hint that the page turns
+// into a button, and an answer the run intercepts.
+import { endingOf, isDecide, isTermsRequest } from "../src/input.ts";
+
+test("the terms line gives the choice Explain the terms, whose answer is the terms request, before Help me decide", () => {
+  const hint = prompts.interviewMessagePrompt;
+  for (const [text, decide] of [[prompts.withTermsOffer(prompts.withOffer(hint)), true], [prompts.withTermsOffer(hint), false]] as const) {
+    const widget = promptOf(text);
+    assert.equal(widget.kind, "interviewMessage");
+    const labels = widget.choices.map((c) => c.label);
+    const terms = widget.choices.find((c) => c.label === prompts.EXPLAIN_TERMS);
+    assert.ok(terms !== undefined && isTermsRequest(terms.sends), labels.join(", "));
+    assert.equal(widget.choices.some((c) => c.label === prompts.HELP_ME_DECIDE && isDecide(c.sends)), decide);
+    if (decide) assert.ok(labels.indexOf(prompts.EXPLAIN_TERMS) < labels.indexOf(prompts.HELP_ME_DECIDE));
+    assert.equal(prompts.pagePromptText(widget.kind, text), prompts.pagePromptText("interviewMessage", hint));
+    assert.equal(endingOf(widget.kind, widget.mode, terms.sends), null);
+  }
+  assert.ok(!promptOf(prompts.withOffer(hint)).choices.some((c) => c.label === prompts.EXPLAIN_TERMS));
+});
+
+test("property: offersOf returns the offers and the text the prompt was built from", () => {
+  fc.assert(
+    fc.property(fc.string(), fc.boolean(), fc.boolean(), (hint, decide, terms) => {
+      const withDecide = decide ? prompts.withOffer(hint) : hint;
+      const text = terms ? prompts.withTermsOffer(withDecide) : withDecide;
+      const parsed = prompts.offersOf(text);
+      return parsed.decide === decide && parsed.terms === terms && parsed.text === hint;
+    }),
+    { numRuns: 200 },
+  );
+});

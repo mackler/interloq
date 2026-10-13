@@ -2,7 +2,7 @@
 // choices with the exact text each sends, whether free text is meaningful, and the quit of its input mode.
 // The web page renders a prompt from this entry. Pure.
 
-import { DECIDE } from "./input.ts";
+import { DECIDE, TERMS_REQUEST } from "./input.ts";
 import * as prompts from "./prompts.ts";
 
 export type Choice = Readonly<{ label: string; sends: string }>;
@@ -61,14 +61,17 @@ const FIXED: ReadonlyMap<string, (text: string) => UserPrompt> = new Map([
 
 /**
  * The widget of a prompt text. Total: a text that is not in the catalog is free text plus Quit. A text with the offer
- * line (decision support, D1) is the entry of the rest with "Help me decide" before Quit.
+ * line (decision support, D1) is the entry of the rest with "Help me decide" before Quit; a text with the terms line
+ * (issue #142) has "Explain the terms" before both.
  */
 export const promptOf = (text: string): UserPrompt => {
-  const offer = prompts.withoutOffer(text);
-  if (!offer.offered) return promptOfText(text);
-  const entry = promptOfText(offer.text);
+  const offers = prompts.offersOf(text);
+  if (!offers.decide && !offers.terms) return promptOfText(text);
+  const entry = promptOfText(offers.text);
   const quit = entry.choices[entry.choices.length - 1];
-  return { ...entry, text, choices: [...entry.choices.slice(0, -1), { label: prompts.HELP_ME_DECIDE, sends: DECIDE }, quit] };
+  const terms = offers.terms ? [{ label: prompts.EXPLAIN_TERMS, sends: TERMS_REQUEST }] : [];
+  const decide = offers.decide ? [{ label: prompts.HELP_ME_DECIDE, sends: DECIDE }] : [];
+  return { ...entry, text, choices: [...entry.choices.slice(0, -1), ...terms, ...decide, quit] };
 };
 
 const promptOfText = (text: string): UserPrompt => FIXED.get(text)?.(text) ?? entry("unknown", text, "ask", [], "line");

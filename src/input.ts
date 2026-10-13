@@ -65,6 +65,9 @@ export const parseInterviewMessage = (message: string): { kind: "empty" } | { ki
 /** The offer's command (D1 of the decision-support plan): "Help me decide" sends it, and a user may type it. */
 export const DECIDE = "/decide";
 export const isDecide = (text: string): boolean => text.trim() === DECIDE;
+/** Issue #142: the command of "Explain the terms", which asks for the explanations of the question on the screen. */
+export const TERMS_REQUEST = "/terms";
+export const isTermsRequest = (text: string): boolean => text.trim() === TERMS_REQUEST;
 
 /** The text a reply stands for when it chooses one of the options by number ("label: description"); any other reply is itself. */
 export const answerOf = (reply: string, options: readonly Readonly<{ label: string; description: string }>[]): string => {

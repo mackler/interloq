@@ -1289,7 +1289,7 @@ Task: ${task}`;
  * the page's buttons replace (plan step 4.7). `kind` is the prompt's kind in src/userPrompts.ts.
  */
 export function pagePromptText(kind: string, offeredText: string): string {
-  const text = withoutOffer(offeredText).text;
+  const text = offersOf(offeredText).text;
   switch (kind) {
     case "decision":
       return "Choose an option, answer in your own words, or continue without deciding.";
@@ -1754,9 +1754,19 @@ export const HELP_ME_DECIDE = "Help me decide";
 export const OFFER_LINE = `/decide = ${HELP_ME_DECIDE}: work out the arguments for and against each option before you choose`;
 /** A prompt with the offer: the offer line, then the prompt. */
 export const withOffer = (prompt: string): string => `${OFFER_LINE}\n${prompt}`;
-/** The prompt without the offer line, and whether it carried one. */
-export const withoutOffer = (text: string): Readonly<{ offered: boolean; text: string }> =>
-  text.startsWith(`${OFFER_LINE}\n`) ? { offered: true, text: text.slice(OFFER_LINE.length + 1) } : { offered: false, text };
+/** Issue #142: the label of the request for the explanations of the terms of the question on the screen. */
+export const EXPLAIN_TERMS = "Explain the terms";
+/** The line that carries the request for a question's terms in a prompt text: the page turns it into a button. */
+export const TERMS_OFFER_LINE = `/terms = ${EXPLAIN_TERMS}: Claude Code explains the words of this question that you may not know`;
+/** A prompt with the request for its question's terms, put outermost, over the offer of decision support. */
+export const withTermsOffer = (prompt: string): string => `${TERMS_OFFER_LINE}\n${prompt}`;
+/** The prompt without its offer lines, and which it carried: the terms line first (outermost), then the decide line. */
+export const offersOf = (text: string): Readonly<{ decide: boolean; terms: boolean; text: string }> => {
+  const strip = (line: string, t: string): Readonly<{ found: boolean; text: string }> => (t.startsWith(`${line}\n`) ? { found: true, text: t.slice(line.length + 1) } : { found: false, text: t });
+  const terms = strip(TERMS_OFFER_LINE, text);
+  const decide = strip(OFFER_LINE, terms.text);
+  return { decide: decide.found, terms: terms.found, text: decide.text };
+};
 /** The options of the cycle limit as a decision analyzes them (decision Q6): the count of more cycles is entered after choosing. */
 /**
  * The pause of issue #30: a response accepted issues and the reviewed file is still unchanged (after the corrective
