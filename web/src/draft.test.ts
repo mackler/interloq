@@ -111,13 +111,26 @@ describe("a draft carried across the request for terms", () => {
     expect(reconcile(carriedDraft, other)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("half an answer") });
   });
 
+  // W1-R1-1 of work review 1: a request for terms the page could not send restores the text it carried, not "/terms".
+  test("an unsent request for terms gives the carried text back to its still pending prompt", () => {
+    const view = live([started, presented(3), asked(1)]);
+    const terms: ClientMessage = { type: "answer", incarnation: "a", run: 1, prompt: 1, text: "/terms" };
+    const mine = carried({ _tag: "Held", key, text: "my unsent answer" }, 3);
+    expect(restoreUnsent(mine, view, terms)).toEqual({ draft: { _tag: "Held", key, text: "my unsent answer" }, quoted: null });
+    const another = carried({ _tag: "Held", key: { ...key, prompt: 2 }, text: "elsewhere" }, 3);
+    expect(restoreUnsent(another, view, terms)).toEqual({ draft: { _tag: "Held", key, text: "/terms" }, quoted: null });
+  });
+
   test("property: a non-empty carried draft is never dropped without a notice", () => {
     fc.assert(
       fc.property(fc.string({ minLength: 1 }).filter((t) => t.trim() !== ""), fc.integer({ min: 1, max: 5 }), fc.integer({ min: 1, max: 5 }), fc.boolean(), (text, number, next, answeredFirst) => {
         const d = carried({ _tag: "Held", key, text }, number);
         const events = answeredFirst ? [started, presented(number), asked(1), termsAnswer(1), presented(next), asked(2)] : [started, presented(number), asked(1), termsAnswer(1)];
         const result = reconcile(d, live(events));
-        return result.draft !== null ? result.draft.text === text : result.notice === prompts.draftWithdrawnNotice(text);
+        const reconciled = result.draft !== null ? result.draft.text === text : result.notice === prompts.draftWithdrawnNotice(text);
+        // W1-R1-1: the request for terms handed back unsent while its own prompt is still pending.
+        const unsent = restoreUnsent(d, live([started, presented(number), asked(1)]), { type: "answer", incarnation: "a", run: 1, prompt: 1, text: "/terms" });
+        return reconciled && (unsent.draft?.text === text || unsent.quoted === text);
       }),
     );
   });

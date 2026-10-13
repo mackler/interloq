@@ -2,6 +2,7 @@
 // of one start of the server; it is reconciled against the view after every reduction, live or replayed, so that
 // another tab's answer withdraws it with a notice instead of leaving it attached to the next prompt.
 
+import { isTermsRequest } from "../../src/input.ts";
 import { draftWithdrawnNotice } from "../../src/prompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
 import type { Shown } from "./state.ts";
@@ -65,8 +66,12 @@ const reconcileCarried = (draft: Extract<Draft, { _tag: "Carried" }>, view: Show
  */
 export const restoreUnsent = (draft: Draft | null, view: Shown, message: ClientMessage): Readonly<{ draft: Draft | null; quoted: string | null }> => {
   if (message.type !== "answer") return { draft, quoted: null };
+  // A request for terms (issue #142, W1-R1-1) is a command, not text the user wrote: the text it carried goes back to
+  // its prompt, still pending, so that the request can be made again.
+  const unsentKey = { incarnation: message.incarnation, run: message.run, prompt: message.prompt };
+  if (draft !== null && draft._tag === "Carried" && sameKey(draft.key, unsentKey) && isTermsRequest(message.text)) return { draft: { _tag: "Held", key: draft.key, text: draft.text }, quoted: null };
   const pending = pendingKey(view);
-  const own = pending !== null && sameKey(pending, { incarnation: message.incarnation, run: message.run, prompt: message.prompt });
+  const own = pending !== null && sameKey(pending, unsentKey);
   if (!own) return { draft, quoted: message.text.trim() === "" ? null : message.text };
   const current = draftFor(draft, pending);
   if (current === "") return { draft: { _tag: "Held", key: pending, text: message.text }, quoted: null };
