@@ -18,7 +18,9 @@ const ISSUES = "https://api.github.com/repos/mackler/interloq/issues";
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 
 /** A GitHub issue object with the fields GitHub sends and a few it sends that the adapter ignores. */
-export const issue = (number: number, labels: readonly string[], more: Record<string, unknown> = {}): Record<string, unknown> => ({ number, title: `issue ${number}`, body: `body ${number}`, state: "open", labels: labels.map((name) => ({ id: number, name, color: "ededed" })), user: { login: "mackler" }, ...more });
+export const issue = (number: number, labels: readonly string[], more: Record<string, unknown> = {}): Record<string, unknown> => ({ number, title: `issue ${number}`, body: `body ${number}`, state: "open", labels: labels.map((name) => ({ id: number, name, color: "ededed" })), user: { login: "mackler" }, html_url: pageOf(number), ...more });
+/** The issue's page on github.com, as GitHub sends it in `html_url`. */
+const pageOf = (number: number): string => `https://github.com/mackler/interloq/issues/${number}`;
 
 /** Every error the tests produced, so that the last test can look for the token in them. */
 const errors: TrackerError[] = [];
@@ -34,6 +36,12 @@ const ids = (items: readonly { id: string }[]): string[] => items.map((i) => i.i
 test("a listing drops the pull requests GitHub returns among the issues", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(1, []), issue(2, [], { pull_request: { url: "u" } }), issue(3, ["bug"])]) }));
   assert.deepEqual(ids(await withTracker(stub, (t) => t.list("unrefined"))), ["1", "3"]);
+});
+
+test("a listing gives each item its issue's html_url, and lists an issue without one with no address", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(1, []), issue(2, [], { html_url: undefined })]) }));
+  const items = await withTracker(stub, (t) => t.list("unrefined"));
+  assert.deepEqual(items.map((i) => i.url), [Option.some(pageOf(1)), Option.none()]);
 });
 
 test("a listing follows the Link header to its second page and concatenates both", async () => {
@@ -55,7 +63,7 @@ test("unrefined lists the labeled and the unlabeled open issues, and no issue of
 test("a labeled state asks GitHub for open issues with its label", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(5, [LABELS.implementing, "bug"])]) }));
   const items = await withTracker(stub, (t) => t.list("implementing"));
-  assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state: "implementing", url: Option.none() }]);
+  assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state: "implementing", url: Option.some(pageOf(5)) }]);
   const params = stub.sent()[0].url.searchParams;
   assert.equal(params.get("state"), "open");
   assert.equal(params.get("labels"), LABELS.implementing);
@@ -111,7 +119,7 @@ test("a client failing with a DecodeError or an EmptyBodyError is TrackerBodyInv
 
 test("read gives an issue with its state; a closed issue with one stage label has it", async () => {
   const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [LABELS.implemented], { body: null, state: "closed" })) }));
-  assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implemented", url: Option.none() });
+  assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implemented", url: Option.some(pageOf(7)) });
 });
 
 test("read of a pull request, a 404, a 410 and an id not in GitHub's format is TrackerItemNotFound", async () => {

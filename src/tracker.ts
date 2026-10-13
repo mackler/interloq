@@ -30,6 +30,8 @@ export type InvalidItemUrl = Readonly<{ _tag: "InvalidItemUrl"; text: string }>;
 /** The text as given, never the URL's normalized href, so the page links to exactly what the tracker sent. */
 export const itemUrlOf = (text: string): Result.Result<ItemUrl, InvalidItemUrl> =>
   URL.canParse(text) && new URL(text).protocol === "https:" ? Result.succeed(text as ItemUrl) : Result.fail({ _tag: "InvalidItemUrl", text });
+/** An item's address from the optional field of a tracker's response: none where it is absent or not an https address. */
+export const itemUrlFrom = (text: string | undefined): Option.Option<ItemUrl> => (text === undefined ? Option.none() : Result.getSuccess(itemUrlOf(text)));
 
 /**
  * What every tracker's item has in common: its id, title, body (a GitHub body of null is ""), state, and url, the item's

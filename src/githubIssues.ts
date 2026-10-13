@@ -2,7 +2,7 @@
 // a state change, the next page of a listing and an id's issue number. Pure; the edge is src/github.ts.
 import { Option, Result, Schema } from "effect";
 import type { GithubLabels } from "./schema.ts";
-import { ITEM_STATES, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { ITEM_STATES, type ItemId, itemUrlFrom, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 /**
  * The fields of GitHub's issue object the adapter reads; the many others are ignored. A label is an object with a
@@ -15,6 +15,8 @@ export const GithubIssue = Schema.Struct({
   state: Schema.Literals(["open", "closed"]),
   labels: Schema.Array(Schema.Union([Schema.String, Schema.Struct({ name: Schema.String })])),
   pull_request: Schema.optionalKey(Schema.Unknown),
+  // The issue's page on github.com (issue #125), not the API address src/github.ts PATCHes.
+  html_url: Schema.optionalKey(Schema.String),
 });
 export type GithubIssue = typeof GithubIssue.Type;
 
@@ -43,7 +45,7 @@ export const stateOf = (labels: GithubLabels, issue: Readonly<{ open: boolean; l
 /** The stage labels among an issue's labels, in the issue's order. */
 export const stageLabelsOf = (labels: GithubLabels, labelNames: readonly string[]): readonly string[] => labelNames.filter((name) => ITEM_STATES.some((state) => labels[state] === name));
 
-/** The item of an issue: its id the issue's number in decimal, a null body the empty string. */
+/** The item of an issue: its id the issue's number in decimal, a null body the empty string, its address its html_url. */
 export const itemOf = (labels: GithubLabels, issue: GithubIssue): Result.Result<TrackerItem, NoState | Ambiguous> =>
   Result.map(stateOf(labels, { open: issue.state === "open", labelNames: labelNamesOf(issue) }), (state) => ({
     // An integer's decimal text is never blank, which is all itemIdOf requires.
@@ -51,7 +53,7 @@ export const itemOf = (labels: GithubLabels, issue: GithubIssue): Result.Result<
     title: issue.title,
     body: issue.body ?? "",
     state,
-    url: Option.none(),
+    url: itemUrlFrom(issue.html_url),
   }));
 
 const LINK_ENTRY = /<([^>]*)>((?:\s*;\s*[^;,]*)*)/gu;

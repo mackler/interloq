@@ -39,6 +39,14 @@ test("itemOf: the id is the decimal number, a null body the empty string", () =>
   assert.deepEqual(item, Result.succeed({ id: id("42"), title: "title", body: "", state: "unrefined", url: Option.none() }));
 });
 
+test("itemOf: an issue's html_url is its address; none without one or with an address that is not https, and the item stands", () => {
+  const page = "https://github.com/mackler/interloq/issues/42";
+  const of = (more: Record<string, unknown>) => Result.getOrThrow(itemOf(LABELS, decode({ number: 42, title: "title", body: null, state: "open", labels: [], ...more }))).url;
+  assert.deepEqual(of({ html_url: page }), Option.some(page));
+  assert.deepEqual(of({}), Option.none());
+  assert.deepEqual(of({ html_url: "javascript:alert(1)" }), Option.none());
+});
+
 test("nextPage finds rel=\"next\" in a Link header as GitHub sends it", () => {
   const link = '<https://api.github.com/repositories/1/issues?state=open&per_page=100&page=2>; rel="next", <https://api.github.com/repositories/1/issues?state=open&per_page=100&page=5>; rel="last"';
   assert.deepEqual(nextPage(link), Option.some("https://api.github.com/repositories/1/issues?state=open&per_page=100&page=2"));

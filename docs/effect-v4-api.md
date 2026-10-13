@@ -115,6 +115,7 @@ new name. Material online describes v3 in most cases and is not a source.
 |---|---|---|
 | `Result.succeed` / `Result.fail` | 262 / 288 | `Result<A, E> = Success<A, E> \| Failure<A, E>` (line 57); the value is `.success`, the error `.failure` |
 | `Result.isSuccess` / `Result.isFailure` | 668 / 637 | type guards. A `Result` is not yieldable in `Effect.gen`: a failure is lifted with `Effect.fail(result.failure)` |
+| `Result.getSuccess` (read 13 Oct 2026, issue #125) | 698 | `getSuccess(self): Option<A>`: the success as `some`, a failure as `none`. `itemUrlFrom` of src/tracker.ts drops an address that is not https |
 | `Result.map` (read 28 Sep, issue #37) | 992 | dual: `map(self, f)` or `map(f)(self)`; transforms the success, keeps the failure. `validatingField` in src/subjects.ts |
 | `Result.mapError` (read 8 Oct 2026, issue #120) | 898 | dual: transforms the failure, keeps the success; the GitHub adapter turns `NoState` and `Ambiguous` into its typed errors (src/github.ts) |
 | `Result.flatMap` (read 9 Oct 2026, issue #120) | 2008 | dual: chains a function returning a `Result` onto the success; `taskTextOf` in src/program.ts |
