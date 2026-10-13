@@ -12,7 +12,7 @@ import { promptOf } from "../../src/userPrompts.ts";
 import { attachedOf, type PresentedQuestion } from "../../src/question.ts";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", location: "/p", current: { refinement: null, implementation: current }, incarnation: "a" });
@@ -1903,5 +1903,34 @@ describe("the tab shown before the user chooses one", () => {
     expect(fold([helloImpl, replayOf("implementation")]).selected).toBe("implementation");
     expect(fold([helloImpl, replayOf("implementation", [{ _tag: "Ended", code: 0 }])]).selected).toBe("refinement");
     expect(fold([replayOf("implementation")], selectMode(fold([helloImpl]), "refinement")).selected).toBe("refinement");
+  });
+});
+
+// Issue #142 (requirements Q3): the Refinement tab's control shows the configured choice of terms until the user changes
+// it; his choice applies to the next refinement alone, and the next shows the configured value again.
+describe("the choice of terms", () => {
+  const items = [{ id: "11", title: "t", excerpt: "e" }];
+  const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms } });
+  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", location: "/p", current: { refinement: null, implementation: null }, incarnation });
+  const startedRefinement: RunEvent = { ...started, mode: "refinement", item: { id: "11", title: "t" } } as RunEvent;
+
+  test("the listing's value is shown; a choice replaces it, survives a Refresh, and a refinement's Started resets it", () => {
+    expect(shownTerms(fold([helloAt("a")]))).toBe(null);
+    const s = fold([helloAt("a"), listed("checked")]);
+    expect(shownTerms(s)).toBe("checked");
+    const chosen = chooseTerms(s, "onRequest");
+    expect(shownTerms(chosen)).toBe("onRequest");
+    expect(shownTerms(fold([listed("checked")], chosen))).toBe("onRequest");
+    const afterStart = fold([{ type: "replay", ui: [], runs: [] }, { type: "event", run: 1, seq: 0, time: "2026-10-13T00:00:00.000Z", event: startedRefinement }], chosen);
+    expect(shownTerms(afterStart)).toBe("checked");
+  });
+
+  test("a hello of another incarnation drops the choice with the items; the implementation tab's items carry none", () => {
+    const chosen = chooseTerms(fold([helloAt("a"), listed("unchecked")]), "checked");
+    expect(shownTerms(fold([helloAt("a")], chosen))).toBe("checked");
+    expect(shownTerms(fold([helloAt("b")], chosen))).toBe(null);
+    const impl = fold([helloAt("a"), { type: "items", mode: "implementation", result: { _tag: "Listed", items } }]);
+    expect(impl.modes.implementation.items).toEqual({ _tag: "Listed", items });
+    expect(shownTerms(impl)).toBe(null);
   });
 });

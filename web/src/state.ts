@@ -2,7 +2,7 @@
 // prompt with its widget, the activity line and the timeline rail. Replay and live events use the same fold.
 
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, ListedItem, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
@@ -11,7 +11,7 @@ import { piecesText } from "../../src/pieces.ts";
 import { correctionCount } from "../../src/issueLog.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { Choice } from "../../src/userPrompts.ts";
-import type { RecordedPlan, RecordedStep, StepStatus } from "../../src/schema.ts";
+import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
 
 export type Author = "program" | "user" | "codex" | "claude";
@@ -162,7 +162,8 @@ export type RunView = Readonly<{
 }>;
 
 /** A tab's items (issue #120): not asked yet, being asked for, listed, or the notice of why the tracker could not list them. */
-export type ItemsView = Readonly<{ _tag: "Unasked" }> | Readonly<{ _tag: "Loading" }> | Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Readonly<{ _tag: "Unavailable"; notice: string }>;
+/** A tab's items: not asked, loading, or the server's answer; the Refinement tab's listing carries the configured choice of terms (issue #142). */
+export type ItemsView = Readonly<{ _tag: "Unasked" }> | Readonly<{ _tag: "Loading" }> | ItemsResult | RefinementItemsResult;
 /**
  * What the page holds of one mode, the content of its tab (issue #120): the id of its run in progress on the server, its
  * newest run (in progress or ended) and the one before it, its items, and the refusal of its last action, which its next
@@ -190,6 +191,11 @@ export type ViewState = Readonly<{
   notices: readonly string[];
   /** The answers the page could not send and could not put back into the answer field, in order, until dismissed. */
   unsent: readonly string[];
+  /**
+   * The choice of terms the user made on the Refinement tab's control (issue #142), or null while he has not: the control
+   * then shows the listing's configured value. It applies to the next refinement alone.
+   */
+  termsChoice: TermsMode | null;
 }>;
 
 export const initialState: ViewState = {
@@ -203,10 +209,19 @@ export const initialState: ViewState = {
   needsReconnect: false,
   notices: [],
   unsent: [],
+  termsChoice: null,
 };
 
 /** The state with one mode's tab changed. */
 const withMode = (state: ViewState, mode: RunMode, change: (m: ModeView) => ModeView): ViewState => ({ ...state, modes: { ...state.modes, [mode]: change(state.modes[mode]) } });
+/** Issue #142: the user's choice on the Refinement tab's control. */
+export const chooseTerms = (state: ViewState, terms: TermsMode): ViewState => ({ ...state, termsChoice: terms });
+/** Issue #142: the choice the control shows: the user's, else the Refinement listing's configured value; null without a listing. */
+export const shownTerms = (state: ViewState): TermsMode | null => {
+  const items = state.modes.refinement.items;
+  if (items._tag !== "Listed" || !("terms" in items)) return null;
+  return state.termsChoice ?? items.terms;
+};
 /** The tab the user shows (issue #120). */
 export const selectMode = (state: ViewState, mode: RunMode): ViewState => ({ ...state, selected: mode, chosen: true });
 /**
@@ -720,7 +735,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(message.current[m]) : reconnectedMode(state.modes[m], message.current[m])])) as Record<RunMode, ModeView>;
-      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false };
+      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the
@@ -754,15 +769,17 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const tab = state.modes[mode];
       const current = message.event._tag === "Started" ? message.run : message.event._tag === "Ended" ? (tab.current === message.run ? null : tab.current) : tab.current;
       const runModes = message.event._tag === "Started" ? { ...state.runModes, [message.run]: mode } : state.runModes;
+      // Issue #142: a refinement's start used the choice; the next shows the configured value again.
+      const termsChoice = message.event._tag === "Started" && mode === "refinement" ? null : state.termsChoice;
       const stamped = { time: message.time, event: message.event };
       if (tab.run !== null && message.run === tab.run.id) {
         if (message.seq !== tab.run.nextSeq) return { ...state, needsReconnect: true };
-        return withMode({ ...state, runModes }, mode, (m) => ({ ...m, current, run: foldEvent(m.run!, stamped) }));
+        return withMode({ ...state, runModes, termsChoice }, mode, (m) => ({ ...m, current, run: foldEvent(m.run!, stamped) }));
       }
       if (tab.run === null || message.run > tab.run.id) {
         if (message.seq !== 0) return { ...state, needsReconnect: true };
         // A run's Started clears its tab's refusal: the action it answers has succeeded.
-        return withMode({ ...state, runModes }, mode, (m) => ({ ...m, current, last: m.run, run: foldEvent(emptyRun(message.run), stamped), refusal: message.event._tag === "Started" ? null : m.refusal }));
+        return withMode({ ...state, runModes, termsChoice }, mode, (m) => ({ ...m, current, last: m.run, run: foldEvent(emptyRun(message.run), stamped), refusal: message.event._tag === "Started" ? null : m.refusal }));
       }
       return state;
     }
