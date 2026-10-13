@@ -31,7 +31,7 @@ const oneQuestion: TestOptions = {
 
 const refine = (options: TestOptions, tracker: FakeTracker = fakeTrackerOf([item])) => {
   const { layer, probe } = testLayer(tempRepo(), options);
-  const exit = Effect.runPromiseExit(refinementRun("Two modes\n\nMake the page two tabs.", item.id).pipe(Effect.provide(Layer.succeed(Tracker, tracker.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = Effect.runPromiseExit(refinementRun("Two modes\n\nMake the page two tabs.", item.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe, tracker };
 };
 const held = async (tracker: FakeTracker): Promise<FakeItem> => (await Effect.runPromise(tracker.items)).find((i) => i.id === item.id) ?? assert.fail("the item is gone");

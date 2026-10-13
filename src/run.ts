@@ -26,7 +26,7 @@ import { planField, planSubject, planValidation, savePlan, workSubject } from ".
  * records stand, and no state that was not written is claimed. A halted or stopped refinement sets nothing, and the item
  * stays unrefined.
  */
-export const refinementRun = (task: string, item: ItemId): Effect.Effect<void, RunError, Services | Tracker> =>
+export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode): Effect.Effect<void, RunError, Services | Tracker> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -38,7 +38,7 @@ export const refinementRun = (task: string, item: ItemId): Effect.Effect<void, R
     yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
     yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", 1) });
-    yield* questionPhase(task).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
+    yield* questionPhase(task, terms).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
     // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
     if ((yield* store.loadQuestions()).questions.length === 0) {
       yield* store.converse(`${NOTHING_TO_SETTLE}\n\n`);

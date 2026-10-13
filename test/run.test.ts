@@ -594,7 +594,7 @@ test("a stopped execution foresees the second iteration at once; a work review t
 test("a refinement run foresees Gather Requirements alone; an implementation run foresees it never", async () => {
   // Each run ends at its first agent call, which is not scripted; what was notified before is what counts.
   const refinement = testLayer(tempRepo(), {});
-  await Effect.runPromiseExit(refinementRun("task", scriptedItem.id).pipe(Effect.provide(refinement.layer)));
+  await Effect.runPromiseExit(refinementRun("task", scriptedItem.id, "checked").pipe(Effect.provide(refinement.layer)));
   assert.equal(foreseen(refinement.probe.ui.notified)[0], "foreseen Q");
   const implementation = testLayer(tempRepo(), {});
   await Effect.runPromiseExit(run("task").pipe(Effect.provide(implementation.layer)));

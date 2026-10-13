@@ -9,7 +9,7 @@ import { blankItemText, itemStartedLine, sessionsLine, sectionMalformedText, tas
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
-import type { Config } from "./schema.ts";
+import type { Config, TermsMode } from "./schema.ts";
 import { loadConfig } from "./config.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
@@ -52,7 +52,7 @@ export const taskOf = (text: string): Result.Result<Task, BlankTask> => (text.tr
  * tracker (taskTextOf).
  */
 export type RunStart =
-  | Readonly<{ mode: "refinement"; item: ItemId; project: string }>
+  | Readonly<{ mode: "refinement"; item: ItemId; project: string; terms: TermsMode }>
   | Readonly<{ mode: "implementation"; item: ItemId; project: string }>;
 
 /**
@@ -73,7 +73,12 @@ export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md
 /** How a run ended when it finished: a refinement run, or an implementation run with its number of execution phases. */
 type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implementation"; phases: number }>;
 /** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
-type Started = Readonly<{ project: string; mode: RunMode; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>> }>;
+type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>> }>;
+/**
+ * The mode of a started run with what only that mode carries (issue #142): a refinement run's choice of how the agreed
+ * questions' terms are explained; an implementation run has no question phase, so it carries no choice.
+ */
+type StartedKind = Readonly<{ mode: "refinement"; terms: TermsMode }> | Readonly<{ mode: "implementation" }>;
 /** What a run has read before its records exist: its task, and its tracker (none for a run started from a task). */
 type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null }>;
 
@@ -91,7 +96,7 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
   programWith(
     {
       project: start.project,
-      mode: start.mode,
+      kind: start.mode === "refinement" ? { mode: "refinement", terms: start.terms } : { mode: "implementation" },
       item: start.item,
       task: (config, ui) =>
         Effect.gen(function* () {
@@ -119,21 +124,22 @@ export const program = (start: RunStart, wiring: Wiring): Effect.Effect<number, 
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
-  programWith({ project: start.project, mode: "implementation", item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null })) }, wiring);
+  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null })) }, wiring);
 
 const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const project = path.resolve(start.project);
+    const mode = start.kind.mode;
     const ui = yield* wiring.ui;
     // Issue #120: the run's records directory, named by its start time, mode and item; allocated after the configuration
     // is read, so that a run refused by its configuration leaves no directory.
-    const planned = runRootOf(start.mode, start.item, new Date(yield* Clock.currentTimeMillis).toISOString());
+    const planned = runRootOf(mode, start.item, new Date(yield* Clock.currentTimeMillis).toISOString());
     const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.provide(wiring.platform));
 
     /** The last two lines of every ending. */
     const tail = (sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
-        yield* ui.say(sessionsLine(records.root, start.mode, sessionId));
+        yield* ui.say(sessionsLine(records.root, mode, sessionId));
         const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map((s) => renderUsage(s, recordPath(records.root, { kind: "usage" }))), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);
       });
@@ -180,7 +186,7 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
       return yield* halted(describe(error.value), null, yield* store(planned, []));
     }
     const records = yield* store(allocated.value, config.ignorePaths);
-    const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: start.mode }), Layer.succeed(Sdk, wiring.sdk));
+    const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk));
     // Built once, so that the planner whose session id is printed is the one the run used.
     // Decision support (D3): the Decider runs its loops over the same services as the run.
     const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));
@@ -192,11 +198,12 @@ const programWith = (start: Started, wiring: Wiring): Effect.Effect<number, neve
       yield* tail(yield* sessionId, records);
     });
     // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
+    const kind = start.kind;
     const body: Effect.Effect<RunOutcome, RunError> =
-      start.mode === "refinement"
+      kind.mode === "refinement"
         ? tracker === null
           ? Effect.die(new Error("a refinement run is started from an item, with its tracker"))
-          : refinementRun(task, start.item).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
+          : refinementRun(task, start.item, kind.terms).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
         : (tracker === null ? run(task) : implementationRun(task, start.item, requirements).pipe(Effect.provide(tracker))).pipe(
             Effect.provide(context),
             Effect.map((phases) => ({ mode: "implementation", phases }) as const),

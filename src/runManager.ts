@@ -216,7 +216,7 @@ export const makeRunManager = (wiring: (ui: WebUi, mode: RunMode) => Wiring, cwd
         // The ui's sink needs the id, and the id is taken with the reservation of the run.
         const idRef = yield* Ref.make(0);
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
-        const runStart: RunStart = mode === "refinement" ? { mode, item: item.id, project: cwd } : { mode, item: item.id, project: cwd };
+        const runStart: RunStart = mode === "refinement" ? { mode, item: item.id, project: cwd, terms: "checked" } : { mode, item: item.id, project: cwd };
         // The ownership transfer (finding 11 of docs/gui-review.md) is one uninterruptible region: the fiber exists
         // before the run is reserved, the run is reserved with its fiber in one step, and the gate is released after
         // Started, so no interruption can leave a run reserved without a fiber or a fiber that never starts.

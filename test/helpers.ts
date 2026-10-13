@@ -28,7 +28,7 @@ import { itemIdOf, type ItemId } from "../src/tracker.ts";
 import type { RunMode } from "../src/runMode.ts";
 import { refinementRun, run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
-import type { Plan as SPlan, RecordedPlan, StepStatus } from "../src/schema.ts";
+import type { Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
 import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
@@ -591,10 +591,14 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
 export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<number> => Effect.runPromise(run(task).pipe(Effect.provide(layer)));
 
 /** Runs a refinement run of the scripted item (issue #120): the question phase, written back to the item. */
-export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task"): Promise<void> => Effect.runPromise(refinementRun(task, scriptedItem.id).pipe(Effect.provide(layer)));
+export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task", terms: TermsMode = "checked"): Promise<void> => Effect.runPromise(refinementRun(task, scriptedItem.id, terms).pipe(Effect.provide(layer)));
 /** Runs a refinement run and asserts that it fails with the given error tag and description texts. */
 export async function refinementFails(layer: Layer.Layer<Services | Tracker>, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
-  const exit = await Effect.runPromiseExit(refinementRun("task", scriptedItem.id).pipe(Effect.provide(layer)));
+  return refinementFailsWith(layer, "checked", tag, ...texts);
+}
+/** refinementFails for a run with the given choice of terms (issue #142). */
+export async function refinementFailsWith(layer: Layer.Layer<Services | Tracker>, terms: TermsMode, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
+  const exit = await Effect.runPromiseExit(refinementRun("task", scriptedItem.id, terms).pipe(Effect.provide(layer)));
   assert.ok(Exit.isFailure(exit), "the run succeeded");
   const error = Cause.findErrorOption(exit.cause);
   assert.ok(Option.isSome(error), `the run ended with a defect, not a typed error: ${Cause.pretty(exit.cause)}`);
@@ -620,7 +624,7 @@ export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: 
 /** The item of every scripted run (issue #120): its title is the scripted task and its body is empty, so taskTextOf gives scriptedTask. */
 export const scriptedItem: FakeItem = { id: Result.getOrThrow(itemIdOf("1")), title: "task", body: "", state: "refined", open: true };
 /** The start of a scripted run from scriptedItem (or another item) in a project. */
-export const scriptedStart = (project: string, mode: RunMode = "implementation", item: ItemId = scriptedItem.id): RunStart => (mode === "refinement" ? { mode, item, project } : { mode, item, project });
+export const scriptedStart = (project: string, mode: RunMode = "implementation", item: ItemId = scriptedItem.id, terms: TermsMode = "checked"): RunStart => (mode === "refinement" ? { mode, item, project, terms } : { mode, item, project });
 /**
  * The project's tracker of a run manager under test (issue #120): refined items 1 to 6 for implementation runs and
  * unrefined items 11 to 16 for refinement runs, each with the scripted item's title and empty body, so that its task is

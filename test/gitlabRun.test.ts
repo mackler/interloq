@@ -33,7 +33,7 @@ const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], 
 
 const refine = async (options: TestOptions, gitlab: FakeGitlab) => {
   const { layer, probe } = testLayer(tempRepo(), options);
-  const exit = await Effect.runPromiseExit(refinementRun(`Two modes\n\n${DEVELOPER}`, ID).pipe(Effect.provide(Layer.succeed(Tracker, gitlab.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = await Effect.runPromiseExit(refinementRun(`Two modes\n\n${DEVELOPER}`, ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, gitlab.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe };
 };
 const implement = async (options: TestOptions, gitlab: FakeGitlab) => {

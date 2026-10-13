@@ -9,7 +9,7 @@ import { renderQuestions, renderTerms } from "./render.ts";
 import * as S from "./schema.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
 import { questionListValidation, questionSubject, requirementsSubject, saveTerms, termsSubject, termsValidation, writeQuestions } from "./subjects.ts";
-import type { QuestionsFile } from "./schema.ts";
+import type { QuestionsFile, TermsMode } from "./schema.ts";
 
 /**
  * The explanations of the agreed questions' terms (S17, decision Q8): a fresh session writes them after the question
@@ -30,7 +30,7 @@ const explainTerms = (task: string, agreed: QuestionsFile["questions"]): Effect.
   });
 
 /** Runs before planning phase 1 and ends with requirements.md written. */
-export const questionPhase = (task: string): Effect.Effect<void, RunError, Services> =>
+export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
