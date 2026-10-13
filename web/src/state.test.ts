@@ -1926,6 +1926,16 @@ describe("the choice of terms", () => {
     expect(shownTerms(afterStart)).toBe("checked");
   });
 
+  // W1-R1-2 of work review 1: a refinement whose Started the page first sees in a replay used the choice like one seen live.
+  test("a replay revealing a new refinement resets the choice; a replay of a refinement already known keeps it", () => {
+    const replayRun = (id: number): ServerMessage => ({ type: "replay", ui: [], runs: [{ id, events: stamp([startedRefinement]) }] });
+    const chosen = chooseTerms(fold([helloAt("a"), { type: "replay", ui: [], runs: [] }, listed("unchecked")]), "onRequest");
+    expect(shownTerms(fold([helloAt("a"), replayRun(1)], chosen))).toBe("unchecked");
+    const known = fold([{ type: "event", run: 1, seq: 0, time: "2026-10-13T00:00:00.000Z", event: startedRefinement }], chosen);
+    const choosing = chooseTerms(known, "onRequest");
+    expect(shownTerms(fold([helloAt("a"), replayRun(1)], choosing))).toBe("onRequest");
+  });
+
   test("a hello of another incarnation drops the choice with the items; the implementation tab's items carry none", () => {
     const chosen = chooseTerms(fold([helloAt("a"), listed("unchecked")]), "checked");
     expect(shownTerms(fold([helloAt("a")], chosen))).toBe("checked");

@@ -730,6 +730,12 @@ const restartedMode = (current: number | null): ModeView => ({ ...emptyMode, cur
 /** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
 const reconnectedMode = (mode: ModeView, current: number | null): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
 
+/**
+ * Whether a run is a refinement the page did not know before (issue #142): its start used the choice of terms, so the
+ * next refinement shows the configured value again, whether the Started arrived live or in a replay.
+ */
+const startsRefinement = (state: ViewState, run: number, mode: RunMode): boolean => mode === "refinement" && state.runModes[run] === undefined;
+
 /** The next state after a message of the server. Pure. */
 export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
   switch (message.type) {
@@ -747,7 +753,9 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const of = (mode: RunMode) => views.filter((v) => modeOfRun(v) === mode);
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], run: of(m).at(-1) ?? null, last: of(m).at(-2) ?? null }])) as Record<RunMode, ModeView>;
       const runModes = { ...state.runModes, ...Object.fromEntries(views.flatMap((v) => (v.mode === null ? [] : [[v.id, v.mode]]))) };
-      const replayed: ViewState = { ...state, modes, runModes };
+      // Issue #142 (W1-R1-2): a refinement first seen in a replay used the choice, as one whose Started arrives live does.
+      const termsChoice = views.some((v) => v.mode !== null && startsRefinement(state, v.id, v.mode)) ? null : state.termsChoice;
+      const replayed: ViewState = { ...state, modes, runModes, termsChoice };
       return { ...replayed, selected: unchosenTab(replayed) };
     }
     case "items":
@@ -773,7 +781,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const current = message.event._tag === "Started" ? message.run : message.event._tag === "Ended" ? (tab.current === message.run ? null : tab.current) : tab.current;
       const runModes = message.event._tag === "Started" ? { ...state.runModes, [message.run]: mode } : state.runModes;
       // Issue #142: a refinement's start used the choice; the next shows the configured value again.
-      const termsChoice = message.event._tag === "Started" && mode === "refinement" ? null : state.termsChoice;
+      const termsChoice = message.event._tag === "Started" && startsRefinement(state, message.run, mode) ? null : state.termsChoice;
       const stamped = { time: message.time, event: message.event };
       if (tab.run !== null && message.run === tab.run.id) {
         if (message.seq !== tab.run.nextSeq) return { ...state, needsReconnect: true };
