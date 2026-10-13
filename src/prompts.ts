@@ -1,7 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
-import { FILE_CHANGE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review } from "./schema.ts";
+import { FILE_CHANGE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -1018,6 +1018,17 @@ export const PROCEED_TO_IMPLEMENTATION = "proceed to implementation with the pla
 export const PROCEED_TO_CLARIFICATION_WITH_TERMS = "proceed to the clarification with the explanations as they are";
 /** The start of the terms' writing (S17), as the run says it. */
 export const termsLine = "\nGather Requirements: Claude Code explains the terms of the agreed questions ...";
+/** Issue #142: the run's choice of how the agreed questions' terms are explained, recorded and said as the question phase begins. */
+export const termsChoiceLine = (terms: TermsMode): string => {
+  switch (terms) {
+    case "checked":
+      return "Explanations of terms: written by Claude Code and checked by Codex before the first question.";
+    case "unchecked":
+      return "Explanations of terms: written by Claude Code before the first question, not checked by Codex.";
+    case "onRequest":
+      return "Explanations of terms: not written before the first question; you can ask for a question's explanations while it is on the screen.";
+  }
+};
 /** The "p" choice at the cycle limit of a decision loop (D10 of the decision-support plan). */
 export const PROCEED_TO_CHOICE = "proceed to your choice with the analysis as it is";
 /** The review loop's lines: a cycle's review and response. */

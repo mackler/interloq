@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT , runRefinement, refinementFails, refinementFailsWith } from "./helpers.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { blocksText, piecesText } from "../src/pieces.ts";
@@ -62,6 +62,9 @@ test("the terms are written in a fresh session after the question review converg
   assert.ok(fs.existsSync(path.join(probe.dir, "terms-review", "review-1.json")));
   assert.deepEqual(JSON.parse(read(probe.dir, "terms-log.json")), { version: 2, entries: [] });
   assert.match(read(probe.dir, "conversation.md"), /## Terms review, round 1/);
+  // Issue #142: the run's choice is recorded, and the step of the terms opened.
+  assert.ok(read(probe.dir, "conversation.md").includes(prompts.termsChoiceLine("checked")));
+  assert.ok(probe.ui.notified.some((e) => e._tag === "TermsBegan"));
   // The fresh sessions: the terms' own (the question list's session is the run's).
   assert.ok(probe.planner.freshSessions >= 1);
 });
@@ -249,4 +252,50 @@ test("issue #112: an explanation with no sense gets the validation repair turn",
   await runRefinement(layer);
   assert.equal(probe.planner.termsPrompts[1], prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "noSense", subject: "zod" }] }]));
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, terms().entries);
+});
+
+// Issue #142 (requirements Q6): the terms written in one call before the first question, with no review.
+test("unchecked: one terms call, no terms review, the explanations written and presented", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+    terms: [{ output: terms() }],
+    // The question review and the requirements review; no terms review.
+    reviews: [{ issues: [] }, { issues: [] }],
+  });
+  await runRefinement(layer, "task", "unchecked");
+  assert.deepEqual(probe.planner.termsPrompts, [prompts.termsPrompt(TEST_ROOT, "task")]);
+  assert.ok(!probe.reviewer.prompts.includes(prompts.termsReviewPrompt(TEST_ROOT, 1)));
+  assert.equal(fs.existsSync(path.join(probe.dir, "terms-review")), false);
+  assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")), { version: 2, entries: terms().entries });
+  assert.deepEqual(presentedQuestions(probe.ui)[0].explanations, [zod]);
+  assert.ok(read(probe.dir, "conversation.md").includes(prompts.termsChoiceLine("unchecked")));
+  assert.ok(probe.ui.notified.some((e) => e._tag === "TermsBegan"));
+});
+
+test("onRequest: no terms call before the interview, and the agreed question is presented without explanations", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+    terms: [{ output: terms() }],
+    reviews: [{ issues: [] }, { issues: [] }],
+  });
+  await runRefinement(layer, "task", "onRequest");
+  assert.deepEqual(probe.planner.termsPrompts, []);
+  assert.equal(fs.existsSync(path.join(probe.dir, "terms.json")), false);
+  assert.ok(!probe.ui.notified.some((e) => e._tag === "TermsBegan"));
+  const [q] = presentedQuestions(probe.ui);
+  assert.deepEqual(q.explanations, []);
+  assert.deepEqual(q.question, entry.question);
+  assert.ok(read(probe.dir, "conversation.md").includes(prompts.termsChoiceLine("onRequest")));
+});
+
+test("unchecked: a terms reply that fails its validation twice halts with QuestionInvalid", async () => {
+  const changed = { entries: [{ ...dividedEntry(), question: [{ text: "Should zod be added?", ref: "", code: false }], explanations: [] }] };
+  const { layer } = testLayer(tempRepo(), {
+    steps: [{ output: { questions: [entry] } }],
+    terms: [{ output: changed }, { output: changed }],
+    reviews: [{ issues: [] }],
+  });
+  await refinementFailsWith(layer, "unchecked", "QuestionInvalid", /Q1: the words or blocks of its field "question" differ from the agreed question/);
 });

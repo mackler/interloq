@@ -13,21 +13,35 @@ import type { QuestionsFile, TermsMode } from "./schema.ts";
 
 /**
  * The explanations of the agreed questions' terms (S17, decision Q8): a fresh session writes them after the question
- * review has converged, against the final wording, and answers Codex's review of them in the same session.
+ * review has converged, against the final wording, and, where `reviewed`, answers Codex's review of them in the same
+ * session. Issue #142: without the review (the choice unchecked) the program's own validation and its repair turn stay.
  */
-const explainTerms = (task: string, agreed: QuestionsFile["questions"]): Effect.Effect<void, RunError, Services> =>
+const explainTerms = (task: string, agreed: QuestionsFile["questions"], reviewed: boolean): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
     const planner = yield* (yield* Planner).fresh;
     yield* Effect.gen(function* () {
+      yield* ui.notify({ _tag: "TermsBegan" });
       yield* ui.say(prompts.termsLine);
       const written = yield* planningCall(prompts.termsPrompt(store.root, task), S.TermsWrite, "planning", "records", termsValidation<S.TermsWrite>(agreed));
       yield* saveTerms(written.output.entries);
       yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${yield* Effect.fromResult(renderTerms(written.output.entries))}\n`);
-      yield* reviewLoop(termsSubject(agreed));
+      if (reviewed) yield* reviewLoop(termsSubject(agreed));
     }).pipe(Effect.provideService(Planner, planner));
   });
+
+/** Issue #142: the terms before the first question, as the run's choice has them. */
+const termsBeforeInterview = (task: string, agreed: QuestionsFile["questions"], terms: TermsMode): Effect.Effect<void, RunError, Services> => {
+  switch (terms) {
+    case "checked":
+      return explainTerms(task, agreed, true);
+    case "unchecked":
+      return explainTerms(task, agreed, false);
+    case "onRequest":
+      return Effect.void;
+  }
+};
 
 /** Runs before planning phase 1 and ends with requirements.md written. */
 export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<void, RunError, Services> =>
@@ -36,6 +50,8 @@ export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<voi
     const ui = yield* Ui;
 
     yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "questions" } });
+    yield* store.converse(`${prompts.termsChoiceLine(terms)}\n\n`);
+    yield* ui.say(prompts.termsChoiceLine(terms));
     yield* ui.say(prompts.questionListLine);
     const generated = yield* planningCall(prompts.questionListPrompt(task), S.QuestionList, "planning", "records", questionListValidation());
     yield* writeQuestions(task, generated.output);
@@ -53,7 +69,7 @@ export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<voi
       return;
     }
     // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
-    yield* explainTerms(task, agreed);
+    yield* termsBeforeInterview(task, agreed, terms);
     yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
     yield* interview(prompts.interviewOpenPrompt(store.root), "clarification", agreed.map((q) => q.id));
 

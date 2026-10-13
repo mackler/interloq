@@ -372,3 +372,11 @@ test("attachedOf: null for blocks without text; otherwise the kind and the block
   assert.equal(attachedOf("summary", [{ kind: "document", markdown: "  " }]), null);
   assert.deepEqual(attachedOf("summary", [{ kind: "document", markdown: "# R" }]), { kind: "summary", blocks: [{ kind: "document", markdown: "# R" }] });
 });
+
+// Issue #142: a question presented without its terms (the choice onRequest) has no explanations and no references, and
+// the reference checks have nothing to refuse.
+test("a question with no explanations and no references has no problem", () => {
+  const bare: Question = { ...good, context: para("Interloq asks this."), history: [], question: plain("Should it be declared?"), explanations: [], options: [opt("A"), opt("B")] };
+  assert.deepEqual(questionProblems(bare), []);
+  assert.ok(Result.isSuccess(validateQuestion(bare)));
+});
