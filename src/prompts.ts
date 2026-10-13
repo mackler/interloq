@@ -711,7 +711,17 @@ export const COMMAND_CEILING_MS = 1_200_000;
 export const planStepSelfContainedRule = (root: RunRoot): string => `Each execution phase begins a new Claude Code session, which carries out the phase's remaining steps having read only the task, ${runDir(root)}/requirements.md, ${runDir(root)}/user-decisions.md and ${runDir(root)}/plan.json, and not this planning. So write each step's text to state the facts and the reasons its choices depend on (the files, the decided behavior, why an approach was chosen over another) wherever the implementer could not recover them from those files and the codebase.`;
 export const PLAN_STEP_DURATION_RULE = `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. No step may end with a command expected to run longer than that, such as a full test suite that may outlast it; a step's verification runs only the suites its change touches.`;
 /** The execution prompt's sentences on long commands (issue #78, requirements Q6). */
-export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. Start a command that may run longer than a few minutes, such as a full test suite, in the background with the Bash tool, and wait for it to end before you report the step done. While it runs, read and search, but do not edit any file: the suites read the working tree, and a result must belong to the files as they were when it started.`;
+/** What Interloq does while a background command runs (issue #154): the adapter's Stop hook holds the session. */
+export const KEEPS_SESSION_OPEN = "Interloq keeps the session open until the command ends";
+/** What Claude Code may do while a command it started runs: the suites read the working tree. */
+export const READ_AND_SEARCH_ONLY = "read and search, but do not edit any file";
+/** What the adapter's hook on the structured output refuses (issue #154). */
+export const NO_REPORT_WHILE_RUNNING = "do not return the status report while a command you started in the background is still running";
+/**
+ * The instruction about long commands (issue #78, rewritten by issue #154): a turn ended to wait for a background
+ * command no longer ends the session, because the adapter's hooks wait for the command and continue the session.
+ */
+export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. A command that may run longer than that may be started in the background with the Bash tool. While it runs, ${READ_AND_SEARCH_ONLY}: the suites read the working tree, and a result must belong to the files as they were when it started. When nothing is left to do but wait for it, end your turn: ${KEEPS_SESSION_OPEN} and then gives you its end and its output file; ${NO_REPORT_WHILE_RUNNING}, and never return 'continuing' or 'blocked' for it.`;
 
 export const planFormat = (root: RunRoot): string => `Return the complete plan in the field 'plan': its stages in order, each with its number and a title, and in each stage its steps in order, each with an id, its number within the stage, a short label of one line, and its full text in Markdown. Return the whole plan every time, including the parts that did not change. The program writes ${runDir(root)}/plan.json and ${runDir(root)}/plan.md from it; do not write either file.`;
 /** The rule of step identity (G-R1-1), which validatePlan in src/plan.ts enforces and the repair turn repeats. */
@@ -2357,7 +2367,7 @@ export const BACKGROUND_WAIT_BOUND_MS = (BACKGROUND_HOOK_TIMEOUT_SECONDS - 30) *
 const commandList = (names: readonly string[]): string => names.join("; ");
 /** What Claude Code is told when one wait's bound passes with a background command still running (issue #154). */
 export function stillRunningText(names: readonly string[]): string {
-  return `A command you started in the background is still running: ${commandList(names)}. You may read and search, but do not edit any file. When nothing is left to do but wait, end your turn again: Interloq keeps the session open until the command ends.`;
+  return `A command you started in the background is still running: ${commandList(names)}. You may ${READ_AND_SEARCH_ONLY}. When nothing is left to do but wait, end your turn again: ${KEEPS_SESSION_OPEN}.`;
 }
 /** The question of an execution call that the SDK ended while a background command was still running (issue #154). */
 export function backgroundKilledText(names: readonly string[]): string {
@@ -2381,7 +2391,7 @@ export function backgroundEndedText(ends: readonly TaskEnd[]): string {
   return `The background command you started has ended:\n${lines.join("\n")}\nRead the output file, then continue the step and call the tool ${REPORT_STEP_TOOL_NAME} and return the status report as before.`;
 }
 /** The denial of a status report returned while a background command Claude Code started is still running (issue #154). */
-export const REPORT_WHILE_RUNNING_DENIED = "Interloq did not accept your status report: a command you started in the background was still running, and its result would have been lost.";
+export const REPORT_WHILE_RUNNING_DENIED = `Interloq did not accept your status report: ${NO_REPORT_WHILE_RUNNING}, since its result would be lost.`;
 /**
  * The prompt that continues an execution phase's session after a report with status continuing (issue #154, decision
  * Q2): the work left, as Claude Code reported it, and the instruction to go on with it without asking the user.

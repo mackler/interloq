@@ -1378,3 +1378,33 @@ test("issue #154: a transport retry starts its wait state afresh", async () => {
   assert.deepEqual(report, {});
   assert.equal(outcome.status, "finished");
 });
+
+// Issue #154 (S7): the instruction about background commands and the adapter's handling of them, in one test. The
+// sentence tells Claude Code to end its turn to wait, which the Stop hook makes possible, and never to report while a
+// command runs, which the report hook refuses; both sides use the same exported phrases.
+test("issue #154: BACKGROUND_SUITE_SENTENCE describes the wait the hooks implement, and the call's prompt carries it", async () => {
+  const sentence = prompts.BACKGROUND_SUITE_SENTENCE;
+  assert.ok(sentence.includes(prompts.KEEPS_SESSION_OPEN));
+  assert.ok(sentence.includes(prompts.READ_AND_SEARCH_ONLY));
+  assert.ok(sentence.includes(prompts.NO_REPORT_WHILE_RUNNING));
+  assert.ok(prompts.REPORT_WHILE_RUNNING_DENIED.includes(prompts.NO_REPORT_WHILE_RUNNING));
+  assert.ok(prompts.stillRunningText(["x"]).includes(prompts.KEEPS_SESSION_OPEN));
+  assert.ok(prompts.stillRunningText(["x"]).includes(prompts.READ_AND_SEARCH_ONLY));
+  assert.doesNotMatch(sentence, /wait for it to end before you report the step done/);
+  assert.ok(sentence.includes(String(prompts.COMMAND_CEILING_MS)));
+  const executePrompt = prompts.executePrompt(TEST_ROOT, "t", true);
+  assert.ok(executePrompt.includes(sentence));
+  // The adapter's side: the call made with that prompt answers a turn ended while the command runs with the same phrase.
+  let stop: HookJSONOutput | undefined;
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("t1");
+    stop = await callStopHook(call.options, [shellTask("t1", SUITE)]);
+    yield notification("t1", "completed", "/tmp/t1.out");
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 100);
+  assert.equal((await run(fake.planner.executing(executePrompt, noReporter))).status, "finished");
+  assert.equal(fake.sdk.calls[0].prompt, executePrompt);
+  assert.ok(reasonOf(stop ?? {}).includes(prompts.KEEPS_SESSION_OPEN));
+});
