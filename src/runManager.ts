@@ -61,7 +61,11 @@ export type RunManager = Readonly<{
   haltAll: (message: string) => Effect.Effect<HaltReport>;
 }>;
 
-/** The runs `haltAll` halted: those whose fibers ended within the bounds, and those whose end the manager published itself. */
+/**
+ * The runs `haltAll` halted (issue #158): `halted`, those that ended with their halt record written; `unconfirmed`, every
+ * other, whose record is not confirmed: one that ended without it, and one stuck past the bounds, whose end the manager
+ * published itself.
+ */
 export type HaltReport = Readonly<{ halted: readonly number[]; unconfirmed: readonly number[] }>;
 /** How long `haltAll` waits for the faulted runs to end, then for their interruption (issue #158). */
 export type HaltBounds = Readonly<{ graceMs: number; interruptMs: number }>;
@@ -286,8 +290,9 @@ export const makeRunManager = (
      * after the snapshot. Each run's fault is failed and its fiber awaited for `graceMs`; a fiber still running is then
      * interrupted by a detached fiber that is never awaited, because an interruption waits for the run's uninterruptible
      * regions and finalizers, which after an uncaught exception need not end. A run still in its slot after
-     * `interruptMs` more is published as ended with 1 by the manager, and named as unconfirmed, since its record may
-     * not have been written.
+     * `interruptMs` more is published as ended with 1 by the manager. A run is reported halted only when its fiber ended
+     * and its record was written (its signal's `recorded`); every other is unconfirmed, a stuck one and one that ended
+     * without its record alike (P2-R1-1).
      */
     const haltAll = (message: string): Effect.Effect<HaltReport> =>
       Effect.gen(function* () {
@@ -301,8 +306,9 @@ export const makeRunManager = (
         const stuck = late.filter((_, i) => !interrupted[i]);
         // Every tab sees a stuck run ended; its own onExit, if it ever comes, then finds no run to end.
         yield* Effect.forEach(stuck, (r) => end(r.id, 1), { discard: true });
-        const unconfirmed = stuck.map((r) => r.id);
-        return { halted: runs.map((r) => r.id).filter((id) => !unconfirmed.includes(id)), unconfirmed };
+        // A run is halted only when it ended and its record was written (P2-R1-1); read once its fiber ended.
+        const recorded = yield* Effect.forEach(runs, (r) => (stuck.includes(r) ? Effect.succeed(false) : Deferred.isDone(r.signal.recorded)));
+        return { halted: runs.filter((_, i) => recorded[i]).map((r) => r.id), unconfirmed: runs.filter((_, i) => !recorded[i]).map((r) => r.id) };
       });
 
     /** The refusal of an action naming a run that no mode holds now: it belongs to no tab. */

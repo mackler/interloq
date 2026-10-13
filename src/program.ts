@@ -206,8 +206,10 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
     });
     // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
     const rootRef = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
-    /** A stage raced with the server's fault: its own value, or the fault (W1-R1-1 of issue #158). */
-    const orFault = <A, R>(stage: Effect.Effect<A, never, R>): Effect.Effect<Exit.Exit<A, ServerFault>, never, R> => Effect.exit(Effect.raceFirst(stage, fault));
+    /** The server's fault if it has come, without waiting for it. */
+    const faultCome = Deferred.isDone(signal.fault).pipe(
+      Effect.flatMap((done) => (done ? Effect.flip(fault).pipe(Effect.map(Option.some)) : Effect.succeed(Option.none<ServerFault>()))),
+    );
     /** Writes the server-fault record and marks it written; a write that fails leaves it unmarked. */
     const recordFault = (records: StoreShape, message: string) =>
       records.converse(serverFaultRecord(message)).pipe(Effect.andThen(Deferred.succeed(signal.recorded, undefined)), Effect.ignore);
@@ -231,7 +233,17 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
         return yield* faultHalted(error.value, ignorePaths);
       });
 
-    const prepared = yield* orFault(prepare);
+    /**
+     * A stage raced with the server's fault: its own value, or the fault (W1-R1-1 of issue #158). A faulted stage
+     * interrupted from outside, which haltAll does to a run that has not ended within its grace, records the fault's halt
+     * (W1-S1-1); an interruption without a fault (Stop task) says nothing here, as before.
+     */
+    const orFault = <A, R>(stage: Effect.Effect<A, never, R>, ignorePaths: readonly string[]): Effect.Effect<Exit.Exit<A, ServerFault>, never, R> =>
+      Effect.exit(Effect.raceFirst(stage, fault)).pipe(
+        Effect.onInterrupt(() => faultCome.pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (error) => Effect.asVoid(faultHalted(error, ignorePaths)) })))),
+      );
+
+    const prepared = yield* orFault(prepare, []);
     if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []);
     if (typeof prepared.value === "number") return prepared.value;
     const { config, decisionFormat, task, tracker, requirements } = prepared.value;
@@ -259,7 +271,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));
       return { records, context } as const;
     });
-    const built = yield* orFault(setup);
+    const built = yield* orFault(setup, config.ignorePaths);
     if (Exit.isFailure(built)) return yield* stageFailed(built.cause, config.ignorePaths);
     if (typeof built.value === "number") return built.value;
     const { records, context } = built.value;
@@ -270,6 +282,17 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
       yield* tail(yield* sessionId, records);
     });
+    /** The halt of the server's fault once the records and the services exist: its record, then HALTED. */
+    const bodyFaulted = (error: ServerFault) =>
+      Effect.gen(function* () {
+        yield* recordFault(records, error.message);
+        return yield* halted(describe(error), yield* sessionId, records);
+      });
+    /**
+     * An interruption of the whole run from outside: the server's fault's halt if the fault has come (W1-S1-1 of issue
+     * #158: haltAll interrupts a faulted run whose body did not end within the grace), otherwise the user's (Stop task).
+     */
+    const interruptedFromOutside = faultCome.pipe(Effect.flatMap(Option.match({ onNone: () => interrupted, onSome: (error) => Effect.asVoid(bodyFaulted(error)) })));
     // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
     const kind = start.kind;
     const body: Effect.Effect<RunOutcome, RunError> =
@@ -283,7 +306,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
           );
     // The race with the server's fault is inside onInterrupt, so a body ended by the fault does not say INTERRUPTED;
     // only an interruption of the whole run (Stop task) does.
-    const exit = yield* Effect.raceFirst(body, fault).pipe(Effect.onInterrupt(() => interrupted), Effect.exit);
+    const exit = yield* Effect.raceFirst(body, fault).pipe(Effect.onInterrupt(() => interruptedFromOutside), Effect.exit);
 
     if (Exit.isSuccess(exit)) {
       if (exit.value.mode === "implementation") {
@@ -300,7 +323,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       yield* interrupted;
       return 130;
     }
-    if (error.value._tag === "ServerFault") yield* recordFault(records, error.value.message);
+    if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value);
     return yield* halted(describe(error.value), yield* sessionId, records);
   });
 

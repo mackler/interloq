@@ -357,6 +357,50 @@ test("the server's fault while the run's services are built (a layer that never 
   assert.ok(Effect.runSync(Deferred.isDone(signal.recorded)), "the record was not marked written");
 });
 
+/**
+ * A run whose Codex turn is uninterruptible until `release`, interrupted from outside (W1-S1-1 of issue #158): with the
+ * server's fault failed first, or, as Stop task, without it. Returns the run's exit once it ended.
+ */
+const interruptedFromOutside = async (faulted: boolean) => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const release = Effect.runSync(Deferred.make<void>());
+  const holding = Layer.succeed(Reviewer, { startPhase: Effect.succeed({ review: () => Effect.sync(reach).pipe(Effect.andThen(Effect.uninterruptible(Deferred.await(release))), Effect.andThen(Effect.never)) }) });
+  const signal = Effect.runSync(makeFaultSignal);
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), { ...wiring, agents: Layer.merge(wiring.agents, holding) }, signal)));
+  await Promise.race([reached, sleep(30_000).then(() => assert.fail("the Codex turn was not reached within 30 s"))]);
+  await sleep(10);
+  if (faulted) await Effect.runPromise(Deferred.fail(signal.fault, new ServerFault({ message: "write EPIPE" })));
+  await sleep(10);
+  Effect.runFork(Fiber.interrupt(fiber));
+  await sleep(10);
+  await Effect.runPromise(Deferred.succeed(release, undefined));
+  const ended = await Effect.runPromise(Fiber.await(fiber).pipe(Effect.timeoutOption("10 seconds")));
+  if (Option.isNone(ended)) return assert.fail("the run did not end within 10 s of its interruption");
+  return { probe, signal };
+};
+
+test("a faulted run interrupted from outside in an uninterruptible turn records and says the server's fault, never INTERRUPTED", async () => {
+  const { probe, signal } = await interruptedFromOutside(true);
+  assert.ok(said(probe).includes(`HALTED: ${serverFaultText("write EPIPE")}`), said(probe));
+  assert.ok(!said(probe).includes("INTERRUPTED"), said(probe));
+  const record = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(record.endsWith(serverFaultRecord("write EPIPE")), record);
+  assert.ok(!record.includes("**Interrupted by the user.**"), record);
+  assert.ok(Effect.runSync(Deferred.isDone(signal.recorded)), "the record was not marked written");
+  assertTail(probe);
+});
+
+test("a run interrupted from outside without a fault (Stop task) still records and says the user's interruption", async () => {
+  const { probe, signal } = await interruptedFromOutside(false);
+  assert.ok(said(probe).includes("INTERRUPTED by the user. State is preserved in"), said(probe));
+  assert.ok(!said(probe).includes("HALTED"), said(probe));
+  const record = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(record.includes("**Interrupted by the user.**"), record);
+  assert.ok(!Effect.runSync(Deferred.isDone(signal.recorded)));
+});
+
 test("the server's fault before the run's records exist (a tracker read that never returns) halts it with 1 and creates its record", async () => {
   const tracker = fakeTrackerOf([scriptedItem]);
   const { wiring, probe } = testWiring(tempRepo(), { tracker });

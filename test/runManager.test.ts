@@ -631,4 +631,50 @@ test("a faulted run that ends by interruption is recorded with code 1, not 130",
   const report = await run(h.manager.haltAll("write EPIPE"));
   assert.deepEqual(report, { halted: [id], unconfirmed: [] });
   assert.equal(endCode(h, id), 1);
+  // W1-S1-1: the outside interruption of a faulted run records and says the fault, not the user's interruption.
+  const record = fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8");
+  assert.ok(record.endsWith(serverFaultRecord("write EPIPE")), record);
+  assert.ok(!record.includes("**Interrupted by the user.**"), record);
+  const texts = eventsOf(h, id).flatMap((e) => (e._tag === "Said" ? [e.text] : []));
+  assert.ok(texts.some((t) => t.includes("HALTED: ")), texts.join("\n"));
+  assert.ok(!texts.some((t) => t.includes("INTERRUPTED")), texts.join("\n"));
+});
+
+// P2-R1-1: a run whose halt record cannot be written is never reported halted. Root ignores file modes.
+const asRoot = process.getuid?.() === 0;
+/** Makes the run's conversation.md read-only for the test's body, its mode restored after it. */
+const readOnlyRecord = async <A>(repo: string, body: () => Promise<A>): Promise<A> => {
+  const file = path.join(runDirOf(repo), "conversation.md");
+  if (!fs.existsSync(file)) fs.writeFileSync(file, "");
+  fs.chmodSync(file, 0o444);
+  try {
+    return await body();
+  } finally {
+    fs.chmodSync(file, 0o644);
+  }
+};
+
+test("a run that ends within the grace without its halt record written is unconfirmed", { skip: asRoot }, async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [asking("Which database?")], undefined, [], undefined, SHORT);
+  const id = await started(h);
+  await pendingAsk(h, id);
+  const began = Date.now();
+  const report = await readOnlyRecord(repo, () => run(h.manager.haltAll("write EPIPE")));
+  assert.ok(Date.now() - began < SHORT.graceMs, `haltAll took ${Date.now() - began} ms`);
+  assert.deepEqual(report, { halted: [], unconfirmed: [id] });
+  assert.equal(endCode(h, id), 1);
+});
+
+test("a faulted run interrupted from outside without its halt record written is unconfirmed", { skip: asRoot }, async () => {
+  const repo = tempRepo();
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const turn = Effect.uninterruptible(Effect.sleep(`${SHORT.graceMs + 200} millis`)).pipe(Effect.andThen(Effect.never));
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => reach(), turn), [], undefined, SHORT);
+  const id = await started(h);
+  await reached;
+  const report = await readOnlyRecord(repo, () => run(h.manager.haltAll("write EPIPE")));
+  assert.deepEqual(report, { halted: [], unconfirmed: [id] });
+  assert.equal(endCode(h, id), 1);
 });
