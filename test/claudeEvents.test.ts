@@ -171,3 +171,19 @@ test("an error result's text is kept in the failure facts; a stream failure keep
   assert.equal(tooLong.failure?.apiStatus, 400);
   assert.equal(reduceMessages([init()], "socket hang up").failure?.resultText, null);
 });
+
+// Issue #154: a report made while a background task is still pending is never the call's end; a recorded stop wins.
+test("checkBackground aborts any outcome while a task is pending, names it, and leaves a recorded stop or no pending task alone", async () => {
+  const { checkBackground, foldBackground, NO_BACKGROUND } = await import("../src/claudeEvents.ts");
+  const { backgroundKilledText } = await import("../src/prompts.ts");
+  const { started, notification } = await import("./backgroundMessages.ts");
+  const pending = foldBackground(NO_BACKGROUND, started("t1"));
+  const finished = { status: "finished" as const, summary: "s", question: "", remainingWork: "w", userInput: null };
+  const nameOf = (id: string) => `the suite (${id})`;
+  for (const result of [finished, { status: "continuing" as const, summary: "s", remainingWork: "w" }]) {
+    assert.deepEqual(checkBackground(result, null, pending, nameOf), { status: "aborted", summary: "s", question: backgroundKilledText(["the suite (t1)"]), remainingWork: "w", userInput: null });
+  }
+  const stopped = { status: "needs_input" as const, summary: "s", question: "A?", remainingWork: "w", userInput: "A" };
+  assert.equal(checkBackground(stopped, { question: "A?", input: "A" }, pending, nameOf), stopped);
+  assert.equal(checkBackground(finished, null, foldBackground(pending, notification("t1", "completed", "/x")), nameOf), finished);
+});

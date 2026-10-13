@@ -7,9 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import type { CanUseTool, HookCallback, HookJSONOutput, Options, PermissionResult, PreToolUseHookInput, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, HookCallback, HookInput, HookJSONOutput, Options, PermissionResult, PreToolUseHookInput, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Clock, Effect, Fiber, Layer } from "effect";
-import { claudeEnv, makeClaudePlanner, toSdkAnswers } from "../src/claude.ts";
+import { claudeEnv, makeClaudePlanner, makeClaudePlannerWith, toSdkAnswers } from "../src/claude.ts";
 import { FileSystemError, type RunError } from "../src/errors.ts";
 import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as prompts from "../src/prompts.ts";
@@ -18,6 +18,7 @@ import { Decider, type DeciderShape, Planner, type PlannerShape, RunConfig, RunK
 import { runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
+import { changed, notification, started } from "./backgroundMessages.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
 import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
@@ -27,13 +28,13 @@ import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
 const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape = noDecider): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Decider, decider)));
 
 /** A Claude Code planner over a fake SDK, a scripted Ui and a store on a temporary repository. */
-const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig | RunKind> }> => {
+const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}, backgroundBoundMs: number = prompts.BACKGROUND_WAIT_BOUND_MS): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig | RunKind> }> => {
   const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await run(store.init("task"));
   const ui = new ScriptedUi(answers);
   const sdk = new FakeSdk(scripts);
   const deps = Layer.mergeAll(Layer.succeed(Store, { ...store, ...storeOverride }), Layer.succeed(Ui, ui), Layer.succeed(Sdk, sdk), Layer.succeed(RunConfig, { ...S.defaultConfig, ...config }), Layer.succeed(RunKind, { mode: "implementation" }));
-  return { planner: await run(makeClaudePlanner.pipe(Effect.provide(deps))), sdk, ui, dir: store.dir, project: store.project, deps };
+  return { planner: await run(makeClaudePlannerWith({ backgroundBoundMs }).pipe(Effect.provide(deps))), sdk, ui, dir: store.dir, project: store.project, deps };
 };
 
 // The schema of most planning calls in these tests; the output the fake returns matches it where the output is read.
@@ -1173,4 +1174,207 @@ test("an execution call that costs more than costWarningUsd is warned about", as
   const fake = await planner([messages(init("s-exec"), success(report, "", 5.5))], [], { costWarningUsd: 5 });
   await run(fake.planner.executing("implement the plan", noReporter));
   assert.deepEqual(warnings(fake.ui.said), [prompts.costWarningLine("s-exec", 5.5, 5)]);
+});
+
+// ---- issue #154 (decision Q1): an execution call waits for its background commands ----------------------------------
+
+const stopHookOf = (options: Options): HookCallback => {
+  const hooks = options.hooks?.Stop;
+  assert.ok(hooks !== undefined && hooks.length > 0, "the call registered no Stop hook");
+  assert.equal(hooks[0].timeout, prompts.BACKGROUND_HOOK_TIMEOUT_SECONDS);
+  return hooks[0].hooks[0];
+};
+const reportHookOf = (options: Options): HookCallback => {
+  const matcher = options.hooks?.PreToolUse?.find((m) => m.matcher === "StructuredOutput");
+  assert.ok(matcher !== undefined, "the call registered no hook on StructuredOutput");
+  assert.equal(matcher.timeout, prompts.BACKGROUND_HOOK_TIMEOUT_SECONDS);
+  return matcher.hooks[0];
+};
+const shellTask = (id: string, command: string) => ({ id, type: "shell", status: "running", description: command, command });
+const callStopHook = (options: Options, tasks: ReturnType<typeof shellTask>[] = []): Promise<HookJSONOutput> =>
+  stopHookOf(options)({ hook_event_name: "Stop", stop_hook_active: false, background_tasks: tasks, session_id: "s", transcript_path: "/t", cwd: "/" } as unknown as HookInput, undefined, { signal: new AbortController().signal });
+const callReportHook = (options: Options): Promise<HookJSONOutput> =>
+  reportHookOf(options)({ hook_event_name: "PreToolUse", tool_name: "StructuredOutput", tool_input: {} } as PreToolUseHookInput, undefined, { signal: new AbortController().signal });
+const reasonOf = (output: HookJSONOutput): string => (output as { reason?: string; hookSpecificOutput?: { permissionDecisionReason?: string } }).reason ?? (output as { hookSpecificOutput?: { permissionDecisionReason?: string } }).hookSpecificOutput?.permissionDecisionReason ?? "";
+const blockOf = (output: HookJSONOutput): string | undefined => (output as { decision?: string }).decision;
+/** "pending" while the promise has not settled after a short real wait. */
+const stillPending = async (promise: Promise<unknown>): Promise<boolean> => (await Promise.race([promise.then(() => "settled"), sleep(150).then(() => "pending")])) === "pending";
+const SUITE = "sbt testFull > /tmp/full.log";
+const finishedReport = { status: "finished", summary: "done", question: "", remaining_work: "" };
+const endOf = (id: string, file: string) => ({ taskId: id, status: "completed" as const, outputFile: file, summary: `summary of ${id}` });
+
+test("issue #154 regression: a turn ended while a background command runs waits for it, continues the same query, and finishes with nothing asked", async () => {
+  const seen: { pendingAfterLevel?: boolean; stop?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield assistantTool("Bash", { command: SUITE, run_in_background: true });
+    yield started("t1");
+    yield changed([["t1", false]]);
+    yield assistantText("The suite is still running. I'll continue when it finishes.");
+    const hook = callStopHook(call.options, [shellTask("t1", SUITE)]);
+    // The SDK's usual order: the level signal without the task before its notification.
+    yield changed([]);
+    seen.pendingAfterLevel = await stillPending(hook);
+    yield notification("t1", "completed", "/tmp/t1.out");
+    seen.stop = await hook;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(seen.pendingAfterLevel, true, "the level signal without the task ended the wait");
+  assert.ok(seen.stop !== undefined);
+  assert.equal(blockOf(seen.stop), "block");
+  assert.equal(reasonOf(seen.stop), prompts.backgroundEndedText([endOf("t1", "/tmp/t1.out")]));
+  assert.equal(outcome.status, "finished");
+  assert.deepEqual(fake.ui.asked, []);
+  assert.equal(fake.sdk.calls.length, 1, "the session was not continued in the same query");
+  assert.ok(fake.ui.said.some((l) => l === prompts.backgroundEndedLine([endOf("t1", "/tmp/t1.out")])), fake.ui.said.join("\n"));
+});
+
+test("issue #154: the notification before the level signal ends the wait too", async () => {
+  let stop: HookJSONOutput | undefined;
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("t1");
+    const hook = callStopHook(call.options, [shellTask("t1", SUITE)]);
+    yield notification("t1", "completed", "/tmp/t1.out");
+    yield changed([]);
+    stop = await hook;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(blockOf(stop ?? {}), "block");
+  assert.equal(outcome.status, "finished");
+});
+
+test("issue #154: two tasks: no report is accepted while either runs, and each denial carries only the new ends", async () => {
+  const results: { whileA?: boolean; a?: HookJSONOutput; whileB?: boolean; b?: HookJSONOutput; idle?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("A");
+    const first = callReportHook(call.options);
+    results.whileA = await stillPending(first);
+    yield notification("A", "completed", "/tmp/a.out");
+    results.a = await first;
+    yield started("B");
+    const second = callReportHook(call.options);
+    results.whileB = await stillPending(second);
+    yield notification("B", "completed", "/tmp/b.out");
+    results.b = await second;
+    results.idle = await callReportHook(call.options);
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(results.whileA, true);
+  assert.equal(results.whileB, true);
+  assert.equal(decision(results.a ?? {}), "deny");
+  assert.equal(reasonOf(results.a ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([endOf("A", "/tmp/a.out")])}`);
+  assert.equal(decision(results.b ?? {}), "deny");
+  assert.equal(reasonOf(results.b ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([endOf("B", "/tmp/b.out")])}`);
+  assert.deepEqual(results.idle, {});
+  assert.equal(outcome.status, "finished");
+});
+
+test("issue #154: past the bound of one wait the command still runs: the Stop hook blocks with stillRunningText, a report is denied, and the next wait ends with the command", async () => {
+  const results: { stop1?: HookJSONOutput; report?: HookJSONOutput; stop2?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("t1");
+    results.stop1 = await callStopHook(call.options, [shellTask("t1", SUITE)]);
+    results.report = await callReportHook(call.options);
+    const again = callStopHook(call.options, [shellTask("t1", SUITE)]);
+    yield notification("t1", "completed", "/tmp/t1.out");
+    results.stop2 = await again;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 200);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(blockOf(results.stop1 ?? {}), "block");
+  assert.equal(reasonOf(results.stop1 ?? {}), prompts.stillRunningText(["task t1"]));
+  assert.equal(decision(results.report ?? {}), "deny");
+  assert.equal(reasonOf(results.report ?? {}), prompts.stillRunningText(["task t1"]));
+  assert.equal(reasonOf(results.stop2 ?? {}), prompts.backgroundEndedText([endOf("t1", "/tmp/t1.out")]));
+  assert.equal(outcome.status, "finished");
+  assert.ok(fake.ui.said.includes(prompts.backgroundStillRunningLine(["task t1"])), fake.ui.said.join("\n"));
+});
+
+test("issue #154: a call that ends with a task pending is aborted with backgroundKilledText, whatever its report", async () => {
+  for (const status of ["finished", "continuing"]) {
+    const script: Script = () => (async function* () {
+      yield init();
+      yield started("t1");
+      yield success({ ...finishedReport, status });
+    })();
+    const fake = await planner([script]);
+    const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+    assert.ok(outcome.status === "aborted", status);
+    assert.equal(outcome.question, prompts.backgroundKilledText(["task t1"]));
+  }
+});
+
+test("issue #154: with nothing pending a report is allowed at once and the Stop hook answers nothing", async () => {
+  const results: HookJSONOutput[] = [];
+  const script: Script = (call) => (async function* () {
+    yield init();
+    results.push(await callReportHook(call.options), await callStopHook(call.options));
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script]);
+  assert.equal((await run(fake.planner.executing("implement the plan", noReporter))).status, "finished");
+  assert.deepEqual(results, [{}, {}]);
+});
+
+test("issue #154: after a recorded stop neither hook waits, and the outcome is needs_input", async () => {
+  const questions = [{ question: "A or B?", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }];
+  const results: HookJSONOutput[] = [];
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("t1");
+    await permission(call.options)("AskUserQuestion", { questions }, callContext());
+    results.push(await callReportHook(call.options), await callStopHook(call.options, [shellTask("t1", SUITE)]));
+    yield success({ ...finishedReport, status: "needs_input" });
+  })();
+  const fake = await planner([script], ["A"], {}, {}, 5_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(results, [{}, {}]);
+  assert.equal(outcome.status, "needs_input");
+});
+
+test("issue #154: an interruption while a hook waits ends the call, and the hook answers nothing", async () => {
+  let hook: Promise<HookJSONOutput> | null = null;
+  let reached: () => void = () => {};
+  const waiting = new Promise<void>((resolve) => (reached = resolve));
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("t1");
+    hook = callStopHook(call.options, [shellTask("t1", SUITE)]);
+    reached();
+    await aborted(call.options);
+  })();
+  const fake = await planner([script], [], {}, {}, 60_000);
+  const fiber = Effect.runFork(fake.planner.executing("implement the plan", noReporter).pipe(Effect.provideService(Decider, noDecider)));
+  await Promise.race([waiting, sleep(10_000).then(() => assert.fail("the Stop hook was not reached within 10 s"))]);
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.ok(hook !== null);
+  assert.deepEqual(await Promise.race([hook, sleep(2_000).then(() => "still waiting")]), {});
+});
+
+test("issue #154: a transport retry starts its wait state afresh", async () => {
+  let report: HookJSONOutput | undefined;
+  const first: Script = () => (async function* () {
+    yield init("session-exec");
+    yield started("t1");
+    throw econnreset();
+  })();
+  const second: Script = (call) => (async function* () {
+    yield init("session-exec");
+    report = await callReportHook(call.options);
+    yield success(finishedReport);
+  })();
+  const fake = await planner([first, second], [], quickRetry);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(report, {});
+  assert.equal(outcome.status, "finished");
 });

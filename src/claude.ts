@@ -2,11 +2,11 @@
 // cancellation, persistence and the SDK's tool-name strings; decoding and reduction are in src/claudeEvents.ts.
 
 import type { CanUseTool, HookCallback, Options, PermissionResult, PreToolUseHookInput, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Deferred, Effect, Exit, Layer, Ref, Result } from "effect";
+import { Clock, Deferred, Duration, Effect, Exit, Layer, Ref, Result } from "effect";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
-import { type CallOutcome, decodeQuestions, decodeToolTarget, execReport, interpretExecution, type Question, reduceMessages, type Stop } from "./claudeEvents.ts";
+import { type BackgroundState, type CallOutcome, checkBackground, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type TaskEnd, waitingOn } from "./claudeEvents.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
@@ -22,6 +22,8 @@ import * as S from "./schema.ts";
 import { Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, RunConfig, Sdk, Store, Ui } from "./services.ts";
 
 const EDIT_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
+/** How often a wait for background commands looks at the call's state (issue #154). */
+const BACKGROUND_POLL_MS = 50;
 
 /**
  * What a callback of the SDK can fail with: the user stopping, a record that could not be written, malformed callback
@@ -104,7 +106,9 @@ const readOnlyPermission: CanUseTool = async () => deny(READ_ONLY_REASON);
  */
 export const claudeEnv = (inherited: Readonly<Record<string, string | undefined>>, ceilingMs: number): Record<string, string | undefined> => ({ ...inherited, BASH_MAX_TIMEOUT_MS: String(ceilingMs) });
 
-export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | Store | RunConfig> = Effect.gen(function* () {
+/** What the adapter takes beside its services: the bound of one wait for background commands (issue #154), shorter in tests. */
+export type ClaudePlannerOptions = Readonly<{ backgroundBoundMs: number }>;
+export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Effect.Effect<PlannerShape, never, Sdk | Ui | Store | RunConfig> => Effect.gen(function* () {
   const sdk = yield* Sdk;
   const ui = yield* Ui;
   const store = yield* Store;
@@ -300,7 +304,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
    * callback still rejects the callback's Promise. The messages are shown and the usage recorded as
    * they arrive; the outcome is the pure reduction of the list at the end.
    */
-  const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | "execution", show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback) => Options = () => ({})): Effect.Effect<CallOutcome, CallbackError> =>
+  const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | "execution", show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback) => Options = () => ({}), observe: (message: SDKMessage) => Effect.Effect<void> = () => Effect.void): Effect.Effect<CallOutcome, CallbackError> =>
     Effect.gen(function* () {
       yield* ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose });
       const controller = new AbortController();
@@ -347,6 +351,7 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       const consume = Effect.gen(function* () {
         for (let message = yield* next(); message !== null; message = yield* next()) {
           seen.push(message);
+          yield* observe(message);
           if (message.type === "system" && message.subtype === "init") {
             yield* Ref.set(session, message.session_id);
             if ((yield* Ref.get(announcedModel)) !== message.model) {
@@ -394,6 +399,75 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
       Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit) && exit.value.error === null })),
     );
 
+  /**
+   * The wait of an execution call for its background commands (issue #154, decision Q1): nothing while a stop is
+   * recorded or no task is pending; otherwise until every pending task has ended (its notification) or the bound of one
+   * wait has passed, whichever comes first. The ends returned are those not yet given to Claude Code. Elapsed time
+   * authorizes nothing: at the bound the command is named as still running, and the next end of the turn waits again.
+   */
+  type BackgroundWait = Readonly<{ kind: "none" }> | Readonly<{ kind: "ended"; ends: readonly TaskEnd[] }> | Readonly<{ kind: "bound"; names: readonly string[] }>;
+  type BackgroundRefs = Readonly<{ stop: Ref.Ref<Stop | null>; state: Ref.Ref<BackgroundState>; names: Ref.Ref<ReadonlyMap<string, string>>; delivered: Ref.Ref<number> }>;
+  const pendingNames = (refs: BackgroundRefs): Effect.Effect<readonly string[]> =>
+    Effect.gen(function* () {
+      const names = yield* Ref.get(refs.names);
+      return [...(yield* Ref.get(refs.state)).pending].map((id) => names.get(id) ?? id);
+    });
+  const said = (line: string): Effect.Effect<void, CallbackError> => ui.say(line).pipe(Effect.andThen(store.converse(`${line}\n\n`)));
+  const untilEnded = (refs: BackgroundRefs, deadline: number): Effect.Effect<"ended" | "bound"> =>
+    Effect.gen(function* () {
+      if (!waitingOn(yield* Ref.get(refs.state))) return "ended" as const;
+      if ((yield* Clock.currentTimeMillis) >= deadline) return "bound" as const;
+      yield* Effect.sleep(Duration.millis(BACKGROUND_POLL_MS));
+      return yield* untilEnded(refs, deadline);
+    });
+  const backgroundWait = (refs: BackgroundRefs): Effect.Effect<BackgroundWait, CallbackError> =>
+    Effect.gen(function* () {
+      if ((yield* Ref.get(refs.stop)) !== null || !waitingOn(yield* Ref.get(refs.state))) return { kind: "none" } as const;
+      yield* said(prompts.backgroundWaitLine(yield* pendingNames(refs)));
+      const reached = yield* untilEnded(refs, (yield* Clock.currentTimeMillis) + plannerOptions.backgroundBoundMs);
+      if (reached === "bound") {
+        const names = yield* pendingNames(refs);
+        yield* said(prompts.backgroundStillRunningLine(names));
+        return { kind: "bound", names } as const;
+      }
+      const { ended } = yield* Ref.get(refs.state);
+      const ends = ended.slice(yield* Ref.modify(refs.delivered, (count) => [count, ended.length] as const));
+      yield* said(prompts.backgroundEndedLine(ends));
+      return { kind: "ended", ends } as const;
+    });
+  /** Runs the wait inside a hook; an interruption or a failed callback, which end the call anyway, answer nothing. */
+  const waitInHook = (refs: BackgroundRefs, inCallback: InCallback): Promise<BackgroundWait> => inCallback(backgroundWait(refs), { kind: "none" }).catch((): BackgroundWait => ({ kind: "none" }));
+  /** The Stop hook: a turn that ends while a command runs is continued with the command's end (or that it still runs). */
+  const waitAtStop =
+    (refs: BackgroundRefs, inCallback: InCallback): HookCallback =>
+    async () => {
+      const wait = await waitInHook(refs, inCallback);
+      switch (wait.kind) {
+        case "none":
+          return {};
+        case "ended":
+          return { decision: "block", reason: prompts.backgroundEndedText(wait.ends) };
+        case "bound":
+          return { decision: "block", reason: prompts.stillRunningText(wait.names) };
+      }
+    };
+  /** The hook on the structured output: no report is accepted while a command Claude Code started runs, however long. */
+  const waitAtReport =
+    (refs: BackgroundRefs, inCallback: InCallback): HookCallback =>
+    async (input) => {
+      const pre = input as PreToolUseHookInput;
+      const wait = await waitInHook(refs, inCallback);
+      const denied = (reason: string) => ({ hookSpecificOutput: { hookEventName: pre.hook_event_name, permissionDecision: "deny" as const, permissionDecisionReason: reason } });
+      switch (wait.kind) {
+        case "none":
+          return {};
+        case "ended":
+          return denied(`${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText(wait.ends)}`);
+        case "bound":
+          return denied(prompts.stillRunningText(wait.names));
+      }
+    };
+
   /** The planner over one session: the run's main one, or a fresh one of a decision loop (D4); the hooks and callbacks are shared. */
   const plannerOver = (session: Ref.Ref<string | null>): PlannerShape => ({
     planning: (prompt, schema, purpose = "planning", capability: PlanningCapability = "records") =>
@@ -425,6 +499,9 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
          */
         const attempt = (n: number): Effect.Effect<ExecCallOutcome, CallbackError | ClaudeSessionTooLong | TransportFault | UsageLimited> =>
           Effect.gen(function* () {
+            // Issue #154: each attempt's background tasks start afresh, since the SDK's level signal is per process.
+            const refs: BackgroundRefs = { stop, state: yield* Ref.make(NO_BACKGROUND), names: yield* Ref.make<ReadonlyMap<string, string>>(new Map()), delivered: yield* Ref.make(0) };
+            const timeout = prompts.BACKGROUND_HOOK_TIMEOUT_SECONDS;
             const outcome = yield* call(
               session,
               n === 1 ? prompt : prompts.executionContinuePrompt,
@@ -433,14 +510,19 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
               {
                 permissionMode: config.execPermissionMode,
                 outputFormat: { type: "json_schema", schema: agentJsonSchema(S.ExecReport) },
-                hooks: { PreToolUse: [{ hooks: [denyAfterStop(stop)] }, { matcher: EDIT_TOOLS.join("|"), hooks: [denyPlanFileEdits] }] },
                 allowedTools: [prompts.REPORT_STEP_TOOL_NAME],
               },
               (inCallback) => executionPermission(stop, decider, inCallback),
               // report_step (issue #6, Q2): each report runs the phase's reporter; a failure to write aborts the call.
+              // Issue #154: the Stop hook and the hook on the structured output wait for the call's background commands.
               (inCallback) => ({
                 mcpServers: { [prompts.REPORT_STEP_SERVER]: sdk.stepReporter((r) => inCallback(reporter(r.id, r.status), { text: prompts.STEP_NOT_RECORDED, isError: true })) },
+                hooks: {
+                  PreToolUse: [{ hooks: [denyAfterStop(stop)] }, { matcher: EDIT_TOOLS.join("|"), hooks: [denyPlanFileEdits] }, { matcher: "StructuredOutput", hooks: [waitAtReport(refs, inCallback)], timeout }],
+                  Stop: [{ hooks: [waitAtStop(refs, inCallback)], timeout }],
+                },
               }),
+              (message) => Ref.update(refs.state, (state) => foldBackground(state, message)).pipe(Effect.andThen(Ref.update(refs.names, (names) => nameTasks(names, message)))),
             );
             const recorded = yield* Ref.get(stop);
             const kind = outcome.error === null ? null : classifyClaude(outcome.failure).kind;
@@ -452,7 +534,9 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
             if (temporary && recorded === null && execReport(outcome.structured) === null) {
               return yield* Effect.fail(callFailure(outcome.error ?? "", outcome.failure) as TransportFault | UsageLimited);
             }
-            return interpretExecution(outcome, recorded, temporary);
+            // Issue #154: a report made while a command Claude Code started still runs is never the call's end.
+            const names = yield* Ref.get(refs.names);
+            return checkBackground(interpretExecution(outcome, recorded, temporary), recorded, yield* Ref.get(refs.state), (id) => names.get(id) ?? id);
           });
         // The retry lives here, where the call's session, stop and reporter are (P2-R2-1): no TransportFault leaves.
         return yield* withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(
@@ -466,5 +550,6 @@ export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | St
   });
   return plannerOver(yield* Ref.make<string | null>(null));
 });
+export const makeClaudePlanner: Effect.Effect<PlannerShape, never, Sdk | Ui | Store | RunConfig> = makeClaudePlannerWith({ backgroundBoundMs: prompts.BACKGROUND_WAIT_BOUND_MS });
 
 export const claudePlannerLayer: Layer.Layer<Planner, never, Sdk | Ui | Store | RunConfig> = Layer.effect(Planner, makeClaudePlanner);

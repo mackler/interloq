@@ -2345,6 +2345,36 @@ export const TRANSPORT_WHAT_EXECUTION = "the implementation";
  * The prompt of a resumed execution call after a transport fault (issue #26, Q4): the session continues where it was, and
  * the steps are reported with report_step as before.
  */
+/**
+ * The SDK's timeout of the two hooks that wait for an execution call's background commands (issue #154), in seconds.
+ * It is not a limit on how long a command may run: when the adapter's own bound of one wait, a little shorter, passes,
+ * the hook answers that the command still runs and the next end of the turn waits again. Whether the bundled CLI
+ * honors a hook timeout this long is unproven until the developer runs prototypes/proto-background.ts.
+ */
+export const BACKGROUND_HOOK_TIMEOUT_SECONDS = 600;
+/** The adapter's bound of one wait for background commands (issue #154), shorter than the hooks' timeout. */
+export const BACKGROUND_WAIT_BOUND_MS = (BACKGROUND_HOOK_TIMEOUT_SECONDS - 30) * 1000;
+const commandList = (names: readonly string[]): string => names.join("; ");
+/** What Claude Code is told when one wait's bound passes with a background command still running (issue #154). */
+export function stillRunningText(names: readonly string[]): string {
+  return `A command you started in the background is still running: ${commandList(names)}. You may read and search, but do not edit any file. When nothing is left to do but wait, end your turn again: Interloq keeps the session open until the command ends.`;
+}
+/** The question of an execution call that the SDK ended while a background command was still running (issue #154). */
+export function backgroundKilledText(names: readonly string[]): string {
+  return `The execution call ended while a command Claude Code had started in the background was still running, so its result is lost: ${commandList(names)}.`;
+}
+/** The line said on the page while an execution call waits for its background commands (issue #154). */
+export function backgroundWaitLine(names: readonly string[]): string {
+  return `Waiting for a command Claude Code started in the background: ${commandList(names)}`;
+}
+/** The line said on the page when the background commands an execution call waited for have ended (issue #154). */
+export function backgroundEndedLine(ends: readonly TaskEnd[]): string {
+  return `The background command ended: ${ends.map((end) => `${end.taskId} ${end.status}`).join("; ")}`;
+}
+/** The line said on the page when one wait's bound passes and the command still runs (issue #154). */
+export function backgroundStillRunningLine(names: readonly string[]): string {
+  return `A command Claude Code started in the background is still running: ${commandList(names)}; Interloq goes on waiting.`;
+}
 /** The reason given to Claude Code when the wait for its background commands ends (issue #154, decision Q1). */
 export function backgroundEndedText(ends: readonly TaskEnd[]): string {
   const lines = ends.map((end) => `- ${end.taskId}: ${end.status}; its output is in ${end.outputFile}; ${end.summary.trim() === "" ? "no summary" : `summary: ${end.summary}`}`);

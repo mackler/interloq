@@ -8,6 +8,7 @@ import * as S from "./schema.ts";
 import type { ExecCallOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
 import { type ClaudeFailure, rejectionOf } from "./transport.ts";
+import { backgroundKilledText } from "./prompts.ts";
 
 export type Question = Readonly<{ question: string; options: readonly Readonly<{ label: string; description: string }>[] }>;
 /** A recorded AskUserQuestion stop of an execution call. */
@@ -182,3 +183,22 @@ export const foldBackground = (state: BackgroundState, message: SDKMessage): Bac
 };
 /** Whether a background task is still pending. */
 export const waitingOn = (state: BackgroundState): boolean => state.pending.size > 0;
+
+/**
+ * An execution call's outcome checked against its background tasks (issue #154): a call that ended while a task was
+ * still pending ended with its result lost, so its report is not taken as its end, however the SDK came to end it (a
+ * hook cancelled at its timeout, structured-output retries exhausted, hooks never called); the outcome is aborted,
+ * which takes the stop's path. A recorded stop takes precedence.
+ */
+export const checkBackground = (result: ExecCallOutcome, stop: Stop | null, state: BackgroundState, nameOf: (id: string) => string): ExecCallOutcome => {
+  if (stop !== null || !waitingOn(state)) return result;
+  return { status: "aborted", summary: result.summary, question: backgroundKilledText([...state.pending].map(nameOf)), remainingWork: result.remainingWork, userInput: null };
+};
+/** The name of each background task, its description as the SDK first gave it, for the lines and texts naming it. */
+export const nameTasks = (names: ReadonlyMap<string, string>, message: SDKMessage): ReadonlyMap<string, string> => {
+  if (message.type !== "system") return names;
+  const named = (m: ReadonlyMap<string, string>, id: string, description: string): ReadonlyMap<string, string> => (m.has(id) ? m : new Map([...m, [id, description]]));
+  if (message.subtype === "task_started") return named(names, message.task_id, message.description);
+  if (message.subtype === "background_tasks_changed") return message.tasks.reduce((m, task) => named(m, task.task_id, task.description), names);
+  return names;
+};
