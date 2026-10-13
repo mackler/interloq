@@ -14,6 +14,7 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { fileURLToPath } from "node:url";
 import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
 import { Result } from "effect";
 import { type CliExit, codexArgs, codexEnv, turnEnd } from "./codexArgs.ts";
@@ -22,8 +23,70 @@ import type { SdkThread } from "./sdk.ts";
 /** The CLI's executable and the directories its package puts first on PATH. */
 export type CodexExecutable = Readonly<{ path: string; pathDirs: readonly string[] }>;
 
-/** The SDK's `findCodexPath`, reproduced: the platform package's binary beside `@openai/codex`. */
-export const findCodexExecutable = (): Result.Result<CodexExecutable, string> => Result.fail("not implemented");
+const CODEX_PACKAGE = "@openai/codex";
+/** The SDK's table of the platform packages, by target triple. */
+const PLATFORM_PACKAGES: Readonly<Record<string, string>> = {
+  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
+  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
+  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
+  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
+  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
+  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+};
+const TRIPLES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  linux: { x64: "x86_64-unknown-linux-musl", arm64: "aarch64-unknown-linux-musl" },
+  android: { x64: "x86_64-unknown-linux-musl", arm64: "aarch64-unknown-linux-musl" },
+  darwin: { x64: "x86_64-apple-darwin", arm64: "aarch64-apple-darwin" },
+  win32: { x64: "x86_64-pc-windows-msvc", arm64: "aarch64-pc-windows-msvc" },
+};
+
+const isFile = (file: string): boolean => {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+};
+const isDirectory = (dir: string): boolean => {
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** The SDK's own entry, from which it resolves `@openai/codex`, so both find the same binary. */
+const sdkEntry = (): string => fileURLToPath(import.meta.resolve("@openai/codex-sdk"));
+
+/**
+ * The SDK's `findCodexPath`, reproduced: `@openai/codex` resolved from `anchor` (the SDK's entry, as the SDK resolves
+ * it), then its platform package's binary, `vendor/<triple>/bin/codex` beside `codex-package.json`, or the legacy
+ * `vendor/<triple>/codex/codex`, each with its directories for PATH.
+ */
+export const findCodexExecutable = (anchor: string = sdkEntry()): Result.Result<CodexExecutable, string> => {
+  const triple = TRIPLES[process.platform]?.[process.arch];
+  if (triple === undefined) return Result.fail(`Unsupported platform: ${process.platform} (${process.arch})`);
+  const platformPackage = PLATFORM_PACKAGES[triple];
+  const vendor = ((): string | null => {
+    try {
+      const codexJson = createRequire(anchor).resolve(`${CODEX_PACKAGE}/package.json`);
+      return path.join(path.dirname(createRequire(codexJson).resolve(`${platformPackage}/package.json`)), "vendor");
+    } catch {
+      return null;
+    }
+  })();
+  const missing = `Unable to locate Codex CLI binaries. Ensure ${CODEX_PACKAGE} is installed with optional dependencies.`;
+  if (vendor === null) return Result.fail(missing);
+  const root = path.join(vendor, triple);
+  const binary = process.platform === "win32" ? "codex.exe" : "codex";
+  const current = path.join(root, "bin", binary);
+  if (isFile(current) && isFile(path.join(root, "codex-package.json"))) {
+    return Result.succeed({ path: current, pathDirs: [path.join(root, "codex-path")].filter(isDirectory) });
+  }
+  const legacy = path.join(root, "codex", binary);
+  if (isFile(legacy)) return Result.succeed({ path: legacy, pathDirs: [path.join(root, "path")].filter(isDirectory) });
+  return Result.fail(`Unable to locate Codex CLI binaries for ${triple}. Ensure ${CODEX_PACKAGE} is installed with optional dependencies.`);
+};
 
 /** The output schema's file, written as the SDK's `createOutputSchemaFile` writes it, and its removal. */
 const schemaFile = async (schema: unknown): Promise<Readonly<{ path: string | null; remove: () => Promise<void> }>> => {

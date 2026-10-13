@@ -5,7 +5,7 @@
 import type { McpServerConfig, Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
 
-/** One Codex thread. `Thread` of the Codex SDK satisfies this. */
+/** One Codex thread, as `codexThread` of src/codexExec.ts gives it (issue #158); `Thread` of the Codex SDK has the same shape. */
 export type SdkThread = {
   readonly id: string | null;
   /** One turn, streamed (the activity line shows its tool use); `RunStreamedResult` of the Codex SDK is `{ events }`. */

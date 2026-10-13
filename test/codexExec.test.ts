@@ -7,7 +7,7 @@ import { after, test } from "node:test";
 import type { ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
 import { Effect, Layer, Result } from "effect";
 import { makeCodexReviewer } from "../src/codex.ts";
-import { type CodexExecutable, codexThread } from "../src/codexExec.ts";
+import { type CodexExecutable, codexThread, findCodexExecutable } from "../src/codexExec.ts";
 import type { RunError } from "../src/errors.ts";
 import { platformLayer } from "../src/platform.ts";
 import * as S from "../src/schema.ts";
@@ -185,4 +185,19 @@ test("cancellation with a pending write: the stream's return kills the child and
     await gone(pidFile);
   });
   assert.deepEqual(uncaught, []);
+});
+
+test("findCodexExecutable: on this machine the platform package's binary under node_modules/@openai/", () => {
+  const found = findCodexExecutable();
+  assert.ok(Result.isSuccess(found), Result.isFailure(found) ? found.failure : "");
+  if (Result.isSuccess(found)) {
+    assert.ok(fs.statSync(found.success.path).isFile());
+    assert.ok(found.success.path.includes(`${path.sep}node_modules${path.sep}@openai${path.sep}`), found.success.path);
+  }
+});
+
+test("findCodexExecutable: from a directory without the package, a failure naming @openai/codex", () => {
+  const found = findCodexExecutable(path.join(DIR, "anchor.js"));
+  assert.ok(Result.isFailure(found));
+  if (Result.isFailure(found)) assert.match(found.failure, /@openai\/codex/);
 });
