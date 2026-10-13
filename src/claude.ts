@@ -304,7 +304,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
    * callback still rejects the callback's Promise. The messages are shown and the usage recorded as
    * they arrive; the outcome is the pure reduction of the list at the end.
    */
-  const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | "execution", show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback) => Options = () => ({}), observe: (message: SDKMessage) => Effect.Effect<void> = () => Effect.void): Effect.Effect<CallOutcome, CallbackError> =>
+  const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | "execution", show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback, ended: AbortSignal) => Options = () => ({}), observe: (message: SDKMessage) => Effect.Effect<void> = () => Effect.void): Effect.Effect<CallOutcome, CallbackError> =>
     Effect.gen(function* () {
       yield* ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose });
       const controller = new AbortController();
@@ -321,7 +321,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           ),
           { signal: controller.signal },
         );
-      const full: Options = { ...options, ...callbacks(inCallback), cwd: store.project, abortController: controller, canUseTool: permission(inCallback) };
+      const full: Options = { ...options, ...callbacks(inCallback, controller.signal), cwd: store.project, abortController: controller, canUseTool: permission(inCallback) };
       const resumed = yield* Ref.get(session);
       if (resumed !== null) full.resume = resumed;
       if (config.claudeModel !== null) full.model = config.claudeModel;
@@ -384,14 +384,16 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           }
         }
       });
-      // On every early exit — an interruption, or a typed failure such as a record that could not be
-      // written — abort the call and close the stream, as the `for await` loop of the Promise version
-      // did through the iterator's return(); otherwise the Claude Code process could outlive the halt.
+      // On every exit — an interruption, a typed failure such as a record that could not be written, and the
+      // stream's end, a failed stream's included — abort the call and close the stream, as the `for await` loop of
+      // the Promise version did through the iterator's return(); otherwise the Claude Code process could outlive
+      // the halt. Issue #154 (W1-R1-1): the abort also ends every callback still running, a hook's background wait
+      // among them, so that none goes on after its call; after a normal end the query has ended and it is harmless.
       const close = Effect.promise(async () => {
         controller.abort();
         await iterator.return?.().catch(() => undefined);
       });
-      yield* consume.pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.succeed(undefined) : close)));
+      yield* consume.pipe(Effect.ensuring(close));
       if (yield* Deferred.isDone(callbackFailure)) return yield* Deferred.await(callbackFailure);
       return reduceMessages(seen, streamError, streamCode);
     }).pipe(
@@ -407,24 +409,30 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
    */
   type BackgroundWait = Readonly<{ kind: "none" }> | Readonly<{ kind: "ended"; ends: readonly TaskEnd[] }> | Readonly<{ kind: "bound"; names: readonly string[] }>;
   type BackgroundRefs = Readonly<{ stop: Ref.Ref<Stop | null>; state: Ref.Ref<BackgroundState>; names: Ref.Ref<ReadonlyMap<string, string>>; delivered: Ref.Ref<number> }>;
+  /** The refs of one attempt with the signal of its call, aborted when the call ends however it ends (W1-R1-1). */
+  type WaitRefs = BackgroundRefs & Readonly<{ ended: AbortSignal }>;
+  const callEnded = (refs: WaitRefs): Effect.Effect<boolean> => Effect.sync(() => refs.ended.aborted);
   const pendingNames = (refs: BackgroundRefs): Effect.Effect<readonly string[]> =>
     Effect.gen(function* () {
       const names = yield* Ref.get(refs.names);
       return [...(yield* Ref.get(refs.state)).pending].map((id) => names.get(id) ?? id);
     });
   const said = (line: string): Effect.Effect<void, CallbackError> => ui.say(line).pipe(Effect.andThen(store.converse(`${line}\n\n`)));
-  const untilEnded = (refs: BackgroundRefs, deadline: number): Effect.Effect<"ended" | "bound"> =>
+  const untilEnded = (refs: WaitRefs, deadline: number): Effect.Effect<"ended" | "bound" | "callEnded"> =>
     Effect.gen(function* () {
+      if (yield* callEnded(refs)) return "callEnded" as const;
       if (!waitingOn(yield* Ref.get(refs.state))) return "ended" as const;
       if ((yield* Clock.currentTimeMillis) >= deadline) return "bound" as const;
       yield* Effect.sleep(Duration.millis(BACKGROUND_POLL_MS));
       return yield* untilEnded(refs, deadline);
     });
-  const backgroundWait = (refs: BackgroundRefs): Effect.Effect<BackgroundWait, CallbackError> =>
+  const backgroundWait = (refs: WaitRefs): Effect.Effect<BackgroundWait, CallbackError> =>
     Effect.gen(function* () {
-      if ((yield* Ref.get(refs.stop)) !== null || !waitingOn(yield* Ref.get(refs.state))) return { kind: "none" } as const;
+      if ((yield* callEnded(refs)) || (yield* Ref.get(refs.stop)) !== null || !waitingOn(yield* Ref.get(refs.state))) return { kind: "none" } as const;
       yield* said(prompts.backgroundWaitLine(yield* pendingNames(refs)));
       const reached = yield* untilEnded(refs, (yield* Clock.currentTimeMillis) + plannerOptions.backgroundBoundMs);
+      // A wait whose call has ended says nothing more: its line would reach the page after the call, perhaps in a later phase.
+      if (reached === "callEnded" || (yield* callEnded(refs))) return { kind: "none" } as const;
       if (reached === "bound") {
         const names = yield* pendingNames(refs);
         yield* said(prompts.backgroundStillRunningLine(names));
@@ -436,10 +444,10 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
       return { kind: "ended", ends } as const;
     });
   /** Runs the wait inside a hook; an interruption or a failed callback, which end the call anyway, answer nothing. */
-  const waitInHook = (refs: BackgroundRefs, inCallback: InCallback): Promise<BackgroundWait> => inCallback(backgroundWait(refs), { kind: "none" }).catch((): BackgroundWait => ({ kind: "none" }));
+  const waitInHook = (refs: WaitRefs, inCallback: InCallback): Promise<BackgroundWait> => inCallback(backgroundWait(refs), { kind: "none" }).catch((): BackgroundWait => ({ kind: "none" }));
   /** The Stop hook: a turn that ends while a command runs is continued with the command's end (or that it still runs). */
   const waitAtStop =
-    (refs: BackgroundRefs, inCallback: InCallback): HookCallback =>
+    (refs: WaitRefs, inCallback: InCallback): HookCallback =>
     async () => {
       const wait = await waitInHook(refs, inCallback);
       switch (wait.kind) {
@@ -453,7 +461,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
     };
   /** The hook on the structured output: no report is accepted while a command Claude Code started runs, however long. */
   const waitAtReport =
-    (refs: BackgroundRefs, inCallback: InCallback): HookCallback =>
+    (refs: WaitRefs, inCallback: InCallback): HookCallback =>
     async (input) => {
       const pre = input as PreToolUseHookInput;
       const wait = await waitInHook(refs, inCallback);
@@ -515,11 +523,11 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
               (inCallback) => executionPermission(stop, decider, inCallback),
               // report_step (issue #6, Q2): each report runs the phase's reporter; a failure to write aborts the call.
               // Issue #154: the Stop hook and the hook on the structured output wait for the call's background commands.
-              (inCallback) => ({
+              (inCallback, ended) => ({
                 mcpServers: { [prompts.REPORT_STEP_SERVER]: sdk.stepReporter((r) => inCallback(reporter(r.id, r.status), { text: prompts.STEP_NOT_RECORDED, isError: true })) },
                 hooks: {
-                  PreToolUse: [{ hooks: [denyAfterStop(stop)] }, { matcher: EDIT_TOOLS.join("|"), hooks: [denyPlanFileEdits] }, { matcher: "StructuredOutput", hooks: [waitAtReport(refs, inCallback)], timeout }],
-                  Stop: [{ hooks: [waitAtStop(refs, inCallback)], timeout }],
+                  PreToolUse: [{ hooks: [denyAfterStop(stop)] }, { matcher: EDIT_TOOLS.join("|"), hooks: [denyPlanFileEdits] }, { matcher: "StructuredOutput", hooks: [waitAtReport({ ...refs, ended }, inCallback)], timeout }],
+                  Stop: [{ hooks: [waitAtStop({ ...refs, ended }, inCallback)], timeout }],
                 },
               }),
               (message) => Ref.update(refs.state, (state) => foldBackground(state, message)).pipe(Effect.andThen(Ref.update(refs.names, (names) => nameTasks(names, message)))),

@@ -1379,6 +1379,69 @@ test("issue #154: a transport retry starts its wait state afresh", async () => {
   assert.equal(outcome.status, "finished");
 });
 
+// Issue #154, W1-R1-1: a hook's wait ends with its call, however the call ends, and says nothing after it.
+const BOUND = 600;
+/** What the page and conversation.md hold when executing returned, and whether anything was added past the bound. */
+const quietAfter = async (fake: Awaited<ReturnType<typeof planner>>, hook: Promise<HookJSONOutput> | null): Promise<void> => {
+  const saidAtReturn = fake.ui.said.length;
+  const conversationAtReturn = conversationOf(fake.dir);
+  assert.ok(hook !== null, "the hook was not called");
+  assert.deepEqual(await Promise.race([hook, sleep(BOUND / 4).then(() => "still waiting")]), {}, "the hook went on waiting after its call ended");
+  await sleep(BOUND * 2);
+  assert.deepEqual(fake.ui.said.slice(saidAtReturn), [], "a line was said after the call ended");
+  assert.equal(conversationOf(fake.dir), conversationAtReturn, "conversation.md was written after the call ended");
+};
+const endsWithTaskPending = (callHook: (options: Options) => Promise<HookJSONOutput>): { script: Script; hook: () => Promise<HookJSONOutput> | null } => {
+  let hook: Promise<HookJSONOutput> | null = null;
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield assistantTool("Bash", { command: SUITE, run_in_background: true });
+    yield started("t1");
+    yield changed([["t1", false]]);
+    hook = callHook(call.options);
+    await sleep(50);
+    yield success(finishedReport);
+  })();
+  return { script, hook: () => hook };
+};
+
+for (const [name, callHook] of [
+  ["Stop hook", (options: Options) => callStopHook(options, [shellTask("t1", SUITE)])],
+  ["hook on the structured output", callReportHook],
+] as const) {
+  test(`issue #154 (W1-R1-1): the ${name}'s wait ends when its call ends normally, and nothing is said after it`, async () => {
+    const { script, hook } = endsWithTaskPending(callHook);
+    const fake = await planner([script], [], {}, {}, BOUND);
+    const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+    assert.ok(outcome.status === "aborted");
+    assert.equal(outcome.question, prompts.backgroundKilledText(["task t1"]));
+    await quietAfter(fake, hook());
+  });
+}
+
+test("issue #154 (W1-R1-1): a transport failure ends the first attempt's wait, and the retry starts afresh", async () => {
+  let hook: Promise<HookJSONOutput> | null = null;
+  let hookAtSecond: boolean | undefined;
+  const first: Script = (call) => (async function* () {
+    yield init("session-exec");
+    yield started("t1");
+    hook = callStopHook(call.options, [shellTask("t1", SUITE)]);
+    await sleep(50);
+    throw econnreset();
+  })();
+  const second: Script = () => (async function* () {
+    yield init("session-exec");
+    hookAtSecond = hook !== null && !(await stillPending(hook));
+    yield success(finishedReport);
+  })();
+  const fake = await planner([first, second], [], quickRetry, {}, BOUND);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(outcome.status, "finished");
+  assert.equal(hookAtSecond, true, "the first attempt's hook was still waiting when the retry began");
+  await quietAfter(fake, hook);
+  assert.ok(!fake.ui.said.includes(prompts.backgroundStillRunningLine(["task t1"])), fake.ui.said.join("\n"));
+});
+
 // Issue #154 (S7): the instruction about background commands and the adapter's handling of them, in one test. The
 // sentence tells Claude Code to end its turn to wait, which the Stop hook makes possible, and never to report while a
 // command runs, which the report hook refuses; both sides use the same exported phrases.
