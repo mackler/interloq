@@ -24,8 +24,10 @@ const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 
 /** A GitLab issue object with the fields GitLab sends and a few it sends that the adapter ignores. */
 export const issue = (iid: number, labels: readonly string[], more: Record<string, unknown> = {}): Record<string, unknown> => ({
-  id: 9000 + iid, iid, project_id: 77, title: `issue ${iid}`, description: `body ${iid}`, state: "opened", labels: [...labels], author: { username: "adammackler" }, ...more,
+  id: 9000 + iid, iid, project_id: 77, title: `issue ${iid}`, description: `body ${iid}`, state: "opened", labels: [...labels], author: { username: "adammackler" }, web_url: pageOf(iid), ...more,
 });
+/** An issue's page on gitlab.com, as GitLab sends it in `web_url`. */
+const pageOf = (iid: number): string => `https://gitlab.com/${PROJECT}/-/issues/${iid}`;
 
 /** Every error the tests produced, so that the last test can look for the token in them. */
 export const errors: TrackerError[] = [];
@@ -43,7 +45,7 @@ test("a labeled state asks GitLab for the project's open issues with its label, 
   for (const state of ["unrefined", "refined", "implementing", "implemented"] as const) {
     const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(5, [GITLAB_LABELS[state], "bug"])]) }));
     const items = await withTracker(stub, (t) => t.list(state));
-    assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state, url: Option.none() }]);
+    assert.deepEqual(items, [{ id: id("5"), title: "issue 5", body: "body 5", state, url: Option.some(pageOf(5)) }]);
     const [sent] = stub.sent();
     assert.equal(where(sent), `GET ${ISSUES}`);
     assert.deepEqual(Object.fromEntries(sent.url.searchParams), { state: "opened", labels: GITLAB_LABELS[state], per_page: "100", page: "1" });
@@ -89,8 +91,8 @@ test("read gives an issue with its one label's state, and a closed issue as depl
     [`GET ${ISSUES}/7`]: json(issue(7, ["Implementing", "bug"], { description: null })),
     [`GET ${ISSUES}/8`]: json(issue(8, ["Refined"], { state: "closed" })),
   }));
-  assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implementing", url: Option.none() });
-  assert.deepEqual(await withTracker(stub, (t) => t.read(id("8"))), { id: id("8"), title: "issue 8", body: "body 8", state: "deployed", url: Option.none() });
+  assert.deepEqual(await withTracker(stub, (t) => t.read(id("7"))), { id: id("7"), title: "issue 7", body: "", state: "implementing", url: Option.some(pageOf(7)) });
+  assert.deepEqual(await withTracker(stub, (t) => t.read(id("8"))), { id: id("8"), title: "issue 8", body: "body 8", state: "deployed", url: Option.some(pageOf(8)) });
   assert.deepEqual(stub.sent().map(where), [`GET ${ISSUES}/7`, `GET ${ISSUES}/8`]);
 });
 

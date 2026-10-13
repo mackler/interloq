@@ -10,7 +10,7 @@ import { type Refinement, type SectionMalformed, withRefinement } from "./refine
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
 import { GITLAB_LABELED_STATES, type GitlabLabeledState, type GitlabLabels } from "./schema.ts";
-import { type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type ItemId, type ItemState, itemUrlFrom, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 const TRACKER = "GitLab";
 
@@ -21,6 +21,8 @@ export const GitlabIssue = Schema.Struct({
   description: Schema.NullOr(Schema.String),
   state: Schema.Literals(["opened", "closed"]),
   labels: Schema.Array(Schema.String),
+  // The issue's page on gitlab.com (issue #125), optional so that a response without it still lists the issue.
+  web_url: Schema.optionalKey(Schema.String),
 });
 export type GitlabIssue = typeof GitlabIssue.Type;
 
@@ -44,9 +46,9 @@ export const stateOfIssue = (labels: GitlabLabels, issue: Pick<GitlabIssue, "sta
   return state === undefined ? Result.fail({ _tag: "NoStateLabel", labels: issue.labels }) : Result.succeed(state);
 };
 
-/** The item of an issue: its id the issue's number in decimal, a null description the empty string. */
+/** The item of an issue: its id the issue's number in decimal, a null description the empty string, its address its web_url. */
 export const itemOfIssue = (labels: GitlabLabels, issue: GitlabIssue): Result.Result<TrackerItem, NoStateLabel | Ambiguous> =>
-  Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state, url: Option.none() }));
+  Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state, url: itemUrlFrom(issue.web_url) }));
 
 /** The body of a state change: the target's label added and every other state label removed, in one request. */
 export const relabelBody = (labels: GitlabLabels, to: GitlabLabeledState): Readonly<{ add_labels: string; remove_labels: string }> => ({

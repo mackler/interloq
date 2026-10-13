@@ -8,7 +8,8 @@ import { GITLAB_LABELED_STATES } from "../src/schema.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { GITLAB_LABELS } from "./gitlabLabels.ts";
 
-const issue = (over: Partial<GitlabIssue>): GitlabIssue => ({ iid: 42, title: "A task", description: "The text.", state: "opened", labels: [], ...over });
+const PAGE = "https://gitlab.com/adammackler/iou-notes/-/issues/42";
+const issue = (over: Partial<GitlabIssue>): GitlabIssue => ({ iid: 42, title: "A task", description: "The text.", state: "opened", labels: [], web_url: PAGE, ...over });
 
 test("a closed issue is deployed whatever its labels", () => {
   for (const labels of [[], ["Refined"], ["Refined", "Implementing"], ["bug"]]) {
@@ -41,10 +42,16 @@ test("an open issue with two state labels is Ambiguous, naming both in the issue
 test("an issue's item: its iid in decimal, its title, its description or the empty string, its state", () => {
   const item = itemOfIssue(GITLAB_LABELS, issue({ labels: ["Refined"] }));
   assert.ok(Result.isSuccess(item));
-  assert.deepEqual(item.success, { id: "42", title: "A task", body: "The text.", state: "refined", url: Option.none() });
+  assert.deepEqual(item.success, { id: "42", title: "A task", body: "The text.", state: "refined", url: Option.some(PAGE) });
   const nullBody = itemOfIssue(GITLAB_LABELS, issue({ description: null, state: "closed" }));
   assert.ok(Result.isSuccess(nullBody));
-  assert.deepEqual(nullBody.success, { id: "42", title: "A task", body: "", state: "deployed", url: Option.none() });
+  assert.deepEqual(nullBody.success, { id: "42", title: "A task", body: "", state: "deployed", url: Option.some(PAGE) });
+});
+
+test("an issue's item has no address without web_url or with one that is not https, and is still an item", () => {
+  const { web_url: _, ...withoutUrl } = issue({ labels: ["Refined"] });
+  assert.deepEqual(Result.map(itemOfIssue(GITLAB_LABELS, withoutUrl), (i) => i.url), Result.succeed(Option.none()));
+  assert.deepEqual(Result.map(itemOfIssue(GITLAB_LABELS, issue({ labels: ["Refined"], web_url: "data:text/html,x" })), (i) => i.url), Result.succeed(Option.none()));
 });
 
 test("iidOf takes a positive decimal integer without leading zeros that is a safe integer", () => {

@@ -12,10 +12,10 @@ import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
 import { type Answer, json, makeStub, type SentRequest } from "./stubHttp.ts";
 
 /** An issue as GitLab sends it: the fields the adapter reads and one it ignores. */
-export type ServerIssue = Readonly<{ id: number; iid: number; title: string; description: string | null; state: "opened" | "closed"; labels: readonly string[] }>;
+export type ServerIssue = Readonly<{ id: number; iid: number; title: string; description: string | null; state: "opened" | "closed"; labels: readonly string[]; web_url: string }>;
 
 export const serverIssue = (iid: number, labels: readonly string[], more: Partial<ServerIssue> = {}): ServerIssue => ({
-  id: 9000 + iid, iid, title: `issue ${iid}`, description: `body ${iid}`, state: "opened", labels, ...more,
+  id: 9000 + iid, iid, title: `issue ${iid}`, description: `body ${iid}`, state: "opened", labels, web_url: `https://gitlab.com/${PROJECT}/-/issues/${iid}`, ...more,
 });
 
 export type GitlabServer = Readonly<{
