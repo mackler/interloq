@@ -1,7 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
-import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -722,14 +722,32 @@ export const COMMAND_CEILING_MS = 1_200_000;
  */
 export const STEP_CHECK_LIMIT_MS = 120_000;
 
-/** The rule of every prompt that asks for the whole plan (issue #78): no step outlasts one shell command. */
 /**
  * Issue #117: each execution phase runs in a Claude Code session of its own, which has not seen the planning; the plan's
  * step texts carry what its implementer cannot recover from the files the execution prompt names and the codebase.
  */
 export const planStepSelfContainedRule = (root: RunRoot): string => `Each execution phase begins a new Claude Code session, which carries out the phase's remaining steps having read only the task, ${runDir(root)}/requirements.md, ${runDir(root)}/user-decisions.md and ${runDir(root)}/plan.json, and not this planning. So write each step's text to state the facts and the reasons its choices depend on (the files, the decided behavior, why an approach was chosen over another) wherever the implementer could not recover them from those files and the codebase.`;
-export const PLAN_STEP_DURATION_RULE = `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. No step may end with a command expected to run longer than that, such as a full test suite that may outlast it; a step's verification runs only the suites its change touches.`;
-/** The execution prompt's sentences on long commands (issue #78, requirements Q6). */
+/** The limit of one step's checks in minutes, as the prompts state it. */
+const stepCheckMinutes = STEP_CHECK_LIMIT_MS / 60_000;
+/** Issue #162 (requirements Q4): each step's text names the commands that check its change, which the plan review holds it to. */
+export const STEP_CHECK_NAMED = "Each step's text names the command or commands that check its change.";
+/** Issue #162 (requirements Q2): a step's check runs only the tests its change touches, within the limit of all its checks together. */
+export const STEP_CHECK_TOUCHED_ONLY = `A step's check runs only the tests its change touches, and all of its check commands together finish within ${stepCheckMinutes} minutes; where the touched tests would take longer, the step runs the part that fits and leaves the rest unrun.`;
+/** Issue #162 (requirements Q3, G-R1-1, F1): no step runs the whole suite. */
+export const STEP_CHECK_NO_SUITE = "No step runs the whole test suite.";
+/** What Interloq does with the configured suite command (requirements G-R1-1, F1), or nothing where none is configured. */
+const suiteSentence = (suite: CommandLine | null): string =>
+  suite === null ? "" : ` Interloq runs the whole suite, ${codeSpan(suite)}, itself after the review of the work finds nothing left to correct.`;
+/** The project's own commands, one line per entry (requirements Q1), or nothing where the project lists none. */
+const projectCommandLines = (checks: StepChecks): string =>
+  checks.commands.length === 0 ? "" : `\nThe project's commands that check each kind of change:${checks.commands.map((entry) => `\n- ${entry.change}: ${codeSpan(entry.command)}`).join("")}`;
+/**
+ * The rule of every prompt that asks for the whole plan, and of the execution prompt (issue #78, rewritten by issue
+ * #162): no command outlasts one shell command, each step names its check, the check runs only the touched tests within
+ * STEP_CHECK_LIMIT_MS, no step runs the whole suite, and the project's own commands where it lists them.
+ */
+export const planStepCheckRule = (checks: StepChecks): string =>
+  `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. ${STEP_CHECK_NAMED} ${STEP_CHECK_TOUCHED_ONLY} ${STEP_CHECK_NO_SUITE}${suiteSentence(checks.suite)}${projectCommandLines(checks)}`;
 /** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
 export const MONITOR_TOOL_NAME = "Monitor";
 /** What Interloq does while a background command or a Monitor watch runs (issues #154, #161): the adapter's Stop hook holds the session. */
@@ -742,7 +760,7 @@ export const NO_REPORT_WHILE_RUNNING = `do not return the status report while a 
  * The instruction about long commands (issue #78, rewritten by issue #154): a turn ended to wait for a background
  * command no longer ends the session, because the adapter's hooks wait for the command and continue the session.
  */
-export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. A command that may run longer than that may be started in the background with the Bash tool. To wait for something, such as a line in a background command's output file, you may also start a watch with the ${MONITOR_TOOL_NAME} tool. While a background command or a watch runs, ${READ_AND_SEARCH_ONLY}: the suites read the working tree, and a result must belong to the files as they were when it started. When nothing is left to do but wait for a background command or a watch, end your turn: ${KEEPS_SESSION_OPEN} and then gives you its end and its output file; ${NO_REPORT_WHILE_RUNNING}, and never return 'continuing' or 'blocked' for it.`;
+export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. A command that may run longer than that may be started in the background with the Bash tool. To wait for something, such as a line in a background command's output file, you may also start a watch with the ${MONITOR_TOOL_NAME} tool. While a background command or a watch runs, ${READ_AND_SEARCH_ONLY}: the tests read the working tree, and a result must belong to the files as they were when it started. When nothing is left to do but wait for a background command or a watch, end your turn: ${KEEPS_SESSION_OPEN} and then gives you its end and its output file; ${NO_REPORT_WHILE_RUNNING}, and never return 'continuing' or 'blocked' for it.`;
 
 export const planFormat = (root: RunRoot): string => `Return the complete plan in the field 'plan': its stages in order, each with its number and a title, and in each stage its steps in order, each with an id, its number within the stage, a short label of one line, and its full text in Markdown. Return the whole plan every time, including the parts that did not change. The program writes ${runDir(root)}/plan.json and ${runDir(root)}/plan.md from it; do not write either file.`;
 /** The rule of step identity (G-R1-1), which validatePlan in src/plan.ts enforces and the repair turn repeats. */
@@ -755,12 +773,12 @@ export const requirementsSentence = (root: RunRoot): string => `${runDir(root)}/
 /** The user's decisions as an execution call is told of them; the file exists from the start of a run. */
 export const userDecisionsSentence = (root: RunRoot): string => `${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed.`;
 
-export function initialPlanPrompt(root: RunRoot, task: string, withRequirements: boolean): string {
+export function initialPlanPrompt(root: RunRoot, task: string, withRequirements: boolean, checks: StepChecks): string {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
 ${requirements}${userDecisionsSentence(root)}
 ${planFormat(root)}
-${PLAN_STEP_DURATION_RULE}
+${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
 Do not modify any file. Do not implement anything.
@@ -769,20 +787,20 @@ ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
 }
 
-export const revisePlanPrompt = (root: RunRoot): string => `Execution has stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.
+export const revisePlanPrompt = (root: RunRoot, checks: StepChecks): string => `Execution has stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.
 Revise the plan in ${runDir(root)}/plan.json for the remaining work: keep the steps with status 'done', and change, add, or remove the other steps as the user's input and the current state of the codebase require.
 ${planStatuses(root)}
 ${planFormat(root)}
-${PLAN_STEP_DURATION_RULE}
+${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}`;
 
-export const planApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend the plan in ${runDir(root)}/plan.json where a decision requires it.
+export const planApplyDecisionsPrompt = (root: RunRoot, checks: StepChecks): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend the plan in ${runDir(root)}/plan.json where a decision requires it.
 ${planFormat(root)}
-${PLAN_STEP_DURATION_RULE}
+${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
 Do not modify any file.
@@ -800,11 +818,11 @@ Put the step's id in the location field.
 ${logRules(root, pathOf({ kind: "log", subject: { plan: phase } }), prefix, round)}`;
 }
 
-export function planRespondPrompt(root: RunRoot, phase: number, round: number): string {
+export function planRespondPrompt(root: RunRoot, phase: number, round: number, checks: StepChecks): string {
   return `${runDir(root)}/planning-${phase}/review-${round}.json contains a review of the plan in ${runDir(root)}/plan.json.
 ${respondRules(root, "you amend the plan for it")}
 ${planFormat(root)}
-${PLAN_STEP_DURATION_RULE}
+${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
 Do not modify any file.`;
@@ -892,13 +910,14 @@ export const BLOCKED_STATUS_SENTENCE = "Return status 'blocked' only for a failu
  * The prompt of an execution call. Each execution phase runs in a Claude Code session of its own (issue #117), which has
  * not seen the planning, so the prompt names the task and the records it must follow.
  */
-export function executePrompt(root: RunRoot, task: string, withRequirements: boolean): string {
+export function executePrompt(root: RunRoot, task: string, withRequirements: boolean, checks: StepChecks): string {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   return `${requirements}${userDecisionsSentence(root)}\nThe plan in ${runDir(root)}/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
 Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, call it with the step's id and the status '${REPORT_STEP_STATUSES[0]}'; when the step is complete and verified, call it with the step's id and the status '${REPORT_STEP_STATUSES[1]}'. ${resumeStepSentence} The program records the status in ${runDir(root)}/plan.json; do not edit ${runDir(root)}/plan.json or ${runDir(root)}/plan.md, and do not change the plan.
 If you need information or a decision from the user, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.
 ${RELAYED_SHAPE}
 ${questionWritingRules()}
+${planStepCheckRule(checks)}
 ${BACKGROUND_SUITE_SENTENCE}
 ${CONTINUING_STATUS_SENTENCE}
 ${BLOCKED_STATUS_SENTENCE}
@@ -1329,7 +1348,7 @@ ${execution.plan}`;
  * Claude Code session of its own (issue #122): so it names the task, requirements.md where the run has one, and
  * user-decisions.md, which the run's one session used to carry.
  */
-export function revisePlanAfterExecutionPrompt(root: RunRoot, task: string, withRequirements: boolean, phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>): string {
+export function revisePlanAfterExecutionPrompt(root: RunRoot, task: string, withRequirements: boolean, phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>, checks: StepChecks): string {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   const stop = end.stopped ? `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.` : "";
   const review =
@@ -1342,7 +1361,7 @@ ${requirements}${userDecisionsSentence(root)}
 Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
 ${planStatuses(root)} An unfinished step counts as remaining.
 ${planFormat(root)}
-${PLAN_STEP_DURATION_RULE}
+${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.

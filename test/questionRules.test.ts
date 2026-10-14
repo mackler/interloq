@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 // S1: one statement of the rules for a question put to the user. The prompt that asks an agent for a question and the
 // review that approves one are both rendered from QUESTION_RULES, so that they cannot disagree (rules for changes: the seam).
 import assert from "node:assert/strict";
@@ -14,14 +15,14 @@ test("the context rule names the five points, in the words the reviewer checks",
 
 test("every prompt that may return questions_for_user carries the writer's rendering", () => {
   const texts = [
-    prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+    prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     prompts.requirementsRespondPrompt(TEST_ROOT, 1),
     prompts.questionRespondPrompt(TEST_ROOT, 1),
     prompts.decisionRespondPrompt(TEST_ROOT, 1, 1),
     prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
-    prompts.initialPlanPrompt(TEST_ROOT, "t", false),
-    prompts.revisePlanPrompt(TEST_ROOT),
-    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: false, workReview: "converged" }),
+    prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
+    prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
+    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: false, workReview: "converged" }, NO_STEP_CHECKS),
   ];
   for (const text of texts) assert.ok(text.includes(prompts.questionWritingRules()), text.slice(0, 80));
 });

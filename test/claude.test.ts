@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import { programWritten } from "../src/questionContext.ts";
 import { renderQuestionRecord } from "../src/render.ts";
@@ -740,19 +741,19 @@ test("during execution an edit of plan.json or plan.md is denied; other edits ar
 
 // The seam of Q2: the prompt names the tool and the statuses exactly as the tool's constants define them.
 test("the execution prompt names report_step and its statuses as the tool defines them", () => {
-  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.REPORT_STEP_TOOL));
-  for (const status of prompts.REPORT_STEP_STATUSES) assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(`'${status}'`), status);
-  assert.match(prompts.executePrompt(TEST_ROOT, "t", true), /plan-review\/runs\/[^/\s]+\/plan\.json/);
-  assert.doesNotMatch(prompts.executePrompt(TEST_ROOT, "t", true), /marker/);
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(prompts.REPORT_STEP_TOOL));
+  for (const status of prompts.REPORT_STEP_STATUSES) assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(`'${status}'`), status);
+  assert.match(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS), /plan-review\/runs\/[^/\s]+\/plan\.json/);
+  assert.doesNotMatch(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS), /marker/);
 });
 
 // Issue #53 (Q1, G-R1-1): any order, one step open at a time, a resumed step reported started again; nothing is refused.
 test("the execution prompt allows any order with one step open at a time, and asks for a resumed step to be reported again", () => {
-  assert.doesNotMatch(prompts.executePrompt(TEST_ROOT, "t", true), /in order/);
-  assert.match(prompts.executePrompt(TEST_ROOT, "t", true), /in any order/);
-  assert.match(prompts.executePrompt(TEST_ROOT, "t", true), /one step open at a time/);
+  assert.doesNotMatch(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS), /in order/);
+  assert.match(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS), /in any order/);
+  assert.match(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS), /one step open at a time/);
   assert.match(prompts.resumeStepSentence, new RegExp(`'${prompts.REPORT_STEP_STATUSES[0]}' again`));
-  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.resumeStepSentence));
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(prompts.resumeStepSentence));
 });
 
 // Issue #26: a failed planning call is TransportFault when src/transport.ts says so, ClaudeCallFailed otherwise, and
@@ -1478,7 +1479,7 @@ test("issue #154: BACKGROUND_SUITE_SENTENCE describes the wait the hooks impleme
   assert.ok(prompts.stillRunningText(["x"]).includes(prompts.READ_AND_SEARCH_ONLY));
   assert.doesNotMatch(sentence, /wait for it to end before you report the step done/);
   assert.ok(sentence.includes(String(prompts.COMMAND_CEILING_MS)));
-  const executePrompt = prompts.executePrompt(TEST_ROOT, "t", true);
+  const executePrompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
   assert.ok(executePrompt.includes(sentence));
   // The adapter's side: the call made with that prompt answers a turn ended while the command runs with the same phrase.
   let stop: HookJSONOutput | undefined;
@@ -1676,7 +1677,7 @@ test("issue #161: the execution prompt names Monitor beside background commands,
   }
   assert.ok(prompts.stillRunningText([WATCH_NAME]).includes(prompts.KEEPS_SESSION_OPEN));
   assert.ok(prompts.stillRunningText([WATCH_NAME]).includes(prompts.READ_AND_SEARCH_ONLY));
-  const executePrompt = prompts.executePrompt(TEST_ROOT, "t", true);
+  const executePrompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
   assert.ok(executePrompt.includes(sentence));
   let stop: HookJSONOutput | undefined;
   const script: Script = (call) => (async function* () {

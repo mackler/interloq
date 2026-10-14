@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 // S3 of the task of issue #36: validateQuestion checks a question's text as data: every ref names an explanation, every
 // explanation is referred to, none blank, no ref on a literal value, and the mechanical part of QUESTION_RULES; the
 // repair prompt cites the rule or format clause it found broken, from the same arrays the writing prompts are rendered
@@ -269,8 +270,8 @@ test("property: re-dividing a question's plain pieces keeps its words and its pr
 
 test("S8: executePrompt states the relayed shape with the rules, and parseRelayedQuestion reads its own example", async () => {
   const { parseRelayedQuestion } = await import("../src/question.ts");
-  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.RELAYED_SHAPE));
-  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.questionWritingRules()));
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(prompts.RELAYED_SHAPE));
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(prompts.questionWritingRules()));
   assert.ok(prompts.RELAYED_SHAPE.includes(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE)), "the prompt's example is the composer's");
   const options = prompts.RELAYED_EXAMPLE.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) }));
   assert.deepEqual(parseRelayedQuestion(prompts.relayedQuestionText(prompts.RELAYED_EXAMPLE), options), prompts.RELAYED_EXAMPLE);

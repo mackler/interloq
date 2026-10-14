@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 // Issue #154 (S2): the statuses executePrompt asks for are the statuses the report's schema accepts, derived from the
 // schema itself, and the sentences for continuing and blocked are the ones the prompt carries.
 import { test } from "node:test";
@@ -9,7 +10,7 @@ import { TEST_ROOT } from "./helpers.ts";
 const statuses = S.ExecReport.fields.status.literals;
 
 test("executePrompt names every status the report's schema accepts, and no other beside the plan's step statuses", () => {
-  const prompt = prompts.executePrompt(TEST_ROOT, "t", true);
+  const prompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
   assert.deepEqual([...statuses].sort(), ["blocked", "continuing", "finished", "needs_input"]);
   for (const status of statuses) assert.ok(prompt.includes(`status '${status}'`), status);
   const named = [...prompt.matchAll(/status '([a-z_]+)'/g)].map((m) => m[1]).filter((s) => !(S.StepStatus.literals as readonly string[]).includes(s));
@@ -17,7 +18,7 @@ test("executePrompt names every status the report's schema accepts, and no other
 });
 
 test("executePrompt describes continuing as work left with nothing for the user, and blocked as a failure the user must act on", () => {
-  const prompt = prompts.executePrompt(TEST_ROOT, "t", true);
+  const prompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
   assert.ok(prompt.includes(prompts.CONTINUING_STATUS_SENTENCE));
   assert.ok(prompt.includes(prompts.BLOCKED_STATUS_SENTENCE));
   assert.match(prompts.CONTINUING_STATUS_SENTENCE, /'continuing'/);

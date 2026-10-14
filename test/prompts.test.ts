@@ -1,7 +1,8 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { test } from "node:test";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
@@ -88,17 +89,17 @@ test("the work response prompt carries the review, the log entries of its phase 
 });
 
 test("the revision prompt after an execution phase names the stop and the work review's outcome", () => {
-  const stopOnly = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" });
+  const stopOnly = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }, NO_STEP_CHECKS);
   assert.match(stopOnly, /^Execution phase 1 has ended\./);
   assert.match(stopOnly, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md/);
   assert.match(stopOnly, /Work review 1 found no issue in the work so far/);
-  const revise = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { stopped: false, workReview: { revisedInRound: 3 } });
+  const revise = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { stopped: false, workReview: { revisedInRound: 3 } }, NO_STEP_CHECKS);
   assert.doesNotMatch(revise, /last entry of plan-review\/runs\/[^/\s]+\/user-decisions\.md contains the user's input for this stop/);
   assert.match(revise, /Work review 2 ended in round 3/);
   assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-2\/round-3\.json/);
   assert.match(revise, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.ok(revise.includes(prompts.planIdRule(TEST_ROOT)));
-  const both = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: { revisedInRound: 1 } });
+  const both = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: { revisedInRound: 1 } }, NO_STEP_CHECKS);
   assert.match(both, /user's input for this stop/);
   assert.match(both, /Work review 1 ended in round 1/);
 });
@@ -234,13 +235,13 @@ test("the texts of an invalid cycle and of the stop at the cycle limit", () => {
 // Decision Q1 of the decision-support task: every prompt that may put a question to the user says how to fill its options.
 test("every prompt that may return questions_for_user says how to fill a question's options", () => {
   const texts = [
-    prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+    prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     prompts.requirementsRespondPrompt(TEST_ROOT, 1),
     prompts.questionRespondPrompt(TEST_ROOT, 1),
     prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
-    prompts.initialPlanPrompt(TEST_ROOT, "t", false),
-    prompts.revisePlanPrompt(TEST_ROOT),
-    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: false, workReview: "converged" }),
+    prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
+    prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
+    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: false, workReview: "converged" }, NO_STEP_CHECKS),
   ];
   for (const text of texts) {
     assert.ok(text.includes(prompts.QUESTION_OPTIONS_RULE), text.slice(0, 80));
@@ -334,33 +335,64 @@ test("the decision review prompt says the program places both headings and the l
 // Issue #6 (F1, G-R1-1): every call that creates or changes the plan returns it whole in 'plan' and keeps the ids; the
 // prompt's rule and the validation that enforces it are tested together, and the repair turn repeats the rule.
 const planProducing = () => [
-  prompts.initialPlanPrompt(TEST_ROOT, "t", false),
-  prompts.revisePlanPrompt(TEST_ROOT),
-  prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }),
-  prompts.planApplyDecisionsPrompt(TEST_ROOT),
-  prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+  prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
+  prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
+  prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }, NO_STEP_CHECKS),
+  prompts.planApplyDecisionsPrompt(TEST_ROOT, NO_STEP_CHECKS),
+  prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
 ];
-// Issue #78: no step of a plan may end with a command expected to outlast one shell command, whose ceiling every Claude
-// Code call carries; the execution prompt states the same ceiling and how to wait for a long suite.
-test("every prompt that asks for the whole plan states the step duration rule, in minutes of COMMAND_CEILING_MS", async () => {
+// Issue #78, rewritten by issue #162: no step of a plan may end with a command expected to outlast one shell command,
+// each step names its check, the check runs only the touched tests within STEP_CHECK_LIMIT_MS, and no step runs the
+// whole suite; the project's own commands are quoted where it lists them.
+const listedChecks = (): S.StepChecks =>
+  Result.getOrThrow(S.stepChecksOf({ checkCommands: [{ change: "the program's modules", command: "npm run test:unit" }, { change: "one end-to-end scenario", command: "E2E_SCENARIOS=tabs npx playwright test e2e/run.spec.ts -g '\\(7\\)'" }], suiteCommand: "npm test" }));
+const planProducingWith = (checks: S.StepChecks) => [
+  prompts.initialPlanPrompt(TEST_ROOT, "t", false, checks),
+  prompts.revisePlanPrompt(TEST_ROOT, checks),
+  prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }, checks),
+  prompts.planApplyDecisionsPrompt(TEST_ROOT, checks),
+  prompts.planRespondPrompt(TEST_ROOT, 1, 1, checks),
+];
+test("every prompt that asks for the whole plan states the step check rule, in minutes of COMMAND_CEILING_MS and STEP_CHECK_LIMIT_MS", async () => {
   const minutes = prompts.COMMAND_CEILING_MS / 60_000;
-  assert.match(prompts.PLAN_STEP_DURATION_RULE, new RegExp(`\\b${minutes} minutes\\b`));
-  for (const text of planProducing()) assert.ok(text.includes(prompts.PLAN_STEP_DURATION_RULE), text.slice(0, 80));
+  const rule = prompts.planStepCheckRule(S.NO_STEP_CHECKS);
+  assert.match(rule, new RegExp(`\\b${minutes} minutes\\b`));
+  assert.match(rule, new RegExp(`\\b${prompts.STEP_CHECK_LIMIT_MS / 60_000} minutes\\b`));
+  for (const text of planProducing()) assert.ok(text.includes(rule), text.slice(0, 80));
   // Every prompt that carries planFormat carries the rule beside it, so that a sixth one added later is not missed.
   const source = fs.readFileSync(new URL("../src/prompts.ts", import.meta.url), "utf8");
   const uses = source.split("${planFormat(root)}").length - 1;
   assert.ok(uses >= 5);
-  assert.equal(source.split("${planFormat(root)}\n${PLAN_STEP_DURATION_RULE}").length - 1, uses, "a prompt carries planFormat without the step duration rule");
+  assert.equal(source.split("${planFormat(root)}\n${planStepCheckRule(checks)}").length - 1, uses, "a prompt carries planFormat without the step check rule");
   // Issue #117: the same prompts tell the plan writer that each execution phase begins a session that has not seen the planning.
   for (const text of planProducing()) assert.ok(text.includes(prompts.planStepSelfContainedRule(TEST_ROOT)), text.slice(0, 80));
-  assert.equal(source.split("${planFormat(root)}\n${PLAN_STEP_DURATION_RULE}\n${planStepSelfContainedRule(root)}").length - 1, uses, "a prompt carries planFormat without the self-contained step rule");
+  assert.equal(source.split("${planFormat(root)}\n${planStepCheckRule(checks)}\n${planStepSelfContainedRule(root)}").length - 1, uses, "a prompt carries planFormat without the self-contained step rule");
   // The seam with the environment of every call: the same ceiling.
   const { claudeEnv } = await import("../src/claude.ts");
   assert.equal(claudeEnv({}, prompts.COMMAND_CEILING_MS).BASH_MAX_TIMEOUT_MS, String(prompts.COMMAND_CEILING_MS));
 });
 
+test("issue #162: the planning prompts and the execution prompt quote the project's commands and its suite command", () => {
+  const checks = listedChecks();
+  for (const text of [...planProducingWith(checks), prompts.executePrompt(TEST_ROOT, "t", true, checks)]) {
+    for (const entry of checks.commands) assert.ok(text.includes(entry.command) && text.includes(entry.change), entry.command);
+    assert.ok(text.includes(`\`${checks.suite}\``), text.slice(0, 80));
+    assert.ok(text.includes(`${prompts.STEP_CHECK_LIMIT_MS / 60_000} minutes`));
+    for (const sentence of [prompts.STEP_CHECK_NAMED, prompts.STEP_CHECK_TOUCHED_ONLY, prompts.STEP_CHECK_NO_SUITE]) assert.ok(text.includes(sentence), sentence);
+  }
+});
+
+test("issue #162: without a list or a suite command, the prompts name no command and still state the rule", () => {
+  const listed = listedChecks();
+  for (const text of [...planProducingWith(S.NO_STEP_CHECKS), prompts.executePrompt(TEST_ROOT, "t", true, S.NO_STEP_CHECKS)]) {
+    for (const entry of listed.commands) assert.ok(!text.includes(entry.command), entry.command);
+    assert.ok(!text.includes("Interloq runs the whole suite"));
+    for (const sentence of [prompts.STEP_CHECK_TOUCHED_ONLY, prompts.STEP_CHECK_NO_SUITE]) assert.ok(text.includes(sentence), sentence);
+  }
+});
+
 test("the execution prompt states the ceiling for a foreground command and says to wait for a long suite in the background without editing", () => {
-  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true).includes(prompts.BACKGROUND_SUITE_SENTENCE));
+  assert.ok(prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(prompts.BACKGROUND_SUITE_SENTENCE));
   assert.ok(prompts.BACKGROUND_SUITE_SENTENCE.includes(`timeout set to ${prompts.COMMAND_CEILING_MS}`), prompts.BACKGROUND_SUITE_SENTENCE);
   assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /in the background/);
   assert.match(prompts.BACKGROUND_SUITE_SENTENCE, /do not edit/);
@@ -786,14 +818,14 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     questionListPrompt: prompts.questionListPrompt("t"),
     questionReviewPrompt: prompts.questionReviewPrompt(TEST_ROOT, 1),
     questionRespondPrompt: prompts.questionRespondPrompt(TEST_ROOT, 1),
-    initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true),
-    revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT),
-    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }),
-    planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1),
+    initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
+    revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
+    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { stopped: true, workReview: "converged" }, NO_STEP_CHECKS),
+    planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
     interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
     termsPrompt: prompts.termsPrompt(TEST_ROOT, "t"),
-    executePrompt: prompts.executePrompt(TEST_ROOT, "t", true),
+    executePrompt: prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
   };
   for (const [name, text] of Object.entries(texts)) {
     const outside = text.split(prompts.questionWritingRules()).join("").split(prompts.questionReviewCriteria()).join("");
@@ -806,7 +838,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
 test("issue #112: WORDING_DISPUTES reaches the question list's and the terms' review and response prompts, and not the plan's", () => {
   for (const round of [1, 2]) {
     for (const p of [prompts.questionReviewPrompt(TEST_ROOT, round), prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsReviewPrompt(TEST_ROOT, round), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
-    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true), prompts.planRespondPrompt(TEST_ROOT, 1, round)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true), prompts.planRespondPrompt(TEST_ROOT, 1, round, NO_STEP_CHECKS)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
   }
   for (const reason of ["cannot judge", "same rules", "time"]) assert.ok(prompts.WORDING_DISPUTES.includes(reason), reason);
 });
@@ -836,15 +868,15 @@ test("issue #112: the explanations clause states the senses that questionProblem
 // task, the requirements where the question phase ran, and the user's decisions.
 test("issue #117: executePrompt names the task, the requirements where they exist, and user-decisions.md", async () => {
   const { scriptedTask } = await import("./helpers.ts");
-  const withRequirements = prompts.executePrompt(TEST_ROOT, scriptedTask, true);
+  const withRequirements = prompts.executePrompt(TEST_ROOT, scriptedTask, true, NO_STEP_CHECKS);
   assert.ok(withRequirements.includes(`Task: ${scriptedTask}`), withRequirements);
   assert.ok(withRequirements.includes(prompts.requirementsSentence(TEST_ROOT)));
-  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, scriptedTask, true).includes(prompts.requirementsSentence(TEST_ROOT)), "the planning and the execution name the requirements alike");
+  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, scriptedTask, true, NO_STEP_CHECKS).includes(prompts.requirementsSentence(TEST_ROOT)), "the planning and the execution name the requirements alike");
   assert.ok(withRequirements.includes(prompts.userDecisionsSentence(TEST_ROOT)));
-  const without = prompts.executePrompt(TEST_ROOT, scriptedTask, false);
+  const without = prompts.executePrompt(TEST_ROOT, scriptedTask, false, NO_STEP_CHECKS);
   assert.ok(without.includes(`Task: ${scriptedTask}`));
   assert.ok(!without.includes(prompts.requirementsSentence(TEST_ROOT)));
-  assert.ok(!prompts.initialPlanPrompt(TEST_ROOT, scriptedTask, false).includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(!prompts.initialPlanPrompt(TEST_ROOT, scriptedTask, false, NO_STEP_CHECKS).includes(prompts.requirementsSentence(TEST_ROOT)));
   assert.ok(without.includes(prompts.userDecisionsSentence(TEST_ROOT)));
 });
 
@@ -877,18 +909,18 @@ test("issue #122: workRespondPrompt embeds the task, the requirements and the us
 // Issue #122: a planning phase runs in a session of its own, so the prompts that start one name what the main session
 // used to carry: the task, requirements.md where the run has one, and user-decisions.md.
 test("issue #122: the initial plan prompt names user-decisions.md", () => {
-  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, "t", false).includes(prompts.userDecisionsSentence(TEST_ROOT)));
-  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, "t", true).includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS).includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  assert.ok(prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS).includes(prompts.userDecisionsSentence(TEST_ROOT)));
 });
 
 test("issue #122: the revision prompt carries the task and names requirements.md, only with requirements, and user-decisions.md", () => {
   const end = { stopped: false, workReview: "converged" } as const;
-  const withReq = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "The task text of item 1", true, 1, end);
+  const withReq = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "The task text of item 1", true, 1, end, NO_STEP_CHECKS);
   assert.ok(withReq.includes("The task text of item 1"));
   assert.ok(withReq.includes(prompts.requirementsSentence(TEST_ROOT)));
   assert.ok(withReq.includes(prompts.userDecisionsSentence(TEST_ROOT)));
   assert.match(withReq, /session of its own/);
-  const without = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "The task text of item 1", false, 1, end);
+  const without = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "The task text of item 1", false, 1, end, NO_STEP_CHECKS);
   assert.ok(!without.includes(prompts.requirementsSentence(TEST_ROOT)));
   assert.ok(without.includes(prompts.userDecisionsSentence(TEST_ROOT)));
   assert.match(without, /^Execution phase 1 has ended\./);
@@ -963,7 +995,7 @@ test("issue #156: TASK_DISPUTE_RULE names the mark the two response schemas carr
   const { Result } = await import("effect");
   for (const round of [1, 2]) {
     for (const p of [prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.TASK_DISPUTE_RULE));
-    for (const p of [prompts.planRespondPrompt(TEST_ROOT, 1, round), prompts.decisionRespondPrompt(TEST_ROOT, 1, round), prompts.requirementsRespondPrompt(TEST_ROOT, round), prompts.workRespondPrompt(TEST_ROOT, 1, round, { review: { issues: [] }, log: [], records: null }, workExecution, "t")]) {
+    for (const p of [prompts.planRespondPrompt(TEST_ROOT, 1, round, NO_STEP_CHECKS), prompts.decisionRespondPrompt(TEST_ROOT, 1, round), prompts.requirementsRespondPrompt(TEST_ROOT, round), prompts.workRespondPrompt(TEST_ROOT, 1, round, { review: { issues: [] }, log: [], records: null }, workExecution, "t")]) {
       assert.ok(!p.includes(prompts.TASK_DISPUTE_RULE));
     }
   }

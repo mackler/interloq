@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
@@ -35,18 +36,18 @@ const cases: ReadonlyArray<readonly [string, string, readonly Artifact[]]> = [
   ["requirementsReviewPrompt", prompts.requirementsReviewPrompt(store.root, 1), [{ kind: "requirements" }, { kind: "questions" }, { kind: "log", subject: "requirements" }]],
   ["requirementsRespondPrompt", prompts.requirementsRespondPrompt(store.root, 1), [{ kind: "review", subject: "requirements", round: 1 }, { kind: "requirements" }]],
   ["requirementsApplyDecisionsPrompt", prompts.requirementsApplyDecisionsPrompt(store.root), [{ kind: "decisions" }, { kind: "requirements" }]],
-  ["initialPlanPrompt", prompts.initialPlanPrompt(store.root, "t", true), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }, { kind: "plan" }]],
-  ["revisePlanPrompt", prompts.revisePlanPrompt(store.root), [{ kind: "decisions" }, { kind: "planFile" }]],
-  ["planApplyDecisionsPrompt", prompts.planApplyDecisionsPrompt(store.root), [{ kind: "decisions" }, { kind: "planFile" }]],
+  ["initialPlanPrompt", prompts.initialPlanPrompt(store.root, "t", true, NO_STEP_CHECKS), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }, { kind: "plan" }]],
+  ["revisePlanPrompt", prompts.revisePlanPrompt(store.root, NO_STEP_CHECKS), [{ kind: "decisions" }, { kind: "planFile" }]],
+  ["planApplyDecisionsPrompt", prompts.planApplyDecisionsPrompt(store.root, NO_STEP_CHECKS), [{ kind: "decisions" }, { kind: "planFile" }]],
   ["planReviewPrompt", prompts.planReviewPrompt(store.root, 2, 1, true), [{ kind: "planFile" }, { kind: "requirements" }, { kind: "log", subject: { plan: 2 } }]],
-  ["planRespondPrompt", prompts.planRespondPrompt(store.root, 2, 1), [{ kind: "review", subject: { plan: 2 }, round: 1 }, { kind: "planFile" }]],
+  ["planRespondPrompt", prompts.planRespondPrompt(store.root, 2, 1, NO_STEP_CHECKS), [{ kind: "review", subject: { plan: 2 }, round: 1 }, { kind: "planFile" }]],
   ["planRepairPrompt", prompts.planRepairPrompt(store.root, { duplicateIds: ["S1"], emptyIds: 0, removedDone: [], changedDone: [] }), [{ kind: "planFile" }]],
-  ["executePrompt", prompts.executePrompt(store.root, "t", true), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }, { kind: "plan" }]],
+  ["executePrompt", prompts.executePrompt(store.root, "t", true, NO_STEP_CHECKS), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }, { kind: "plan" }]],
   ["correctivePrompt", prompts.correctivePrompt(store.root, "plan.json", 1, ["P1-R1-1"]), [{ kind: "planFile" }]],
   ["workReviewPrompt", prompts.workReviewPrompt(store.root, 1, 1, true), [{ kind: "changes", phase: 1 }, { kind: "planFile" }, { kind: "requirements" }, { kind: "log", subject: { work: 1 } }]],
   ["workReviewPrompt, a later round", prompts.workReviewPrompt(store.root, 1, 2, true), [{ kind: "changes", phase: 1 }, { kind: "log", subject: { work: 1 } }]],
   ["workRespondPrompt", prompts.workRespondPrompt(store.root, 1, 1, context, workExecution, "t"), [{ kind: "review", subject: { work: 1 }, round: 1 }, { kind: "changes", phase: 1 }, { kind: "decisions" }, { kind: "plan" }]],
-  ["revisePlanAfterExecutionPrompt", prompts.revisePlanAfterExecutionPrompt(store.root, "t", true, 1, { stopped: true, workReview: { revisedInRound: 2 } }), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "round", subject: { work: 1 }, round: 2 }, { kind: "planFile" }]],
+  ["revisePlanAfterExecutionPrompt", prompts.revisePlanAfterExecutionPrompt(store.root, "t", true, 1, { stopped: true, workReview: { revisedInRound: 2 } }, NO_STEP_CHECKS), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "round", subject: { work: 1 }, round: 2 }, { kind: "planFile" }]],
   ["decisionAnalysisPrompt", prompts.decisionAnalysisPrompt(store.root, "format", question, { task: "t", requirements: null, plan: null }), [{ kind: "requirements" }, { kind: "plan" }]],
   ["decisionReviewPrompt", prompts.decisionReviewPrompt(store.root, "format", 3, 1), [{ kind: "analysis", decision: 3 }, { kind: "decisionQuestion", decision: 3 }, { kind: "log", subject: { decision: 3 } }]],
   ["decisionRespondPrompt", prompts.decisionRespondPrompt(store.root, 3, 1), [{ kind: "review", subject: { decision: 3 }, round: 1 }, { kind: "analysis", decision: 3 }]],

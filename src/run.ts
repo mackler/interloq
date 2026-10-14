@@ -150,13 +150,13 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     for (let k = 1; ; k++) {
       // The plan as this planning phase begins (issue #6, G-R1-1): its done steps and statuses do not change within the phase.
       const before = Option.getOrNull(yield* store.loadPlan());
-      const subject = planSubject(store.root, k, withRequirements, before);
+      const subject = planSubject(store.root, k, withRequirements, before, checks);
       const reviewed = yield* Effect.gen(function* () {
         // Planning phase K: write or revise the plan, then review it.
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });
         yield* ui.say(planningBeganLine(label("planning", k), previous === null));
         // The reply is the plan (F1): validated, then written by the program as plan.json and plan.md.
-        const written = yield* planningCall(previous === null ? initialPlanPrompt(store.root, task, withRequirements) : revisePlanAfterExecutionPrompt(store.root, task, withRequirements, k - 1, previous), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
+        const written = yield* planningCall(previous === null ? initialPlanPrompt(store.root, task, withRequirements, checks) : revisePlanAfterExecutionPrompt(store.root, task, withRequirements, k - 1, previous, checks), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
         yield* store.savePlanWrite(k, written.output);
         yield* savePlan(k, written.output.plan, before);
         yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: written.resultText });
@@ -184,7 +184,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const executor = yield* planner.fresh;
         // Issue #154 (Q2, Q3): a call that reports work left and nothing to decide is continued in this session, without
         // asking and without limit; the steps' end runs once, when the last call ends.
-        const ending = yield* continuedExecution(executor, executePrompt(store.root, task, withRequirements), steps.report, label("execution", k)).pipe(
+        const ending = yield* continuedExecution(executor, executePrompt(store.root, task, withRequirements, checks), steps.report, label("execution", k)).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;
@@ -218,7 +218,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       const work = yield* Effect.gen(function* () {
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "work", n: k } });
         yield* ui.say(workReviewBeganLine(label("work", k)));
-        return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work));
+        return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work, checks));
       }).pipe(ownSession, inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
       // The run is finished only when Claude Code reported finished and the work review converged.

@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ATTACHED_KINDS, type Sense, type Senses } from "../src/question.ts";
@@ -299,8 +300,8 @@ test("every subject's response, as its own schema decodes it, survives the round
     { subject: "questions" as SubjectId, schema: questionSubject("t").respond.schema, example: questionListResponse },
     { subject: "requirements" as const, schema: requirementsSubject().respond.schema, example: plannerResponse },
     // Issue #6: the plan's response carries the whole plan.
-    { subject: { plan: 1 }, schema: planSubject(TEST_ROOT, 1, true, null).respond.schema, example: { ...plannerResponse, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x" }] }] } } },
-    { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution).respond.schema, example: plannerResponse },
+    { subject: { plan: 1 }, schema: planSubject(TEST_ROOT, 1, true, null, NO_STEP_CHECKS).respond.schema, example: { ...plannerResponse, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x" }] }] } } },
+    { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS).respond.schema, example: plannerResponse },
     // W2-R1-1: a decision's response carries the amended analysis.
     { subject: { decision: 1 }, schema: decisionResponseSchema, example: { ...plannerResponse, analysis: decisionAnalysis } },
   ];
