@@ -21,18 +21,41 @@ const withoutAssignments = (text: string): string => {
   return match === null ? text : withoutAssignments(text.slice(match[0].length));
 };
 
+/** npm options that take the next word as their value, so that word is not the script (W1-R1-2). */
+export const NPM_VALUE_OPTIONS: ReadonlySet<string> = new Set(["--loglevel", "--prefix", "-C", "--workspace", "-w", "--userconfig", "--cache", "--registry", "--script-shell"]);
+/** npm options that take no value. */
+export const NPM_FLAG_OPTIONS: ReadonlySet<string> = new Set(["--silent", "-s", "--quiet", "-q", "--verbose", "-d", "--if-present", "--ignore-scripts", "--foreground-scripts", "--workspaces", "--ws", "--include-workspace-root"]);
+
+const QUOTING = /['"\\]/u;
+
 /**
- * The npm script a command names: `npm run <script>` or `npm run-script <script>`, npm flags allowed before the script's
- * name, and `npm test` or `npm t`, which name `test`; any leading environment assignments allowed. Every other command
- * is none: it is used as written and not checked.
+ * The script named by the words after `run`: a known value-taking option is skipped with its value, `-x=value` and a
+ * known flag alone, and the first other word is the script. None (not checked) where a word up to the script holds a
+ * quote or a backslash, since the words were split on whitespace and a shell would join them differently, or where an
+ * unknown option stands before a further word, since whether that word is its value cannot be told.
+ */
+const scriptAfterRun = (words: ReadonlyArray<string>): Option.Option<string> => {
+  const [word, next] = words;
+  if (word === undefined || QUOTING.test(word)) return Option.none();
+  if (word.startsWith("-") && word.includes("=")) return scriptAfterRun(words.slice(1));
+  if (NPM_VALUE_OPTIONS.has(word)) return next === undefined || QUOTING.test(next) ? Option.none() : scriptAfterRun(words.slice(2));
+  if (NPM_FLAG_OPTIONS.has(word)) return scriptAfterRun(words.slice(1));
+  return word.startsWith("-") ? Option.none() : Option.some(word);
+};
+
+/**
+ * The npm script a command names: `npm run <script>` or `npm run-script <script>`, and `npm test` or `npm t`, which name
+ * `test`; any leading environment assignments allowed. Before the script's name, the known npm flags are skipped, and
+ * so are the known value-taking options with their values (`--loglevel error`, `--loglevel=error`). An unknown option
+ * before a further word, or a quote or backslash in a word up to the script, makes the command unchecked. Every other
+ * command is none: it is used as written and not checked.
  */
 export const scriptOf = (command: CommandLine): Option.Option<string> => {
   const words = withoutAssignments(command.trim()).split(/\s+/u);
   if (words[0] !== "npm") return Option.none();
   if (words[1] === "test" || words[1] === "t") return Option.some("test");
   if (words[1] !== "run" && words[1] !== "run-script") return Option.none();
-  const script = words.slice(2).find((word) => !word.startsWith("-"));
-  return script === undefined ? Option.none() : Option.some(script);
+  return scriptAfterRun(words.slice(2));
 };
 
 /** Every listed command: the check commands in their order, then the suite command where one is set. */

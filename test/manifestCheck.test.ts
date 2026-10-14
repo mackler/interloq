@@ -7,7 +7,7 @@ import { test } from "node:test";
 import fc from "fast-check";
 import { Option, Result } from "effect";
 import { decodeConfigText, mergeConfig } from "../src/config.ts";
-import { listedCommands, manifestProblems, manifestScriptsOf, scriptOf } from "../src/manifestCheck.ts";
+import { listedCommands, manifestProblems, manifestScriptsOf, NPM_FLAG_OPTIONS, NPM_VALUE_OPTIONS, scriptOf } from "../src/manifestCheck.ts";
 import { type CommandLine, commandLineOf, stepChecksOf } from "../src/schema.ts";
 
 const line = (text: string): CommandLine => Result.getOrThrow(commandLineOf(text));
@@ -30,6 +30,50 @@ test("scriptOf recognizes npm run, run-script, test and t, with assignments and 
     ["npm ci", null],
   ];
   for (const [command, script] of cases) assert.deepEqual(scriptOf(line(command)), script === null ? Option.none() : Option.some(script), command);
+});
+
+// Issue #162 (W1-R1-2, P2-R1-1): an option's value is not the script, and a quoted word before the script is not checked.
+test("scriptOf skips npm options' values, and leaves an unknown option or a quoted word unchecked", () => {
+  const cases: ReadonlyArray<[string, string | null]> = [
+    ["npm run --loglevel error check", "check"],
+    ["npm run --loglevel=error check", "check"],
+    ["npm run -w pkg check", "check"],
+    ["npm run --silent check", "check"],
+    ["npm run --unknown-option x check", null],
+    ["npm run --cache \"/tmp/npm cache\" check", null],
+    ["FOO='a b' npm run check", "check"],
+  ];
+  for (const [command, script] of cases) assert.deepEqual(scriptOf(line(command)), script === null ? Option.none() : Option.some(script), command);
+  const scripts = Option.some({ check: "x" });
+  for (const command of ["npm run --loglevel error check", "npm run --loglevel=error check", "npm run -w pkg check", "npm run --cache \"/tmp/npm cache\" check"]) {
+    assert.deepEqual(manifestProblems([line(command)], scripts), [], command);
+  }
+});
+
+const scriptName = fc.stringMatching(/^[a-z][a-z:._-]{0,10}$/u);
+const valueWord = fc.stringMatching(/^[A-Za-z0-9/._:-]{1,12}$/u);
+
+test("property: a value-taking option and its value before the script never change the script found", () => {
+  fc.assert(
+    fc.property(scriptName, fc.constantFrom(...NPM_VALUE_OPTIONS), valueWord, fc.boolean(), (script, option, value, joined) => {
+      const options = joined && option.startsWith("--") ? `${option}=${value}` : `${option} ${value}`;
+      assert.deepEqual(scriptOf(line(`npm run ${options} ${script}`)), Option.some(script));
+    }),
+    { numRuns: 300 },
+  );
+});
+
+test("property: a quote or backslash in a word between run and the script makes the command unchecked", () => {
+  fc.assert(
+    fc.property(scriptName, fc.constantFrom(...NPM_VALUE_OPTIONS), valueWord, fc.constantFrom("'", '"', "\\"), fc.nat(2), fc.nat(12), (script, option, value, quote, which, at) => {
+      const words = [option, value, script];
+      const word = words[which];
+      const i = Math.min(at, word.length);
+      words[which] = word.slice(0, i) + quote + word.slice(i);
+      assert.deepEqual(scriptOf(line(`npm run ${words.join(" ")}`)), Option.none());
+    }),
+    { numRuns: 300 },
+  );
 });
 
 test("manifestProblems: a missing script, no manifest, and commands that are not checked", () => {
