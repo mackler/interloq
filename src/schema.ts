@@ -348,7 +348,7 @@ export const LogEntry = Schema.Union([ReviewEntry, SelfCorrectionEntry, UserEntr
 /** A text with a character other than whitespace (a tracker's coordinate or label). */
 const NonBlankText = Schema.String.check(Schema.isPattern(/\S/u));
 /**
- * Each of the given states mapped to a value of its own (a GitHub label, a Trello list, a GitLab label): two states
+ * Each of the given states mapped to a value of its own (a GitHub label, a GitLab label): two states
  * sharing one would make a listing return the same items for both. The issue is on the later state's path, naming the value.
  */
 const perState = <S extends ItemState>(states: readonly S[], value: typeof NonBlankText, noun: string) =>
@@ -364,17 +364,6 @@ export type GithubLabels = typeof GithubLabels.Type;
 /** The project's GitHub tracker: the repository and the stage labels. No credential: it comes from the environment. */
 export const GithubTrackerConfig = Schema.Struct({ kind: Schema.Literal("github"), owner: NonBlankText, repo: NonBlankText, labels: GithubLabels });
 export type GithubTrackerConfig = typeof GithubTrackerConfig.Type;
-/** A Trello object's id: 24 lowercase hexadecimal characters, so a blank or malformed id is no value of the type. */
-export const TrelloId = Schema.String.check(Schema.isPattern(/^[0-9a-f]{24}$/u));
-/** Each of Interloq's five states mapped to a Trello list id, not a list name, so that a column can be renamed freely. */
-export const TrelloLists = perState(ITEM_STATES, TrelloId, "list");
-export type TrelloLists = typeof TrelloLists.Type;
-/**
- * The project's Trello tracker: the board and the five lists. The board is carried so that a card of another board is
- * refused as not found and a list of another board is found out; the developer has its id beside the lists' ids.
- */
-export const TrelloTrackerConfig = Schema.Struct({ kind: Schema.Literal("trello"), board: TrelloId, lists: TrelloLists });
-export type TrelloTrackerConfig = typeof TrelloTrackerConfig.Type;
 /** The states a GitLab label marks: every state but deployed, which is a closed issue (the developer's decision of 9 Oct 2026). */
 export const GITLAB_LABELED_STATES = ["unrefined", "refined", "implementing", "implemented"] as const satisfies readonly ItemState[];
 export type GitlabLabeledState = (typeof GITLAB_LABELED_STATES)[number];
@@ -392,8 +381,8 @@ const GitlabProjectPath = Schema.String.check(Schema.isPattern(/^[^/\s]+(\/[^/\s
 /** The project's GitLab tracker on gitlab.com: the project's path and the state labels. No credential: it comes from the environment. */
 export const GitlabTrackerConfig = Schema.Struct({ kind: Schema.Literal("gitlab"), project: GitlabProjectPath, labels: GitlabLabels });
 export type GitlabTrackerConfig = typeof GitlabTrackerConfig.Type;
-/** The project's issue tracker, a union tagged by `kind`: GitHub Issues, a Trello board or a GitLab project's issues. */
-export const TrackerConfig = Schema.Union([GithubTrackerConfig, TrelloTrackerConfig, GitlabTrackerConfig]);
+/** The project's issue tracker, a union tagged by `kind`: GitHub Issues or a GitLab project's issues. */
+export const TrackerConfig = Schema.Union([GithubTrackerConfig, GitlabTrackerConfig]);
 export type TrackerConfig = typeof TrackerConfig.Type;
 
 /** Issue #142: the three ways a refinement run may explain the agreed questions' terms. */

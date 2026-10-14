@@ -17,9 +17,7 @@ import ActivityLine from "./components/ActivityLine.svelte";
 import { decodeServer, listedItemOf, type ServerMessage } from "../../src/protocol.ts";
 import { Result, Schema } from "effect";
 import { GithubIssue, itemOf } from "../../src/githubIssues.ts";
-import { itemOfCard, TrelloCard } from "../../src/trelloCards.ts";
 import { GitlabIssue, itemOfIssue } from "../../src/gitlabIssues.ts";
-import type { TrelloTrackerConfig } from "../../src/schema.ts";
 import type { TrackerItem } from "../../src/tracker.ts";
 import { countOfKind, foreseenPhases, iterationsOf, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
@@ -151,7 +149,7 @@ test("every author's message carries its author as class and data-author", () =>
 describe("ItemList", () => {
   const items = [
     { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120" },
-    { id: "121", title: "Trello", excerpt: "", url: null },
+    { id: "121", title: "No address", excerpt: "", url: null },
   ];
   const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, running: false, onStart: () => undefined, onRefresh: () => undefined, ...props });
 
@@ -177,7 +175,7 @@ describe("ItemList", () => {
     expect(link?.rel.split(/\s+/u)).toEqual(expect.arrayContaining(["noopener", "noreferrer"]));
     expect(link?.textContent?.trim()).toBe(prompts.itemHeadline("120", "Two modes"));
     expect(rows[1].querySelector("a")).toBeNull();
-    expect(rows[1].querySelector("[data-headline]")?.textContent?.trim()).toBe(prompts.itemHeadline("121", "Trello"));
+    expect(rows[1].querySelector("[data-headline]")?.textContent?.trim()).toBe(prompts.itemHeadline("121", "No address"));
   });
 
   test("following an item's link starts nothing", () => {
@@ -211,14 +209,10 @@ describe("ItemList", () => {
   // listedItemOf, sent as the server sends a frame (JSON.stringify) and decoded as the page decodes it, is the href of
   // the row's link. Both sides derive from one source object per tracker.
   const LABELS = { unrefined: "u", refined: "r", implementing: "i", implemented: "d", deployed: "x" } as const;
-  const BOARD = "5f0000000000000000000b0a";
-  const LISTS = { unrefined: "5f0000000000000000000a01", refined: "5f0000000000000000000a02", implementing: "5f0000000000000000000a03", implemented: "5f0000000000000000000a04", deployed: "5f0000000000000000000a05" };
   const githubSource = { number: 42, title: "GitHub issue", body: "Its body.", state: "open", labels: [{ name: "r" }], html_url: "https://github.com/mackler/interloq/issues/42" };
-  const trelloSource = { id: "5f00000000000000000000c1", name: "Trello card", desc: "Its description.", idList: LISTS.refined, idBoard: BOARD, closed: false, url: "https://trello.com/c/AbCd1234/7-trello-card" };
   const gitlabSource = { iid: 9, title: "GitLab issue", description: "Its description.", state: "opened", labels: ["r"], web_url: "https://gitlab.com/adammackler/iou-notes/-/issues/9" };
   const sources: readonly (readonly [string, () => TrackerItem, string])[] = [
     ["GitHub", () => Result.getOrThrow(itemOf(LABELS, Schema.decodeUnknownSync(GithubIssue)(githubSource))), githubSource.html_url],
-    ["Trello", () => Result.getOrThrow(itemOfCard({ kind: "trello", board: BOARD, lists: LISTS } as TrelloTrackerConfig, Schema.decodeUnknownSync(TrelloCard)(trelloSource))), trelloSource.url],
     ["GitLab", () => Result.getOrThrow(itemOfIssue({ unrefined: "u", refined: "r", implementing: "i", implemented: "d" }, Schema.decodeUnknownSync(GitlabIssue)(gitlabSource))), gitlabSource.web_url],
   ];
   for (const [tracker, itemFrom, address] of sources) {
