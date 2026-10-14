@@ -19,7 +19,7 @@ import { Decider, type DeciderShape, Planner, type PlannerShape, RunConfig, RunK
 import { runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { changed, notification, started } from "./backgroundMessages.ts";
+import { changed, monitorResult, monitorUse, noTasksChanged, notification, started, watchChanged, watchNotification, watchStarted, watchSummary, watchUpdated } from "./backgroundMessages.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
 import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
@@ -1493,4 +1493,173 @@ test("issue #154: BACKGROUND_SUITE_SENTENCE describes the wait the hooks impleme
   assert.equal((await run(fake.planner.executing(executePrompt, noReporter))).status, "finished");
   assert.equal(fake.sdk.calls[0].prompt, executePrompt);
   assert.ok(reasonOf(stop ?? {}).includes(prompts.KEEPS_SESSION_OPEN));
+});
+
+// ---- issue #161 (decision Q2): an execution call may use Monitor, and a running watch is waited for exactly as a
+// pending background command is; the messages are those the developer's run of the prototype showed (S8).
+const WATCH = "b9zskmcpx";
+const WATCH_USE = "toolu_019cn3umzYKBUKhQQK1g9DS6";
+const WATCH_NAME = "proto watch";
+const WATCH_OUT = "/tmp/claude-1000/tasks/b9zskmcpx.output";
+const WATCH_COMMAND = "until grep -q '^exit' /tmp/script-suite.log; do sleep 15; done";
+const watchTask = shellTask(WATCH, WATCH_COMMAND);
+const watchEnd: NamedEnd = { end: { taskId: WATCH, status: "completed", outputFile: WATCH_OUT, summary: watchSummary(WATCH_NAME) }, name: WATCH_NAME };
+/** The watch started as the prototype's run showed it: the tool's use, its announcement, its start, the tool's result. */
+async function* watchBegins(): AsyncGenerator<SDKMessage> {
+  yield monitorUse(WATCH_USE, { description: WATCH_NAME, timeout_ms: 300000, command: WATCH_COMMAND });
+  yield watchChanged(WATCH, WATCH_NAME);
+  yield watchStarted(WATCH, WATCH_USE, WATCH_NAME);
+  yield monitorResult(WATCH_USE, { taskId: WATCH, timeoutMs: 300000, persistent: false });
+}
+const watchEnds = (): SDKMessage => watchNotification(WATCH, WATCH_USE, WATCH_OUT, WATCH_NAME);
+
+test("issue #161: no hook of an execution call denies the Monitor tool", async () => {
+  let denied: string | undefined = "not called";
+  const script: Script = (call) => (async function* () {
+    yield init();
+    denied = await runHooks(call.options, prompts.MONITOR_TOOL_NAME, { description: WATCH_NAME, timeout_ms: 300000, command: WATCH_COMMAND });
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script]);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(denied, undefined);
+});
+
+test("issue #161 regression (GitLab issue #75 of iou-notes, Monitor alone): a turn ended while a watch runs waits for it, and the report after its end finishes the call", async () => {
+  const seen: { pending?: boolean; stop?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield* watchBegins();
+    yield assistantText("Waiting for the suite's completion notice.");
+    const hook = callStopHook(call.options, [watchTask]);
+    yield noTasksChanged();
+    yield watchUpdated(WATCH);
+    seen.pending = await stillPending(hook);
+    yield watchEnds();
+    seen.stop = await hook;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(seen.pending, true, "the Stop hook did not wait for the watch");
+  assert.equal(blockOf(seen.stop ?? {}), "block");
+  assert.equal(reasonOf(seen.stop ?? {}), prompts.backgroundEndedText([watchEnd]));
+  assert.equal(outcome.status, "finished");
+  assert.deepEqual(fake.ui.asked, []);
+  for (const line of [prompts.backgroundWaitLine([WATCH_NAME]), prompts.backgroundEndedLine([watchEnd])]) {
+    assert.ok(line.includes(WATCH_NAME), line);
+    assert.ok(fake.ui.said.includes(line), fake.ui.said.join("\n"));
+    assert.ok(conversationOf(fake.dir).includes(line), line);
+  }
+});
+
+test("issue #161: a report returned while a watch runs is denied, and the denial carries the watch's end", async () => {
+  const results: { pending?: boolean; report?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield* watchBegins();
+    const hook = callReportHook(call.options);
+    results.pending = await stillPending(hook);
+    yield watchEnds();
+    results.report = await hook;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(results.pending, true);
+  assert.equal(decision(results.report ?? {}), "deny");
+  assert.equal(reasonOf(results.report ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([watchEnd])}`);
+  assert.equal(outcome.status, "finished");
+});
+
+test("issue #161: past the bound of one wait the watch still runs: the Stop hook names it as running, and the next end of the turn waits again", async () => {
+  const results: { stop1?: HookJSONOutput; stop2?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield* watchBegins();
+    results.stop1 = await callStopHook(call.options, [watchTask]);
+    const again = callStopHook(call.options, [watchTask]);
+    yield watchEnds();
+    results.stop2 = await again;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 200);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(blockOf(results.stop1 ?? {}), "block");
+  assert.equal(reasonOf(results.stop1 ?? {}), prompts.stillRunningText([WATCH_NAME]));
+  assert.equal(reasonOf(results.stop2 ?? {}), prompts.backgroundEndedText([watchEnd]));
+  assert.ok(fake.ui.said.includes(prompts.backgroundStillRunningLine([WATCH_NAME])), fake.ui.said.join("\n"));
+  assert.equal(outcome.status, "finished");
+});
+
+test("issue #161: a call the SDK ends while a watch is pending is aborted, naming the watch", async () => {
+  const script: Script = () => (async function* () {
+    yield init();
+    yield* watchBegins();
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script]);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.ok(outcome.status === "aborted");
+  assert.equal(outcome.question, prompts.backgroundKilledText([WATCH_NAME]));
+});
+
+test("issue #161: a background command and a watch together (the GitLab issue #75 transcript): both are named, and the wait ends only when both have ended", async () => {
+  const seen: { afterCommand?: boolean; stop?: HookJSONOutput } = {};
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield assistantTool("Bash", { command: SUITE, run_in_background: true });
+    yield started("t1");
+    yield changed([["t1", false]]);
+    yield* watchBegins();
+    const hook = callStopHook(call.options, [shellTask("t1", SUITE), watchTask]);
+    yield notification("t1", "completed", "/tmp/t1.out");
+    seen.afterCommand = await stillPending(hook);
+    yield watchEnds();
+    seen.stop = await hook;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(seen.afterCommand, true, "the wait ended with the watch still running");
+  assert.equal(reasonOf(seen.stop ?? {}), prompts.backgroundEndedText([namedEndOf("t1", "/tmp/t1.out"), watchEnd]));
+  assert.ok(fake.ui.said.includes(prompts.backgroundWaitLine(["task t1", WATCH_NAME])), fake.ui.said.join("\n"));
+  assert.equal(outcome.status, "finished");
+});
+
+test("issue #161: a second turn and a second result after the report, as the prototype's run showed: the call finishes with the last report and refuses none", async () => {
+  const results: HookJSONOutput[] = [];
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield* watchBegins();
+    const hook = callStopHook(call.options, [watchTask]);
+    yield watchEnds();
+    await hook;
+    results.push(await callReportHook(call.options));
+    yield success(finishedReport);
+    yield assistantText("The watch has now actually finished.");
+    results.push(await callStopHook(call.options), await callReportHook(call.options));
+    yield success({ ...finishedReport, summary: "watched" });
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(results, [{}, {}, {}]);
+  assert.equal(outcome.status, "finished");
+  assert.equal(outcome.summary, "watched");
+});
+
+test("issue #161: after a recorded stop neither hook waits for a watch", async () => {
+  const questions = [{ question: "A or B?", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }];
+  const results: HookJSONOutput[] = [];
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield* watchBegins();
+    await permission(call.options)("AskUserQuestion", { questions }, callContext());
+    results.push(await callReportHook(call.options), await callStopHook(call.options, [watchTask]));
+    yield success({ ...finishedReport, status: "needs_input" });
+  })();
+  const fake = await planner([script], ["A"], {}, {}, 5_000);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(results, [{}, {}]);
+  assert.equal(outcome.status, "needs_input");
 });
