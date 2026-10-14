@@ -63,16 +63,44 @@ test("property: a value-taking option and its value before the script never chan
   );
 });
 
-test("property: a quote or backslash in a word between run and the script makes the command unchecked", () => {
+// Issue #162 (W3-R1-1): a shell metacharacter in a word up to the script makes the command unchecked, since the shell may
+// cut, join, redirect or expand that word; an operator standing alone after the script does not affect it.
+test("scriptOf leaves a command with shell syntax up to its script unchecked", () => {
+  const cases: ReadonlyArray<[string, string | null]> = [
+    ["npm run check>/dev/null", null],
+    ["npm run check; echo done", null],
+    ["npm run --loglevel err|x check", null],
+    ["npm test>out", null],
+    ["npm test;", null],
+    ["npm run check > /dev/null", "check"],
+    ["npm run check && echo done", "check"],
+    ["npm run 'check'", null],
+    ["npm run che\\ck", null],
+  ];
+  for (const [command, script] of cases) assert.deepEqual(scriptOf(line(command)), script === null ? Option.none() : Option.some(script), command);
+  const scripts = Option.some({ check: "x" });
+  for (const command of ["npm run check>/dev/null", "npm run check; echo done"]) assert.deepEqual(manifestProblems([line(command)], scripts), [], command);
+});
+
+const metacharacters = ["'", '"', "\\", ";", "&", "|", "<", ">", "(", ")", "$", "`", "*", "?", "[", "]", "{", "}", "~", "#", "!"];
+const plainScript = fc.stringMatching(/^[A-Za-z0-9:_][A-Za-z0-9:_-]{0,10}$/u);
+const optionWords = fc.array(
+  fc.oneof(fc.constantFrom(...NPM_FLAG_OPTIONS).map((flag) => [flag]), fc.tuple(fc.constantFrom(...NPM_VALUE_OPTIONS), valueWord).map(([option, value]) => [option, value])),
+  { maxLength: 3 },
+);
+
+test("property: a shell metacharacter in any word between run and the script makes the command unchecked", () => {
   fc.assert(
-    fc.property(scriptName, fc.constantFrom(...NPM_VALUE_OPTIONS), valueWord, fc.constantFrom("'", '"', "\\"), fc.nat(2), fc.nat(12), (script, option, value, quote, which, at) => {
-      const words = [option, value, script];
-      const word = words[which];
+    fc.property(plainScript, optionWords, fc.constantFrom(...metacharacters), fc.nat(), fc.nat(12), (script, options, meta, which, at) => {
+      const words = [...options.flat(), script];
+      assert.deepEqual(scriptOf(line(`npm run ${words.join(" ")}`)), Option.some(script));
+      const index = which % words.length;
+      const word = words[index];
       const i = Math.min(at, word.length);
-      words[which] = word.slice(0, i) + quote + word.slice(i);
-      assert.deepEqual(scriptOf(line(`npm run ${words.join(" ")}`)), Option.none());
+      words[index] = word.slice(0, i) + meta + word.slice(i);
+      assert.deepEqual(scriptOf(line(`npm run ${words.join(" ")}`)), Option.none(), words.join(" "));
     }),
-    { numRuns: 300 },
+    { numRuns: 500 },
   );
 });
 

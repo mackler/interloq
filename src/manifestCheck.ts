@@ -26,19 +26,25 @@ export const NPM_VALUE_OPTIONS: ReadonlySet<string> = new Set(["--loglevel", "--
 /** npm options that take no value. */
 export const NPM_FLAG_OPTIONS: ReadonlySet<string> = new Set(["--silent", "-s", "--quiet", "-q", "--verbose", "-d", "--if-present", "--ignore-scripts", "--foreground-scripts", "--workspaces", "--ws", "--include-workspace-root"]);
 
-const QUOTING = /['"\\]/u;
+/**
+ * A shell metacharacter (W3-R1-1). A word holding one may be cut, joined, redirected or expanded by the shell, so the word
+ * split on whitespace is not the script's name as npm receives it. No shell parser is written: where the script cannot be
+ * told apart the command is not checked, since a wrong guess refuses a valid run while an unchecked command fails later,
+ * visibly, in the step that runs it.
+ */
+const SHELL_SYNTAX = /['"\\;&|<>()$`*?[\]{}~#!]/u;
 
 /**
  * The script named by the words after `run`: a known value-taking option is skipped with its value, `-x=value` and a
  * known flag alone, and the first other word is the script. None (not checked) where a word up to the script holds a
- * quote or a backslash, since the words were split on whitespace and a shell would join them differently, or where an
+ * shell metacharacter (`SHELL_SYNTAX`), since the words were split on whitespace and a shell may cut them differently, or where an
  * unknown option stands before a further word, since whether that word is its value cannot be told.
  */
 const scriptAfterRun = (words: ReadonlyArray<string>): Option.Option<string> => {
   const [word, next] = words;
-  if (word === undefined || QUOTING.test(word)) return Option.none();
+  if (word === undefined || SHELL_SYNTAX.test(word)) return Option.none();
   if (word.startsWith("-") && word.includes("=")) return scriptAfterRun(words.slice(1));
-  if (NPM_VALUE_OPTIONS.has(word)) return next === undefined || QUOTING.test(next) ? Option.none() : scriptAfterRun(words.slice(2));
+  if (NPM_VALUE_OPTIONS.has(word)) return next === undefined || SHELL_SYNTAX.test(next) ? Option.none() : scriptAfterRun(words.slice(2));
   if (NPM_FLAG_OPTIONS.has(word)) return scriptAfterRun(words.slice(1));
   return word.startsWith("-") ? Option.none() : Option.some(word);
 };
@@ -47,7 +53,7 @@ const scriptAfterRun = (words: ReadonlyArray<string>): Option.Option<string> => 
  * The npm script a command names: `npm run <script>` or `npm run-script <script>`, and `npm test` or `npm t`, which name
  * `test`; any leading environment assignments allowed. Before the script's name, the known npm flags are skipped, and
  * so are the known value-taking options with their values (`--loglevel error`, `--loglevel=error`). An unknown option
- * before a further word, or a quote or backslash in a word up to the script, makes the command unchecked. Every other
+ * before a further word, or a shell metacharacter (`SHELL_SYNTAX`) in a word up to the script, makes the command unchecked. Every other
  * command is none: it is used as written and not checked.
  */
 export const scriptOf = (command: CommandLine): Option.Option<string> => {
