@@ -711,17 +711,19 @@ export const COMMAND_CEILING_MS = 1_200_000;
 export const planStepSelfContainedRule = (root: RunRoot): string => `Each execution phase begins a new Claude Code session, which carries out the phase's remaining steps having read only the task, ${runDir(root)}/requirements.md, ${runDir(root)}/user-decisions.md and ${runDir(root)}/plan.json, and not this planning. So write each step's text to state the facts and the reasons its choices depend on (the files, the decided behavior, why an approach was chosen over another) wherever the implementer could not recover them from those files and the codebase.`;
 export const PLAN_STEP_DURATION_RULE = `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. No step may end with a command expected to run longer than that, such as a full test suite that may outlast it; a step's verification runs only the suites its change touches.`;
 /** The execution prompt's sentences on long commands (issue #78, requirements Q6). */
-/** What Interloq does while a background command runs (issue #154): the adapter's Stop hook holds the session. */
-export const KEEPS_SESSION_OPEN = "Interloq keeps the session open until the command ends";
+/** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
+export const MONITOR_TOOL_NAME = "Monitor";
+/** What Interloq does while a background command or a Monitor watch runs (issues #154, #161): the adapter's Stop hook holds the session. */
+export const KEEPS_SESSION_OPEN = "Interloq keeps the session open until it ends";
 /** What Claude Code may do while a command it started runs: the suites read the working tree. */
 export const READ_AND_SEARCH_ONLY = "read and search, but do not edit any file";
 /** What the adapter's hook on the structured output refuses (issue #154). */
-export const NO_REPORT_WHILE_RUNNING = "do not return the status report while a command you started in the background is still running";
+export const NO_REPORT_WHILE_RUNNING = `do not return the status report while a command you started in the background or a ${MONITOR_TOOL_NAME} watch is still running`;
 /**
  * The instruction about long commands (issue #78, rewritten by issue #154): a turn ended to wait for a background
  * command no longer ends the session, because the adapter's hooks wait for the command and continue the session.
  */
-export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. A command that may run longer than that may be started in the background with the Bash tool. While it runs, ${READ_AND_SEARCH_ONLY}: the suites read the working tree, and a result must belong to the files as they were when it started. When nothing is left to do but wait for it, end your turn: ${KEEPS_SESSION_OPEN} and then gives you its end and its output file; ${NO_REPORT_WHILE_RUNNING}, and never return 'continuing' or 'blocked' for it.`;
+export const BACKGROUND_SUITE_SENTENCE = `A shell command may run in the foreground for up to ${COMMAND_CEILING_MS / 60_000} minutes, with the Bash tool's timeout set to ${COMMAND_CEILING_MS}. A command that may run longer than that may be started in the background with the Bash tool. To wait for something, such as a line in a background command's output file, you may also start a watch with the ${MONITOR_TOOL_NAME} tool. While a background command or a watch runs, ${READ_AND_SEARCH_ONLY}: the suites read the working tree, and a result must belong to the files as they were when it started. When nothing is left to do but wait for a background command or a watch, end your turn: ${KEEPS_SESSION_OPEN} and then gives you its end and its output file; ${NO_REPORT_WHILE_RUNNING}, and never return 'continuing' or 'blocked' for it.`;
 
 export const planFormat = (root: RunRoot): string => `Return the complete plan in the field 'plan': its stages in order, each with its number and a title, and in each stage its steps in order, each with an id, its number within the stage, a short label of one line, and its full text in Markdown. Return the whole plan every time, including the parts that did not change. The program writes ${runDir(root)}/plan.json and ${runDir(root)}/plan.md from it; do not write either file.`;
 /** The rule of step identity (G-R1-1), which validatePlan in src/plan.ts enforces and the repair turn repeats. */
@@ -794,8 +796,6 @@ export const REPORT_STEP_SERVER = "interloq";
 export const REPORT_STEP_TOOL = "report_step";
 /** The name under which Claude Code calls the tool, and under which hooks and permissions see it. */
 export const REPORT_STEP_TOOL_NAME = `mcp__${REPORT_STEP_SERVER}__${REPORT_STEP_TOOL}`;
-/** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
-export const MONITOR_TOOL_NAME = "Monitor";
 export const REPORT_STEP_STATUSES = ["started", "done"] as const;
 export const REPORT_STEP_DESCRIPTION = `Report the progress of a step of the plan you are carrying out, which the program records in plan.json in the run's records directory: call it with the step's id and ${REPORT_STEP_STATUSES.map((s) => `'${s}'`).join(" when you begin the step, and ")} when the step is complete and verified.`;
 /** report_step's answers: the step recorded, or an id that is not in the plan (Q3: nothing changes, the run goes on). */
@@ -2385,28 +2385,28 @@ export const BACKGROUND_WAIT_BOUND_MS = (BACKGROUND_HOOK_TIMEOUT_SECONDS - 30) *
 const commandList = (names: readonly string[]): string => names.join("; ");
 /** What Claude Code is told when one wait's bound passes with a background command still running (issue #154). */
 export function stillRunningText(names: readonly string[]): string {
-  return `A command you started in the background is still running: ${commandList(names)}. You may ${READ_AND_SEARCH_ONLY}. When nothing is left to do but wait, end your turn again: ${KEEPS_SESSION_OPEN}.`;
+  return `A command or watch you started is still running: ${commandList(names)}. You may ${READ_AND_SEARCH_ONLY}. When nothing is left to do but wait, end your turn again: ${KEEPS_SESSION_OPEN}.`;
 }
 /** The question of an execution call that the SDK ended while a background command was still running (issue #154). */
 export function backgroundKilledText(names: readonly string[]): string {
-  return `The execution call ended while a command Claude Code had started in the background was still running, so its result is lost: ${commandList(names)}.`;
+  return `The execution call ended while a command or watch Claude Code had started was still running, so its result is lost: ${commandList(names)}.`;
 }
 /** The line said on the page while an execution call waits for its background commands (issue #154). */
 export function backgroundWaitLine(names: readonly string[]): string {
-  return `Waiting for a command Claude Code started in the background: ${commandList(names)}`;
+  return `Waiting for a command or watch Claude Code started: ${commandList(names)}`;
 }
 /** The line said on the page when the background commands an execution call waited for have ended (issue #154). */
 export function backgroundEndedLine(ends: readonly NamedEnd[]): string {
-  return `The background command ended: ${ends.map(({ end, name }) => `${name} ${end.status}`).join("; ")}`;
+  return `The command or watch ended: ${ends.map(({ end, name }) => `${name} ${end.status}`).join("; ")}`;
 }
 /** The line said on the page when one wait's bound passes and the command still runs (issue #154). */
 export function backgroundStillRunningLine(names: readonly string[]): string {
-  return `A command Claude Code started in the background is still running: ${commandList(names)}; Interloq goes on waiting.`;
+  return `A command or watch Claude Code started is still running: ${commandList(names)}; Interloq goes on waiting.`;
 }
 /** The reason given to Claude Code when the wait for its background commands ends (issue #154, decision Q1). */
 export function backgroundEndedText(ends: readonly NamedEnd[]): string {
   const lines = ends.map(({ end, name }) => `- ${name}: ${end.status}; its output is in ${end.outputFile}; ${end.summary.trim() === "" ? "no summary" : `summary: ${end.summary}`}`);
-  return `The background command you started has ended:\n${lines.join("\n")}\nRead the output file, then continue the step and call the tool ${REPORT_STEP_TOOL_NAME} and return the status report as before.`;
+  return `The command or watch you started has ended:\n${lines.join("\n")}\nRead the output file, then continue the step and call the tool ${REPORT_STEP_TOOL_NAME} and return the status report as before.`;
 }
 /** The denial of a status report returned while a background command Claude Code started is still running (issue #154). */
 export const REPORT_WHILE_RUNNING_DENIED = `Interloq did not accept your status report: ${NO_REPORT_WHILE_RUNNING}, since its result would be lost.`;

@@ -1663,3 +1663,31 @@ test("issue #161: after a recorded stop neither hook waits for a watch", async (
   assert.deepEqual(results, [{}, {}]);
   assert.equal(outcome.status, "needs_input");
 });
+
+test("issue #161: the execution prompt names Monitor beside background commands, the hooks' texts share its phrases, and a watch past the bound is answered with them", async () => {
+  const sentence = prompts.BACKGROUND_SUITE_SENTENCE;
+  assert.ok(sentence.includes(prompts.MONITOR_TOOL_NAME), sentence);
+  for (const phrase of [prompts.KEEPS_SESSION_OPEN, prompts.READ_AND_SEARCH_ONLY, prompts.NO_REPORT_WHILE_RUNNING]) assert.ok(sentence.includes(phrase), phrase);
+  assert.match(prompts.NO_REPORT_WHILE_RUNNING, /watch/);
+  assert.ok(prompts.REPORT_WHILE_RUNNING_DENIED.includes(prompts.NO_REPORT_WHILE_RUNNING));
+  for (const text of [prompts.stillRunningText([WATCH_NAME]), prompts.backgroundKilledText([WATCH_NAME]), prompts.backgroundWaitLine([WATCH_NAME]), prompts.backgroundStillRunningLine([WATCH_NAME]), prompts.backgroundEndedText([watchEnd]), prompts.backgroundEndedLine([watchEnd])]) {
+    assert.match(text, /watch/, text);
+    assert.ok(text.includes(WATCH_NAME), text);
+  }
+  assert.ok(prompts.stillRunningText([WATCH_NAME]).includes(prompts.KEEPS_SESSION_OPEN));
+  assert.ok(prompts.stillRunningText([WATCH_NAME]).includes(prompts.READ_AND_SEARCH_ONLY));
+  const executePrompt = prompts.executePrompt(TEST_ROOT, "t", true);
+  assert.ok(executePrompt.includes(sentence));
+  let stop: HookJSONOutput | undefined;
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield* watchBegins();
+    stop = await callStopHook(call.options, [watchTask]);
+    yield watchEnds();
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 100);
+  assert.equal((await run(fake.planner.executing(executePrompt, noReporter))).status, "finished");
+  assert.equal(fake.sdk.calls[0].prompt, executePrompt);
+  assert.ok(reasonOf(stop ?? {}).includes(prompts.KEEPS_SESSION_OPEN));
+});
