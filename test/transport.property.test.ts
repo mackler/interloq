@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { type ClaudeFailure, classifyClaude, NETWORK_CODES, PERMANENT_ASSISTANT_ERRORS, type Rejection } from "../src/transport.ts";
+import { type ClaudeFailure, classifyClaude, NETWORK_CODES, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
 
 // Issue #68 (issue #66 applies): the classification of a failed Claude Code call over arbitrary facts.
 const RUNS = { numRuns: 500, seed: 20261007 };
@@ -111,6 +111,31 @@ test("property: an error result whose text says the prompt is too long, in any c
 test("property: a text without the phrase classifies as no text does, the classification before issue #122", () => {
   fc.assert(
     fc.property(facts, (x) => assert.deepEqual(classifyClaude(x), classifyClaude({ ...x, resultText: null }))),
+    RUNS,
+  );
+});
+
+// Issue #157: processEndOf over the SDK's texts with arbitrary stderr tails, and over arbitrary other texts.
+const signalName = fc.stringMatching(/^SIG[A-Z0-9]{1,8}$/);
+const nonzero = fc.integer({ min: -255, max: 100000 }).filter((n) => n !== 0);
+const tail = fc.oneof(fc.constant(""), fc.string().map((s) => `. stderr: ${s}`));
+
+test("an SDK-shaped ending reads back as that ending", () => {
+  fc.assert(
+    fc.property(signalName, nonzero, tail, (signal, code, t) => {
+      assert.deepEqual(processEndOf(new Error(`Claude Code process terminated by signal ${signal}${t}`)), { kind: "signal", signal });
+      assert.deepEqual(processEndOf(new Error(`Claude Code process exited with code ${code}${t}`)), { kind: "exit", code });
+    }),
+    RUNS,
+  );
+});
+
+test("a text without the SDK's phrases is no ending", () => {
+  fc.assert(
+    fc.property(fc.string(), (s) => {
+      fc.pre(!s.includes("Claude Code process"));
+      assert.equal(processEndOf(new Error(s)), null);
+    }),
     RUNS,
   );
 });

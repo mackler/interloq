@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONTEXT_TOO_LONG_PATTERN, type ClaudeFailure, classifyClaude, classifyCodex, rejectionOf } from "../src/transport.ts";
+import { CONTEXT_TOO_LONG_PATTERN, type ClaudeFailure, classifyClaude, classifyCodex, processEndOf, rejectionOf } from "../src/transport.ts";
 
 const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
 
@@ -134,4 +134,32 @@ test("Claude: an error result saying the prompt is too long is contextTooLong, w
   assert.deepEqual(classifyClaude(f({ resultText: "Prompt is too long" })), { kind: "contextTooLong" });
   assert.match("Prompt is too long", CONTEXT_TOO_LONG_PATTERN);
   assert.deepEqual(classifyClaude(f({ resultText: "API Error: 400 bad request", apiStatus: 400 })), { kind: "permanent" });
+});
+
+// Issue #157: the ending of the Claude Code process, read from the error the Agent SDK throws.
+
+test("processEndOf: the SDK's signal text, with and without a stderr tail", () => {
+  assert.deepEqual(processEndOf(new Error("Claude Code process terminated by signal SIGBUS")), { kind: "signal", signal: "SIGBUS" });
+  assert.deepEqual(processEndOf(new Error("Claude Code process terminated by signal SIGKILL. stderr: out of memory")), { kind: "signal", signal: "SIGKILL" });
+});
+
+test("processEndOf: the SDK's exit text, with and without a stderr tail", () => {
+  assert.deepEqual(processEndOf(new Error("Claude Code process exited with code 1")), { kind: "exit", code: 1 });
+  assert.deepEqual(processEndOf(new Error("Claude Code process exited with code 137. stderr: killed")), { kind: "exit", code: 137 });
+});
+
+test("processEndOf: the own fields the SDK sets, whatever the message", () => {
+  assert.deepEqual(processEndOf(Object.assign(new Error("something else"), { signal: "SIGTERM" })), { kind: "signal", signal: "SIGTERM" });
+  assert.deepEqual(processEndOf(Object.assign(new Error("something else"), { exitCode: 2 })), { kind: "exit", code: 2 });
+});
+
+test("processEndOf: no ending for a zero code, another text or a value that is no error", () => {
+  assert.equal(processEndOf(new Error("Claude Code process exited with code 0")), null);
+  assert.equal(processEndOf(Object.assign(new Error("x"), { exitCode: 0 })), null);
+  assert.equal(processEndOf(Object.assign(new Error("x"), { exitCode: 1.5 })), null);
+  assert.equal(processEndOf(Object.assign(new Error("x"), { signal: "unknown" })), null);
+  assert.equal(processEndOf(new Error("read ECONNRESET")), null);
+  assert.equal(processEndOf("Claude Code process terminated by signal SIGBUS"), null);
+  assert.equal(processEndOf(null), null);
+  assert.equal(processEndOf(42), null);
 });

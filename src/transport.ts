@@ -41,6 +41,44 @@ export const rejectionOf = (info: RateLimitInfo): Rejection | null => {
   return resetsAt !== undefined && Number.isFinite(resetsAt) && resetsAt > 0 ? { kind: "withReset", resetsAtMs: resetsAt * 1000, limitType } : { kind: "withoutReset", limitType };
 };
 
+/**
+ * How the Claude Code process of a call ended abnormally (issue #157): killed by a signal, or exited by itself with a
+ * nonzero code. Never both, so a tagged union.
+ */
+export type ProcessEnd = Readonly<{ kind: "signal"; signal: string }> | Readonly<{ kind: "exit"; code: number }>;
+
+/** The Agent SDK's text for a process killed by a signal, at the start of its error's message. */
+export const PROCESS_SIGNAL_PATTERN = /^Claude Code process terminated by signal (SIG[A-Z0-9]+)/;
+/** The Agent SDK's text for a process that exited with a code, at the start of its error's message. */
+export const PROCESS_EXIT_PATTERN = /^Claude Code process exited with code (-?\d+)\b/;
+
+/** The form of a signal's name; the SDK attaches `signal` only in that form, and "unknown" otherwise. */
+const SIGNAL_NAME = /^SIG[A-Z0-9]+$/;
+
+/**
+ * The ending of the Claude Code process that a thrown value states, or null. Total. The Agent SDK 0.3.283 throws, from
+ * its process transport's `getProcessExitError`, `Error("Claude Code process exited with code N" + tail)` or
+ * `Error("Claude Code process terminated by signal SIGX" + tail)`, the tail ". stderr: …" or empty, and attaches to it
+ * as own properties `errorClass` with `exitCode` (an integer) or `signal` (a name of the form SIGX, else "unknown").
+ * The own fields are read first, then the message; a zero code, a non-integer code and any other text are no ending.
+ * test/processEndSeam.test.ts reads both texts and both fields from the SDK's source.
+ */
+export const processEndOf = (thrown: unknown): ProcessEnd | null => {
+  if (typeof thrown !== "object" || thrown === null) return null;
+  const own = (key: string): unknown => (Object.hasOwn(thrown, key) ? (thrown as Record<string, unknown>)[key] : undefined);
+  const exitCode = own("exitCode");
+  if (typeof exitCode === "number" && Number.isInteger(exitCode) && exitCode !== 0) return { kind: "exit", code: exitCode };
+  const signal = own("signal");
+  if (typeof signal === "string" && SIGNAL_NAME.test(signal)) return { kind: "signal", signal };
+  const message = (thrown as { message?: unknown }).message;
+  if (typeof message !== "string") return null;
+  const bySignal = PROCESS_SIGNAL_PATTERN.exec(message);
+  if (bySignal !== null && bySignal[1] !== undefined) return { kind: "signal", signal: bySignal[1] };
+  const byExit = PROCESS_EXIT_PATTERN.exec(message);
+  const code = byExit === null ? 0 : Number(byExit[1]);
+  return Number.isInteger(code) && code !== 0 ? { kind: "exit", code } : null;
+};
+
 /** What a failed Claude Code call is (issue #68): permanent, a transport fault, or a usage limit with a stated reset. */
 export type FailureKind =
   | Readonly<{ kind: "permanent" }>
