@@ -425,3 +425,26 @@ test("onRequest: an agreed question that has its explanations offers no request"
   assert.equal(probe.planner.termsPrompts.length, 1);
   assert.deepEqual(probe.ui.asked.map((a) => prompts.offersOf(a).terms).slice(0, 3), [true, false, false]);
 });
+
+// Issue #156: in the terms, a disagreement Claude Code marks as about what the task requires and Codex raises again is
+// put to the developer, as in the question list.
+test("issue #156: a marked rejection of the terms raised again is put to the developer", async () => {
+  const objection = "The explanation of zod must say what the task requires of it.";
+  const reading = "The task leaves open whether zod is a dependency or an example.";
+  const markedResponse = { ...respond([]), dispositions: respond([["T-R1-1", "rejected", true]]).dispositions.map((d) => ({ ...d, rationale: reading })), ...terms("A library.") };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", "1", ""],
+    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    terms: [{ output: terms("A library.") }, { output: markedResponse }, { output: { ...respond([["T-R1-1", "accepted"]]), ...terms() } }],
+    termsReviews: [{ issues: [issue("T-R1-1", objection)] }, { issues: [issue("T-R1-1", objection)] }, { issues: [] }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runRefinement(layer);
+  const pauses = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "pause");
+  assert.equal(pauses.length, 1, JSON.stringify(pauses.map((x) => x.origin)));
+  assert.deepEqual(pauses[0]!.origin, { kind: "pause", heading: "Terms review", pause: "reraised", id: "T-R1-1" });
+  assert.equal(piecesText(pauses[0]!.question), prompts.TASK_DISPUTE_QUESTION);
+  const descriptions = pauses[0]!.options.map((o) => piecesText(o.description)).join("\n");
+  for (const part of [objection, reading]) assert.ok(descriptions.includes(part), part);
+});

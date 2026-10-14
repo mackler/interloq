@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
 import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
-import { piecesText } from "../src/pieces.ts";
+import { blocksText, piecesText } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 type InterviewTurn = typeof S.InterviewTurn.Type;
@@ -441,4 +441,84 @@ test("issue #112: an issue of the question list raised again after a partial acc
   assert.ok(probe.ui.said.some((line) => /issue Q-R1-1, raised again/.test(line)));
   assert.ok(!(await probe.loadLog("questions")).some((e) => e.action === "decided_by_user"));
   assert.ok(probe.reviewer.prompts.some((p) => p === prompts.questionReviewPrompt(TEST_ROOT, 3)));
+});
+
+// Issue #156, the regression of the task: Codex asks for a question to be dropped because the task text answers it;
+// Claude Code rejects it with the mark, since the text allows another reading; Codex raises it again. The developer is
+// asked which reading the work should follow, with both readings as his options.
+const DROP_Q1 = "Drop Q1: the task text already answers it, so the plan should do the removal.";
+const OTHER_READING = "'Decide whether the app offers' can mean find out what the app does or choose what it should do; the task does not settle which.";
+const markedRejection = (id: string, rationale: string, mark = true) => ({ ...respond([]), dispositions: respond([[id, "rejected", mark]]).dispositions.map((d) => ({ ...d, rationale })) });
+const pausesOf = (ui: Parameters<typeof presentedQuestions>[0]) => presentedQuestions(ui).filter((x) => x.origin.kind === "pause");
+
+test("issue #156: a marked rejection of a request to drop a question, raised again, reaches the developer with both readings", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1"],
+    steps: [
+      { output: { questions: [q("Q1")] } },
+      { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
+      { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [] } },
+    ],
+    reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runRefinement(layer);
+  const [pause] = pausesOf(probe.ui);
+  assert.ok(pause !== undefined, JSON.stringify(presentedSubjects(probe.ui)));
+  assert.deepEqual(pause.origin, { kind: "pause", heading: "Question review", pause: "reraised", id: "Q-R1-1" });
+  assert.equal(piecesText(pause.question), prompts.TASK_DISPUTE_QUESTION);
+  const descriptions = pause.options.map((o) => piecesText(o.description)).join("\n");
+  assert.ok(descriptions.includes(DROP_Q1), descriptions);
+  assert.ok(descriptions.includes(OTHER_READING), descriptions);
+  assert.ok(blocksText(pause.attached?.blocks ?? []).join("\n").includes(prompts.TASK_DISPUTE_FACT));
+  const conversation = read(probe.dir, "conversation.md");
+  assert.ok(!new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\*[^\\n]*Q-R1-1`).test(conversation), conversation);
+  assert.match(read(probe.dir, "user-decisions.md"), /Q-R1-1/);
+});
+
+test("issue #156: a marked rejection that Codex does not raise again asks nothing", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", ""],
+    steps: [
+      { output: { questions: [q("Q1")] } },
+      { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
+      { output: turn("Q1: A or B?", []) },
+      { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
+    ],
+    reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runRefinement(layer);
+  assert.deepEqual(pausesOf(probe.ui), []);
+  assert.ok(!read(probe.dir, "conversation.md").includes(prompts.WORDING_DISPUTE_HEADING));
+});
+
+// P1-R1-3: a reversal settled while unmarked is asked when the corrective turn returns it rejected with the mark.
+test("issue #156: a reversal settled unmarked is put to the developer when the corrective turn marks it", async () => {
+  const amended = questionEntry("Q1", "question Q1, amended?", [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
+  const reversal = (action: "partially_accepted" | "rejected", mark: boolean) => ({
+    ...respond([]),
+    dispositions: respond([["Q-R2-1", action, mark]]).dispositions.map((d) => ({ ...d, reverses: "Q-R1-1", rationale: OTHER_READING })),
+    questions: [amended],
+  });
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["1", "1", ""],
+    steps: [
+      { output: { questions: [q("Q1")] } },
+      { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [amended] } },
+      { output: reversal("partially_accepted", false) },
+      { output: reversal("rejected", true) },
+      { output: { questions: [amended] } },
+      { output: turn("Q1: A or B?", []) },
+      { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
+    ],
+    reviews: [{ issues: [issue("Q-R1-1", "Q1 is unclear.")] }, { issues: [issue("Q-R2-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  await runRefinement(layer);
+  const conversation = read(probe.dir, "conversation.md");
+  assert.match(conversation, new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\* Question review: issue Q-R2-1 against the accepted correction for Q-R1-1`));
+  const reversals = pausesOf(probe.ui).filter((x) => x.origin.kind === "pause" && x.origin.pause === "reversal");
+  assert.equal(reversals.length, 1, JSON.stringify(presentedSubjects(probe.ui)));
+  assert.equal(piecesText(reversals[0]!.question), prompts.TASK_DISPUTE_QUESTION);
 });
