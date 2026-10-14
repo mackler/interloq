@@ -15,6 +15,8 @@ const Disposition = Schema.Struct({
   duplicate_of: Str,
   reverses: Str,
 });
+// Issue #156: Claude Code's mark, in the question list's and the terms' responses only.
+const MarkedDisposition = Schema.Struct({ ...Disposition.fields, task_dispute: Schema.Boolean });
 const SelfCorrection = Schema.Struct({ id: Str, new_action: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Str });
 // Issue #36 (30 Sep 2026): a question's text is blocks and pieces, and its explanations a list the pieces refer to.
 const Piece = Schema.Struct({ text: Str, ref: Str, code: Schema.Boolean });
@@ -29,6 +31,7 @@ const Blocks = Schema.Array(Block);
 const PieceOption = Schema.Struct({ label: Pieces, description: Pieces });
 const UserQuestion = Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) });
 const plannerFields = { dispositions: Schema.Array(Disposition), self_corrections: Schema.Array(SelfCorrection), reviewer_feedback: Str, questions_for_user: Schema.Array(UserQuestion) };
+const markedFields = { ...plannerFields, dispositions: Schema.Array(MarkedDisposition) };
 const QuestionEntry = Schema.Struct({
   id: Str,
   context: Blocks,
@@ -80,7 +83,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   planWrite: Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) }),
   execReport: Schema.Struct({ status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]), summary: Str, question: Str, remaining_work: Str }),
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
-  questionListResponse: Schema.Struct({ ...plannerFields, questions: Schema.Array(QuestionEntry) }),
+  questionListResponse: Schema.Struct({ ...markedFields, questions: Schema.Array(QuestionEntry) }),
   interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
   decisionAnalysis: DecisionAnalysis,
   decisionResponse: Schema.Struct({ ...plannerFields, analysis: DecisionAnalysis }),
@@ -92,7 +95,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   questionContext: Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),
   // S17: the explanations of the agreed questions' terms, each question divided into pieces (issue #36, decision Q1).
   termsWrite: Schema.Struct({ entries: Schema.Array(TermsEntry) }),
-  termsResponse: Schema.Struct({ ...plannerFields, entries: Schema.Array(TermsEntry) }),
+  termsResponse: Schema.Struct({ ...markedFields, entries: Schema.Array(TermsEntry) }),
 };
 
 export type Json = Record<string, any>;

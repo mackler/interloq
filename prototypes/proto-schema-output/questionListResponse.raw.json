@@ -27,6 +27,9 @@
           },
           "reverses": {
             "type": "string"
+          },
+          "task_dispute": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -34,7 +37,8 @@
           "action",
           "rationale",
           "duplicate_of",
-          "reverses"
+          "reverses",
+          "task_dispute"
         ],
         "additionalProperties": false
       }

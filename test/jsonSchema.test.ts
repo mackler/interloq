@@ -47,6 +47,17 @@ const withContext = <T extends { properties: { questions: { items: { properties:
     },
   },
 });
+/** Issue #156: the question list's dispositions carry Claude Code's mark, after the legacy fields. */
+const withMark = <T extends { properties: { dispositions: { items: { properties: object } } } }>(schema: T): T => ({
+  ...schema,
+  properties: {
+    ...schema.properties,
+    dispositions: {
+      ...schema.properties.dispositions,
+      items: { ...schema.properties.dispositions.items, properties: { ...schema.properties.dispositions.items.properties, [S.TASK_DISPUTE_FIELD]: { type: "boolean" } } },
+    },
+  },
+});
 const withQuestions = <T extends { properties: object }>(schema: T): T => ({ ...schema, properties: { ...schema.properties, questions_for_user: userQuestions } });
 const agentSchemas = {
   review: { effect: S.Review, legacy: legacy.reviewSchema },
@@ -58,7 +69,7 @@ const agentSchemas = {
     legacy: { ...legacy.execReportSchema, properties: { ...legacy.execReportSchema.properties, status: { type: "string", enum: ["finished", "continuing", "needs_input", "blocked"] } } },
   },
   questionList: { effect: S.QuestionList, legacy: withContext(legacy.questionListSchema) },
-  questionListResponse: { effect: S.QuestionListResponse, legacy: withContext(withQuestions(legacy.questionListResponseSchema)) },
+  questionListResponse: { effect: S.QuestionListResponse, legacy: withMark(withContext(withQuestions(legacy.questionListResponseSchema))) },
   // Issue #21 (Q6 follow-up): the interview turn has asked_ids beyond the frozen legacy schema, which stays frozen.
   interviewTurn: {
     effect: S.InterviewTurn,
@@ -216,7 +227,7 @@ test("the plan's agent schemas are total and closed", () => {
 // Issue #6 (Q1): the files of the plan's schemas in prototypes/proto-schema-output/ are what the program sends; they
 // are unproven until the developer's run of prototypes/proto-schema.ts (CLAUDE.md, "Not yet known").
 test("the plan's schema files in prototypes/proto-schema-output/ are what the program sends", () => {
-  for (const [name, schema] of [["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse]] as const) {
+  for (const [name, schema] of [["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse], ["questionListResponse", S.QuestionListResponse]] as const) {
     assert.deepEqual(rawJsonSchema(schema), proven(name, "raw"), `${name} raw`);
     assert.deepEqual(strict(rawJsonSchema(schema)), proven(name, "strict"), `${name} strict`);
   }
