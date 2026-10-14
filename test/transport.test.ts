@@ -148,6 +148,13 @@ test("processEndOf: the SDK's exit text, with and without a stderr tail", () => 
   assert.deepEqual(processEndOf(new Error("Claude Code process exited with code 137. stderr: killed")), { kind: "exit", code: 137 });
 });
 
+test("processEndOf: a value followed by neither the end nor the SDK's stderr tail is no ending (W1-R1-1, W1-S1-1)", () => {
+  assert.equal(processEndOf(new Error("Claude Code process exited with code 1.5")), null);
+  assert.equal(processEndOf(new Error("Claude Code process exited with code 1x")), null);
+  assert.equal(processEndOf(new Error("Claude Code process terminated by signal SIGBUSx")), null);
+  assert.equal(processEndOf(new Error("Claude Code process terminated by signal SIGBUS1.5")), null);
+});
+
 test("processEndOf: the own fields the SDK sets, whatever the message", () => {
   assert.deepEqual(processEndOf(Object.assign(new Error("something else"), { signal: "SIGTERM" })), { kind: "signal", signal: "SIGTERM" });
   assert.deepEqual(processEndOf(Object.assign(new Error("something else"), { exitCode: 2 })), { kind: "exit", code: 2 });

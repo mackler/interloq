@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
-import { processEndOf } from "../src/transport.ts";
+import { PROCESS_STDERR_TAIL, processEndOf } from "../src/transport.ts";
 
 // Issue #157: the seam between the Agent SDK's error for a Claude Code process that ended abnormally and what
 // processEndOf reads. The SDK's own source (its entry, sdk.mjs) is read, so an upgrade that rewords the texts or drops the fields fails here.
@@ -15,16 +15,27 @@ const prefix = (phrase: string): string => {
   return m[1] ?? "";
 };
 
+// The stderr tail, as the SDK's formatStderrTail builds it: the literal before the trimmed stderr text, or nothing.
+const tailPrefix = ((): string => {
+  const m = source.match(/formatStderrTail\(\)\{[^}]*\?`([^`$]*)\$\{/);
+  assert.ok(m !== null, "the SDK no longer builds its stderr tail as a literal before the stderr text");
+  return m[1] ?? "";
+})();
+
+test("the SDK's stderr tail is the one processEndOf accepts after the value", () => {
+  assert.equal(tailPrefix, PROCESS_STDERR_TAIL);
+});
+
 test("the SDK's exit text reads back as the exit code", () => {
   const p = prefix("Claude Code process exited with code ");
   assert.deepEqual(processEndOf(new Error(`${p}3`)), { kind: "exit", code: 3 });
-  assert.deepEqual(processEndOf(new Error(`${p}3. stderr: boom`)), { kind: "exit", code: 3 });
+  assert.deepEqual(processEndOf(new Error(`${p}3${tailPrefix}boom`)), { kind: "exit", code: 3 });
 });
 
 test("the SDK's signal text reads back as the signal", () => {
   const p = prefix("Claude Code process terminated by signal ");
   assert.deepEqual(processEndOf(new Error(`${p}SIGBUS`)), { kind: "signal", signal: "SIGBUS" });
-  assert.deepEqual(processEndOf(new Error(`${p}SIGBUS. stderr: bus error`)), { kind: "signal", signal: "SIGBUS" });
+  assert.deepEqual(processEndOf(new Error(`${p}SIGBUS${tailPrefix}bus error`)), { kind: "signal", signal: "SIGBUS" });
 });
 
 test("the own fields the SDK attaches read back as the ending", () => {

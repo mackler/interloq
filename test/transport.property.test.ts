@@ -133,6 +133,24 @@ test("an SDK-shaped ending reads back as that ending", () => {
   );
 });
 
+// W1-R1-1, W1-S1-1: a suffix whose first character cannot extend the value (P2-R1-1), and which is not the SDK's
+// stderr tail, leaves the message no ending.
+const suffixAfter = (valueClass: RegExp): fc.Arbitrary<string> =>
+  fc
+    .tuple(fc.constantFrom(..."._ x:-abcz"), fc.string())
+    .map(([first, rest]) => first + rest)
+    .filter((s) => !valueClass.test(s.charAt(0)) && !s.startsWith(". stderr: "));
+
+test("an SDK phrase whose value is followed by neither the end nor the stderr tail is no ending", () => {
+  fc.assert(
+    fc.property(signalName, nonzero, suffixAfter(/[A-Z0-9]/), suffixAfter(/[0-9]/), (signal, code, signalSuffix, exitSuffix) => {
+      assert.equal(processEndOf(new Error(`Claude Code process terminated by signal ${signal}${signalSuffix}`)), null);
+      assert.equal(processEndOf(new Error(`Claude Code process exited with code ${code}${exitSuffix}`)), null);
+    }),
+    RUNS,
+  );
+});
+
 test("a text without the SDK's phrases is no ending", () => {
   fc.assert(
     fc.property(fc.string(), (s) => {

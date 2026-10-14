@@ -52,10 +52,16 @@ export const rejectionOf = (info: RateLimitInfo): Rejection | null => {
  */
 export type ProcessEnd = Readonly<{ kind: "signal"; signal: string }> | Readonly<{ kind: "exit"; code: number }>;
 
-/** The Agent SDK's text for a process killed by a signal, at the start of its error's message. */
-export const PROCESS_SIGNAL_PATTERN = /^Claude Code process terminated by signal (SIG[A-Z0-9]+)/;
-/** The Agent SDK's text for a process that exited with a code, at the start of its error's message. */
-export const PROCESS_EXIT_PATTERN = /^Claude Code process exited with code (-?\d+)\b/;
+/** The start of the stderr tail the Agent SDK may append after the value (its `formatStderrTail`). */
+export const PROCESS_STDERR_TAIL = ". stderr: ";
+
+/** What may follow the value in the SDK's text: the end of the message or the stderr tail (W1-R1-1, W1-S1-1). */
+const VALUE_END = `(?=$|${PROCESS_STDERR_TAIL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`;
+
+/** The Agent SDK's text for a process killed by a signal: the whole message, or its start before the stderr tail. */
+export const PROCESS_SIGNAL_PATTERN = new RegExp(`^Claude Code process terminated by signal (SIG[A-Z0-9]+)${VALUE_END}`);
+/** The Agent SDK's text for a process that exited with a code: the whole message, or its start before the stderr tail. */
+export const PROCESS_EXIT_PATTERN = new RegExp(`^Claude Code process exited with code (-?\\d+)${VALUE_END}`);
 
 /** The form of a signal's name; the SDK attaches `signal` only in that form, and "unknown" otherwise. */
 const SIGNAL_NAME = /^SIG[A-Z0-9]+$/;
@@ -65,7 +71,8 @@ const SIGNAL_NAME = /^SIG[A-Z0-9]+$/;
  * its process transport's `getProcessExitError`, `Error("Claude Code process exited with code N" + tail)` or
  * `Error("Claude Code process terminated by signal SIGX" + tail)`, the tail ". stderr: …" or empty, and attaches to it
  * as own properties `errorClass` with `exitCode` (an integer) or `signal` (a name of the form SIGX, else "unknown").
- * The own fields are read first, then the message; a zero code, a non-integer code and any other text are no ending.
+ * The own fields are read first, then the message, in which the value must be followed by the end of the message or
+ * the SDK's stderr tail (`PROCESS_STDERR_TAIL`); a zero code, a non-integer code and any other text are no ending.
  * test/processEndSeam.test.ts reads both texts and both fields from the SDK's source.
  */
 export const processEndOf = (thrown: unknown): ProcessEnd | null => {
