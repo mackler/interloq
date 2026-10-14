@@ -37,7 +37,7 @@ export type Wiring = Readonly<{
   tracker: (config: Config) => Result.Result<Layer.Layer<Tracker>, NoTracker | TrackerCredentialMissing>;
   /** The format of a decision analysis, read before the run (D7); by default docs/decision-making.md of this repository. */
   decisionFormat?: string;
-  /** The runner of the project's whole suite after a converged work review (issue #162; live: suiteRunner of src/suiteExec.ts). */
+  /** The runner of the project's whole suite after the review of the work finds nothing left to correct (issue #162; live: suiteRunner of src/suiteExec.ts). */
   suite: SuiteRunnerShape;
 }>;
 

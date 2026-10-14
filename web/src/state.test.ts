@@ -2025,7 +2025,7 @@ describe("an analysis across the request for terms", () => {
   });
 });
 
-// Issue #162: the whole suite Interloq runs after a converged work review is a phase of the timeline, numbered by the
+// Issue #162: the whole suite Interloq runs after the review of the work finds nothing left to correct is a phase of the timeline, numbered by the
 // run's suite runs, with its result.
 describe("the Full test suite phase (issue #162)", () => {
   const begin = (phase: Phase) => notified({ _tag: "PhaseBegan", phase });

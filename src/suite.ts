@@ -1,4 +1,4 @@
-// Issue #162 (requirements G-R1-1, F1): the whole suite that Interloq runs after a converged work review, as data (pure).
+// Issue #162 (requirements G-R1-1, F1): the whole suite that Interloq runs after the review of the work finds nothing left to correct, as data (pure).
 // The runner is the edge src/suiteExec.ts; the port is `SuiteRunner` in src/services.ts.
 
 /** Why a suite run failed: its exit code, the signal that ended it, the bound it exceeded, or the shell not starting. */

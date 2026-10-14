@@ -1,4 +1,4 @@
-// Issue #162 (requirements G-R1-1, F1): after a converged work review an implementation run runs the project's whole
+// Issue #162 (requirements G-R1-1, F1): after the review of the work finds nothing left to correct an implementation run runs the project's whole
 // suite; a failure is corrected like an accepted work issue (a revision, its review, an execution, a work review) and
 // the suite runs again, without limit; a project with no suite command finishes after the work review, as before.
 import assert from "node:assert/strict";

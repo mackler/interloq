@@ -433,7 +433,7 @@ export const Config = Schema.Struct({
    * stepChecksOf decodes it only when an implementation run starts, so a malformed value never refuses a refinement run.
    */
   checkCommands: Schema.Unknown,
-  /** Issue #162: the command Interloq runs as the whole suite after a converged work review, or null. Decoded like checkCommands. */
+  /** Issue #162: the command Interloq runs as the whole suite after the review of the work finds nothing left to correct, or null. Decoded like checkCommands. */
   suiteCommand: Schema.Unknown,
 });
 

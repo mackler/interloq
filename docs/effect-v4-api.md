@@ -175,6 +175,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Schema.Struct.Fields` (read 26 Sep, web GUI stage 3.1) | 2680 | the type of a struct's field record; the protocol's `tagged`/`typed` helpers take `F extends Schema.Struct.Fields` and spread it after the tag |
 | `Schema.String` / `Number` / `Boolean` / `Unknown` | 2454 / 2520 / 2541 / 2407 | constants |
 | `Schema.Finite` / `Int` | 5619 / 5876 | Use `Finite` for numbers in agent schemas: `Number` generates `anyOf [number, "Infinity"/"-Infinity"/"NaN"]` (observed in a probe). |
+| `Schema.Unknown` | 2407 (read 14 Oct 2026, issue #162) | `Unknown`, a schema that accepts any value as `unknown`. `Config.checkCommands` and `Config.suiteCommand` of src/schema.ts hold the two settings undecoded, so a config file decodes whatever they contain; `stepChecksOf` decodes them only when an implementation run starts |
 | `Schema.Literal` / `Literals` | 2140 / 4003 | `Literals(["a", "b"])` generates `{type: "string", enum: [...]}` (observed) |
 | `Schema.suspend` (read 28 Sep 2026, decision support step 1.2) | 4104 | `suspend(() => schema)`: a recursive schema; `toJsonSchemaDocument` generates a `$defs` definition that refers to itself (observed; `prototypes/proto-recursive-schema.ts`). The recursive `Argument` of `src/schema.ts` annotates the thunk's result as `Schema.Codec<Argument>` |
 | `Schema.Codec` (read 28 Sep 2026) | 816 | `interface Codec<T, E = T, RD = never, RE = never>`: the type of a recursive schema's declaration (`const Argument: Schema.Codec<Argument> = …`) |

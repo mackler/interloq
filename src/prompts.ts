@@ -1545,7 +1545,7 @@ export function suiteFailedLine(label: string, command: string, reason: SuiteFai
 export function suiteResultText(outcome: SuiteOutcome): string {
   return outcome === "passed" ? "Passed" : "Failed";
 }
-/** Issue #162: the name of the phase in which Interloq runs the whole suite after a converged work review. */
+/** Issue #162: the name of the phase in which Interloq runs the whole suite after the review of the work finds nothing left to correct. */
 export const FULL_SUITE_PHASE = "Full test suite";
 /** The purpose of an agent call as the activity line names it: the events keep the program's words (issues #14, #21). */
 export function purposeLabel(purpose: string): string {

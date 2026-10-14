@@ -107,7 +107,7 @@ export interface TrackerShape {
 export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-review/Tracker") {}
 
 /**
- * Issue #162 (requirements G-R1-1, F1): the runner of the project's whole suite after a converged work review. A port
+ * Issue #162 (requirements G-R1-1, F1): the runner of the project's whole suite after the review of the work finds nothing left to correct. A port
  * beside the services, not one of them, as Tracker is not: the decision loops and the review loop never use it. Every
  * failure of the command is a Failed value; the runner itself never fails.
  */

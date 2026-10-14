@@ -9,7 +9,7 @@ import { piecesText } from "./pieces.ts";
 import type { RunMode } from "./runMode.ts";
 
 /** A phase of the run as the progress display names it. */
-/** The kinds of a numbered phase; `suite` is the whole suite Interloq runs after a converged work review (issue #162). */
+/** The kinds of a numbered phase; `suite` is the whole suite Interloq runs after the review of the work finds nothing left to correct (issue #162). */
 export const NUMBERED_PHASE_KINDS = ["planning", "execution", "work", "suite"] as const;
 export type NumberedPhaseKind = (typeof NUMBERED_PHASE_KINDS)[number];
 export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
