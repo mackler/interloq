@@ -8,7 +8,7 @@ import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe,
 import { blankItemText, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
+import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "./services.ts";
 import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
 import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
@@ -37,6 +37,8 @@ export type Wiring = Readonly<{
   tracker: (config: Config) => Result.Result<Layer.Layer<Tracker>, NoTracker | TrackerCredentialMissing>;
   /** The format of a decision analysis, read before the run (D7); by default docs/decision-making.md of this repository. */
   decisionFormat?: string;
+  /** The runner of the project's whole suite after a converged work review (issue #162; live: suiteRunner of src/suiteExec.ts). */
+  suite: SuiteRunnerShape;
 }>;
 
 /** The task of a run: a text with at least one character other than whitespace (issue #88). */
@@ -288,7 +290,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
         return yield* halted(describe(error.value), null, yield* store(planned, []));
       }
       const records = yield* store(allocated.value, config.ignorePaths);
-      const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk));
+      const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite));
       // Built once, so that the planner whose session id is printed is the one the run used.
       // Decision support (D3): the Decider runs its loops over the same services as the run.
       const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task, decisionFormat), Layer.provideMerge(wiring.agents, base)));

@@ -8,7 +8,8 @@ import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { RunMode } from "./runMode.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
-import type { Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
+import type { SuiteResult } from "./suite.ts";
+import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
@@ -104,6 +105,16 @@ export interface TrackerShape {
   setState(id: ItemId, state: ItemState): Effect.Effect<void, TrackerError>;
 }
 export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-review/Tracker") {}
+
+/**
+ * Issue #162 (requirements G-R1-1, F1): the runner of the project's whole suite after a converged work review. A port
+ * beside the services, not one of them, as Tracker is not: the decision loops and the review loop never use it. Every
+ * failure of the command is a Failed value; the runner itself never fails.
+ */
+export interface SuiteRunnerShape {
+  run(command: CommandLine, cwd: string): Effect.Effect<SuiteResult>;
+}
+export class SuiteRunner extends Context.Service<SuiteRunner, SuiteRunnerShape>()("plan-review/SuiteRunner") {}
 
 /** An absolute path inside the project (finding 21): the root the change detection watches. */
 export type ProjectPath = Brand.Branded<string, "ProjectPath">;

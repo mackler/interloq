@@ -31,7 +31,8 @@ import * as S from "../src/schema.ts";
 import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { StartRequest } from "../src/protocol.ts";
-import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, Tracker, Ui, type UiShape } from "../src/services.ts";
+import type { SuiteResult } from "../src/suite.ts";
+import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
 import { type DeciderDeps, deciderLayer } from "../src/decision.ts";
@@ -541,8 +542,27 @@ export const finished: ExecOutcome = { status: "finished", summary: "done", ques
 /** The execution a work response is given (issue #117): a finished report and a plan text of its own. */
 export const workExecution: WorkExecution = { outcome: finished, plan: "# Plan\n\n1. S1 (done): the scripted step\n" };
 
+/**
+ * Issue #162: the runner of the whole suite, scripted: each run takes the next result of its queue (Passed when it is
+ * empty), and "hang" never completes, so a test can stop the run during it. Every run's command and directory is kept.
+ */
+export class ScriptedSuite implements SuiteRunnerShape {
+  readonly runs: Array<Readonly<{ command: string; cwd: string }>> = [];
+  readonly results: Array<SuiteResult | "hang">;
+  constructor(results: ReadonlyArray<SuiteResult | "hang">) {
+    this.results = [...results];
+  }
+  run(command: S.CommandLine, cwd: string): Effect.Effect<SuiteResult> {
+    return Effect.suspend(() => {
+      this.runs.push({ command, cwd });
+      const next = this.results.shift() ?? { _tag: "Passed", output: "all passed\n", ms: 1 };
+      return next === "hang" ? Effect.never : Effect.succeed(next);
+    });
+  }
+}
+
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked
@@ -574,6 +594,8 @@ export type Probe = {
   config: Config;
   /** The project's tracker of testLayer (issue #120). */
   tracker: FakeTracker;
+  /** The whole suite's runner of testLayer (issue #162). */
+  suite: ScriptedSuite;
 };
 
 /** The developer's format of the representation (docs/decision-making.md), as the program reads it. */
@@ -586,7 +608,7 @@ export const noDecider: DeciderShape = { at: () => noDecider, decide: () => Effe
 export const withDecider = (layer: Layer.Layer<DeciderDeps>, task = "task"): Layer.Layer<Services> => Layer.provideMerge(deciderLayer(task, DECISION_FORMAT_TEXT), layer);
 
 /** The layer of the six services with scripted agents and Ui over a temporary repository. */
-export function testLayer(repo: string, options: TestOptions = {}): { layer: Layer.Layer<Services | Tracker>; probe: Probe } {
+export function testLayer(repo: string, options: TestOptions = {}): { layer: Layer.Layer<Services | Tracker | SuiteRunner>; probe: Probe } {
   const paths = pathsOf(repo);
   const config: Config = { ...defaultConfig, ...options.config };
   const ui = new ScriptedUi(options.answers ?? [], options.confirmEnds ?? false);
@@ -599,11 +621,12 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   const store = Layer.effect(Store, makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.map(wrap))).pipe(Layer.provide(options.platform ?? platformLayer));
   // Issue #120: the project's tracker, a fake holding the scripted item (unrefined, as a refinement run finds it).
   const tracker = options.tracker ?? fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
-  const layer = Layer.merge(withDecider(Layer.mergeAll(store, Layer.succeed(Ui, ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: options.mode ?? "implementation" }))), Layer.succeed(Tracker, tracker.tracker));
+  const suite = new ScriptedSuite(options.suite ?? []);
+  const layer = Layer.merge(withDecider(Layer.mergeAll(store, Layer.succeed(Ui, ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: options.mode ?? "implementation" }))), Layer.merge(Layer.succeed(Tracker, tracker.tracker), Layer.succeed(SuiteRunner, suite)));
   const dir = paths.records();
   const loadLog = (subject: SubjectId = { plan: 1 }): Promise<readonly LogEntry[]> =>
     Effect.runPromise(makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.flatMap((s) => s.loadLog(subject)), Effect.provide(platformLayer)));
-  return { layer, probe: { dir, plan: planOf(paths), requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config, tracker } };
+  return { layer, probe: { dir, plan: planOf(paths), requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config, tracker, suite } };
 }
 
 /** Runs the procedure against a layer and returns the number of execution phases. */
@@ -638,7 +661,7 @@ export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag
 }
 
 /** What a program test inspects: the scripted implementations, the paths and the tracker. */
-export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string; tracker: FakeTracker | null };
+export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string; tracker: FakeTracker | null; suite: ScriptedSuite };
 
 /** The item of every scripted run (issue #120): its title is the scripted task and its body is empty, so taskTextOf gives scriptedTask. */
 export const scriptedItem: FakeItem = { id: Result.getOrThrow(itemIdOf("1")), title: "task", body: "", state: "refined", open: true, url: Option.none() };
@@ -691,6 +714,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   const tracker = options.tracker === undefined ? fakeTrackerOf([scriptedItem]) : options.tracker;
+  const suite = new ScriptedSuite(options.suite ?? []);
   const wiring: Wiring = {
     ui: Effect.succeed(ui),
     platform: platformLayer,
@@ -710,6 +734,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
     ),
     sharedConfig: shared,
     tracker: () => (tracker === null ? Result.fail(new NoTracker()) : Result.succeed(Layer.succeed(Tracker, tracker.tracker))),
+    suite,
   };
   return {
     wiring,
@@ -719,6 +744,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
       reviewer,
       project: paths.project,
       tracker,
+      suite,
       /** The run's records directory once the run's store exists; plan-review/ before it. */
       get dir() {
         return records ?? dir;
