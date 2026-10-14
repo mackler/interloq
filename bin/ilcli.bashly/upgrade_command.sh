@@ -20,11 +20,11 @@ fi
 
 ## Issue #104: before the fetch, so that a refusal leaves the copy as it was; refusing after the fast-forward but
 ## before npm ci would leave it at a commit whose dependencies are not installed.
-force_hint="bin/ilcli upgrade --force replaces the copy anyway."
+force_hint="bin/ilcli upgrade --force skips the check and replaces the copy anyway."
 if [[ -n ${args[--force]:-} ]]; then
   note upgrade "--force: the check for processes using the installed copy was skipped."
 elif ! users="$(installed_copy_users)"; then
-  refuse upgrade "could not check whether the installed copy is in use: $users. Nothing was changed. bin/ilcli upgrade --force skips the check."
+  refuse upgrade "could not check whether the installed copy is in use: $users. Nothing was changed. $force_hint"
 elif [[ -n $users ]]; then
   refuse upgrade "processes in running containers run files under /opt/interloq, the installed copy ($root). Replacing those files can kill a running agent at any later point until its run ends, not only during the update. Nothing was changed. $force_hint" "$users"
 fi

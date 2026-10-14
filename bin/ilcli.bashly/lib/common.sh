@@ -102,21 +102,28 @@ is_launcher() {
   [[ $program == docker || $program == docker-compose || $program == */docker || $program == */docker-compose ]]
 }
 
+# exit_text <status> <stderr file>: a failed command's status and the first line of its stderr, as one phrase.
+exit_text() {
+  local err
+  err=$(head -n 1 "$2")
+  printf '(exit status %s)%s' "$1" "${err:+: $err}"
+}
+
 # search_container <id>: the lines of the processes in container <id> whose command line names the installed
 # copy, launchers dropped, on stdout. Fails with the reason on stdout when the search cannot be made: pgrep exits
 # 1 with nothing on stderr for no match, while docker exec also exits 1, with a message, for a container that is
 # gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none.
 search_container() {
-  local errfile rc=0 out err line
+  local errfile rc=0 out reason="" line
   errfile=$(mktemp)
   out=$(docker exec "$1" pgrep -a -f "$INSTALLED_COPY_PATTERN" 2>"$errfile") || rc=$?
-  err=$(head -n 1 "$errfile")
+  if [[ $rc -ne 0 && ! ($rc -eq 1 && ! -s $errfile) ]]; then reason="the search failed $(exit_text "$rc" "$errfile")"; fi
   rm -f "$errfile"
-  if [[ $rc -eq 1 && -z $err ]]; then return 0; fi
-  if [[ $rc -ne 0 ]]; then
-    printf 'the search failed (exit status %s)%s\n' "$rc" "${err:+: $err}"
+  if [[ -n $reason ]]; then
+    printf '%s\n' "$reason"
     return 1
   fi
+  if [[ $rc -ne 0 ]]; then return 0; fi
   while IFS= read -r line; do
     if [[ -n $line ]] && ! is_launcher "$line"; then printf '%s\n' "$line"; fi
   done <<< "$out"
@@ -127,17 +134,17 @@ search_container() {
 # cannot be made: docker missing, docker ps failing, or a container whose search fails. An inconclusive container
 # ends the check, since upgrade changes nothing until every check has passed.
 installed_copy_users() {
-  local errfile rc=0 containers err id name found report=""
+  local errfile rc=0 containers reason="" id name found report=""
   if ! command -v docker > /dev/null 2>&1; then
     echo "docker is not available"
     return 1
   fi
   errfile=$(mktemp)
   containers=$(docker ps --format '{{.ID}} {{.Names}}' 2>"$errfile") || rc=$?
-  err=$(head -n 1 "$errfile")
+  if [[ $rc -ne 0 ]]; then reason="docker ps failed $(exit_text "$rc" "$errfile")"; fi
   rm -f "$errfile"
-  if [[ $rc -ne 0 ]]; then
-    printf 'docker ps failed (exit status %s)%s\n' "$rc" "${err:+: $err}"
+  if [[ -n $reason ]]; then
+    printf '%s\n' "$reason"
     return 1
   fi
   while read -r id name; do
