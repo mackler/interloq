@@ -125,6 +125,11 @@ const positions = (reviewer: string, planner: string): readonly Option[] => [
 const reviewerSays = (i: Review["issues"][number] | undefined): string => (i === undefined ? "" : `${i.problem} ${i.evidence}`.trim());
 /** The current entry of an id in the log (the last one that is not superseded). */
 const currentEntry = (history: readonly LogEntry[], id: string): LogEntry | undefined => history.filter((e) => e.id === id && e.superseded !== true).at(-1);
+/** Whether Claude Code's latest answer to an id in the log carries its mark (issue #156): its current entry is a marked review entry. */
+const markedEntry = (history: readonly LogEntry[], id: string): boolean => {
+  const e = currentEntry(history, id);
+  return e !== undefined && e.source === "review" && e.task_dispute;
+};
 /** Where the loop is inside a round: what the next event means. */
 export type Step =
   | Readonly<{ name: "idle" }>
@@ -279,19 +284,23 @@ const toResponse = (s: ReviewState, before: readonly ReviewCommand[] = []): Tran
 
 /**
  * Issue #112: the asks a subject puts to the user, and the lines that record the disputed pauses it does not. With
- * disputesSettledBy "agents" (the question list and the terms) no pause of behavior 7 that concerns a disputed issue
- * is asked: the dispute is about how a question to the user is worded, which the user cannot judge before he has read
- * the question, and both agents argue it from the one statement of the rules. The loop exists to settle such a
- * disagreement by review and response; Claude Code's disposition stands, its rationale goes back to Codex in the next
+ * disputesSettledBy "agents" (the question list and the terms) a pause of behavior 7 that concerns a disagreement about
+ * how a question to the user is worded is not asked: the user cannot judge whether a word in a question he has not read
+ * needs explaining to him, and both agents argue it from the one statement of the rules. The loop exists to settle such
+ * a disagreement by review and response; Claude Code's disposition stands, its rationale goes back to Codex in the next
  * round, and the round limit and the idle limit still bound the loop. A corrective turn could not move a rejection, and
- * taking Codex's position would record a decision no one made. The planner's own questions are always asked.
+ * taking Codex's position would record a decision no one made. Issue #156: a disagreement Claude Code marks as about
+ * what the task requires is asked, because no statement of the question rules settles it and the user can answer it in
+ * a line. The planner's own questions are always asked.
  */
-const askedOrSettled = (s: ReviewState, asks: readonly Ask[]): Readonly<{ asked: readonly Ask[]; settled: readonly ReviewCommand[] }> => {
-  if (s.setup.disputesSettledBy === "user") return { asked: asks, settled: [] };
-  const disputed = (a: Ask): a is Ask & { asks: { kind: "pause" } } => a.asks.kind === "pause";
+const askedOrSettled = (s: ReviewState, asks: readonly Ask[]): Readonly<{ asked: readonly Ask[]; settledAsks: readonly Ask[]; settled: readonly ReviewCommand[] }> => {
+  if (s.setup.disputesSettledBy === "user") return { asked: asks, settledAsks: [], settled: [] };
+  const settles = (a: Ask): a is Ask & { asks: { kind: "pause" } } => a.asks.kind === "pause" && a.taskDispute !== true;
+  const settledAsks = asks.filter(settles);
   return {
-    asked: asks.filter((a) => !disputed(a)),
-    settled: asks.filter(disputed).flatMap((a) => {
+    asked: asks.filter((a) => !settles(a)),
+    settledAsks,
+    settled: settledAsks.flatMap((a) => {
       const line = prompts.wordingDisputeLine(pauseOriginOf(a.asks.facts), s.setup.heading);
       return [say(line), { kind: "Converse", markdown: `**${prompts.WORDING_DISPUTE_HEADING}** ${line}\n\n` } as ReviewCommand];
     }),
@@ -318,11 +327,15 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
   if (counted === 0) {
     return done(state, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: `## ${heading}, round ${n}\n\n### Codex\n\nNo counted issue. The review of ${fileLabel} has converged.\n\n` }, checkpoint(state, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
   }
-  const reraised: Ask[] = log.reraisedIds(s.log, review).map((id) => ({
-    asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null, taskDispute: false } },
-    id: id as IssueId,
-    options: positions(reviewerSays(review.issues.find((i) => i.id === id)), currentEntry(s.log, id)?.rationale ?? ""),
-  }));
+  const reraised: Ask[] = log.reraisedIds(s.log, review).map((id) => {
+    const taskDispute = markedEntry(s.log, id);
+    return {
+      asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null, taskDispute } },
+      id: id as IssueId,
+      options: positions(reviewerSays(review.issues.find((i) => i.id === id)), currentEntry(s.log, id)?.rationale ?? ""),
+      taskDispute,
+    };
+  });
   const { asked, settled } = askedOrSettled(state, reraised);
   return askEach(state, asked, (asking, queue) => ({ name: "askingReraised", asking, queue }), toResponse, [...before, ...settled, checkpoint(state, "reviewed")]);
 };
@@ -332,31 +345,53 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
  * the log as the round began. The questions for the user are the last.
  */
 const disposedPauses = (history: readonly LogEntry[], review: Review, round: ValidatedRound, response: PlannerResponse): readonly Ask[] => {
+  // Claude Code's latest answer to the new id is this response's disposition (issue #156).
+  const markedNow = (id: string): boolean => round.dispositions.find((d) => d.id === id)?.taskDispute ?? false;
+  const dispositionOf = (id: string) => response.dispositions.find((d) => d.id === id) ?? null;
   return [
-    ...log.secondClarifications(history, round).map((id): Ask => ({
-      asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: response.dispositions.find((d) => d.id === id) ?? null, taskDispute: false } },
-      id: id as IssueId,
-      options: positions(reviewerSays(review.issues.find((i) => i.id === id)), response.dispositions.find((d) => d.id === id)?.rationale ?? ""),
-      key: `clarification ${id}`,
-    })),
-    ...response.self_corrections.filter((sc) => sc.new_action === "rejected").map((sc): Ask => ({
-      asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute: false } },
-      id: sc.id as IssueId,
-      options: positions(currentEntry(history, sc.id)?.problem ?? "", sc.explanation),
-      key: `disputed ${sc.id}`,
-    })),
-    ...log.reversals(round).map(([idNew, idOld]): Ask => ({
-      asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: response.dispositions.find((d) => d.id === idNew) ?? null, taskDispute: false } },
-      id: idNew as IssueId,
-      options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), response.dispositions.find((d) => d.id === idNew)?.rationale ?? ""),
-      key: `reversal ${idNew} ${idOld}`,
-    })),
-    ...log.repeatedUnderNewId(history, round).map(([idNew, idOld]): Ask => ({
-      asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: response.dispositions.find((d) => d.id === idNew) ?? null, taskDispute: false } },
-      id: idNew as IssueId,
-      options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), currentEntry(history, idOld)?.rationale ?? ""),
-      key: `repeat ${idNew} ${idOld}`,
-    })),
+    ...log.secondClarifications(history, round).map((id): Ask => {
+      const taskDispute = markedNow(id);
+      return {
+        asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: dispositionOf(id), taskDispute } },
+        id: id as IssueId,
+        options: positions(reviewerSays(review.issues.find((i) => i.id === id)), dispositionOf(id)?.rationale ?? ""),
+        key: `clarification ${id}`,
+        taskDispute,
+      };
+    }),
+    ...response.self_corrections.filter((sc) => sc.new_action === "rejected").map((sc): Ask => {
+      // A self-correction carries no mark: the answer it disputes is the issue's entry as the round began.
+      const taskDispute = markedEntry(history, sc.id);
+      return {
+        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute } },
+        id: sc.id as IssueId,
+        options: positions(currentEntry(history, sc.id)?.problem ?? "", sc.explanation),
+        key: `disputed ${sc.id}`,
+        taskDispute,
+      };
+    }),
+    ...log.reversals(round).map(([idNew, idOld]): Ask => {
+      const taskDispute = markedNow(idNew);
+      return {
+        asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute } },
+        id: idNew as IssueId,
+        options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), dispositionOf(idNew)?.rationale ?? ""),
+        key: `reversal ${idNew} ${idOld}`,
+        taskDispute,
+      };
+    }),
+    ...log.repeatedUnderNewId(history, round).map(([idNew, idOld]): Ask => {
+      const taskDispute = markedNow(idNew);
+      // Marked, Claude Code's position is the reading it gave the new id (P1-R1-1); unmarked, its earlier rationale as before.
+      const planner = taskDispute ? (dispositionOf(idNew)?.rationale ?? "") : (currentEntry(history, idOld)?.rationale ?? "");
+      return {
+        asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute } },
+        id: idNew as IssueId,
+        options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), planner),
+        key: `repeat ${idNew} ${idOld}`,
+        taskDispute,
+      };
+    }),
     ...response.questions_for_user.map((question, i): Ask => ({ asks: { kind: "planner", question }, id: null, options: question.options.map((o) => ({ label: piecesText(o.label), description: piecesText(o.description) })), key: `question ${i}` })),
   ];
 };
@@ -373,9 +408,15 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: Val
   const history = s.current.startLog;
   // The costs are the session's running totals: a corrective turn's replaces the round's.
   const withCost: ReviewState = { ...s, costs: corrective ? [...s.costs.slice(0, -1), costUsd] : [...s.costs, costUsd] };
-  const pauses = disposedPauses(history, review, round, response).filter((a) => !s.current.asked.includes(a.key ?? ""));
-  const state: ReviewState = { ...withCost, current: { ...s.current, round, response, resultText, asked: [...s.current.asked, ...pauses.map((a) => a.key ?? "")] } };
-  const { asked, settled } = askedOrSettled(state, pauses);
+  // A pause asked this round is not asked again; one settled this round is not settled again, but is asked if a
+  // corrective reply now marks it (issue #156, P1-R1-3).
+  const pauses = disposedPauses(history, review, round, response).filter((a) => !s.current.asked.includes(a.key ?? "") && (!s.current.settled.includes(a.key ?? "") || a.taskDispute === true));
+  const { asked, settledAsks, settled } = askedOrSettled(withCost, pauses);
+  const keysOf = (asks: readonly Ask[]): readonly string[] => asks.map((a) => a.key ?? "");
+  const state: ReviewState = {
+    ...withCost,
+    current: { ...s.current, round, response, resultText, asked: [...s.current.asked, ...keysOf(asked)], settled: [...s.current.settled, ...keysOf(settledAsks)] },
+  };
   const before: ReviewCommand[] = [
     ...(corrective ? [] : [{ kind: "SaveResponse", round: n, response } as ReviewCommand]),
     {

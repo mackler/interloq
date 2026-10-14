@@ -5,6 +5,7 @@ import { describe } from "../src/errors.ts";
 import { pauseProse } from "../src/render.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
 import { Result } from "effect";
+import fc from "fast-check";
 import { advance as advanceState, initialState, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, roundCheckOf, subjectOf, type Transition } from "../src/reviewState.ts";
 import { validateReview, type ValidatedRound } from "../src/round.ts";
 import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
@@ -607,4 +608,116 @@ test("issue #112: the four disputed pauses after a response are not asked when t
   const withQuestion = { ...resp, questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] };
   const asked = advance(reviewed.state, { kind: "ResponseDecoded", response: withQuestion, resultText: "", costUsd: null });
   assert.equal(askedSubject(last(asked), asked.state), "question from Claude Code: Which?");
+});
+
+// Issue #156 (decisions Q1, Q2): in the subjects whose disputes the agents settle, a disputed pause whose latest answer
+// from Claude Code carries its mark, that the disagreement is about what the task requires, is put to the user.
+const marked = (id: string, action: string): LogEntry => ({ ...entry(id, action), task_dispute: true }) as LogEntry;
+type AskCommand = Extract<ReviewCommand, { kind: "AskDecision" }>;
+/** The pauses a transition asks: the one it asks now and the ones queued behind it. */
+const askedPauses = (t: Transition): readonly AskCommand[] => {
+  const now = t.commands.filter((c): c is AskCommand => c.kind === "AskDecision");
+  const step = t.state.step;
+  const queued = "queue" in step ? step.queue.map((a) => ({ kind: "AskDecision", asks: a.asks, options: a.options }) as unknown as AskCommand) : [];
+  return [...now, ...queued];
+};
+const pauseOf = (c: AskCommand) => (c.asks.kind === "pause" ? c.asks.facts : null);
+const disputedResponse = (marks: Readonly<{ a: boolean; b: boolean; n: boolean }>): PlannerResponse => ({
+  ...respond([]),
+  dispositions: respond([["A", "clarification_requested", marks.a], ["B", "rejected", marks.b], ["N", "rejected", marks.n]]).dispositions.map((d) =>
+    d.id === "B" ? { ...d, reverses: "C" } : d.id === "N" ? { ...d, duplicate_of: "O" } : d,
+  ),
+});
+const disputedLog = [entry("C", "accepted"), entry("O", "rejected"), entry("A", "clarification_requested")];
+const afterDisputed = (begin: (log: LogEntry[]) => Transition, marks: Readonly<{ a: boolean; b: boolean; n: boolean }>): Transition =>
+  run(begin(disputedLog), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B"), issue("N")] } }, { kind: "ResponseDecoded", response: disputedResponse(marks), resultText: "", costUsd: null });
+
+test("issue #156: an issue raised again whose latest answer is marked is asked, with both positions and no settled line", () => {
+  const t = run(startAgents([marked("A", "rejected")]), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B")] } });
+  assert.deepEqual(settled(t), []);
+  const c = last(t) as AskCommand;
+  assert.equal(c.kind, "AskDecision");
+  assert.deepEqual(c.options, [
+    { label: prompts.REVIEWER_POSITION, description: "p e" },
+    { label: prompts.PLANNER_POSITION, description: "r" },
+  ]);
+  assert.equal(pauseOf(c)?.pause, "reraised");
+  assert.equal(pauseOf(c) !== null && "taskDispute" in pauseOf(c)! ? (pauseOf(c) as { taskDispute: boolean }).taskDispute : null, true);
+  const unmarked = run(startAgents([entry("A", "rejected")]), { kind: "ReviewDecoded", review: { issues: [issue("A"), issue("B")] } });
+  assert.equal(settled(unmarked).length, 1);
+  assert.ok(!kinds(unmarked).includes("AskDecision"));
+});
+
+test("issue #156: after a response, a second clarification, a reversal and a repetition are asked when this response's disposition is marked", () => {
+  const all = afterDisputed(startAgents, { a: true, b: true, n: true });
+  assert.deepEqual(settled(all), []);
+  assert.deepEqual(askedPauses(all).map((c) => [pauseOf(c)?.pause, (pauseOf(c) as { taskDispute?: boolean } | null)?.taskDispute]), [
+    ["secondClarification", true],
+    ["reversal", true],
+    ["repeatedUnderNewId", true],
+  ]);
+  const none = afterDisputed(startAgents, { a: false, b: false, n: false });
+  assert.equal(settled(none).length, 3);
+  assert.deepEqual(askedPauses(none), []);
+});
+
+test("issue #156: a mixed batch asks the marked pauses and settles the others in one transition", () => {
+  const t = afterDisputed(startAgents, { a: true, b: false, n: false });
+  assert.deepEqual(askedPauses(t).map((c) => pauseOf(c)?.pause), ["secondClarification"]);
+  assert.equal(settled(t).length, 2);
+  assert.match(settled(t).join(""), /issue B/);
+  assert.match(settled(t).join(""), /issue N/);
+});
+
+test("issue #156: a disputed self-correction is asked when the issue's entry as the round began is marked", () => {
+  const resp = (selfId: string) => ({ ...respond([["X", "rejected"]]), self_corrections: [{ id: selfId, new_action: "rejected" as const, explanation: "x" }] });
+  const begin = (log: LogEntry[]) => run(startAgents(log), { kind: "ReviewDecoded", review: { issues: [issue("X")] } });
+  const asked = advance(begin([marked("C", "rejected")]).state, { kind: "ResponseDecoded", response: resp("C"), resultText: "", costUsd: null });
+  assert.deepEqual(askedPauses(asked).map((c) => [pauseOf(c)?.pause, (pauseOf(c) as { taskDispute?: boolean }).taskDispute]), [["disputedSelfCorrection", true]]);
+  const settledOne = advance(begin([entry("C", "rejected")]).state, { kind: "ResponseDecoded", response: resp("C"), resultText: "", costUsd: null });
+  assert.deepEqual(askedPauses(settledOne), []);
+  assert.equal(settled(settledOne).length, 1);
+});
+
+test("issue #156: a marked repetition under a new id offers the new id's rationale as Claude Code's position, and its facts carry that disposition", () => {
+  const t = afterDisputed(startAgents, { a: false, b: false, n: true });
+  const [c] = askedPauses(t);
+  const facts = pauseOf(c!) as { pause: string; disposition: { id: string; rationale: string } | null };
+  assert.equal(facts.pause, "repeatedUnderNewId");
+  assert.equal(facts.disposition?.id, "N");
+  assert.deepEqual(c!.options?.[1], { label: prompts.PLANNER_POSITION, description: "rationale N" });
+  const user = afterDisputed((log) => start({}, log), { a: false, b: false, n: false });
+  const repeat = askedPauses(user).find((x) => pauseOf(x)?.pause === "repeatedUnderNewId");
+  assert.deepEqual(repeat?.options?.[1], { label: prompts.PLANNER_POSITION, description: "r" });
+});
+
+test("property: with disputesSettledBy user every disputed pause is asked, whatever the marks (issue #156)", () => {
+  fc.assert(
+    fc.property(fc.boolean(), fc.boolean(), fc.boolean(), (a, b, n) => {
+      const t = afterDisputed((log) => start({}, log), { a, b, n });
+      return askedPauses(t).length === 3 && settled(t).length === 0;
+    }),
+    { numRuns: 8, seed: 156 },
+  );
+});
+
+// P1-R1-3: a corrective reply that marks a settled answer puts its pause to the user; one that leaves it unmarked
+// records no second line.
+test("issue #156: a corrective reply that marks a settled reversal asks it; one that leaves it unmarked settles it once", () => {
+  const agentsMeasured: ReviewSetup = { ...agents, onUnchanged: "corrective" };
+  const begin = advance(initialState(agentsMeasured, { maxRounds: 5, maxIdleRounds: 2, countMinor: true }), { kind: "Begin", hash: "h0", text: "a\n", log: [entry("C", "accepted")] });
+  const reversal = (action: "partially_accepted" | "rejected", mark: boolean): PlannerResponse => ({
+    ...respond([]),
+    dispositions: respond([["B", action, mark]]).dispositions.map((d) => ({ ...d, reverses: "C" })),
+  });
+  const first = run(begin, { kind: "ReviewDecoded", review: { issues: [issue("B")] } }, { kind: "ResponseDecoded", response: reversal("partially_accepted", false), resultText: "", costUsd: null });
+  assert.equal(settled(first).length, 1);
+  const correcting = advance(first.state, { kind: "FileObserved", hash: "h0", text: "a\n" });
+  assert.deepEqual(last(correcting), { kind: "CallCorrective", round: 1, attempt: 1 });
+  const markedReply = advance(correcting.state, { kind: "CorrectionDecoded", response: reversal("rejected", true), resultText: "", costUsd: null });
+  assert.deepEqual(askedPauses(markedReply).map((c) => pauseOf(c)?.pause), ["reversal"]);
+  assert.deepEqual(settled(markedReply), []);
+  const unmarkedReply = advance(correcting.state, { kind: "CorrectionDecoded", response: reversal("partially_accepted", false), resultText: "", costUsd: null });
+  assert.deepEqual(askedPauses(unmarkedReply), []);
+  assert.deepEqual(settled(unmarkedReply), []);
 });
