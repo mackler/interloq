@@ -16,7 +16,7 @@ import * as S from "../src/schema.ts";
 
 // Decision Q5: the prompts describe the version-2 issue log (an object with entries; three sources; null references).
 test("the log rules name the entries list, the three sources and null references", () => {
-  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false), questionReviewPrompt(TEST_ROOT, 1)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), questionReviewPrompt(TEST_ROOT, 1)]) {
     assert.match(text, /'entries'/);
     assert.match(text, /source 'review'/);
     assert.match(text, /source 'self_correction'/);
@@ -30,7 +30,7 @@ test("the log rules name the entries list, the three sources and null references
 test("the log rules explain file_change with the keys the log entries carry", () => {
   const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e" }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
-  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false), questionReviewPrompt(TEST_ROOT, 1), prompts.requirementsReviewPrompt(TEST_ROOT, 1), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), questionReviewPrompt(TEST_ROOT, 1), prompts.requirementsReviewPrompt(TEST_ROOT, 1), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true)]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
     for (const key of ["changed", "added", "removed"]) {
       assert.match(text, new RegExp(`\\b${key}\\b`));
@@ -431,12 +431,12 @@ test("each clause of the id rule is enforced by validatePlan, and the repair pro
 });
 
 test("the plan review and the work review read plan.json with its statuses", () => {
-  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false)]) {
+  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false)]) {
     assert.match(text, /plan-review\/runs\/[^/\s]+\/plan\.json/);
     assert.match(text, /status 'done'/);
     assert.doesNotMatch(text, /plan-review\/runs\/[^/\s]+\/plan\.md/);
   }
-  assert.match(prompts.planReviewPrompt(TEST_ROOT, 1, 2, false), /plan-review\/runs\/[^/\s]+\/plan\.json/);
+  assert.match(prompts.planReviewPrompt(TEST_ROOT, 1, 2, false, NO_STEP_CHECKS), /plan-review\/runs\/[^/\s]+\/plan\.json/);
 });
 
 // Issue #6 (numbering): a kind with one instance in the run carries no number; with two or more, every one does.
@@ -838,7 +838,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
 test("issue #112: WORDING_DISPUTES reaches the question list's and the terms' review and response prompts, and not the plan's", () => {
   for (const round of [1, 2]) {
     for (const p of [prompts.questionReviewPrompt(TEST_ROOT, round), prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsReviewPrompt(TEST_ROOT, round), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
-    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true), prompts.planRespondPrompt(TEST_ROOT, 1, round, NO_STEP_CHECKS)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true, NO_STEP_CHECKS), prompts.planRespondPrompt(TEST_ROOT, 1, round, NO_STEP_CHECKS)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
   }
   for (const reason of ["cannot judge", "same rules", "time"]) assert.ok(prompts.WORDING_DISPUTES.includes(reason), reason);
 });

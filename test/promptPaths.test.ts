@@ -39,7 +39,7 @@ const cases: ReadonlyArray<readonly [string, string, readonly Artifact[]]> = [
   ["initialPlanPrompt", prompts.initialPlanPrompt(store.root, "t", true, NO_STEP_CHECKS), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }, { kind: "plan" }]],
   ["revisePlanPrompt", prompts.revisePlanPrompt(store.root, NO_STEP_CHECKS), [{ kind: "decisions" }, { kind: "planFile" }]],
   ["planApplyDecisionsPrompt", prompts.planApplyDecisionsPrompt(store.root, NO_STEP_CHECKS), [{ kind: "decisions" }, { kind: "planFile" }]],
-  ["planReviewPrompt", prompts.planReviewPrompt(store.root, 2, 1, true), [{ kind: "planFile" }, { kind: "requirements" }, { kind: "log", subject: { plan: 2 } }]],
+  ["planReviewPrompt", prompts.planReviewPrompt(store.root, 2, 1, true, NO_STEP_CHECKS), [{ kind: "planFile" }, { kind: "requirements" }, { kind: "log", subject: { plan: 2 } }]],
   ["planRespondPrompt", prompts.planRespondPrompt(store.root, 2, 1, NO_STEP_CHECKS), [{ kind: "review", subject: { plan: 2 }, round: 1 }, { kind: "planFile" }]],
   ["planRepairPrompt", prompts.planRepairPrompt(store.root, { duplicateIds: ["S1"], emptyIds: 0, removedDone: [], changedDone: [] }), [{ kind: "planFile" }]],
   ["executePrompt", prompts.executePrompt(store.root, "t", true, NO_STEP_CHECKS), [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }, { kind: "plan" }]],

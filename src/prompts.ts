@@ -746,6 +746,11 @@ const projectCommandLines = (checks: StepChecks): string =>
  * #162): no command outlasts one shell command, each step names its check, the check runs only the touched tests within
  * STEP_CHECK_LIMIT_MS, no step runs the whole suite, and the project's own commands where it lists them.
  */
+/**
+ * Issue #162 (requirements Q4): the plan review's criterion, the counterpart of planStepCheckRule, which the plan review
+ * quotes beside it so that Codex holds each remaining step to the rule the writer was given.
+ */
+export const STEP_CHECK_REVIEW_CRITERION = `Raise an issue for a remaining step whose text names no check command, whose named checks run tests the step's change does not touch or are expected to take more than ${stepCheckMinutes} minutes together, or that runs the whole test suite.`;
 export const planStepCheckRule = (checks: StepChecks): string =>
   `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. ${STEP_CHECK_NAMED} ${STEP_CHECK_TOUCHED_ONLY} ${STEP_CHECK_NO_SUITE}${suiteSentence(checks.suite)}${projectCommandLines(checks)}`;
 /** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
@@ -806,7 +811,7 @@ ${planIdRule(root)}
 Do not modify any file.
 Return an empty questions_for_user array.`;
 
-export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean): string {
+export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, checks: StepChecks): string {
   const prefix = `P${phase}`;
   if (round > 1) return laterRound(root, pathOf({ kind: "planFile" }), pathOf({ kind: "log", subject: { plan: phase } }), prefix, round);
   const requirements = withRequirements
@@ -814,6 +819,9 @@ export function planReviewPrompt(root: RunRoot, phase: number, round: number, wi
     : "";
   return `Review the implementation plan in ${runDir(root)}/plan.json against the codebase. Do not modify any file.
 ${requirements}${planStatuses(root)} Steps with status 'done' are already implemented in the codebase; review the remaining steps, and review whether the remaining steps are consistent with the implemented state.
+The plan writer was given this rule on how a step checks its change:
+${planStepCheckRule(checks)}
+${STEP_CHECK_REVIEW_CRITERION}
 Put the step's id in the location field.
 ${logRules(root, pathOf({ kind: "log", subject: { plan: phase } }), prefix, round)}`;
 }
