@@ -22,7 +22,7 @@ const invalid = <A>(result: Result.Result<A, RoundInvalid>, ...texts: RegExp[]):
 const review = (...issues: Review["issues"]): Review => ({ issues });
 /** A version-2 review entry by default; `extra` may change the source (the review-only fields are then ignored by the functions under test). */
 const entry = (id: string, action: string, extra: Partial<LogEntry> = {}): LogEntry =>
-  ({ id, phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, ...extra }) as LogEntry;
+  ({ id, phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, task_dispute: false, ...extra }) as LogEntry;
 const validated = (r: Review): ValidatedReview => ok(validateReview(r));
 
 test("validateReview: unique non-empty ids pass; a duplicate or an empty id is RoundInvalid", () => {
@@ -114,4 +114,45 @@ test("validateRound: a generated self-correction id uses the id number, while th
   const round = ok(validateRound(r, response, [], 1, 1, "D", 2));
   assert.deepEqual(round.selfCorrections.map((s) => s.id), ["D2-S1-1"]);
   assert.equal(round.phase, 1);
+});
+
+// Issue #156: Claude Code's mark on a disposition, that its disagreement is about what the task requires.
+
+test("validateRound: a marked disposition that is not accepted carries the mark; a mark on accepted is ignored", () => {
+  const r = validated(review(issue("A"), issue("B"), issue("C"), issue("D"), issue("E")));
+  const round = ok(
+    validateRound(
+      r,
+      respond([
+        ["A", "rejected", true],
+        ["B", "accepted", true],
+        ["C", "partially_accepted", true],
+        ["D", "no_change_needed", true],
+        ["E", "clarification_requested", true],
+      ]),
+      [],
+      1,
+      1,
+      "Q",
+    ),
+  );
+  assert.deepEqual(
+    round.dispositions.map((d) => [d.id, d.taskDispute]),
+    [["A", true], ["B", false], ["C", true], ["D", true], ["E", true]],
+  );
+});
+
+test("validateRound: an unmarked disposition, and a disposition without the field (the plan's response), carry no mark", () => {
+  const r = validated(review(issue("A"), issue("B")));
+  const unmarked = ok(validateRound(r, respond([["A", "rejected", false], ["B", "rejected"]]), [], 1, 1, "Q"));
+  assert.deepEqual(unmarked.dispositions.map((d) => d.taskDispute), [false, false]);
+  const plain: PlannerResponse = { dispositions: [{ id: "A", action: "rejected", rationale: "r", duplicate_of: "", reverses: "" }, { id: "B", action: "rejected", rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
+  assert.deepEqual(ok(validateRound(r, plain, [], 1, 1, "P")).dispositions.map((d) => d.taskDispute), [false, false]);
+});
+
+test("appendRound writes the round's mark on each review entry", () => {
+  const r = validated(review(issue("A"), issue("B")));
+  const round = ok(validateRound(r, respond([["A", "rejected", true], ["B", "rejected"]]), [], 1, 1, "Q"));
+  const entries = log.appendRound([], round, null);
+  assert.deepEqual(entries.map((e) => [e.id, e.source === "review" ? e.task_dispute : null]), [["A", true], ["B", false]]);
 });

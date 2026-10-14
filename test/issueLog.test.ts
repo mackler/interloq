@@ -10,7 +10,7 @@ const round = (dispositions: [string, ValidatedRound["dispositions"][number]["ac
   phase: 1,
   round: 1,
   review: { issues: dispositions.map(([i]) => ({ id: id(i), severity: "major", location: "l", problem: "p", evidence: "e" })) },
-  dispositions: dispositions.map(([i, action]) => ({ id: id(i), action, rationale: "r", duplicateOf: null, reverses: null })),
+  dispositions: dispositions.map(([i, action]) => ({ id: id(i), action, rationale: "r", duplicateOf: null, reverses: null, taskDispute: false })),
   selfCorrections: self.map(([i, newAction]) => ({ id: id(i), newAction, explanation: "x", generated: false })),
   notes: [],
   reviewerFeedback: "",

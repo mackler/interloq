@@ -212,14 +212,48 @@ export type ShownEntry = LogEntry;
  * disposition and the earlier log entries that the user reads as prose (`pauseProse` in src/render.ts), never as JSON.
  */
 export type PauseFacts =
-  | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null }>
-  | Readonly<{ pause: "secondClarification"; id: string; history: readonly ShownEntry[]; disposition: Disposition | null }>
-  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[] }>
-  | Readonly<{ pause: "reversal"; id: string; reverses: string; history: readonly ShownEntry[]; issue: Issue | null; disposition: Disposition | null }>
-  | Readonly<{ pause: "repeatedUnderNewId"; id: string; repeats: string; history: readonly ShownEntry[]; issue: Issue | null }>
+  | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null; taskDispute: boolean }>
+  | Readonly<{ pause: "secondClarification"; id: string; history: readonly ShownEntry[]; disposition: Disposition | null; taskDispute: boolean }>
+  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; taskDispute: boolean }>
+  | Readonly<{
+      pause: "reversal";
+      id: string;
+      reverses: string;
+      history: readonly ShownEntry[];
+      issue: Issue | null;
+      disposition: Disposition | null;
+      taskDispute: boolean;
+    }>
+  | Readonly<{
+      pause: "repeatedUnderNewId";
+      id: string;
+      repeats: string;
+      history: readonly ShownEntry[];
+      issue: Issue | null;
+      disposition: Disposition | null;
+      taskDispute: boolean;
+    }>
   | Readonly<{ pause: "unexplained"; fileLabel: string; heading: string; round: number; resultText: string }>
   | Readonly<{ pause: "identical"; fileLabel: string; round: number; seen: string }>
   | Readonly<{ pause: "idle"; idle: number; round: number; issues: readonly ShownEntry[] }>;
+/**
+ * Whether a disputed pause's disagreement is one Claude Code marked as about what the task requires (issue #156); the
+ * pauses that are no disagreement are never.
+ */
+export const taskDisputeOf = (facts: PauseFacts): boolean => {
+  switch (facts.pause) {
+    case "reraised":
+    case "secondClarification":
+    case "disputedSelfCorrection":
+    case "reversal":
+    case "repeatedUnderNewId":
+      return facts.taskDispute;
+    case "unexplained":
+    case "identical":
+    case "idle":
+      return false;
+  }
+};
 /** The ids a pause's origin keeps of its facts. */
 export const pauseOriginOf = (facts: PauseFacts): PauseOrigin => {
   switch (facts.pause) {

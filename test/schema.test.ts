@@ -51,7 +51,7 @@ const interviewTurn: legacy.InterviewTurn & { asked_ids: string[] } & CurrentQue
 const execReport: legacy.ExecReport = { status: "finished", summary: "s", question: "", remaining_work: "" };
 const execOutcome: legacy.ExecOutcome = { status: "needs_input", summary: "s", question: "q", remainingWork: "w", userInput: null };
 // Version 2 (Q5): three shapes tagged by source.
-const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null };
+const reviewEntry = { id: "A", phase: 1, round: 2, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false };
 const selfEntry = { id: "P1-S2-1", phase: 1, round: 2, source: "self_correction", problem: "p", action: "plan_error", rationale: "r", superseded: false, file_change: null };
 const userEntry = { id: "A", phase: 1, round: 2, source: "user", problem: "p", action: "decided_by_user", rationale: "r", superseded: true };
 const usage = { version: 2, agent: "claude", time: "2026-09-24T00:00:00.000Z", session: null, num_turns: 0, total_cost_usd: 0 };
@@ -72,7 +72,9 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   assert.deepEqual(decode(S.PlanWriteResult, { questions_for_user: [] }), { questions_for_user: [] });
   assert.deepEqual(decode(S.QuestionEntry, questionEntry), questionEntry);
   assert.deepEqual(decode(S.QuestionList, { questions: [questionEntry] }), { questions: [questionEntry] });
-  assert.deepEqual(decode(S.QuestionListResponse, { ...plannerResponse, questions: [questionEntry] }), { ...plannerResponse, questions: [questionEntry] });
+  // Issue #156: the question list's dispositions carry Claude Code's mark.
+  const markedResponse = { ...plannerResponse, dispositions: [{ ...disposition, task_dispute: true }], questions: [questionEntry] };
+  assert.deepEqual(decode(S.QuestionListResponse, markedResponse), markedResponse);
   assert.deepEqual(decode(S.InterviewTurn, interviewTurn), interviewTurn);
   assert.deepEqual(decode(S.ExecReport, execReport), execReport);
   assert.deepEqual(decode(S.ExecOutcome, execOutcome), execOutcome);
@@ -92,7 +94,13 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.PlanWriteResult.Type>, DeepMutable<WithQuestions<legacy.PlanWriteResult>>>>();
   sameType<Equals<DeepMutable<typeof S.QuestionEntry.Type>, QuestionEntry>>();
   sameType<Equals<DeepMutable<typeof S.QuestionList.Type>, { questions: QuestionEntry[] }>>();
-  sameType<Equals<DeepMutable<typeof S.QuestionListResponse.Type>, DeepMutable<WithQuestions<Omit<legacy.QuestionListResponse, "questions">> & { questions: QuestionEntry[] }>>>();
+  // Issue #156: the question list's dispositions carry Claude Code's mark.
+  sameType<
+    Equals<
+      DeepMutable<typeof S.QuestionListResponse.Type>,
+      DeepMutable<Omit<WithQuestions<Omit<legacy.QuestionListResponse, "questions">>, "dispositions"> & { dispositions: (legacy.Disposition & { task_dispute: boolean })[]; questions: QuestionEntry[] }>
+    >
+  >();
   // G-R1-1: the context call returns the whole question as pieces.
   sameType<Equals<DeepMutable<typeof S.QuestionContext.Type>, { context: Block[]; history: Block[]; question: Piece[]; options: PieceOption[]; details: Block[]; explanations: Explanation[] }>>();
   // Decision Q1: the explaining conversation returns each agreed entry divided into pieces, with its explanations.

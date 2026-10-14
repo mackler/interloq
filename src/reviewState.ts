@@ -111,7 +111,8 @@ export type Option = Readonly<{ label: string; description: string }>;
 /** What a decision of the loop asks (S7): a pause of behaviour 7 with its facts (S11), or a question Claude Code returned with its response. */
 export type Asks = Readonly<{ kind: "pause"; facts: PauseFacts }> | Readonly<{ kind: "planner"; question: UserQuestion }>;
 /** `key`: the condition and the id of a pause that depends on the dispositions, so that it is asked once per round (P1-R1-3). */
-type Ask = Readonly<{ asks: Asks; id: IssueId | null; options?: readonly Option[]; key?: string }>;
+/** `taskDispute`: the disagreement Claude Code marked as about what the task requires (issue #156); none for the planner's questions. */
+type Ask = Readonly<{ asks: Asks; id: IssueId | null; options?: readonly Option[]; key?: string; taskDispute?: boolean }>;
 /** The subject of a decision in the records, from what it asks (S7): prompts.recordSubject is the one place it is composed. */
 export const subjectOf = (heading: string, asks: Asks): string =>
   asks.kind === "pause" ? prompts.recordSubject({ kind: "pause", heading, ...pauseOriginOf(asks.facts) }, "") : prompts.recordSubject({ kind: "planner", heading }, piecesText(asks.question.question));
@@ -165,6 +166,8 @@ export type RoundInProgress = Readonly<{
   decisions: readonly DecisionEvent[];
   /** The keys of the disposition-dependent pauses asked this round. */
   asked: readonly string[];
+  /** The keys of the disposition-dependent pauses settled this round between the agents while unmarked (issue #156). */
+  settled: readonly string[];
   /** The corrective turns taken this round (issue #30). */
   corrections: number;
   /** The reviewed file's text when the round began, from which the response's change is measured (issue #31). */
@@ -190,7 +193,7 @@ export type ReviewState = Readonly<{
 
 export type Transition = Readonly<{ state: ReviewState; commands: readonly ReviewCommand[] }>;
 
-const freshRound: RoundInProgress = { review: null, validatedReview: null, round: null, response: null, resultText: "", decided: false, toApply: false, decisions: [], asked: [], corrections: 0, startText: "", startLog: [] };
+const freshRound: RoundInProgress = { review: null, validatedReview: null, round: null, response: null, resultText: "", decided: false, toApply: false, decisions: [], asked: [], settled: [], corrections: 0, startText: "", startLog: [] };
 
 export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds" | "maxIdleRounds" | "countMinor">): ReviewState => ({
   setup: { ...setup, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor },
@@ -316,7 +319,7 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
     return done(state, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: `## ${heading}, round ${n}\n\n### Codex\n\nNo counted issue. The review of ${fileLabel} has converged.\n\n` }, checkpoint(state, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
   }
   const reraised: Ask[] = log.reraisedIds(s.log, review).map((id) => ({
-    asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null } },
+    asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null, taskDispute: false } },
     id: id as IssueId,
     options: positions(reviewerSays(review.issues.find((i) => i.id === id)), currentEntry(s.log, id)?.rationale ?? ""),
   }));
@@ -331,25 +334,25 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
 const disposedPauses = (history: readonly LogEntry[], review: Review, round: ValidatedRound, response: PlannerResponse): readonly Ask[] => {
   return [
     ...log.secondClarifications(history, round).map((id): Ask => ({
-      asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: response.dispositions.find((d) => d.id === id) ?? null } },
+      asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: response.dispositions.find((d) => d.id === id) ?? null, taskDispute: false } },
       id: id as IssueId,
       options: positions(reviewerSays(review.issues.find((i) => i.id === id)), response.dispositions.find((d) => d.id === id)?.rationale ?? ""),
       key: `clarification ${id}`,
     })),
     ...response.self_corrections.filter((sc) => sc.new_action === "rejected").map((sc): Ask => ({
-      asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id) } },
+      asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute: false } },
       id: sc.id as IssueId,
       options: positions(currentEntry(history, sc.id)?.problem ?? "", sc.explanation),
       key: `disputed ${sc.id}`,
     })),
     ...log.reversals(round).map(([idNew, idOld]): Ask => ({
-      asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: response.dispositions.find((d) => d.id === idNew) ?? null } },
+      asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: response.dispositions.find((d) => d.id === idNew) ?? null, taskDispute: false } },
       id: idNew as IssueId,
       options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), response.dispositions.find((d) => d.id === idNew)?.rationale ?? ""),
       key: `reversal ${idNew} ${idOld}`,
     })),
     ...log.repeatedUnderNewId(history, round).map(([idNew, idOld]): Ask => ({
-      asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null } },
+      asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: response.dispositions.find((d) => d.id === idNew) ?? null, taskDispute: false } },
       id: idNew as IssueId,
       options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), currentEntry(history, idOld)?.rationale ?? ""),
       key: `repeat ${idNew} ${idOld}`,

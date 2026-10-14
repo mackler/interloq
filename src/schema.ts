@@ -34,6 +34,18 @@ export const Disposition = Schema.Struct({
   reverses: Schema.String,
 });
 
+/**
+ * The name of Claude Code's mark on a disposition (issue #156), the one source of it for the schema, the log entries,
+ * the prompts and the tests.
+ */
+export const TASK_DISPUTE_FIELD = "task_dispute";
+/**
+ * A disposition with Claude Code's mark (issue #156): true where its disagreement with the issue is about what the task
+ * requires, not about how a question to the user is worded. Only the responses of the subjects whose disputes the agents
+ * settle (the question list and the terms) carry it; it is ignored on `accepted`, which is no disagreement.
+ */
+export const MarkedDisposition = Schema.Struct({ ...Disposition.fields, [TASK_DISPUTE_FIELD]: Schema.Boolean });
+
 export const SelfCorrection = Schema.Struct({
   id: Schema.String,
   new_action: Schema.Literals(["accepted", "rejected", "plan_error"]),
@@ -106,6 +118,9 @@ const plannerResponseFields = {
 };
 
 export const PlannerResponse = Schema.Struct(plannerResponseFields);
+
+/** The fields of a response whose dispositions carry Claude Code's mark (issue #156): the question list and the terms. */
+const markedResponseFields = { ...plannerResponseFields, dispositions: Schema.Array(MarkedDisposition) };
 
 export const PlanWriteResult = Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) });
 
@@ -207,7 +222,7 @@ export const QuestionList = Schema.Struct({ questions: Schema.Array(QuestionEntr
 
 /** A response to a review of the question list: the dispositions and the complete amended list. */
 export const QuestionListResponse = Schema.Struct({
-  ...plannerResponseFields,
+  ...markedResponseFields,
   questions: Schema.Array(QuestionEntry),
 });
 
@@ -227,7 +242,7 @@ export const TermsEntry = Schema.Struct({
 });
 export const TermsWrite = Schema.Struct({ entries: Schema.Array(TermsEntry) });
 /** A response to a review of the explanations: the dispositions and the complete amended explanations. */
-export const TermsResponse = Schema.Struct({ ...plannerResponseFields, entries: Schema.Array(TermsEntry) });
+export const TermsResponse = Schema.Struct({ ...markedResponseFields, entries: Schema.Array(TermsEntry) });
 
 /** A response to a review of a decision analysis: the dispositions and the complete amended analysis. */
 export const DecisionResponse = Schema.Struct({ ...plannerResponseFields, analysis: DecisionAnalysis });
@@ -303,6 +318,8 @@ export const ReviewEntry = Schema.Struct({
   duplicate_of: Schema.NullOr(IssueId),
   reverses: Schema.NullOr(IssueId),
   [FILE_CHANGE_FIELD]: Schema.NullOr(FileChange),
+  /** Claude Code's mark (issue #156): true only where it marked a disposition other than `accepted`; false elsewhere. */
+  [TASK_DISPUTE_FIELD]: Schema.Boolean,
 });
 /** A correction Claude Code made to its own earlier work. */
 export const SelfCorrectionEntry = Schema.Struct({
@@ -449,6 +466,7 @@ export type Issue = typeof Issue.Type;
 export type Review = typeof Review.Type;
 export type Action = typeof Action.Type;
 export type Disposition = typeof Disposition.Type;
+export type MarkedDisposition = typeof MarkedDisposition.Type;
 export type SelfCorrection = typeof SelfCorrection.Type;
 export type UserQuestion = typeof UserQuestion.Type;
 export type Piece = typeof Piece.Type;

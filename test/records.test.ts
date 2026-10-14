@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { Effect, Result } from "effect";
 import { describe, type StateFileInvalid } from "../src/errors.ts";
 import { platformLayer } from "../src/platform.ts";
-import { AnalysisFile, ChoiceFile, DecisionQuestionFile, readCheckpoint, readLog, readQuestions, readUsage } from "../src/records.ts";
+import { AnalysisFile, ChoiceFile, RoundFile, DecisionQuestionFile, readCheckpoint, readLog, readQuestions, readUsage } from "../src/records.ts";
 import { Schema } from "effect";
 import { finished, issue, respond, runTask, tempRepo, testLayer, entryOf } from "./helpers.ts";
 
@@ -19,7 +19,7 @@ const failureText = <A>(result: Result.Result<A, StateFileInvalid>): string => {
   assert.ok(Result.isFailure(result), "the read succeeded");
   return describe(result.failure);
 };
-const review = { id: "A", phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null };
+const review = { id: "A", phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false };
 
 test("readLog reads a version-2 log file and rejects a bare array (the old shape)", () => {
   const entries = ok(readLog("issue-log.json", JSON.stringify({ version: 2, entries: [review] })));
@@ -158,4 +158,30 @@ test("readCheckpoint reads a decision checkpoint and requires its question and a
   put("decision-2/analysis.json", { version: 2, analysis: emptyAnalysis });
   const exit = await read();
   assert.ok(exit._tag === "Success", `the decision checkpoint was rejected: ${exit._tag === "Failure" ? String(exit.cause) : ""}`);
+});
+
+// Issue #156: a validated round's record keeps Claude Code's mark on each disposition, and a log entry its field.
+test("a validated round record keeps taskDispute through write and decode; a review entry without task_dispute fails", () => {
+  const round = {
+    version: 2,
+    kind: "validated",
+    subject: "question-review",
+    phase: 0,
+    round: 1,
+    reconstructed: false,
+    review: { issues: [{ id: "Q-R1-1", severity: "major", location: "l", problem: "p", evidence: "e" }] },
+    response: {
+      dispositions: [{ id: "Q-R1-1", action: "rejected", rationale: "r", duplicateOf: null, reverses: null, taskDispute: true }],
+      selfCorrections: [],
+      reviewerFeedback: "",
+      questionsForUser: [],
+    },
+    notes: [],
+  };
+  const decoded = Schema.decodeUnknownSync(RoundFile)(JSON.parse(JSON.stringify(round)));
+  assert.equal(decoded.kind === "validated" ? decoded.response.dispositions[0]!.taskDispute : null, true);
+  const { taskDispute: _t, ...unmarked } = round.response.dispositions[0]!;
+  assert.throws(() => Schema.decodeUnknownSync(RoundFile)({ ...round, response: { ...round.response, dispositions: [unmarked] } }));
+  const { task_dispute: _u, ...withoutMark } = review;
+  assert.match(failureText(readLog("issue-log.json", JSON.stringify({ version: 2, entries: [withoutMark] }))), /task_dispute/);
 });

@@ -11,7 +11,7 @@ import { reviewRepairPrompt, roundRepairPrompt } from "../src/prompts.ts";
 import { serializeReply } from "../src/records.ts";
 import { correctiveValidation, validateReview, validateRound } from "../src/round.ts";
 import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, type ScriptedPlanner } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, unmarked, type ScriptedPlanner } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const json = (dir: string, name: string) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
@@ -67,7 +67,7 @@ for (const c of RESPONSE_CASES) {
     const seen = atRepair as { cc: PlannerResponse; kept: PlannerResponse };
     assert.deepEqual(seen.cc.dispositions, c.refused.dispositions, "cc-1.json held the refused reply before the repair turn");
     assert.deepEqual(seen.kept.dispositions, c.refused.dispositions, "the refused reply was kept in invalid-replies/");
-    assert.deepEqual(json(probe.dir, "planning-1/cc-1.json").dispositions, c.repaired.dispositions, "cc-1.json holds the accepted reply");
+    assert.deepEqual(json(probe.dir, "planning-1/cc-1.json").dispositions, unmarked(c.repaired.dispositions), "cc-1.json holds the accepted reply");
   });
 
   test(`a second response with ${c.name} halts with RoundInvalid, both replies kept`, async () => {
@@ -164,7 +164,7 @@ for (const [what, extra] of [["a BigInt", 1n], ["a cycle", (() => { const c: Rec
     const expected = serializeReply({ ...refused, plan: json(probe.dir, "planning-1/cc-1.json").plan });
     assert.equal(seen.cc.trimEnd(), expected, "cc-1.json held serializeReply's text of the refused reply");
     assert.equal(seen.kept.trimEnd(), expected, "invalid-replies/ kept the same text");
-    assert.deepEqual(json(probe.dir, "planning-1/cc-1.json").dispositions, respond([["A", "accepted"], ["B", "rejected"]]).dispositions);
+    assert.deepEqual(json(probe.dir, "planning-1/cc-1.json").dispositions, unmarked(respond([["A", "accepted"], ["B", "rejected"]]).dispositions));
   });
 }
 
@@ -275,5 +275,5 @@ test("a work response with a missing disposition gets its read-only repair turn 
   assert.equal(probe.planner.prompts[2], roundRepairPrompt(roundFailure([issue("W1-R1-1")], respond([])), ["W1-R1-1"]));
   assert.deepEqual(probe.planner.capabilities.slice(1), ["readOnly", "readOnly"]);
   assert.ok(exists(probe.dir, "invalid-replies/claude-1.json"));
-  assert.deepEqual(json(probe.dir, "work-review-1/cc-1.json").dispositions, respond([["W1-R1-1", "rejected"]]).dispositions);
+  assert.deepEqual(json(probe.dir, "work-review-1/cc-1.json").dispositions, unmarked(respond([["W1-R1-1", "rejected"]]).dispositions));
 });

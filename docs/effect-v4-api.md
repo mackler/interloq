@@ -178,6 +178,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Schema.Literal` / `Literals` | 2140 / 4003 | `Literals(["a", "b"])` generates `{type: "string", enum: [...]}` (observed) |
 | `Schema.suspend` (read 28 Sep 2026, decision support step 1.2) | 4104 | `suspend(() => schema)`: a recursive schema; `toJsonSchemaDocument` generates a `$defs` definition that refers to itself (observed; `prototypes/proto-recursive-schema.ts`). The recursive `Argument` of `src/schema.ts` annotates the thunk's result as `Schema.Codec<Argument>` |
 | `Schema.Codec` (read 28 Sep 2026) | 816 | `interface Codec<T, E = T, RD = never, RE = never>`: the type of a recursive schema's declaration (`const Argument: Schema.Codec<Argument> = …`) |
+| `Schema.is` (read 14 Oct 2026, issue #156) | 1099 | `is(schema)` (`typeof SchemaParser.is`, `SchemaParser.d.ts:94`): a type guard `(input) => input is I & S["Type"]` over the decoded side; `taskDisputeOf` in src/round.ts uses it to tell a `MarkedDisposition` from a plain `Disposition` |
 | `Schema.Array` | 3722 (`ArraySchema as Array`) | `Array(item)` |
 | `Schema.NonEmptyArray` | 3778 | `NonEmptyArray(item)`: Type `readonly [T, ...T[]]`, at least one element; the senses of a presented explanation in src/protocol.ts (issue #112). Not sent to the agents, whose schemas keep a plain `Array` |
 | `Schema.isPattern` | 5346 | `isPattern(regExp)`: a `Filter<string>` for `.check(...)`; `/\S/u` gives a non-blank string, the sense of a presented explanation in src/protocol.ts (issue #112) |

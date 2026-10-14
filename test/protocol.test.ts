@@ -49,7 +49,10 @@ const plannerResponse = fc.record({
 });
 const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength: 2 }), history: fc.array(block, { maxLength: 2 }), question: pieces, reason: fc.array(block, { maxLength: 2 }), proposed_answers: fc.array(pieceOption, { maxLength: 2 }), default_answer: text, skip_if: fc.option(fc.record({ question: text, answer: text }), { nil: null }) });
 // Defect A of docs/page-question-phase-defects.md: the question subject's response carries the amended list too.
-const response = fc.oneof(plannerResponse, fc.tuple(plannerResponse, fc.array(questionEntry, { maxLength: 2 })).map(([r, questions]) => ({ ...r, questions })));
+// Issue #156: its dispositions carry Claude Code's mark, as the question list's schema requires.
+const markedDisposition = fc.tuple(disposition, fc.boolean()).map(([d, task_dispute]) => ({ ...d, task_dispute }));
+const markedListResponse = fc.tuple(plannerResponse, fc.array(markedDisposition, { maxLength: 3 }), fc.array(questionEntry, { maxLength: 2 })).map(([r, dispositions, questions]) => ({ ...r, dispositions, questions }));
+const response = fc.oneof(plannerResponse, markedListResponse);
 const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }) });
 // S5: a question as the user is shown it, with every kind of origin and both kinds of answer.
 const origin = fc.oneof(
@@ -272,13 +275,13 @@ test("inSnapshot: with an empty replay nothing is dropped; a later run passes fr
 // Defect A of docs/page-question-phase-defects.md: a question review's response is a QuestionListResponse, the planner's
 // response plus the amended list; the page's decoding refused it, and with it the whole replay.
 const questionListResponse: QuestionListResponse = {
-  dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "" }],
+  dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "", task_dispute: false }],
   self_corrections: [],
   reviewer_feedback: "",
   questions_for_user: [],
   questions: [entryOf({ id: "Q1", context: "c", question: "Which database?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }], default_answer: "PostgreSQL" })],
 };
-const responseEvent = (subject: SubjectId, response: QuestionListResponse | Omit<QuestionListResponse, "questions"> | DecisionResponse): RunEvent => ({ _tag: "Notified", event: { _tag: "ResponseReceived", subject, round: 1, response, resultText: "" } });
+const responseEvent = (subject: SubjectId, response: QuestionListResponse | PlannerResponse | DecisionResponse): RunEvent => ({ _tag: "Notified", event: { _tag: "ResponseReceived", subject, round: 1, response, resultText: "" } });
 
 test("a question review's ResponseReceived survives the round trip, live and in a replay", () => {
   const event: ServerMessage = { type: "event", run: 1, seq: 5, time: T, event: { _tag: "Notified", event: { _tag: "ResponseReceived", subject: "questions", round: 1, response: questionListResponse, resultText: "" } } };

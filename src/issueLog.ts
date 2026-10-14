@@ -65,6 +65,7 @@ export function appendRound(log: readonly LogEntry[], round: ValidatedRound, cha
       reverses: d.reverses,
       superseded: false,
       file_change: change,
+      task_dispute: d.taskDispute,
     };
   });
   const fromSelf: LogEntry[] = round.selfCorrections.map((sc) => {

@@ -28,7 +28,8 @@ import { itemIdOf, type ItemId, type ItemUrl, itemUrlOf } from "../src/tracker.t
 import type { RunMode } from "../src/runMode.ts";
 import { refinementRun, run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
-import type { Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
+import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
+import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { StartRequest } from "../src/protocol.ts";
 import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
@@ -512,13 +513,29 @@ export class ScriptedReviewer implements ReviewerShape {
 
 export const issue = (id: string, problem = "p"): Review["issues"][number] => ({ id, severity: "major", location: "s", problem, evidence: "e" });
 
-export const respond = (dispositions: [string, PlannerResponse["dispositions"][number]["action"]][], extra: Partial<PlannerResponse> = {}): PlannerResponse => ({
-  dispositions: dispositions.map(([id, action]) => ({ id, action, rationale: `rationale ${id}`, duplicate_of: "", reverses: "" })),
-  self_corrections: [],
-  reviewer_feedback: "",
-  questions_for_user: [],
-  ...extra,
-});
+/**
+ * A response with one disposition per tuple. Each carries Claude Code's mark (issue #156), the tuple's third element or
+ * false, which the question list's and the terms' schemas require and every other subject's decode drops.
+ */
+export const respond = (
+  dispositions: [string, PlannerResponse["dispositions"][number]["action"], boolean?][],
+  extra: Partial<PlannerResponse> = {},
+): MarkedResponse => {
+  const marked: readonly MarkedDisposition[] = dispositions.map(([id, action, mark]) => ({
+    id,
+    action,
+    rationale: `rationale ${id}`,
+    duplicate_of: "",
+    reverses: "",
+    [TASK_DISPUTE_FIELD]: mark ?? false,
+  }));
+  return { self_corrections: [], reviewer_feedback: "", questions_for_user: [], ...extra, dispositions: extra.dispositions?.map((d) => ({ [TASK_DISPUTE_FIELD]: false, ...d })) ?? marked };
+};
+/** Dispositions as a subject without the mark decodes them (issue #156): its schema drops `task_dispute`. */
+export const unmarked = (dispositions: readonly S.Disposition[]): readonly S.Disposition[] =>
+  dispositions.map(({ id, action, rationale, duplicate_of, reverses }) => ({ id, action, rationale, duplicate_of, reverses }));
+/** A response whose dispositions carry the mark, which every subject's response accepts. */
+export type MarkedResponse = Omit<PlannerResponse, "dispositions"> & Readonly<{ dispositions: readonly MarkedDisposition[] }>;
 
 export const finished: ExecOutcome = { status: "finished", summary: "done", question: "", remainingWork: "", userInput: null };
 /** The execution a work response is given (issue #117): a finished report and a plan text of its own. */

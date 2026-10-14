@@ -61,7 +61,7 @@ const advance = (s: ReviewState, e: TestEvent): Transition => advanceState(s, co
 const run = (first: Transition, ...events: TestEvent[]): Transition => events.reduce((t, e) => advance(t.state, e), first);
 const noQuestions = { questions_for_user: [] };
 const entry = (id: string, action: string, round = 1): LogEntry =>
-  ({ id, phase: 1, round, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false }) as LogEntry;
+  ({ id, phase: 1, round, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, task_dispute: false }) as LogEntry;
 const response = (dispositions: [string, "accepted" | "rejected" | "partially_accepted" | "no_change_needed" | "clarification_requested"][], extra = {}): TestEvent => ({ kind: "ResponseDecoded", response: respond(dispositions, extra), resultText: "", costUsd: 0.1 });
 void noQuestions;
 
@@ -97,7 +97,7 @@ test("a counted review saves the review, reports the count, and asks about each 
   assert.match(askedProse(last(t)), /raised issue A again/);
   assert.deepEqual(last(t), {
     kind: "AskDecision",
-    asks: { kind: "pause", facts: { pause: "reraised", id: "A", history: [entry("A", "rejected")], issue: issue("A") } },
+    asks: { kind: "pause", facts: { pause: "reraised", id: "A", history: [entry("A", "rejected")], issue: issue("A"), taskDispute: false } },
     id: "A",
     options: [{ label: prompts.REVIEWER_POSITION, description: "p e" }, { label: prompts.PLANNER_POSITION, description: "r" }],
   });

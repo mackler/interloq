@@ -559,7 +559,7 @@ test("an agreed question gives the analysis its reviewed context, reason and ter
   const { prompt } = await decideOn(draft);
   for (const part of ["The service stores orders in a database.", "the schema depends on it", "orders: What customers buy."]) assert.ok(prompt.includes(part), part);
   const { decisionDraft } = await import("../src/review.ts");
-  const facts = { pause: "reraised" as const, id: "P1-R1-1", history: [], issue: { id: "P1-R1-1", severity: "major" as const, location: "S1", problem: "The migration is missing.", evidence: "S1 never migrates." } };
+  const facts = { pause: "reraised" as const, id: "P1-R1-1", history: [], issue: { id: "P1-R1-1", severity: "major" as const, location: "S1", problem: "The migration is missing.", evidence: "S1 never migrates." }, taskDispute: false };
   const pause = await decideOn({ ...decisionDraft("Planning phase 1", { kind: "pause", facts }, question.options, null), explain: undefined });
   assert.ok(pause.prompt.includes("Codex says: The migration is missing."), pause.prompt.slice(-1500));
 });

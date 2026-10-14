@@ -121,17 +121,17 @@ test("conversation.md records a question under its displayed number with the rec
 test("pauseProse writes every kind of pause as prose, without the record's field names or empty fields", async () => {
   const { pauseProse } = await import("../src/render.ts");
   const earlier = [
-    { id: "P1-R1-1", phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "S3", problem: "The plan omits the migration.", evidence: "Step S3 writes the table\nbut never migrates it.", action: "rejected" as const, rationale: "The migration is in S4.", duplicate_of: null, reverses: null, superseded: true },
+    { id: "P1-R1-1", phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "S3", problem: "The plan omits the migration.", evidence: "Step S3 writes the table\nbut never migrates it.", action: "rejected" as const, rationale: "The migration is in S4.", duplicate_of: null, reverses: null, superseded: true, file_change: null, task_dispute: false },
     { id: "P1-R1-1", phase: 1, round: 2, source: "user" as const, problem: "The plan omits the migration.", action: "decided_by_user" as const, rationale: "Add it to S3.", superseded: false },
   ] as unknown as LogEntry[];
   const issueNow = { id: "P1-R2-1", severity: "major" as const, location: "S3", problem: "Still no migration.", evidence: "S3 is unchanged." };
   const disposition = { id: "P1-R2-1", action: "partially_accepted" as const, rationale: "Only the index.", duplicate_of: "", reverses: "" };
   const all = [
-    pauseProse({ pause: "reraised", id: "P1-R1-1", history: earlier, issue: issueNow }),
-    pauseProse({ pause: "secondClarification", id: "P1-R1-1", history: earlier, disposition }),
-    pauseProse({ pause: "disputedSelfCorrection", id: "P1-R1-1", explanation: "It breaks the build.", history: earlier }),
-    pauseProse({ pause: "reversal", id: "P1-R2-1", reverses: "P1-R1-1", history: earlier, issue: issueNow, disposition }),
-    pauseProse({ pause: "repeatedUnderNewId", id: "P1-R2-1", repeats: "P1-R1-1", history: earlier, issue: issueNow }),
+    pauseProse({ pause: "reraised", id: "P1-R1-1", history: earlier, issue: issueNow, taskDispute: false }),
+    pauseProse({ pause: "secondClarification", id: "P1-R1-1", history: earlier, disposition, taskDispute: false }),
+    pauseProse({ pause: "disputedSelfCorrection", id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false }),
+    pauseProse({ pause: "reversal", id: "P1-R2-1", reverses: "P1-R1-1", history: earlier, issue: issueNow, disposition, taskDispute: false }),
+    pauseProse({ pause: "repeatedUnderNewId", id: "P1-R2-1", repeats: "P1-R1-1", history: earlier, issue: issueNow, disposition: null, taskDispute: false }),
     pauseProse({ pause: "unexplained", fileLabel: "plan.json", heading: "Planning phase 1", round: 2, resultText: "I tidied it." }),
     pauseProse({ pause: "identical", fileLabel: "plan.json", round: 3, seen: "cycle 1" }),
     pauseProse({ pause: "idle", idle: 2, round: 2, issues: [earlier[0]] }),

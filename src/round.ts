@@ -2,12 +2,13 @@
 // guaranteed (findings 3, 4 and 7 of docs/functional-design-review.md; decisions Q2 and Q3). Pure. A failure was a halt
 // under decision Q3; since issue #151 it gets one validation repair turn first (reviewValidation, roundValidation).
 
-import { Result } from "effect";
+import { Result, Schema } from "effect";
 import { CorrectionInvalid, RoundInvalid } from "./errors.ts";
 import { correctionRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
 import type { Validation } from "./review.ts";
 import type { Action, LogEntry, PlannerResponse, Review, UserQuestion } from "./schema.ts";
 
+import * as S from "./schema.ts";
 import type { IssueId } from "./schema.ts";
 export type { IssueId };
 
@@ -16,7 +17,22 @@ export type ValidatedReview = Readonly<{ issues: readonly ValidatedIssue[] }>;
 
 /** A reference that decision Q3 dropped: what the response named, in which field, and why it was dropped. */
 export type ReferenceNote = Readonly<{ id: IssueId; field: "duplicate_of" | "reverses"; named: string; reason: "unknown" | "not_accepted" }>;
-export type ValidatedDisposition = Readonly<{ id: IssueId; action: Action; rationale: string; duplicateOf: IssueId | null; reverses: IssueId | null }>;
+const isMarked = Schema.is(S.MarkedDisposition);
+/**
+ * Claude Code's mark on a disposition (issue #156), the one place the rule is stated: a disposition of the question
+ * list's or the terms' response that is marked and not `accepted`, since an accepted issue is no disagreement. Only
+ * those two subjects' schemas keep the field when the reply is decoded, so every other disposition has none.
+ */
+export const taskDisputeOf = (d: S.Disposition): boolean => isMarked(d) && d[S.TASK_DISPUTE_FIELD] && d.action !== "accepted";
+/** `taskDispute`: Claude Code's mark (issue #156), true only on a disposition other than `accepted`. */
+export type ValidatedDisposition = Readonly<{
+  id: IssueId;
+  action: Action;
+  rationale: string;
+  duplicateOf: IssueId | null;
+  reverses: IssueId | null;
+  taskDispute: boolean;
+}>;
 export type ValidatedSelfCorrection = Readonly<{ id: IssueId; newAction: "accepted" | "rejected" | "plan_error"; explanation: string; generated: boolean }>;
 export type ValidatedRound = Readonly<{
   phase: number;
@@ -79,7 +95,14 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
   };
   const dispositions: ValidatedDisposition[] = response.dispositions.map((d) => {
     const id = d.id as IssueId;
-    return { id, action: d.action, rationale: d.rationale, duplicateOf: reference(id, "duplicate_of", d.duplicate_of), reverses: reference(id, "reverses", d.reverses) };
+    return {
+      id,
+      action: d.action,
+      rationale: d.rationale,
+      duplicateOf: reference(id, "duplicate_of", d.duplicate_of),
+      reverses: reference(id, "reverses", d.reverses),
+      taskDispute: taskDisputeOf(d),
+    };
   });
 
   const known = new Set(log.map((e) => e.id));

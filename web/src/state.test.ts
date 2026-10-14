@@ -691,7 +691,7 @@ describe("a replay of a question phase", () => {
         subject: "questions",
         round: 1,
         response: {
-          dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "" }],
+          dispositions: [{ id: "Q-R1-1", action: "accepted", rationale: "Added the database question.", duplicate_of: "", reverses: "", task_dispute: false }],
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],

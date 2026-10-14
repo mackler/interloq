@@ -35,7 +35,14 @@ export const questionsFile = (task: string, questions: QuestionsFile["questions"
 
 const IssueRecord = Schema.Struct({ id: S.IssueId, severity: S.Severity, location: Schema.String, problem: Schema.String, evidence: Schema.String });
 export const ValidatedReviewRecord = Schema.Struct({ issues: Schema.Array(IssueRecord) });
-const DispositionRecord = Schema.Struct({ id: S.IssueId, action: S.Action, rationale: Schema.String, duplicateOf: Schema.NullOr(S.IssueId), reverses: Schema.NullOr(S.IssueId) });
+const DispositionRecord = Schema.Struct({
+  id: S.IssueId,
+  action: S.Action,
+  rationale: Schema.String,
+  duplicateOf: Schema.NullOr(S.IssueId),
+  reverses: Schema.NullOr(S.IssueId),
+  taskDispute: Schema.Boolean,
+});
 const SelfCorrectionRecord = Schema.Struct({ id: S.IssueId, newAction: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Schema.String, generated: Schema.Boolean });
 const NoteRecord = Schema.Struct({ id: S.IssueId, field: Schema.Literals(["duplicate_of", "reverses"]), named: Schema.String, reason: Schema.Literals(["unknown", "not_accepted"]) });
 /** The response part of a validated round (src/round.ts `ValidatedRound` without its review). */
