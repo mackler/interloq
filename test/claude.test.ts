@@ -1691,3 +1691,27 @@ test("issue #161: the execution prompt names Monitor beside background commands,
   assert.equal(fake.sdk.calls[0].prompt, executePrompt);
   assert.ok(reasonOf(stop ?? {}).includes(prompts.KEEPS_SESSION_OPEN));
 });
+
+// Issue #157 (P1-R1-1): a planning call classifies its failure without the process ending, so a planning or context
+// call keeps the classification, and the transport retry, it had before.
+const sdkSignal = () => Object.assign(new Error("Claude Code process terminated by signal SIGBUS"), { errorClass: "process_killed_by_signal", signal: "SIGBUS" });
+const sdkExit = () => Object.assign(new Error("Claude Code process exited with code 1"), { errorClass: "process_exited_nonzero", exitCode: 1 });
+const retry503 = { type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 503, error: "server_error" } as unknown as SDKMessage;
+
+test("a planning call whose process ends with nothing else fails with ClaudeCallFailed after one query", async () => {
+  for (const ending of [sdkSignal, sdkExit]) {
+    const fake = await planner([throwing(ending())]);
+    assert.equal(await failedTag(fake), "ClaudeCallFailed");
+    assert.equal(fake.sdk.calls.length, 1);
+  }
+});
+
+test("a planning call whose process ends after a 503 api_retry is a TransportFault, and planningCall makes it again", async () => {
+  for (const ending of [sdkSignal, sdkExit]) {
+    assert.equal(await failedTag(await planner([throwing(ending(), [retry503])])), "TransportFault");
+    const fake = await planner([throwing(ending(), [retry503]), messages(init(), success({ questions_for_user: [] }))], [], quickRetry);
+    const out = await run(planningCall("write the plan", schema).pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps)));
+    assert.deepEqual(out.output, { questions_for_user: [] });
+    assert.equal(fake.sdk.calls.length, 2);
+  }
+});

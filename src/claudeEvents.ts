@@ -7,7 +7,7 @@ import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
 import type { ExecCallOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
-import { type ClaudeFailure, rejectionOf } from "./transport.ts";
+import { type ClaudeFailure, type ProcessEnd, rejectionOf } from "./transport.ts";
 import { backgroundKilledText } from "./prompts.ts";
 
 export type Question = Readonly<{ question: string; options: readonly Readonly<{ label: string; description: string }>[] }>;
@@ -62,7 +62,7 @@ export const decodeToolTarget = (toolInput: unknown): string | null => {
 };
 
 const noResult = "the call produced no result message";
-const noFacts: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null };
+const noFacts: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null, processEnd: null };
 
 /** Whether a message shows that the call made progress: an assistant message without error, a stream event, a tool result. */
 const isProgress = (message: SDKMessage): boolean => {
@@ -79,11 +79,12 @@ type Fold = Readonly<{ out: CallOutcome; facts: ClaudeFailure }>;
 
 /**
  * The outcome of a call from its messages in order; `streamError` is the text of a failure of the stream, which wins over
- * any result, and `streamCode` its error code. A success result with is_error is a failure (the turn ended on an API
+ * any result, `streamCode` its error code and `processEnd` how the Claude Code process ended (issue #157), both kept
+ * only with a stream failure. A success result with is_error is a failure (the turn ended on an API
  * error). The facts of a failure keep the result's status, reason and subtype, and the assistant error and the api_retry
  * seen after the last sign of progress (issue #26), and the latest usage-limit rejection after it (issue #68).
  */
-export const reduceMessages = (messages: readonly SDKMessage[], streamError: string | null = null, streamCode: string | null = null): CallOutcome => {
+export const reduceMessages = (messages: readonly SDKMessage[], streamError: string | null = null, streamCode: string | null = null, processEnd: ProcessEnd | null = null): CallOutcome => {
   const start: Fold = { out: { sessionId: null, costUsd: null, structured: null, resultText: "", error: noResult, partial: true, failure: null }, facts: noFacts };
   const folded = messages.reduce<Fold>(({ out, facts }, message) => {
     if (message.type === "system" && message.subtype === "init") return { out: { ...out, sessionId: message.session_id }, facts };
@@ -102,7 +103,7 @@ export const reduceMessages = (messages: readonly SDKMessage[], streamError: str
     return { out: { ...out, costUsd: message.total_cost_usd, structured: message.structured_output, resultText: message.result, error: null, partial: false }, facts: terminal };
   }, start);
   const out = streamError === null ? folded.out : { ...folded.out, error: streamError };
-  return { ...out, failure: out.error === null ? null : { ...folded.facts, streamCode: streamError === null ? null : streamCode } };
+  return { ...out, failure: out.error === null ? null : { ...folded.facts, streamCode: streamError === null ? null : streamCode, processEnd: streamError === null ? null : processEnd } };
 };
 
 const decodeExecReport = Schema.decodeUnknownResult(S.ExecReport);

@@ -17,6 +17,11 @@ export type ClaudeFailure = Readonly<{
   rejection: Rejection | null;
   /** The text of the error result (issue #122), or null when the call had no error result (a stream failure, an abort). */
   resultText: string | null;
+  /**
+   * How the Claude Code process ended (issue #157), read by processEndOf from the value the stream threw; null for
+   * every other failure and for an aborted call.
+   */
+  processEnd: ProcessEnd | null;
 }>;
 
 /**
@@ -79,12 +84,16 @@ export const processEndOf = (thrown: unknown): ProcessEnd | null => {
   return Number.isInteger(code) && code !== 0 ? { kind: "exit", code } : null;
 };
 
-/** What a failed Claude Code call is (issue #68): permanent, a transport fault, or a usage limit with a stated reset. */
+/**
+ * What a failed Claude Code call is (issue #68): permanent, a transport fault, a usage limit with a stated reset, a
+ * session too long (issue #122), or a process that ended abnormally (issue #157).
+ */
 export type FailureKind =
   | Readonly<{ kind: "permanent" }>
   | Readonly<{ kind: "transport" }>
   | Readonly<{ kind: "limited"; resetsAtMs: number; limitType: string | null }>
-  | Readonly<{ kind: "contextTooLong" }>;
+  | Readonly<{ kind: "contextTooLong" }>
+  | Readonly<{ kind: "processEnded"; end: ProcessEnd }>;
 
 /**
  * The text of a rejection because the session's history no longer fits Claude Code's context (issue #122). Inferred
@@ -153,8 +162,10 @@ const isOtherPermanentError = (e: string | null): boolean => e !== null && e !==
  * What a failed Claude Code call is, by the facts kept of it. A rejection because the session is too long is checked
  * first (issue #122), since it usually carries a 4xx status as well; then permanent evidence other than the rate limit;
  * then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold; then the
- * rate limit, or a rejection without a reset, is permanent; then the transport evidence. `terminalReason`
- * alone is never sufficient.
+ * rate limit, or a rejection without a reset, is permanent; then a process that ended by a signal or a nonzero exit
+ * (issue #157), the call's terminal fact, is `processEnded`; then the transport evidence. `terminalReason` alone is
+ * never sufficient. A planning or context call classifies its failure with `processEnd` null (src/claude.ts,
+ * `callFailure`), so only an execution call is ever `processEnded`.
  */
 export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
   if (failure === null) return PERMANENT;
@@ -169,6 +180,7 @@ export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
   if (rejection !== null && rejection.kind === "withReset") return { kind: "limited", resetsAtMs: rejection.resetsAtMs, limitType: rejection.limitType };
   const rateLimited = rejection !== null || isRateLimit(apiStatus, assistantError) || (retrySeen !== null && isRateLimit(retrySeen.status, retrySeen.error));
   if (rateLimited) return PERMANENT;
+  if (failure.processEnd !== null) return { kind: "processEnded", end: failure.processEnd };
   const transport =
     (streamCode !== null && NETWORK_CODES.includes(streamCode)) ||
     is5xx(apiStatus) ||

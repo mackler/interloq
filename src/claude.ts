@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
 import { type BackgroundState, type CallOutcome, checkBackground, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, UsageLimited } from "./errors.ts";
-import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
+import { type ClaudeFailure, classifyClaude, errorCode, type ProcessEnd, processEndOf } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
 import type { ExecCallOutcome } from "./schema.ts";
@@ -36,7 +36,9 @@ type CallbackError = RunError;
  * ClaudeCallFailed otherwise.
  */
 const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | ClaudeSessionTooLong | TransportFault | UsageLimited => {
-  const kind = classifyClaude(failure);
+  // Issue #157 (P1-R1-1): classified without the process ending, so a planning or context call keeps the
+  // classification it had before; only an execution call's attempt classifies with it.
+  const kind = classifyClaude(failure === null ? null : { ...failure, processEnd: null });
   switch (kind.kind) {
     case "transport":
       return new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null });
@@ -45,6 +47,7 @@ const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCall
     case "contextTooLong":
       return new ClaudeSessionTooLong({ message });
     case "permanent":
+    case "processEnded": // never: the ending was removed above
       return new ClaudeCallFailed({ message });
   }
 };
@@ -336,6 +339,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
       const seen: SDKMessage[] = [];
       let streamError: string | null = null;
       let streamCode: string | null = null;
+      let processEnd: ProcessEnd | null = null;
       /** The next message, or null at the end; a failure of the stream ends the call with its text and its code (issue #26). */
       const next = (): Effect.Effect<SDKMessage | null> =>
         Effect.tryPromise({ try: () => iterator.next(), catch: (e: unknown) => e }).pipe(
@@ -344,6 +348,8 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             Effect.sync(() => {
               streamError = failed(e);
               streamCode = errorCode(e);
+              // Issue #157: an aborted call (Stop task, or the adapter's own abort) is never read as a process ending.
+              processEnd = controller.signal.aborted ? null : processEndOf(e);
               return null;
             }),
           ),
@@ -395,7 +401,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
       });
       yield* consume.pipe(Effect.ensuring(close));
       if (yield* Deferred.isDone(callbackFailure)) return yield* Deferred.await(callbackFailure);
-      return reduceMessages(seen, streamError, streamCode);
+      return reduceMessages(seen, streamError, streamCode, processEnd);
     }).pipe(
       // Every exit ends the activity: a call error, a typed failure and an interruption are ok: false.
       Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit) && exit.value.error === null })),

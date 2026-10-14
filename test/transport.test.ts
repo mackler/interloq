@@ -35,7 +35,7 @@ test("Codex: an exec exit is retried only when its stderr shows a transport faul
   assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; usage limit"), false);
 });
 
-const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null };
+const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null, processEnd: null };
 const f = (over: Partial<ClaudeFailure>): ClaudeFailure => ({ ...none, ...over });
 
 test("Claude: no facts, or api_error without a status or other evidence, is not retried", () => {
@@ -162,4 +162,27 @@ test("processEndOf: no ending for a zero code, another text or a value that is n
   assert.equal(processEndOf("Claude Code process terminated by signal SIGBUS"), null);
   assert.equal(processEndOf(null), null);
   assert.equal(processEndOf(42), null);
+});
+
+// Issue #157: where a process ending stands in the evidence order.
+const bus = { kind: "signal" as const, signal: "SIGBUS" };
+
+test("Claude: a process ending alone is processEnded", () => {
+  assert.deepEqual(classifyClaude(f({ processEnd: bus })), { kind: "processEnded", end: bus });
+  assert.deepEqual(classifyClaude(f({ processEnd: { kind: "exit", code: 1 } })), { kind: "processEnded", end: { kind: "exit", code: 1 } });
+});
+
+test("Claude: permanent evidence, a rejection and the session's length win over a process ending", () => {
+  assert.equal(classifyClaude(f({ processEnd: bus, apiStatus: 401 })).kind, "permanent");
+  assert.equal(classifyClaude(f({ processEnd: bus, assistantError: "billing_error" })).kind, "permanent");
+  assert.equal(classifyClaude(f({ processEnd: bus, subtype: "error_max_turns" })).kind, "permanent");
+  assert.equal(classifyClaude(f({ processEnd: bus, rejection: { kind: "withReset", resetsAtMs: 5000, limitType: null } })).kind, "limited");
+  assert.equal(classifyClaude(f({ processEnd: bus, rejection: { kind: "withoutReset", limitType: null } })).kind, "permanent");
+  assert.equal(classifyClaude(f({ processEnd: bus, resultText: "Prompt is too long" })).kind, "contextTooLong");
+});
+
+test("Claude: a process ending wins over transport evidence", () => {
+  assert.equal(classifyClaude(f({ processEnd: bus, assistantError: "overloaded" })).kind, "processEnded");
+  assert.equal(classifyClaude(f({ processEnd: bus, retrySeen: { status: 503, error: "server_error" } })).kind, "processEnded");
+  assert.equal(classifyClaude(f({ processEnd: bus, streamCode: "ECONNRESET" })).kind, "processEnded");
 });

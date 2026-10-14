@@ -25,7 +25,10 @@ const facts: fc.Arbitrary<ClaudeFailure> = fc.record({
   subtype: fc.option(fc.constantFrom(...STOPPING, "success", "error_during_execution"), { nil: null }),
   rejection,
   resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error", "Request too large for the model"), { nil: null }),
+  processEnd: fc.option(fc.oneof(fc.record({ kind: fc.constant("signal" as const), signal: fc.constantFrom("SIGBUS", "SIGKILL", "SIGTERM") }), fc.record({ kind: fc.constant("exit" as const), code: fc.integer({ min: 1, max: 255 }) })), { nil: null }),
 });
+/** The failures without a process ending (issue #157): the domain of the properties stated before it. */
+const before157 = facts.map((x) => ({ ...x, processEnd: null }));
 
 const is4xx = (s: number | null): boolean => s !== null && s >= 400 && s <= 499;
 const is5xx = (s: number | null): boolean => s !== null && s >= 500 && s <= 599;
@@ -55,7 +58,7 @@ const transportBefore = (x: ClaudeFailure): boolean => {
 
 test("property: limited if and only if the rejection carries a reset and no permanent evidence but the rate limit is present", () => {
   fc.assert(
-    fc.property(facts, (x) => {
+    fc.property(before157, (x) => {
       const kind = classifyClaude(x);
       const expected = x.rejection !== null && x.rejection.kind === "withReset" && !otherPermanent(x);
       assert.equal(kind.kind === "limited", expected);
@@ -77,7 +80,7 @@ test("property: permanent evidence other than the rate limit always gives perman
 
 test("property: without a rejection, the classification is the one before issue #68", () => {
   fc.assert(
-    fc.property(facts, (x) => {
+    fc.property(before157, (x) => {
       const without = { ...x, rejection: null };
       assert.equal(classifyClaude(without).kind, transportBefore(without) ? "transport" : "permanent");
     }),
@@ -136,6 +139,51 @@ test("a text without the SDK's phrases is no ending", () => {
       fc.pre(!s.includes("Claude Code process"));
       assert.equal(processEndOf(new Error(s)), null);
     }),
+    RUNS,
+  );
+});
+
+// Issue #157: a process ending is classified after the session's length, the permanent evidence and the usage-limit
+// rejections, and before the transport evidence.
+const CONTEXT = /prompt is too long/i;
+const outranks = (x: ClaudeFailure): boolean => otherPermanent(x) || x.rejection !== null || is4xx(x.apiStatus) && x.apiStatus === 429 || x.assistantError === "rate_limit" || (x.retrySeen !== null && (x.retrySeen.status === 429 || x.retrySeen.error === "rate_limit")) || (x.resultText !== null && CONTEXT.test(x.resultText));
+
+/** A failure with a process ending and, beside it, transport evidence or none, but nothing that outranks it. */
+const endedOnly: fc.Arbitrary<ClaudeFailure> = fc.record({
+  streamCode: fc.option(fc.constantFrom(...NETWORK_CODES, "ERR_OTHER"), { nil: null }),
+  apiStatus: fc.option(fc.integer({ min: 500, max: 599 }), { nil: null }),
+  terminalReason: fc.option(fc.constantFrom("api_error", "completed"), { nil: null }),
+  assistantError: fc.option(fc.constantFrom("server_error", "overloaded", "unknown"), { nil: null }),
+  retrySeen: fc.option(fc.record({ status: fc.option(fc.integer({ min: 500, max: 599 }), { nil: null }), error: fc.constantFrom("server_error", "unknown") }), { nil: null }),
+  subtype: fc.option(fc.constantFrom("success", "error_during_execution"), { nil: null }),
+  rejection: fc.constant(null),
+  resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error"), { nil: null }),
+  processEnd: fc.oneof(fc.record({ kind: fc.constant("signal" as const), signal: fc.constantFrom("SIGBUS", "SIGKILL") }), fc.record({ kind: fc.constant("exit" as const), code: fc.integer({ min: 1, max: 255 }) })),
+});
+
+test("property: a process ending with nothing that outranks it is processEnded with that ending", () => {
+  fc.assert(
+    fc.property(endedOnly, (x) => {
+      assert.equal(outranks(x), false);
+      assert.deepEqual(classifyClaude(x), { kind: "processEnded", end: x.processEnd });
+    }),
+    RUNS,
+  );
+});
+
+test("property: a process ending never overrides the session's length, permanent evidence or a rejection", () => {
+  fc.assert(
+    fc.property(facts, (x) => {
+      fc.pre(outranks(x));
+      assert.deepEqual(classifyClaude(x), classifyClaude({ ...x, processEnd: null }));
+    }),
+    RUNS,
+  );
+});
+
+test("property: without its ending, as planning and context calls classify, a failure is never processEnded", () => {
+  fc.assert(
+    fc.property(facts, (x) => assert.notEqual(classifyClaude({ ...x, processEnd: null }).kind, "processEnded")),
     RUNS,
   );
 });
