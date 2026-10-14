@@ -320,6 +320,7 @@ test("every write of the Store to a guarded record is in its journal, with the e
     ["saveExecution", store.saveExecution(1, { status: "finished", summary: "", question: "", remainingWork: "", userInput: null, checks: [] })],
     ["saveQuestions", store.saveQuestions("task", [])],
     ["writeRequirements", store.writeRequirements("# R\n")],
+    ["saveSuiteLog", store.saveSuiteLog(1, "all passed\n")],
     ["savePlan", store.savePlan(plan)],
     ["saveLog", store.saveLog({ plan: 1 }, [])],
     ["appendDecision", store.appendDecision({ subject: "issue A", id: null, decision: "keep it", phase: 1, round: 1 })],

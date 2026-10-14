@@ -256,6 +256,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       // The readers accept the version-1 files of earlier runs as well (Q5's follow-up).
       loadQuestions: () => readText(questions).pipe(Effect.flatMap((text) => Effect.fromResult(readQuestions(questions, text)))),
       writeRequirements: (text) => writeText(requirements, text),
+      saveSuiteLog: (n, text) => writeText(path.join(dir, pathOf({ kind: "suiteLog", n })), text),
       loadLog: (subject) => {
         const k = decisionOf(subject);
         if (k !== null) return readLogFile(subject).pipe(Effect.map((entries) => entries.filter(ofDecision(k))));

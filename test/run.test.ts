@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Fiber } from "effect";
 import { refinementRun, run } from "../src/run.ts";
-import { countOfKind, foreseenPhases, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
+import { countOfKind, foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT, scriptedItem } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
@@ -624,8 +624,8 @@ test("the seam of the phase names: the phase lines open with phaseName's names",
   });
   await runTask(layer);
   const known: readonly (readonly [Phase, number])[] = [[{ kind: "planning", n: 1 }, 1], [{ kind: "execution", n: 1 }, 1], [{ kind: "work", n: 1 }, 2], [{ kind: "planning", n: 2 }, 2], [{ kind: "execution", n: 2 }, 2], [{ kind: "work", n: 2 }, 2]];
-  const expected = known.map(([phase, iterations]) => phaseName(phase, countOfKind(foreseenPhases("implementation", iterations), phase.kind)));
-  const candidates = [1, 2].flatMap((iterations) => foreseenPhases("implementation", 2).map((phase) => phaseName(phase, countOfKind(foreseenPhases("implementation", iterations), phase.kind))));
+  const expected = known.map(([phase, iterations]) => phaseName(phase, countOfKind(foreseenPhases("implementation", iterationsOf(iterations)), phase.kind)));
+  const candidates = [1, 2].flatMap((iterations) => foreseenPhases("implementation", iterationsOf(2)).map((phase) => phaseName(phase, countOfKind(foreseenPhases("implementation", iterationsOf(iterations)), phase.kind))));
   const opened = probe.ui.said.map((l) => l.trim()).flatMap((l) => candidates.filter((name) => l.startsWith(`${name}:`)).sort((a, b) => b.length - a.length).slice(0, 1));
   assert.deepEqual(opened, expected);
 });

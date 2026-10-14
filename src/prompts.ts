@@ -11,6 +11,7 @@ import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
+import { SUITE_TAIL_LINES, type SuiteFailure } from "./suite.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -1380,14 +1381,50 @@ ${execution.plan}`;
  * Claude Code session of its own (issue #122): so it names the task, requirements.md where the run has one, and
  * user-decisions.md, which the run's one session used to carry.
  */
-export function revisePlanAfterExecutionPrompt(root: RunRoot, task: string, withRequirements: boolean, phase: number, end: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }>, checks: StepChecks): string {
+/**
+ * Why the plan is revised after execution phase k (issue #162): the execution and its work review ended with a stop or
+ * a correction due, or the work review found nothing to correct and the whole suite Interloq then ran failed.
+ */
+export type RevisionCause =
+  | Readonly<{ _tag: "ExecutionEnded"; stopped: boolean; workReview: WorkReviewEnd }>
+  | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: SuiteFailure; tail: string; log: string }>;
+
+/** A suite run's failure in words (issue #162): its exit code, the signal that ended it, the bound, or why it did not start. */
+export function suiteFailureText(reason: SuiteFailure): string {
+  switch (reason.kind) {
+    case "exit":
+      return `it exited with code ${reason.code}`;
+    case "signal":
+      return `it was ended by the signal ${reason.signal}`;
+    case "timedOut":
+      return `it ran longer than ${reason.ms / 60_000} minutes and was stopped`;
+    case "notStarted":
+      return `it could not be started (${reason.message})`;
+  }
+}
+
+/** What the revision prompt says of its cause. */
+const revisionCauseText = (root: RunRoot, phase: number, cause: RevisionCause): string => {
+  switch (cause._tag) {
+    case "ExecutionEnded": {
+      const stop = cause.stopped ? `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.` : "";
+      const review =
+        cause.workReview === "converged"
+          ? `\nWork review ${phase} found no issue in the work so far.`
+          : `\nWork review ${phase} ended in round ${cause.workReview.revisedInRound} with accepted issues or a user decision: ${runDir(root)}/${pathOf({ kind: "round", subject: { work: phase }, round: cause.workReview.revisedInRound })}, ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })} and the last entries of ${runDir(root)}/user-decisions.md.`;
+      return `${stop}${review}`;
+    }
+    case "SuiteFailed":
+      return `\nWork review ${phase} found nothing left to correct. Interloq then ran the whole suite, ${codeSpan(cause.command)}, and it failed: ${suiteFailureText(cause.reason)}. Its whole output is in ${cause.log}; its last ${SUITE_TAIL_LINES} lines are:
+${codeFence(cause.tail)}
+${cause.tail}${cause.tail.endsWith("\n") ? "" : "\n"}${codeFence(cause.tail)}
+Revise the plan with steps that correct this failure; each step still checks its change under the rule below, and Interloq runs the whole suite again after the next review of the work finds nothing left to correct.`;
+  }
+};
+
+export function revisePlanAfterExecutionPrompt(root: RunRoot, task: string, withRequirements: boolean, phase: number, cause: RevisionCause, checks: StepChecks): string {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
-  const stop = end.stopped ? `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.` : "";
-  const review =
-    end.workReview === "converged"
-      ? `\nWork review ${phase} found no issue in the work so far.`
-      : `\nWork review ${phase} ended in round ${end.workReview.revisedInRound} with accepted issues or a user decision: ${runDir(root)}/${pathOf({ kind: "round", subject: { work: phase }, round: end.workReview.revisedInRound })}, ${runDir(root)}/${pathOf({ kind: "log", subject: { work: phase } })} and the last entries of ${runDir(root)}/user-decisions.md.`;
-  return `Execution phase ${phase} has ended.${stop}${review}
+  return `Execution phase ${phase} has ended.${revisionCauseText(root, phase, cause)}
 This request runs in a Claude Code session of its own, which has not seen the earlier phases: read the files named here.
 ${requirements}${userDecisionsSentence(root)}
 Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
@@ -1479,7 +1516,7 @@ export const SUMMARY_PROPOSED_HEADING = "Summary proposed by Claude:";
  * execution phase implements the plan. The records keep their own names (question-review/, execution-<k>/). Issue #6:
  * `count` is how many phases of the kind the run holds, begun or foreseen; with one, the phase carries no number.
  */
-export function phaseLabel(kind: "questions" | "planning" | "execution" | "work", n: number, count: number): string {
+export function phaseLabel(kind: "questions" | "planning" | "execution" | "work" | "suite", n: number, count: number): string {
   const numbered = (name: string) => (count === 1 ? name : `${name} ${n}`);
   switch (kind) {
     case "questions":
@@ -1490,8 +1527,22 @@ export function phaseLabel(kind: "questions" | "planning" | "execution" | "work"
       return numbered("Implementation");
     case "work":
       return numbered("Code review");
+    case "suite":
+      return numbered(FULL_SUITE_PHASE);
   }
 }
+/** Issue #162: the lines of a suite run, said on the page and written to conversation.md. */
+export function suiteBeganLine(label: string, command: string): string {
+  return `\n${label}: Interloq runs the whole suite, ${command}, because the review of the work found nothing left to correct.`;
+}
+export function suitePassedLine(label: string, command: string): string {
+  return `${label} passed: ${command}. The run is finished.`;
+}
+export function suiteFailedLine(label: string, command: string, reason: SuiteFailure, log: string): string {
+  return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
+}
+/** Issue #162: the name of the phase in which Interloq runs the whole suite after a converged work review. */
+export const FULL_SUITE_PHASE = "Full test suite";
 /** The purpose of an agent call as the activity line names it: the events keep the program's words (issues #14, #21). */
 export function purposeLabel(purpose: string): string {
   return purpose === "interview" ? "clarification" : purpose === "execution" ? "implementation" : purpose === "context" ? "explaining a question" : purpose;
@@ -1726,7 +1777,7 @@ export const DECISION_FORMAT_AUTHORITY =
 
 /** A decision's question as a prompt names it: the phase is where it was asked, `label` its name as the run shows it (W1-R1-2). */
 export type DecisionPromptQuestion = Readonly<{
-  phase: Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work"; n: number }>;
+  phase: Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work" | "suite"; n: number }>;
   label: string;
   question: string;
   options: readonly Readonly<{ label: string; description: string }>[];

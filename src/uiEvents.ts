@@ -9,7 +9,10 @@ import { piecesText } from "./pieces.ts";
 import type { RunMode } from "./runMode.ts";
 
 /** A phase of the run as the progress display names it. */
-export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work"; n: number }>;
+/** The kinds of a numbered phase; `suite` is the whole suite Interloq runs after a converged work review (issue #162). */
+export const NUMBERED_PHASE_KINDS = ["planning", "execution", "work", "suite"] as const;
+export type NumberedPhaseKind = (typeof NUMBERED_PHASE_KINDS)[number];
+export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
 /** Which conversation with the user runs (issue #21): the first clarification, or a follow-up on accepted requirements gaps. An empty agreed list opens none (issue #83). */
 export type InterviewStage = "clarification" | "followUp";
 export type Agent = "claude" | "codex";
@@ -87,16 +90,26 @@ export const phaseName = (phase: Phase, count: number): string => (phase.kind ==
 export const countOfKind = (phases: readonly Phase[], kind: Phase["kind"]): number => phases.filter((p) => p.kind === kind).length;
 /** The name of a phase in test output: always numbered. */
 const numberedName = (phase: Phase): string => phaseName(phase, 2);
+/** One iteration of an implementation run as foreseen: the number of the suite run that follows its work review, or none (issue #162). */
+export type Iteration = Readonly<{ suite: number | null }>;
+/** n iterations with no suite run, the shape of a run whose project names no suite command. */
+export const iterationsOf = (n: number): readonly Iteration[] => Array.from({ length: n }, () => ({ suite: null }));
 /**
- * The phases known of a run (issue #6): a refinement run is Gather Requirements alone, whatever the count (issue #120);
- * an implementation run is Planning, Implementation and Code review of each iteration known so far.
+ * The phases known of a run (issue #6): a refinement run is Gather Requirements alone, whatever the iterations (issue
+ * #120); an implementation run is Planning, Implementation and Code review of each iteration known so far, each followed
+ * by its Full test suite where it has one (issue #162).
  */
-export const foreseenPhases = (mode: RunMode, iterations: number): readonly Phase[] => {
+export const foreseenPhases = (mode: RunMode, iterations: readonly Iteration[]): readonly Phase[] => {
   switch (mode) {
     case "refinement":
       return [{ kind: "questions" }];
     case "implementation":
-      return Array.from({ length: iterations }, (_, i) => i + 1).flatMap((n): Phase[] => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]);
+      return iterations.flatMap((iteration, i): Phase[] => [
+        { kind: "planning", n: i + 1 },
+        { kind: "execution", n: i + 1 },
+        { kind: "work", n: i + 1 },
+        ...(iteration.suite === null ? [] : [{ kind: "suite" as const, n: iteration.suite }]),
+      ]);
   }
 };
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;

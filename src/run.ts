@@ -9,14 +9,16 @@ import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
+import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suitePassedLine, type WorkExecution } from "./prompts.ts";
+import { recordPath } from "./artifacts.ts";
 import { plainPieces, type ShownBlock } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
-import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, Tracker, Ui } from "./services.ts";
-import { countOfKind, foreseenPhases as foreseen, type Phase, phaseName } from "./uiEvents.ts";
+import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, SuiteRunner, Tracker, Ui } from "./services.ts";
+import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
+import { SUITE_TAIL_LINES, tailLines } from "./suite.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
 
 /**
@@ -37,7 +39,7 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode): E
     yield* store.init(task);
     yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
-    yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", 1) });
+    yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", iterationsOf(1)) });
     yield* questionPhase(task, terms).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
     // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
     if ((yield* store.loadQuestions()).questions.length === 0) {
@@ -63,7 +65,7 @@ const firstLine = (task: string): string => task.split("\n")[0] ?? "";
  * executes and reviews, and sets the item to implemented when the run finishes. A run that halts or is stopped sets
  * nothing more, and Interloq never moves an item backward. Succeeds with the number of execution phases.
  */
-export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks): Effect.Effect<number, RunError, Services | Tracker> =>
+export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks): Effect.Effect<number, RunError, Services | Tracker | SuiteRunner> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const tracker = yield* Tracker;
@@ -78,7 +80,7 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
   });
 
 /** The planning, execution and review of a task without a tracker item: the implementation run's phases after a new records directory. */
-export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effect.Effect<number, RunError, Services> =>
+export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effect.Effect<number, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
     yield* (yield* Store).init(task);
     return yield* implementationPhases(task, false, checks);
@@ -118,7 +120,7 @@ const processEndedStop = (ending: S.ExecProcessEnded, records: StepRecords): Rea
   };
 };
 
-const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks): Effect.Effect<number, RunError, Services> =>
+const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks): Effect.Effect<number, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -141,14 +143,46 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
     let known = 1;
-    const foresee = (iterations: number) =>
-      iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", iterations) })));
-    yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", known) });
+    // Issue #162: the iterations whose suite run has run, in order; where a suite command is set, the next suite run
+    // follows the last known iteration, and moves to a new last one when a stop or a correction adds it.
+    let suitedIterations: readonly number[] = [];
+    const shape = (): readonly Iteration[] =>
+      iterationsOf(known).map((_, i) => {
+        const ran = suitedIterations.indexOf(i + 1);
+        if (ran >= 0) return { suite: ran + 1 };
+        return { suite: checks.suite !== null && i + 1 === known ? suitedIterations.length + 1 : null };
+      });
+    const foreseeShape = Effect.suspend(() => ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", shape()) }));
+    const foresee = (iterations: number) => (iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), foreseeShape)));
+    yield* foreseeShape;
     /** A phase's label as the phases known now number it. */
-    const label = (kind: "planning" | "execution" | "work", n: number): string => phaseName({ kind, n }, countOfKind(foreseen("implementation", known), kind));
+    const label = (kind: NumberedPhaseKind, n: number): string => phaseName({ kind, n }, countOfKind(foreseen("implementation", shape()), kind));
 
-    /** How the previous execution phase and its work review ended; the next plan revision is written from it. */
-    let previous: Readonly<{ stopped: boolean; workReview: WorkReviewEnd }> | null = null;
+    /**
+     * Suite run n (issue #162): the whole suite, run by Interloq in the project with no guard, its output written to
+     * suite-<n>.log, its result said and written to conversation.md; the revision's cause where it failed, else null.
+     */
+    const suitePhase = (command: S.CommandLine, n: number) =>
+      Effect.gen(function* () {
+        const runner = yield* SuiteRunner;
+        const phase: Phase = { kind: "suite", n };
+        const name = label("suite", n);
+        yield* ui.notify({ _tag: "PhaseBegan", phase });
+        const began = suiteBeganLine(name, command);
+        yield* ui.say(began);
+        yield* store.converse(`${began.trim()}\n\n`);
+        const result = yield* runner.run(command, store.project);
+        yield* store.saveSuiteLog(n, result.output);
+        const log = recordPath(store.root, { kind: "suiteLog", n });
+        yield* ui.notify({ _tag: "PhaseEnded", phase, result: result._tag === "Passed" ? "passed" : "failed" });
+        const line = result._tag === "Passed" ? suitePassedLine(name, command) : suiteFailedLine(name, command, result.reason, log);
+        yield* ui.say(line);
+        yield* store.converse(`${line}\n\n`);
+        return result._tag === "Passed" ? null : ({ _tag: "SuiteFailed", suite: n, command, reason: result.reason, tail: tailLines(result.output, SUITE_TAIL_LINES), log } satisfies RevisionCause);
+      });
+
+    /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
+    let previous: RevisionCause | null = null;
     for (let k = 1; ; k++) {
       // The plan as this planning phase begins (issue #6, G-R1-1): its done steps and statuses do not change within the phase.
       const before = Option.getOrNull(yield* store.loadPlan());
@@ -223,9 +257,19 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work, checks));
       }).pipe(ownSession, inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
-      // The run is finished only when Claude Code reported finished and the work review converged.
-      if (!stopped && work.result === "converged") return k;
+      // The run is finished only when Claude Code reported finished and the work review converged, and then, where the
+      // project names a suite command, only when the whole suite passes (issue #162, G-R1-1, F1).
+      if (!stopped && work.result === "converged") {
+        if (checks.suite === null) return k;
+        const n = suitedIterations.length + 1;
+        const failed = yield* suitePhase(checks.suite, n);
+        suitedIterations = [...suitedIterations, k];
+        if (failed === null) return k;
+        yield* foresee(k + 1);
+        previous = failed;
+        continue;
+      }
       yield* foresee(k + 1);
-      previous = { stopped, workReview: work.result === "converged" ? "converged" : { revisedInRound: work.round } };
+      previous = { _tag: "ExecutionEnded", stopped, workReview: work.result === "converged" ? "converged" : { revisedInRound: work.round } };
     }
   });

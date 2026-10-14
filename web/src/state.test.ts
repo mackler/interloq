@@ -3,9 +3,9 @@ import { shownOf } from "./test-setup.ts";
 import { describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
-import { foreseenPhases, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
+import { foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 /** The phases of a run of Gather Requirements followed by planning, as runs had them before issue #120 separated the modes. */
-const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [...(questions ? foreseenPhases("refinement", 1) : []), ...foreseenPhases("implementation", iterations)];
+const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [...(questions ? foreseenPhases("refinement", iterationsOf(1)) : []), ...foreseenPhases("implementation", iterationsOf(iterations))];
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
 import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
@@ -1086,7 +1086,7 @@ describe("the whole run in the timeline", () => {
   test("a finished refinement run: Gather Requirements alone, done, and no entry not reached or ahead", () => {
     const events: RunEvent[] = [
       started,
-      notified({ _tag: "PhasesForeseen", phases: foreseenPhases("refinement", 1) }),
+      notified({ _tag: "PhasesForeseen", phases: foreseenPhases("refinement", iterationsOf(1)) }),
       began(q),
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
@@ -1251,7 +1251,7 @@ describe("phase times", () => {
 // Issue #53 (G-R1-1): at most one step of the plan is current, the one named by the latest 'started' report of the
 // running execution call while it is still started; nothing but a report makes a step current again.
 describe("the current step of the plan", () => {
-  const foreseen = notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 1) });
+  const foreseen = notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterationsOf(1)) });
   const began = notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } });
   const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose });
   const callEnded = (ok = true) => notified({ _tag: "AgentCallEnded", agent: "claude", ok });
@@ -1357,7 +1357,7 @@ describe("the steps an Implementation acted on", () => {
 
   const implementation1: RunEvent[] = [
     started,
-    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 1) }),
+    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterationsOf(1)) }),
     begin("planning", 1),
     planChanged(1, v1()),
     end("planning", 1),
@@ -1372,7 +1372,7 @@ describe("the steps an Implementation acted on", () => {
     planChanged(1, v1({ S1: "unfinished", S3: "done", S4: "unfinished" })),
     end("execution", 1, "aborted"),
   ];
-  const revision: RunEvent[] = [begin("work", 1), end("work", 1), notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 2) }), begin("planning", 2), planChanged(2, v2()), end("planning", 2)];
+  const revision: RunEvent[] = [begin("work", 1), end("work", 1), notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterationsOf(2)) }), begin("planning", 2), planChanged(2, v2()), end("planning", 2)];
   const implementation2: RunEvent[] = [begin("execution", 2), call, planChanged(2, v2({ S4: "started" }), { id: "S4", status: "started" }), planChanged(2, v2({ S4: "done" }), { id: "S4", status: "done" }), callEnded, end("execution", 2, "finished")];
 
   const entry = (s: ViewState, label: string) => s.modes.implementation.run!.timeline.find((e) => e.label === label)!;

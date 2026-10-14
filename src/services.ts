@@ -162,6 +162,8 @@ export interface StoreShape {
   saveQuestions(task: string, questions: QuestionsFile["questions"]): Effect.Effect<void, StoreError>;
   loadQuestions(): Effect.Effect<QuestionsFile, StoreError>;
   writeRequirements(text: string): Effect.Effect<void, StoreError>;
+  /** Issue #162: the whole output of suite run n, in suite-<n>.log. */
+  saveSuiteLog(n: number, text: string): Effect.Effect<void, StoreError>;
   /** Writes plan.json (issue #6, F1), then plan.md rendered from it (F2). */
   savePlan(plan: RecordedPlan): Effect.Effect<void, StoreError>;
   /** The plan of plan.json; none before the first plan is written. */

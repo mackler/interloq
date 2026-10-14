@@ -3,7 +3,7 @@
 
 import { Option, Result, Schema } from "effect";
 import * as S from "./schema.ts";
-import type { UiEvent } from "./uiEvents.ts";
+import { NUMBERED_PHASE_KINDS, type UiEvent } from "./uiEvents.ts";
 import { DECISION_SECTIONS, type RunUiState, type UiFlag } from "./uiState.ts";
 import type { Choice, PromptKind } from "./userPrompts.ts";
 import { excerptOf, RunMode } from "./runMode.ts";
@@ -102,7 +102,8 @@ const tagged = <const T extends string, F extends Schema.Struct.Fields>(tag: T, 
 const typed = <const T extends string, F extends Schema.Struct.Fields>(type: T, fields: F) => Schema.Struct({ type: Schema.Literal(type), ...fields });
 
 const SubjectIdSchema = Schema.Union([Schema.Literal("questions"), Schema.Literal("terms"), Schema.Literal("requirements"), Schema.Struct({ plan: Int }), Schema.Struct({ work: Int }), Schema.Struct({ decision: Int })]);
-const PhaseSchema = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(["planning", "execution", "work"]), n: Int })]);
+// Issue #162: the numbered kinds from src/uiEvents.ts, so the protocol and the run cannot disagree on them.
+const PhaseSchema = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(NUMBERED_PHASE_KINDS), n: Int })]);
 const AgentSchema = Schema.Literals(["claude", "codex"]);
 const round = { subject: SubjectIdSchema, round: Int };
 

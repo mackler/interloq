@@ -629,8 +629,13 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   return { layer, probe: { dir, plan: planOf(paths), requirements: path.join(dir, "requirements.md"), loadLog, ui, planner, reviewer, config, tracker, suite } };
 }
 
+/**
+ * The suite's runner where a layer provides none (issue #162): a run without a suite command never calls it, and the
+ * layer's own runner, testLayer's, takes precedence where it provides one.
+ */
+const withSuite = <A, E>(effect: Effect.Effect<A, E, SuiteRunner>): Effect.Effect<A, E> => Effect.provideService(effect, SuiteRunner, new ScriptedSuite([]));
 /** Runs the procedure against a layer and returns the number of execution phases. */
-export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<number> => Effect.runPromise(run(task).pipe(Effect.provide(layer)));
+export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<number> => Effect.runPromise(withSuite(run(task).pipe(Effect.provide(layer))));
 
 /** Runs a refinement run of the scripted item (issue #120): the question phase, written back to the item. */
 export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task", terms: TermsMode = "checked"): Promise<void> => Effect.runPromise(refinementRun(task, scriptedItem.id, terms).pipe(Effect.provide(layer)));
@@ -651,7 +656,7 @@ export async function refinementFailsWith(layer: Layer.Layer<Services | Tracker>
 
 /** Runs the procedure and asserts that it fails with the given error tag and description texts. */
 export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
-  const exit = await Effect.runPromiseExit(run("task").pipe(Effect.provide(layer)));
+  const exit = await Effect.runPromiseExit(withSuite(run("task").pipe(Effect.provide(layer))));
   assert.ok(Exit.isFailure(exit), "the run succeeded");
   const error = Cause.findErrorOption(exit.cause);
   assert.ok(Option.isSome(error), `the run ended with a defect, not a typed error: ${Cause.pretty(exit.cause)}`);

@@ -21,7 +21,7 @@ import { itemOfCard, TrelloCard } from "../../src/trelloCards.ts";
 import { GitlabIssue, itemOfIssue } from "../../src/gitlabIssues.ts";
 import type { TrelloTrackerConfig } from "../../src/schema.ts";
 import type { TrackerItem } from "../../src/tracker.ts";
-import { countOfKind, foreseenPhases, phaseName, type UiEvent } from "../../src/uiEvents.ts";
+import { countOfKind, foreseenPhases, iterationsOf, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import type { Block } from "../../src/schema.ts";
 import { EXPANDED_MIN_WIDTH, floorPx } from "./layout.ts";
@@ -801,7 +801,7 @@ describe("App and the draft", () => {
 
     test("a refinement run's rail shows Gather Requirements alone", async () => {
       const { root, ws } = await begin();
-      const foreseen = { _tag: "Notified", event: { _tag: "PhasesForeseen", phases: foreseenPhases("refinement", 1) } };
+      const foreseen = { _tag: "Notified", event: { _tag: "PhasesForeseen", phases: foreseenPhases("refinement", iterationsOf(1)) } };
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("refinement", "11"), foreseen]) }] });
       expect(root.querySelector(".rail")?.textContent).toContain(phaseName({ kind: "questions" }, 1));
       expect(root.querySelector(".rail")?.textContent).not.toContain(phaseName({ kind: "planning", n: 1 }, 1));
@@ -1154,7 +1154,7 @@ describe("App and the draft", () => {
   // one opened by a prompt inside it, and a toggle sent as the run's shared state.
   test("the rail collapses: closed at the start, opened by the run and by a prompt, a toggle sent as a ui frame", async () => {
     const { root, ws } = await openPage();
-    const foreseen = { _tag: "Notified", event: { _tag: "PhasesForeseen", phases: foreseenPhases("implementation", 1) } };
+    const foreseen = { _tag: "Notified", event: { _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterationsOf(1)) } };
     const began = { _tag: "Notified", event: { _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } } };
     const event = (seq: number, e: unknown) => ws.receive({ type: "event", run: 1, seq, time: TIME, event: e });
     const toggle = (label: string) => [...root.querySelectorAll<HTMLButtonElement>("button.rail-toggle")].find((b) => b.querySelector("[data-label]")?.textContent?.trim() === label)!;
@@ -2428,7 +2428,7 @@ test("the activity line shows a determinate progressbar and the time remaining d
 // names come from phaseName alone, so a rail entry or a band that writes a name by hand fails whatever the name is.
 test("the seam of the phase names: the rail and the bands show phaseName's names", () => {
   const time = "2026-10-07T14:00:00.000Z";
-  const phases = foreseenPhases("implementation", 2);
+  const phases = foreseenPhases("implementation", iterationsOf(2));
   const events: unknown[] = [
     { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } },
     { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },

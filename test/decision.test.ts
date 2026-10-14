@@ -451,11 +451,11 @@ test("a repair of a duplicate id permits no recommendation, and the repaired ana
 // W1-R1-2: a decision's prompt names its phase as the phase lines and the rail do, by the count of its kind in the run.
 test("a decision names its phase by the run's count: Planning in a run of one iteration, Planning 2 once a second is foreseen", async () => {
   const { run } = await import("../src/run.ts");
-  const { countOfKind, foreseenPhases, phaseName } = await import("../src/uiEvents.ts");
+  const { countOfKind, foreseenPhases, iterationsOf, phaseName } = await import("../src/uiEvents.ts");
   const { finished } = await import("./helpers.ts");
   const noQuestions = { questions_for_user: [] };
   const asking = { questions_for_user: [userQuestion(question.question, question.options.map((o) => [o.label, o.description] as const))] };
-  const expected = (iterations: number, n: number) => `The run is in ${phaseName({ kind: "planning", n }, countOfKind(foreseenPhases("implementation", iterations), "planning"))}.`;
+  const expected = (iterations: number, n: number) => `The run is in ${phaseName({ kind: "planning", n }, countOfKind(foreseenPhases("implementation", iterationsOf(iterations)), "planning"))}.`;
   const analysisPrompt = (prompts: readonly string[]) => prompts.find((p) => p.includes(prompts_.DECISION_FORMAT_AUTHORITY)) ?? "";
   const prompts_ = prompts;
 

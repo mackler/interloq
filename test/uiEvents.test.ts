@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { countOfKind, describeEvent, foreseenPhases, phaseName, type UiEvent } from "../src/uiEvents.ts";
+import { countOfKind, describeEvent, foreseenPhases, iterationsOf, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { para, plain } from "./helpers.ts";
 import { Result } from "effect";
 import { shownExplanations } from "../src/question.ts";
@@ -66,14 +66,25 @@ test("phaseName names the phases as the page shows them", () => {
   assert.equal(phaseName({ kind: "execution", n: 2 }, 2), "Implementation 2");
   assert.equal(phaseName({ kind: "work", n: 3 }, 3), "Code review 3");
   // Issue #6: the count of a kind among the known phases.
-  const phases = foreseenPhases("implementation", 2);
+  const phases = foreseenPhases("implementation", iterationsOf(2));
   assert.deepEqual([countOfKind(phases, "questions"), countOfKind(phases, "planning"), countOfKind(phases.slice(0, 3), "work")], [0, 2, 1]);
 });
 
 // Issue #6: the run's shape, known from the start, and each further iteration as soon as it is known.
 // Issue #120: a refinement run is Gather Requirements alone, and an implementation run never has it, for any count.
 test("foreseenPhases: a refinement run foresees Gather Requirements alone; an implementation run Planning, Implementation and Code review per iteration", () => {
-  for (const n of [1, 2, 5]) assert.deepEqual(foreseenPhases("refinement", n), [{ kind: "questions" }]);
-  assert.deepEqual(foreseenPhases("implementation", 2), [1, 2].flatMap((n) => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]));
-  for (const n of [1, 3]) assert.equal(countOfKind(foreseenPhases("implementation", n), "questions"), 0);
+  for (const n of [1, 2, 5]) assert.deepEqual(foreseenPhases("refinement", iterationsOf(n)), [{ kind: "questions" }]);
+  assert.deepEqual(foreseenPhases("implementation", iterationsOf(2)), [1, 2].flatMap((n) => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]));
+  for (const n of [1, 3]) assert.equal(countOfKind(foreseenPhases("implementation", iterationsOf(n)), "questions"), 0);
+});
+
+// Issue #162: an iteration with a suite run is followed by its Full test suite, numbered by the run's suite runs.
+test("foreseenPhases: each iteration's suite run follows its Code review, numbered by the suite runs", () => {
+  const names = (iterations: readonly { suite: number | null }[]): string[] => {
+    const phases = foreseenPhases("implementation", iterations);
+    return phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
+  };
+  assert.deepEqual(names([{ suite: 1 }]), ["Planning", "Implementation", "Code review", "Full test suite"]);
+  assert.deepEqual(names([{ suite: 1 }, { suite: 2 }]), ["Planning 1", "Implementation 1", "Code review 1", "Full test suite 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite 2"]);
+  assert.deepEqual(names([{ suite: null }, { suite: 1 }]), ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite"]);
 });

@@ -21,6 +21,8 @@ export type Artifact =
   /** The tree of the project at the start of the run (Q7), and the change record a work review reads. */
   | Readonly<{ kind: "baseline" }>
   | Readonly<{ kind: "changes"; phase: number }>
+  /** The output of suite run n, the whole suite Interloq runs after a converged work review (issue #162). */
+  | Readonly<{ kind: "suiteLog"; n: number }>
   | Readonly<{ kind: "invalidReply"; agent: "claude" | "codex"; n: number }>
   /** Decision k: the question and its options, the reviewed analysis, the analysis call's raw output, the user's choice. */
   | Readonly<{ kind: "decisionQuestion" | "analysis" | "analysisWrite" | "chosen"; decision: number }>;
@@ -133,6 +135,8 @@ export const pathOf = (artifact: Artifact): string => {
       return "baseline.json";
     case "changes":
       return `work-review-${artifact.phase}/changes.diff`;
+    case "suiteLog":
+      return `suite-${artifact.n}.log`;
     case "invalidReply":
       return `invalid-replies/${artifact.agent}-${artifact.n}.json`;
     case "decisionQuestion":
