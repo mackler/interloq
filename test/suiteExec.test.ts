@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
 import { Effect, Fiber, Result } from "effect";
 import { type CommandLine, commandLineOf } from "../src/schema.ts";
-import { suiteRunner } from "../src/suiteExec.ts";
+import { SUITE_CLOSE_GRACE_MS, suiteRunner } from "../src/suiteExec.ts";
 
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "suite-exec-"));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
@@ -79,4 +79,57 @@ test("a directory that does not exist fails as not started", async () => {
   const result = await Effect.runPromise(suiteRunner(process.env, 1000).run(line("true"), path.join(DIR, "missing")));
   assert.equal(result._tag, "Failed");
   assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
+});
+
+// W2-R1-1: a descendant in a process group of its own survives the group's kill and holds the output open; the result
+// must not wait for it. The command prints the descendant's pid, which the test kills itself so that it leaks nowhere.
+const DETACHED = `node -e "const c=require('child_process').spawn('sleep',['30'],{detached:true,stdio:'inherit'});console.log('pid='+c.pid);c.unref()"`;
+const withDetached = async (command: string, ceilingMs: number, check: (result: Awaited<ReturnType<typeof run>>, elapsed: number) => void): Promise<void> => {
+  const uncaught: unknown[] = [];
+  const listener = (e: unknown): void => void uncaught.push(e);
+  process.on("uncaughtException", listener);
+  let pid: number | null = null;
+  try {
+    const started = Date.now();
+    const result = await run(command, ceilingMs);
+    const elapsed = Date.now() - started;
+    const found = /pid=(\d+)/u.exec(result.output);
+    pid = found === null ? null : Number(found[1]);
+    assert.ok(pid !== null, `the output names no detached pid: ${result.output}`);
+    check(result, elapsed);
+    await sleep(100);
+    assert.deepEqual(uncaught, []);
+  } finally {
+    process.off("uncaughtException", listener);
+    if (pid !== null) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+};
+
+test("the ceiling bounds a run whose detached descendant holds the output open", { timeout: 10_000 }, async () => {
+  // A ceiling of 2 s, so that node has printed the pid on a loaded machine; the shell outlives it by far (20 s), and so
+  // does the descendant (30 s), so a result under 5 s is the ceiling's.
+  await withDetached(`${DETACHED}; sleep 20`, 2000, (result, elapsed) => {
+    assert.deepEqual(result._tag === "Failed" ? result.reason : null, { kind: "timedOut", ms: 2000 });
+    assert.ok(elapsed < 5000, `the result took ${elapsed} ms`);
+  });
+});
+
+test("a shell that exits while a detached descendant holds the output passes within the grace", { timeout: 10_000 }, async () => {
+  await withDetached(DETACHED, 60_000, (result, elapsed) => {
+    assert.equal(result._tag, "Passed");
+    assert.ok(elapsed < SUITE_CLOSE_GRACE_MS + 2000, `the result took ${elapsed} ms`);
+  });
+});
+
+test("a shell that exits 3 while a detached descendant holds the output fails with 3 within the grace", { timeout: 10_000 }, async () => {
+  await withDetached(`${DETACHED}; exit 3`, 60_000, (result, elapsed) => {
+    assert.deepEqual(result._tag === "Failed" ? result.reason : null, { kind: "exit", code: 3 });
+    assert.ok(elapsed < SUITE_CLOSE_GRACE_MS + 2000, `the result took ${elapsed} ms`);
+  });
 });
