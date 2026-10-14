@@ -145,6 +145,8 @@ export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, tran
 
 /** A background task's end, as its task_notification states it. */
 export type TaskEnd = Readonly<{ taskId: string; status: "completed" | "failed" | "stopped"; outputFile: string; summary: string }>;
+/** A task's end with the name its wait is told by (issue #161): its description, else its id (`taskName`). */
+export type NamedEnd = Readonly<{ end: TaskEnd; name: string }>;
 /**
  * The background tasks of one execution call, folded from the SDK's messages: the tasks pending (seen live and not
  * yet ended), the tasks that are not activity (ambient, never waited on), and the ends seen, in order, one per task.
@@ -202,3 +204,5 @@ export const nameTasks = (names: ReadonlyMap<string, string>, message: SDKMessag
   if (message.subtype === "background_tasks_changed") return message.tasks.reduce((m, task) => named(m, task.task_id, task.description), names);
   return names;
 };
+/** The one naming rule of a task in the wait's texts (issue #161): the description `nameTasks` recorded, else its id. */
+export const taskName = (names: ReadonlyMap<string, string>, id: string): string => names.get(id) ?? id;

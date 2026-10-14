@@ -11,6 +11,7 @@ import type { CanUseTool, HookCallback, HookInput, HookJSONOutput, Options, Perm
 import { Clock, Effect, Fiber, Layer } from "effect";
 import { claudeEnv, makeClaudePlanner, makeClaudePlannerWith, toSdkAnswers } from "../src/claude.ts";
 import { FileSystemError, type RunError } from "../src/errors.ts";
+import type { NamedEnd } from "../src/claudeEvents.ts";
 import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
@@ -1202,6 +1203,8 @@ const stillPending = async (promise: Promise<unknown>): Promise<boolean> => (awa
 const SUITE = "sbt testFull > /tmp/full.log";
 const finishedReport = { status: "finished", summary: "done", question: "", remaining_work: "" };
 const endOf = (id: string, file: string) => ({ taskId: id, status: "completed" as const, outputFile: file, summary: `summary of ${id}` });
+/** An end named as the fake messages announce its task (`started` describes task id as `task <id>`; issue #161). */
+const namedEndOf = (id: string, file: string): NamedEnd => ({ end: endOf(id, file), name: `task ${id}` });
 
 test("issue #154 regression: a turn ended while a background command runs waits for it, continues the same query, and finishes with nothing asked", async () => {
   const seen: { pendingAfterLevel?: boolean; stop?: HookJSONOutput } = {};
@@ -1224,11 +1227,31 @@ test("issue #154 regression: a turn ended while a background command runs waits 
   assert.equal(seen.pendingAfterLevel, true, "the level signal without the task ended the wait");
   assert.ok(seen.stop !== undefined);
   assert.equal(blockOf(seen.stop), "block");
-  assert.equal(reasonOf(seen.stop), prompts.backgroundEndedText([endOf("t1", "/tmp/t1.out")]));
+  assert.equal(reasonOf(seen.stop), prompts.backgroundEndedText([namedEndOf("t1", "/tmp/t1.out")]));
   assert.equal(outcome.status, "finished");
   assert.deepEqual(fake.ui.asked, []);
   assert.equal(fake.sdk.calls.length, 1, "the session was not continued in the same query");
-  assert.ok(fake.ui.said.some((l) => l === prompts.backgroundEndedLine([endOf("t1", "/tmp/t1.out")])), fake.ui.said.join("\n"));
+  assert.ok(fake.ui.said.some((l) => l === prompts.backgroundEndedLine([namedEndOf("t1", "/tmp/t1.out")])), fake.ui.said.join("\n"));
+});
+
+test("issue #161: the wait's end names the task by its description, as the wait does, in the hook's reason and on the page", async () => {
+  let stop: HookJSONOutput | undefined;
+  const script: Script = (call) => (async function* () {
+    yield init();
+    yield started("t1");
+    const hook = callStopHook(call.options, [shellTask("t1", SUITE)]);
+    yield notification("t1", "completed", "/tmp/t1.out");
+    stop = await hook;
+    yield success(finishedReport);
+  })();
+  const fake = await planner([script], [], {}, {}, 2_000);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  const ends = [{ end: endOf("t1", "/tmp/t1.out"), name: "task t1" }];
+  assert.equal(reasonOf(stop ?? {}), prompts.backgroundEndedText(ends));
+  assert.ok(reasonOf(stop ?? {}).includes("task t1"));
+  const line = prompts.backgroundEndedLine(ends);
+  assert.ok(line.includes("task t1"));
+  assert.ok(fake.ui.said.includes(line), fake.ui.said.join("\n"));
 });
 
 test("issue #154: the notification before the level signal ends the wait too", async () => {
@@ -1270,9 +1293,9 @@ test("issue #154: two tasks: no report is accepted while either runs, and each d
   assert.equal(results.whileA, true);
   assert.equal(results.whileB, true);
   assert.equal(decision(results.a ?? {}), "deny");
-  assert.equal(reasonOf(results.a ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([endOf("A", "/tmp/a.out")])}`);
+  assert.equal(reasonOf(results.a ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([namedEndOf("A", "/tmp/a.out")])}`);
   assert.equal(decision(results.b ?? {}), "deny");
-  assert.equal(reasonOf(results.b ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([endOf("B", "/tmp/b.out")])}`);
+  assert.equal(reasonOf(results.b ?? {}), `${prompts.REPORT_WHILE_RUNNING_DENIED} ${prompts.backgroundEndedText([namedEndOf("B", "/tmp/b.out")])}`);
   assert.deepEqual(results.idle, {});
   assert.equal(outcome.status, "finished");
 });
@@ -1295,7 +1318,7 @@ test("issue #154: past the bound of one wait the command still runs: the Stop ho
   assert.equal(reasonOf(results.stop1 ?? {}), prompts.stillRunningText(["task t1"]));
   assert.equal(decision(results.report ?? {}), "deny");
   assert.equal(reasonOf(results.report ?? {}), prompts.stillRunningText(["task t1"]));
-  assert.equal(reasonOf(results.stop2 ?? {}), prompts.backgroundEndedText([endOf("t1", "/tmp/t1.out")]));
+  assert.equal(reasonOf(results.stop2 ?? {}), prompts.backgroundEndedText([namedEndOf("t1", "/tmp/t1.out")]));
   assert.equal(outcome.status, "finished");
   assert.ok(fake.ui.said.includes(prompts.backgroundStillRunningLine(["task t1"])), fake.ui.said.join("\n"));
 });

@@ -6,7 +6,7 @@ import { Clock, Deferred, Duration, Effect, Exit, Layer, Ref, Result } from "eff
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
-import { type BackgroundState, type CallOutcome, checkBackground, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type TaskEnd, waitingOn } from "./claudeEvents.ts";
+import { type BackgroundState, type CallOutcome, checkBackground, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
@@ -407,7 +407,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
    * wait has passed, whichever comes first. The ends returned are those not yet given to Claude Code. Elapsed time
    * authorizes nothing: at the bound the command is named as still running, and the next end of the turn waits again.
    */
-  type BackgroundWait = Readonly<{ kind: "none" }> | Readonly<{ kind: "ended"; ends: readonly TaskEnd[] }> | Readonly<{ kind: "bound"; names: readonly string[] }>;
+  type BackgroundWait = Readonly<{ kind: "none" }> | Readonly<{ kind: "ended"; ends: readonly NamedEnd[] }> | Readonly<{ kind: "bound"; names: readonly string[] }>;
   type BackgroundRefs = Readonly<{ stop: Ref.Ref<Stop | null>; state: Ref.Ref<BackgroundState>; names: Ref.Ref<ReadonlyMap<string, string>>; delivered: Ref.Ref<number> }>;
   /** The refs of one attempt with the signal of its call, aborted when the call ends however it ends (W1-R1-1). */
   type WaitRefs = BackgroundRefs & Readonly<{ ended: AbortSignal }>;
@@ -415,7 +415,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
   const pendingNames = (refs: BackgroundRefs): Effect.Effect<readonly string[]> =>
     Effect.gen(function* () {
       const names = yield* Ref.get(refs.names);
-      return [...(yield* Ref.get(refs.state)).pending].map((id) => names.get(id) ?? id);
+      return [...(yield* Ref.get(refs.state)).pending].map((id) => taskName(names, id));
     });
   const said = (line: string): Effect.Effect<void, CallbackError> => ui.say(line).pipe(Effect.andThen(store.converse(`${line}\n\n`)));
   const untilEnded = (refs: WaitRefs, deadline: number): Effect.Effect<"ended" | "bound" | "callEnded"> =>
@@ -439,7 +439,8 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
         return { kind: "bound", names } as const;
       }
       const { ended } = yield* Ref.get(refs.state);
-      const ends = ended.slice(yield* Ref.modify(refs.delivered, (count) => [count, ended.length] as const));
+      const recorded = yield* Ref.get(refs.names);
+      const ends = ended.slice(yield* Ref.modify(refs.delivered, (count) => [count, ended.length] as const)).map((end) => ({ end, name: taskName(recorded, end.taskId) }));
       yield* said(prompts.backgroundEndedLine(ends));
       return { kind: "ended", ends } as const;
     });
@@ -544,7 +545,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             }
             // Issue #154: a report made while a command Claude Code started still runs is never the call's end.
             const names = yield* Ref.get(refs.names);
-            return checkBackground(interpretExecution(outcome, recorded, temporary), recorded, yield* Ref.get(refs.state), (id) => names.get(id) ?? id);
+            return checkBackground(interpretExecution(outcome, recorded, temporary), recorded, yield* Ref.get(refs.state), (id) => taskName(names, id));
           });
         // The retry lives here, where the call's session, stop and reporter are (P2-R2-1): no TransportFault leaves.
         return yield* withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(

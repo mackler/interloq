@@ -7,7 +7,7 @@ import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
-import type { TaskEnd } from "./claudeEvents.ts";
+import type { NamedEnd } from "./claudeEvents.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -2396,16 +2396,16 @@ export function backgroundWaitLine(names: readonly string[]): string {
   return `Waiting for a command Claude Code started in the background: ${commandList(names)}`;
 }
 /** The line said on the page when the background commands an execution call waited for have ended (issue #154). */
-export function backgroundEndedLine(ends: readonly TaskEnd[]): string {
-  return `The background command ended: ${ends.map((end) => `${end.taskId} ${end.status}`).join("; ")}`;
+export function backgroundEndedLine(ends: readonly NamedEnd[]): string {
+  return `The background command ended: ${ends.map(({ end, name }) => `${name} ${end.status}`).join("; ")}`;
 }
 /** The line said on the page when one wait's bound passes and the command still runs (issue #154). */
 export function backgroundStillRunningLine(names: readonly string[]): string {
   return `A command Claude Code started in the background is still running: ${commandList(names)}; Interloq goes on waiting.`;
 }
 /** The reason given to Claude Code when the wait for its background commands ends (issue #154, decision Q1). */
-export function backgroundEndedText(ends: readonly TaskEnd[]): string {
-  const lines = ends.map((end) => `- ${end.taskId}: ${end.status}; its output is in ${end.outputFile}; ${end.summary.trim() === "" ? "no summary" : `summary: ${end.summary}`}`);
+export function backgroundEndedText(ends: readonly NamedEnd[]): string {
+  const lines = ends.map(({ end, name }) => `- ${name}: ${end.status}; its output is in ${end.outputFile}; ${end.summary.trim() === "" ? "no summary" : `summary: ${end.summary}`}`);
   return `The background command you started has ended:\n${lines.join("\n")}\nRead the output file, then continue the step and call the tool ${REPORT_STEP_TOOL_NAME} and return the status report as before.`;
 }
 /** The denial of a status report returned while a background command Claude Code started is still running (issue #154). */

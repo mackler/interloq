@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { foldBackground, nameTasks, NO_BACKGROUND, type BackgroundState, waitingOn } from "../src/claudeEvents.ts";
+import { foldBackground, nameTasks, NO_BACKGROUND, type BackgroundState, taskName, waitingOn } from "../src/claudeEvents.ts";
 import { backgroundEndedText, REPORT_WHILE_RUNNING_DENIED } from "../src/prompts.ts";
 import { changed, monitorResult, monitorUse, noTasksChanged, notification, started, watchChanged, watchNotification, watchStarted, watchSummary, watchUpdated } from "./backgroundMessages.ts";
 
@@ -60,8 +60,8 @@ test("other messages change nothing", () => {
 });
 
 test("the text of an ended wait names each task's status, output file and summary; the denial says a command runs", () => {
-  const text = backgroundEndedText([{ taskId: "a", status: "completed", outputFile: "/tmp/a.out", summary: "suite passed" }]);
-  for (const part of ["completed", "/tmp/a.out", "suite passed"]) assert.ok(text.includes(part), part);
+  const text = backgroundEndedText([{ end: { taskId: "a", status: "completed", outputFile: "/tmp/a.out", summary: "suite passed" }, name: "the suite" }]);
+  for (const part of ["the suite", "completed", "/tmp/a.out", "suite passed"]) assert.ok(text.includes(part), part);
   assert.match(REPORT_WHILE_RUNNING_DENIED, /background/);
 });
 
@@ -96,4 +96,10 @@ test("issue #161: the tool's result before the task messages gives the same end 
   const observed = fold(use, watchChanged(WATCH, WATCH_NAME), watchStarted(WATCH, WATCH_USE, WATCH_NAME), result, noTasksChanged(), watchUpdated(WATCH), end);
   const resultFirst = fold(use, result, watchChanged(WATCH, WATCH_NAME), watchStarted(WATCH, WATCH_USE, WATCH_NAME), noTasksChanged(), watchUpdated(WATCH), end);
   assert.deepEqual(resultFirst, observed);
+});
+
+test("issue #161: taskName gives the description nameTasks recorded, and the id where none was recorded", () => {
+  assert.equal(taskName(names(watchStarted(WATCH, WATCH_USE, WATCH_NAME)), WATCH), WATCH_NAME);
+  assert.equal(taskName(new Map(), WATCH), WATCH);
+  assert.equal(taskName(names(started("a")), WATCH), WATCH);
 });
