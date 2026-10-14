@@ -794,6 +794,8 @@ export const REPORT_STEP_SERVER = "interloq";
 export const REPORT_STEP_TOOL = "report_step";
 /** The name under which Claude Code calls the tool, and under which hooks and permissions see it. */
 export const REPORT_STEP_TOOL_NAME = `mcp__${REPORT_STEP_SERVER}__${REPORT_STEP_TOOL}`;
+/** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
+export const MONITOR_TOOL_NAME = "Monitor";
 export const REPORT_STEP_STATUSES = ["started", "done"] as const;
 export const REPORT_STEP_DESCRIPTION = `Report the progress of a step of the plan you are carrying out, which the program records in plan.json in the run's records directory: call it with the step's id and ${REPORT_STEP_STATUSES.map((s) => `'${s}'`).join(" when you begin the step, and ")} when the step is complete and verified.`;
 /** report_step's answers: the step recorded, or an id that is not in the plan (Q3: nothing changes, the run goes on). */

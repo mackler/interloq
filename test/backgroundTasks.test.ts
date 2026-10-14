@@ -3,9 +3,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { foldBackground, NO_BACKGROUND, type BackgroundState, waitingOn } from "../src/claudeEvents.ts";
+import { foldBackground, nameTasks, NO_BACKGROUND, type BackgroundState, waitingOn } from "../src/claudeEvents.ts";
 import { backgroundEndedText, REPORT_WHILE_RUNNING_DENIED } from "../src/prompts.ts";
-import { changed, notification, started } from "./backgroundMessages.ts";
+import { changed, monitorResult, monitorUse, noTasksChanged, notification, started, watchChanged, watchNotification, watchStarted, watchSummary, watchUpdated } from "./backgroundMessages.ts";
 
 const fold = (...messages: SDKMessage[]): BackgroundState => messages.reduce(foldBackground, NO_BACKGROUND);
 const pending = (state: BackgroundState): string[] => [...state.pending].sort();
@@ -63,4 +63,37 @@ test("the text of an ended wait names each task's status, output file and summar
   const text = backgroundEndedText([{ taskId: "a", status: "completed", outputFile: "/tmp/a.out", summary: "suite passed" }]);
   for (const part of ["completed", "/tmp/a.out", "suite passed"]) assert.ok(text.includes(part), part);
   assert.match(REPORT_WHILE_RUNNING_DENIED, /background/);
+});
+
+// Issue #161 (S8): a Monitor watch, in the messages and the order the developer's run of the prototype showed.
+const WATCH = "b9zskmcpx";
+const WATCH_USE = "toolu_019cn3umzYKBUKhQQK1g9DS6";
+const WATCH_NAME = "proto watch";
+const WATCH_OUT = "/tmp/claude-1000/tasks/b9zskmcpx.output";
+const use = monitorUse(WATCH_USE, { description: WATCH_NAME, timeout_ms: 300000, command: "node -e 1" });
+const result = monitorResult(WATCH_USE, { taskId: WATCH, timeoutMs: 300000, persistent: false });
+const names = (...messages: SDKMessage[]): ReadonlyMap<string, string> => messages.reduce(nameTasks, new Map<string, string>());
+
+test("issue #161: a Monitor watch is pending from its announcement and named by its description", () => {
+  assert.deepEqual(pending(fold(use, watchChanged(WATCH, WATCH_NAME))), [WATCH]);
+  assert.deepEqual(pending(fold(use, watchChanged(WATCH, WATCH_NAME), watchStarted(WATCH, WATCH_USE, WATCH_NAME))), [WATCH]);
+  assert.ok(waitingOn(fold(watchStarted(WATCH, WATCH_USE, WATCH_NAME))));
+  assert.equal(names(watchChanged(WATCH, WATCH_NAME)).get(WATCH), WATCH_NAME);
+  assert.equal(names(watchStarted(WATCH, WATCH_USE, WATCH_NAME)).get(WATCH), WATCH_NAME);
+});
+
+test("issue #161: the tool's messages, the emptied level signal and task_updated leave the watch pending; its notification ends it", () => {
+  const announced = [use, watchChanged(WATCH, WATCH_NAME), watchStarted(WATCH, WATCH_USE, WATCH_NAME), result, noTasksChanged(), watchUpdated(WATCH)];
+  const before = fold(...announced);
+  assert.deepEqual(pending(before), [WATCH]);
+  const after = foldBackground(before, watchNotification(WATCH, WATCH_USE, WATCH_OUT, WATCH_NAME));
+  assert.deepEqual(pending(after), []);
+  assert.deepEqual(after.ended, [{ taskId: WATCH, status: "completed", outputFile: WATCH_OUT, summary: watchSummary(WATCH_NAME) }]);
+});
+
+test("issue #161: the tool's result before the task messages gives the same end state", () => {
+  const end = watchNotification(WATCH, WATCH_USE, WATCH_OUT, WATCH_NAME);
+  const observed = fold(use, watchChanged(WATCH, WATCH_NAME), watchStarted(WATCH, WATCH_USE, WATCH_NAME), result, noTasksChanged(), watchUpdated(WATCH), end);
+  const resultFirst = fold(use, result, watchChanged(WATCH, WATCH_NAME), watchStarted(WATCH, WATCH_USE, WATCH_NAME), noTasksChanged(), watchUpdated(WATCH), end);
+  assert.deepEqual(resultFirst, observed);
 });
