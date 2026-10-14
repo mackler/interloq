@@ -2,6 +2,7 @@
 // GitLab adapter over a stub GitLab (test/fakeGitlab.ts), with the assertions of test/refinementRun.test.ts and
 // test/implementationRun.test.ts. They pass unchanged, so the port did not move. And a run whose issue is closed during
 // it halts at its next tracker write, which reads the issue and sends no write (the developer's decision G-R1-1).
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -40,7 +41,7 @@ const implement = async (options: TestOptions, gitlab: FakeGitlab) => {
   const { layer, probe } = testLayer(tempRepo(), { ...options, tracker: gitlab });
   const item = await Effect.runPromise(gitlab.tracker.read(ID));
   const section = Option.getOrNull(Result.getOrThrow(readRefinement(item.body)));
-  const exit = await Effect.runPromiseExit(implementationRun(`${item.title}\n\n${item.body}`, item.id, section).pipe(Effect.provide(layer)));
+  const exit = await Effect.runPromiseExit(implementationRun(`${item.title}\n\n${item.body}`, item.id, section, NO_STEP_CHECKS).pipe(Effect.provide(layer)));
   return { exit, probe };
 };
 const failureOf = <A, E>(exit: Exit.Exit<A, E>): E => {

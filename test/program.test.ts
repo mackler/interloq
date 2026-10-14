@@ -12,8 +12,9 @@ import { refinementOf, withoutRefinement, withRefinement } from "../src/refineme
 import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { checkCommandInvalidText, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
+import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -412,4 +413,51 @@ test("the server's fault before the run's records exist (a tracker read that nev
   const dirs = fs.existsSync(runs) ? fs.readdirSync(runs) : [];
   assert.equal(dirs.length, 1, "no records directory was created");
   assertServerFault(probe, exit, path.join(runs, dirs[0]));
+});
+
+// Issue #162: an implementation run decodes checkCommands and suiteCommand and checks the npm scripts they name against
+// the project's package.json at its start, before any record or agent call; a refinement run reads neither.
+const writeManifest = (project: string, scripts: Record<string, string>): void => fs.writeFileSync(path.join(project, "package.json"), JSON.stringify({ name: "p", scripts }));
+const heldState = async (tracker: ReturnType<typeof fakeTrackerOf>): Promise<string | undefined> => (await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state;
+
+test("issue #162: a listed npm command naming a script package.json lacks halts an implementation run with 1 before any agent call", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: { checkCommands: [{ change: "unit", command: "npm run test:missing" }], suiteCommand: "npm test" } });
+  writeManifest(probe.project, { test: "node --test" });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.ok(said(probe).includes(checkCommandInvalidText([{ _tag: "MissingScript", command: "npm run test:missing" as CommandLine, script: "test:missing" }])), said(probe));
+  assert.match(said(probe), /HALTED: .*npm run test:missing.*test:missing/su);
+  assert.deepEqual(probe.planner.prompts, []);
+  assert.equal(await heldState(tracker), scriptedItem.state, "the item was moved");
+});
+
+test("issue #162: the same configuration does not refuse a refinement run", async () => {
+  const tracker = fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }], tracker, mode: "refinement", config: { checkCommands: [{ change: "unit", command: "npm run test:missing" }] } });
+  writeManifest(probe.project, { test: "node --test" });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "refinement"), wiring))), 0);
+});
+
+test("issue #162 (P1-R1-2): malformed settings halt an implementation run with ConfigInvalid naming the key and the file, and never a refinement run", async () => {
+  const malformed = { suiteCommand: " ", checkCommands: [{ change: "unit", command: "npm test\nnpm run check" }] };
+  const refinement = testWiring(tempRepo(), { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }], tracker: fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]), mode: "refinement", config: malformed });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(refinement.probe.project, "refinement"), refinement.wiring))), 0);
+  const tracker = fakeTrackerOf([scriptedItem]);
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: malformed });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: .*\(at checkCommands\[0\]\.command\)/u);
+  assert.deepEqual(probe.planner.prompts, []);
+  assert.equal(await heldState(tracker), scriptedItem.state);
+});
+
+test("issue #162: a listed command that is not an npm script is used as written and not checked", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, config: { checkCommands: [{ change: "e2e", command: "npx playwright test e2e/run.spec.ts" }] } });
+  assert.equal(await runProgram(probe, wiring), 0);
+});
+
+test("issue #162: an npm command in a project with no package.json halts, naming the command", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, config: { suiteCommand: "npm test" } });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.ok(said(probe).includes(checkCommandInvalidText([{ _tag: "NoManifest", command: "npm test" as CommandLine }])), said(probe));
+  assert.deepEqual(probe.planner.prompts, []);
 });

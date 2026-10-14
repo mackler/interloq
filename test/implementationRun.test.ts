@@ -1,3 +1,4 @@
+import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -26,7 +27,7 @@ const implement = async (item: FakeItem, options: TestOptions, tracker: FakeTrac
   const { layer, probe } = testLayer(tempRepo(), { ...options, tracker });
   const held = (await Effect.runPromise(tracker.items)).find((i) => i.id === item.id) ?? assert.fail("no item");
   const section = Option.getOrNull(Result.getOrThrow(readRefinement(held.body)));
-  const exit = await Effect.runPromiseExit(implementationRun(`${held.title}\n\n${held.body}`, held.id, section).pipe(Effect.provide(layer)));
+  const exit = await Effect.runPromiseExit(implementationRun(`${held.title}\n\n${held.body}`, held.id, section, NO_STEP_CHECKS).pipe(Effect.provide(layer)));
   return { exit, probe, tracker, section };
 };
 const stateOf = async (tracker: FakeTracker, item: FakeItem): Promise<string> => (await Effect.runPromise(tracker.items)).find((i) => i.id === item.id)?.state ?? assert.fail("no item");

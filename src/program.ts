@@ -4,13 +4,14 @@
 import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DecisionFormatUnreadable, describe, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
+import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
 import { blankItemText, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, Tracker, Ui, type UiShape } from "./services.ts";
-import type { Config, TermsMode } from "./schema.ts";
-import { loadConfig } from "./config.ts";
+import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
+import { fileOf, loadSourcedConfig } from "./config.ts";
+import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
 import { recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
@@ -174,13 +175,14 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
      */
     const prepare = Effect.gen(function* () {
       // The configuration, before any agent exists and before the records are initialised (Q4).
-      const configExit = yield* Effect.exit(loadConfig(project, wiring.sharedConfig).pipe(Effect.provide(wiring.platform)));
+      const configExit = yield* Effect.exit(loadSourcedConfig(project, wiring.sharedConfig).pipe(Effect.provide(wiring.platform)));
       if (Exit.isFailure(configExit)) {
         const error = Cause.findErrorOption(configExit.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(configExit.cause));
         return yield* halted(describe(error.value), null, yield* store(planned, []));
       }
-      const config = configExit.value;
+      const sourced = configExit.value;
+      const config = sourced.config;
 
       // The format of a decision analysis (D7), before any agent exists and before the records are initialized.
       const formatFile = wiring.decisionFormat ?? DECISION_FORMAT;
@@ -202,7 +204,28 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
       const { task, tracker, requirements } = taskRead.success;
 
-      return { config, decisionFormat, task, tracker, requirements } as const;
+      // Issue #162: an implementation run decodes its check commands and checks their npm scripts against the project's
+      // package.json; a refinement run reads neither setting, so a malformed value never refuses it.
+      if (mode === "refinement") return { config, decisionFormat, task, tracker, requirements, checks: NO_STEP_CHECKS } as const;
+      const checks = stepChecksOf(config);
+      if (Result.isFailure(checks)) {
+        const { key, path: inside, message } = checks.failure;
+        const invalid = new ConfigInvalid({ file: fileOf(sourced, key) ?? "the default configuration", path: `${key}${inside}`, message });
+        return yield* halted(describe(invalid), null, yield* store(planned, []));
+      }
+      const manifest = yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const file = path.join(project, "package.json");
+        return (yield* fs.exists(file)) ? Option.some(manifestScriptsOf(yield* fs.readFileString(file))) : Option.none();
+      }).pipe(Effect.provide(wiring.platform), Effect.exit);
+      if (Exit.isFailure(manifest)) {
+        const error = Cause.findErrorOption(manifest.cause);
+        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(manifest.cause));
+        return yield* halted(describe(new FileSystemError({ operation: "read", path: path.join(project, "package.json"), message: error.value.message })), null, yield* store(planned, []));
+      }
+      const problems = manifestProblems(listedCommands(checks.success), manifest.value);
+      if (problems.length > 0) return yield* halted(describe(new CheckCommandInvalid({ problems })), null, yield* store(planned, []));
+      return { config, decisionFormat, task, tracker, requirements, checks: checks.success } as const;
     });
     // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
     const rootRef = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
@@ -246,7 +269,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
     const prepared = yield* orFault(prepare, []);
     if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []);
     if (typeof prepared.value === "number") return prepared.value;
-    const { config, decisionFormat, task, tracker, requirements } = prepared.value;
+    const { config, decisionFormat, task, tracker, requirements, checks } = prepared.value;
 
     /**
      * The run's directory, its store and its services, raced with the fault (W1-R1-1 of issue #158). The allocation
@@ -300,7 +323,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
         ? tracker === null
           ? Effect.die(new Error("a refinement run is started from an item, with its tracker"))
           : refinementRun(task, start.item, kind.terms).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
-        : (tracker === null ? run(task) : implementationRun(task, start.item, requirements).pipe(Effect.provide(tracker))).pipe(
+        : (tracker === null ? run(task, checks) : implementationRun(task, start.item, requirements, checks).pipe(Effect.provide(tracker))).pipe(
             Effect.provide(context),
             Effect.map((phases) => ({ mode: "implementation", phases }) as const),
           );

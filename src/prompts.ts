@@ -9,6 +9,7 @@ import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
+import type { ManifestProblem } from "./manifestCheck.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -2350,6 +2351,19 @@ export function transportDecisionLine(answer: "retry" | "stop", agent: "claude" 
 export function costWarningLine(session: string | null, costUsd: number, thresholdUsd: number): string {
   const which = session === null ? "a Claude Code request without a session id" : `one Claude Code request in session ${session}`;
   return `Warning: ${which} cost $${costUsd.toFixed(2)}, more than the $${thresholdUsd.toFixed(2)} set by costWarningUsd. Each request re-sends its session's history, and Claude Code refuses a session that has grown too long.`;
+}
+
+/**
+ * Issue #162: the halt of an implementation run whose listed commands name npm scripts the project's package.json
+ * lacks, or whose project has no package.json; the run did not start.
+ */
+export function checkCommandInvalidText(problems: readonly ManifestProblem[]): string {
+  const lines = problems.map((problem) =>
+    problem._tag === "MissingScript"
+      ? `the command "${problem.command}" names the script "${problem.script}", which the project's package.json does not have`
+      : `the command "${problem.command}" runs an npm script, and the project has no package.json at its top level`,
+  );
+  return `the commands of checkCommands and suiteCommand in the configuration (behavior 9) do not match the project: ${lines.join("; ")}. The run did not start; correct the configuration or the scripts and start it again`;
 }
 
 export function sessionTooLongText(message: string): string {

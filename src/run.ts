@@ -63,7 +63,7 @@ const firstLine = (task: string): string => task.split("\n")[0] ?? "";
  * executes and reviews, and sets the item to implemented when the run finishes. A run that halts or is stopped sets
  * nothing more, and Interloq never moves an item backward. Succeeds with the number of execution phases.
  */
-export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null): Effect.Effect<number, RunError, Services | Tracker> =>
+export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks): Effect.Effect<number, RunError, Services | Tracker> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const tracker = yield* Tracker;
@@ -72,16 +72,16 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
     const start = stateAtStart("implementation");
     if (start !== null) yield* tracker.setState(item, start).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplementing", cause: trackerFailureText(e), done: null }))));
     if (requirements !== null) yield* store.writeRequirements(requirements);
-    const phases = yield* implementationPhases(task, requirements !== null);
+    const phases = yield* implementationPhases(task, requirements !== null, checks);
     yield* tracker.setState(item, stateAtEnd("implementation")).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplemented", cause: trackerFailureText(e), done: null }))));
     return phases;
   });
 
 /** The planning, execution and review of a task without a tracker item: the implementation run's phases after a new records directory. */
-export const run = (task: string): Effect.Effect<number, RunError, Services> =>
+export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effect.Effect<number, RunError, Services> =>
   Effect.gen(function* () {
     yield* (yield* Store).init(task);
-    return yield* implementationPhases(task, false);
+    return yield* implementationPhases(task, false, checks);
   });
 
 /**
@@ -116,7 +116,7 @@ const processEndedStop = (ending: S.ExecProcessEnded, records: StepRecords): Rea
   };
 };
 
-const implementationPhases = (task: string, withRequirements: boolean): Effect.Effect<number, RunError, Services> =>
+const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks): Effect.Effect<number, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;

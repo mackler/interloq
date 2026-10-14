@@ -3,8 +3,9 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import type { ProcessEnd } from "./transport.ts";
+import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
-import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, analysisInvalidText, sessionTooLongText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -36,6 +37,11 @@ export class RoundLimitStop extends Data.TaggedError("RoundLimitStop")<{ readonl
 export class ClaudeCallFailed extends Data.TaggedError("ClaudeCallFailed")<{ readonly message: string }> {}
 /** A Claude Code request refused because its session is too long for Claude Code to accept (issue #122): never retried. */
 export class ClaudeSessionTooLong extends Data.TaggedError("ClaudeSessionTooLong")<{ readonly message: string }> {}
+/**
+ * Issue #162: a command listed in checkCommands or suiteCommand names an npm script the project's package.json lacks,
+ * or the project has none; an implementation run halts with it at its start, before any record or agent call.
+ */
+export class CheckCommandInvalid extends Data.TaggedError("CheckCommandInvalid")<{ readonly problems: readonly ManifestProblem[] }> {}
 export class CodexCallFailed extends Data.TaggedError("CodexCallFailed")<{ readonly message: string }> {}
 /**
  * A failure of an agent call that src/transport.ts identifies as a dropped connection, a reset, a timeout or a 5xx
@@ -163,6 +169,7 @@ export type RunError =
   | RoundLimitStop
   | ClaudeCallFailed
   | ClaudeSessionTooLong
+  | CheckCommandInvalid
   | CodexCallFailed
   | AgentReplyInvalid
   | ConfigInvalid
@@ -213,6 +220,8 @@ export const describe = (error: RunErrorFields): string => {
       return `Claude Code planning call failed: ${error.message}`;
     case "ClaudeSessionTooLong":
       return sessionTooLongText(error.message);
+    case "CheckCommandInvalid":
+      return checkCommandInvalidText(error.problems);
     case "CodexCallFailed":
       return `Codex review failed: ${error.message}`;
     case "AgentUnreachable":
@@ -292,6 +301,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("RoundLimitStop"), heading: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("ClaudeCallFailed"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("ClaudeSessionTooLong"), message: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("CheckCommandInvalid"), problems: Schema.Array(ManifestProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("CodexCallFailed"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("AgentReplyInvalid"), agent: Schema.String, issue: Schema.String, files: Strings }),
   Schema.Struct({ _tag: Schema.Literal("ConfigInvalid"), file: Schema.String, path: Schema.String, message: Schema.String }),

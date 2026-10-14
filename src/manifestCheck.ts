@@ -1,12 +1,17 @@
 // Issue #162: the check of a project's listed commands against its package.json (pure). A command that names an npm
 // script must name one the manifest has, so a renamed script refuses the run at its start instead of failing a step.
-import { Option } from "effect";
+import { Option, Schema } from "effect";
 import type { CommandLine, StepChecks } from "./schema.ts";
 
-/** A command whose npm script the manifest lacks, or an npm script command in a project with no top-level package.json. */
-export type ManifestProblem =
-  | Readonly<{ _tag: "MissingScript"; command: CommandLine; script: string }>
-  | Readonly<{ _tag: "NoManifest"; command: CommandLine }>;
+/**
+ * A command whose npm script the manifest lacks, or an npm script command in a project with no top-level package.json.
+ * A schema, since it is the data of the halt CheckCommandInvalid, which decodeRunError reads.
+ */
+export const ManifestProblemSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("MissingScript"), command: Schema.String, script: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("NoManifest"), command: Schema.String }),
+]);
+export type ManifestProblem = typeof ManifestProblemSchema.Type;
 
 /** Leading environment assignments: NAME=value, NAME='…' or NAME="…", each followed by whitespace. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|[^\s'"]*)\s+/u;

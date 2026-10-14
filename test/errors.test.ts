@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { sessionTooLongText } from "../src/prompts.ts";
-import { ClaudeSessionTooLong, ConfigInvalid, DecisionFormatUnreadable, decodeRunError, GitError, haltMessage, ProjectChanged, RecordsChanged, RoundInvalid, RoundLimitStop } from "../src/errors.ts";
+import { CheckCommandInvalid, ClaudeSessionTooLong, ConfigInvalid, DecisionFormatUnreadable, decodeRunError, GitError, haltMessage, ProjectChanged, RecordsChanged, RoundInvalid, RoundLimitStop } from "../src/errors.ts";
 
 test("haltMessage reports a typed error with its description", () => {
   const error = new ProjectChanged({ during: "planning", fileLabel: null, changes: [{ kind: "content_changed", path: "a.txt" }] });
@@ -65,4 +65,11 @@ test("ClaudeSessionTooLong names the cause, round-trips through decodeRunError a
   assert.equal(haltMessage(error), `HALTED: ${sessionTooLongText("Prompt is too long")}`);
   assert.match(sessionTooLongText("Prompt is too long"), /session/);
   assert.equal(decodeRunError({ _tag: "ClaudeSessionTooLong", message: "Prompt is too long" })?._tag, "ClaudeSessionTooLong");
+});
+
+test("issue #162: CheckCommandInvalid names each command and script, and round-trips through decodeRunError", () => {
+  const error = new CheckCommandInvalid({ problems: [{ _tag: "MissingScript", command: "npm run x", script: "x" }, { _tag: "NoManifest", command: "npm test" }] });
+  assert.match(haltMessage(error) ?? "", /"npm run x" names the script "x"/u);
+  assert.match(haltMessage(error) ?? "", /"npm test" runs an npm script, and the project has no package.json/u);
+  assert.deepEqual(decodeRunError({ _tag: "CheckCommandInvalid", problems: [{ _tag: "NoManifest", command: "npm test" }] }), { _tag: "CheckCommandInvalid", problems: [{ _tag: "NoManifest", command: "npm test" }] });
 });
