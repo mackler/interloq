@@ -400,25 +400,25 @@ is_launcher() {
 }
 
 # run_capturing <command>...: runs the command and sets run_out (its stdout), run_rc (its exit status),
-# run_had_err (1 when its stderr was nonempty, empty otherwise) and run_err (the first line of its stderr that is
-# not blank, for a message), whatever the status. Its stderr goes to a temporary file, removed on
-# every path. Fails, running nothing, when that file cannot be created: its callers run in a condition, where
-# errexit is off, so an unchecked mktemp would leave an empty path whose redirection fails silently with status 1,
-# which a search would read as no match (W1-R1-1).
+# run_had_err (1 when its stderr was nonempty, empty otherwise) and run_err_line (the first line of its stderr that
+# is not blank, for a message), whatever the status. Its stderr goes to a temporary file, removed on every path.
+# Fails, running nothing, when that file cannot be created: its callers run in a condition, where errexit is off,
+# so an unchecked mktemp would leave an empty path whose redirection fails silently with status 1, which a search
+# would read as no match (W1-R1-1).
 run_capturing() {
   local errfile
-  run_out="" run_rc=0 run_err="" run_had_err=""
+  run_out="" run_rc=0 run_err_line="" run_had_err=""
   errfile=$(mktemp) || return 1
   run_out=$("$@" 2>"$errfile") || run_rc=$?
   if [[ -s $errfile ]]; then run_had_err=1; fi
-  run_err=$(grep -m 1 '[^[:space:]]' "$errfile" || true)
+  run_err_line=$(grep -m 1 '[^[:space:]]' "$errfile" || true)
   rm -f "$errfile"
 }
 
 # exit_text: the status and the first stderr line that is not blank of the command run_capturing last ran, as one
 # phrase.
 exit_text() {
-  printf '(exit status %s)%s' "$run_rc" "${run_err:+: $run_err}"
+  printf '(exit status %s)%s' "$run_rc" "${run_err_line:+: $run_err_line}"
 }
 
 # search_container <id>: the lines of the processes in container <id> whose command line names the installed
