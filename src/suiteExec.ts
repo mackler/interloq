@@ -3,8 +3,9 @@
 // with the environment Interloq was started with, in a process group of its own, so that the bound, an interruption
 // (Stop task) and the end of the shell kill everything the suite started. Every stream has an 'error' listener,
 // attached before anything else and never removed (issue #158: a stream error with no listener ended the server).
-import { spawn } from "node:child_process";
-import { Effect } from "effect";
+import { type ChildProcessByStdio, spawn } from "node:child_process";
+import type { Readable } from "node:stream";
+import { Effect, Result } from "effect";
 import type { CommandLine } from "./schema.ts";
 import type { SuiteRunnerShape } from "./services.ts";
 import type { SuiteFailure, SuiteResult } from "./suite.ts";
@@ -48,7 +49,20 @@ export const suiteRunner = (env: Readonly<Record<string, string | undefined>>, c
       let settled = false;
       let exited: RunEnd | null = null;
       let grace: NodeJS.Timeout | undefined;
-      const child = spawn(command, { shell: true, cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      let timer: NodeJS.Timeout | undefined;
+      // spawn throws synchronously on an argument it refuses (W2-R1-2); the run then did not start, and the edge stays total.
+      const spawned = ((): Result.Result<ChildProcessByStdio<null, Readable, Readable>, string> => {
+        try {
+          return Result.succeed(spawn(command, { shell: true, cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] }));
+        } catch (e) {
+          return Result.fail(e instanceof Error ? e.message : String(e));
+        }
+      })();
+      if (Result.isFailure(spawned)) {
+        resume(Effect.succeed({ _tag: "Failed", reason: { kind: "notStarted", message: spawned.failure }, output: "", ms: Date.now() - started }));
+        return Effect.void;
+      }
+      const child = spawned.success;
       const stopReading = (): void => {
         child.stdout.destroy();
         child.stderr.destroy();
@@ -70,7 +84,7 @@ export const suiteRunner = (env: Readonly<Record<string, string | undefined>>, c
         stream.setEncoding("utf8");
         stream.on("data", (text: string) => void chunks.push(text));
       }
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         killGroup(child.pid);
         stopReading();
         settleEnd({ kind: "timedOut", ms: ceilingMs });

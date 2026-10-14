@@ -133,3 +133,20 @@ test("a shell that exits 3 while a detached descendant holds the output fails wi
     assert.ok(elapsed < SUITE_CLOSE_GRACE_MS + 2000, `the result took ${elapsed} ms`);
   });
 });
+
+// W2-R1-2: spawn throws synchronously on a NUL character; the edge stays total and reports the run as not started.
+test("a command spawn refuses synchronously fails as not started, and nothing is uncaught", async () => {
+  const uncaught: unknown[] = [];
+  const listener = (e: unknown): void => void uncaught.push(e);
+  process.on("uncaughtException", listener);
+  try {
+    // The cast bypasses commandLineOf on purpose, to reach the edge with a value the constructor refuses.
+    const result = await Effect.runPromise(suiteRunner(process.env, 1000).run("echo ok\u0000" as CommandLine, DIR));
+    assert.equal(result._tag, "Failed");
+    assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
+    await sleep(100);
+    assert.deepEqual(uncaught, []);
+  } finally {
+    process.off("uncaughtException", listener);
+  }
+});

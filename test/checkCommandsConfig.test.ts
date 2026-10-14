@@ -32,6 +32,8 @@ test("stepChecksOf refuses each malformed value, naming its key and path", () =>
     [[{ change: "unit", command: "  " }], null, "checkCommands", /^\[0\]\.command$/u],
     [[{ change: "unit", command: "npm test\nnpm run check" }], null, "checkCommands", /^\[0\]\.command$/u],
     [[{ change: "unit", command: "npm test", extra: 1 }], null, "checkCommands", /^\[0\]/u],
+    [[{ change: "x", command: "echo ok\u0000" }], null, "checkCommands", /^\[0\]\.command$/u],
+    [[], "echo ok\u0000", "suiteCommand", /^$/u],
     [[], 3, "suiteCommand", /^$/u],
     [[], "", "suiteCommand", /^$/u],
     ["npm test", null, "checkCommands", /^$/u],
@@ -52,11 +54,11 @@ test("originOf names the source whose value wins", () => {
   assert.equal(originOf("checkCommands", {}, { suiteCommand: "x" }), "defaults");
 });
 
-test("property: commandLineOf succeeds exactly for one line with a character other than whitespace", () => {
-  const text = fc.string({ unit: fc.constantFrom("a", " ", "\t", "\n", "\r", "-", "'", " ") });
+test("property: commandLineOf succeeds exactly for one line with a character other than whitespace and no NUL", () => {
+  const text = fc.string({ unit: fc.constantFrom("a", " ", "\t", "\n", "\r", "-", "'", " ", "\u0000") });
   fc.assert(
     fc.property(text, (t) => {
-      const valid = /\S/u.test(t) && !/[\r\n]/u.test(t);
+      const valid = /\S/u.test(t) && !/[\r\n\u0000]/u.test(t);
       assert.equal(Result.isSuccess(commandLineOf(t)), valid);
     }),
     { numRuns: 500 },

@@ -437,16 +437,16 @@ export const Config = Schema.Struct({
   suiteCommand: Schema.Unknown,
 });
 
-/** Issue #162: a command of one line with a character other than whitespace, built by commandLineOf alone. */
+/** Issue #162: a command of one line with a character other than whitespace and no NUL character (which spawn refuses; W2-R1-2), built by commandLineOf alone. */
 export type CommandLine = Brand.Branded<string, "CommandLine">;
 /** Issue #162: a kind of change, a text with a character other than whitespace. */
 export type ChangeKind = Brand.Branded<string, "ChangeKind">;
-/** Why a text is not a command line: it is blank or has a line break. */
+/** Why a text is not a command line: it is blank, has a line break or has a NUL character. */
 export type InvalidCommandLine = Readonly<{ _tag: "InvalidCommandLine"; text: string }>;
-const isCommandLine = (text: string): boolean => /\S/u.test(text) && !/[\r\n]/u.test(text);
+const isCommandLine = (text: string): boolean => /\S/u.test(text) && !/[\r\n\u0000]/u.test(text);
 export const commandLineOf = (text: string): Result.Result<CommandLine, InvalidCommandLine> =>
   isCommandLine(text) ? Result.succeed(text as CommandLine) : Result.fail({ _tag: "InvalidCommandLine", text });
-const CommandLineSchema = Schema.String.check(Schema.makeFilter((text: string) => isCommandLine(text) || "a command of one line that is not blank")).pipe(Schema.brand("CommandLine"));
+const CommandLineSchema = Schema.String.check(Schema.makeFilter((text: string) => isCommandLine(text) || "a command of one line that is not blank and has no NUL character")).pipe(Schema.brand("CommandLine"));
 const ChangeKindSchema = Schema.String.check(Schema.makeFilter((text: string) => /\S/u.test(text) || "a description that is not blank")).pipe(Schema.brand("ChangeKind"));
 /** One entry of checkCommands: a kind of change and the command that checks it. */
 export const CheckCommand = Schema.Struct({ change: ChangeKindSchema, command: CommandLineSchema });
