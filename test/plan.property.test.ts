@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
 import fc from "fast-check";
-import { renderPlanMarkdown, STATUS_MARKER, stripStatuses, validatePlan } from "../src/plan.ts";
+import { endExecution, renderPlanMarkdown, STATUS_MARKER, stepRecordsOf, stripStatuses, validatePlan } from "../src/plan.ts";
 import { stageHeading } from "../src/prompts.ts";
 import type { RecordedPlan, StepStatus } from "../src/schema.ts";
 
@@ -80,4 +80,20 @@ test("property (F2): plan.md rendered from a plan reads back as that plan", () =
 test("the rendered stage heading is the one the rail shows", () => {
   const plan: RecordedPlan = { stages: [{ number: 2, title: "the records", steps: [] }] };
   assert.ok(renderPlanMarkdown(plan).includes(`## ${stageHeading(2, "the records")}`));
+});
+
+// Issue #157: stepRecordsOf is exactly the done and the unfinished steps, in plan order; after an execution's end no
+// started step is missing from the unfinished ones.
+test("property: stepRecordsOf partitions out the done and the unfinished steps in plan order", () => {
+  fc.assert(
+    fc.property(arbPlan, (plan) => {
+      const all = plan.stages.flatMap((s) => s.steps);
+      const records = stepRecordsOf(plan);
+      assert.deepEqual(records.done, all.filter((s) => s.status === "done"));
+      assert.deepEqual(records.unfinished, all.filter((s) => s.status === "unfinished"));
+      const ended = stepRecordsOf(endExecution(plan)).unfinished.map((s) => s.id);
+      for (const s of all.filter((s) => s.status === "started")) assert.ok(ended.includes(s.id), s.id);
+    }),
+    RUNS,
+  );
 });

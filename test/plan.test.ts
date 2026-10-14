@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
-import { endExecution, recordStep, remainingSteps, renderPlanMarkdown, stripStatuses, validatePlan } from "../src/plan.ts";
+import { endExecution, recordStep, remainingSteps, renderPlanMarkdown, stepRecordsOf, stripStatuses, validatePlan } from "../src/plan.ts";
 import { haltMessage } from "../src/errors.ts";
 import type { Plan, RecordedPlan, StepStatus } from "../src/schema.ts";
 
@@ -98,4 +98,14 @@ test("the rendered plan has the stages as headings and a marker per status", () 
   assert.match(md, /^1\. \[x\] First \(S1\)$/m);
   assert.match(md, /^ {3}Line \*\*two\*\*\.$/m);
   assert.match(md, /^1\. \[ \] label S2 \(S2\)$/m);
+});
+
+// Issue #157: the steps a stop after a process ending states.
+test("stepRecordsOf gives the done and the unfinished steps in plan order, and none for no plan", () => {
+  const plan = recorded(reply([step("S1", 1), step("S2", 2)], [step("S3", 1), step("S4", 2)]), { S1: "done", S2: "unfinished", S3: "done", S4: "started" });
+  const records = stepRecordsOf(plan);
+  assert.deepEqual(records.done.map((s) => s.id), ["S1", "S3"]);
+  assert.deepEqual(records.unfinished.map((s) => s.id), ["S2"]);
+  assert.deepEqual(stepRecordsOf(endExecution(plan)).unfinished.map((s) => s.id), ["S2", "S4"]);
+  assert.deepEqual(stepRecordsOf(null), { done: [], unfinished: [] });
 });

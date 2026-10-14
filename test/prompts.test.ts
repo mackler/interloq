@@ -926,3 +926,30 @@ test("decisionRegionName is YOUR_CHOICE and the question; equivalenceLinkName na
   assert.equal(prompts.decisionRegionName("Which database should the service use?"), "Your Choice: Which database should the service use?");
   assert.equal(prompts.equivalenceLinkName("†", "Advantage 2:", "One file."), "†: the same point as Advantage 2: One file.");
 });
+
+// Issue #157: the texts of a stop after a process ending name the ending and the steps recorded.
+test("the texts of a process ending name the ending, the attempts and the steps, or say that there are none", async () => {
+  const { questionProblems } = await import("../src/question.ts");
+  const { blocksText } = await import("../src/pieces.ts");
+  const bus = { kind: "signal" as const, signal: "SIGBUS" };
+  assert.equal(prompts.processEndText(bus), "killed by signal SIGBUS");
+  assert.equal(prompts.processEndText({ kind: "exit", code: 1 }), "exited with code 1");
+  const question = prompts.processEndedQuestion(bus, 4);
+  assert.ok(question.includes("killed by signal SIGBUS") && question.includes("4"), question);
+  const done = [{ id: "S1", label: "Write the parser" }];
+  const unfinished = [{ id: "S2", label: "Test the\nparser" }];
+  assert.ok(prompts.processEndedSummary(done).includes("S1 (Write the parser)"));
+  assert.ok(prompts.processEndedRemaining(unfinished).includes("S2 (Test the parser)"), "a label is written on one line");
+  assert.notEqual(prompts.processEndedSummary([]), "");
+  assert.notEqual(prompts.processEndedRemaining([]), "");
+  for (const [d, u] of [[done, unfinished], [[], []]] as const) {
+    const details = prompts.processEndedDetails(question, d, u);
+    const text = blocksText(details).join("\n");
+    assert.ok(text.includes(question));
+    for (const s of [...d, ...u]) assert.ok(text.includes(s.id), s.id);
+    assert.ok(!text.includes(prompts.EXEC_STOP_NO_DESCRIPTION));
+    const asQuestion = { context: para("c"), history: [], question: plain("What now?"), explanations: [], options: [], details };
+    assert.deepEqual(questionProblems(asQuestion), []);
+    assert.ok(attachedOf("stopReport", details) !== null);
+  }
+});

@@ -55,6 +55,13 @@ export const endExecution = (plan: RecordedPlan): RecordedPlan => withStatuses(p
 /** The steps still to do: pending and unfinished (an unfinished step counts as remaining, G-R1-2). */
 export const remainingSteps = (plan: RecordedPlan): readonly RecordedStep[] => stepsOf(plan).filter((s) => s.status === "pending" || s.status === "unfinished");
 
+/** The steps recorded as done and those left unfinished, each in plan order (issue #157); none for no plan. */
+export type StepRecords = Readonly<{ done: readonly RecordedStep[]; unfinished: readonly RecordedStep[] }>;
+export const stepRecordsOf = (plan: RecordedPlan | null): StepRecords => {
+  const steps = plan === null ? [] : stepsOf(plan);
+  return { done: steps.filter((s) => s.status === "done"), unfinished: steps.filter((s) => s.status === "unfinished") };
+};
+
 /** The plan as the agent returns it: without the statuses. */
 export const stripStatuses = (plan: RecordedPlan): Plan => ({
   stages: plan.stages.map((stage) => ({ ...stage, steps: stage.steps.map(({ status: _status, ...st }) => st) })),

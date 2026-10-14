@@ -8,6 +8,7 @@ import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
+import type { ProcessEnd } from "./transport.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -2585,6 +2586,52 @@ export const EXEC_STOP_NO_DESCRIPTION = "Claude Code gave no description of why 
 /** An execution stop's details (S52): Claude Code's description, its own prose, rendered as Markdown like all of it (issue #7). */
 export function execStopDetails(description: string): readonly ShownBlock[] {
   return [description.trim() === "" ? { kind: "paragraph", pieces: [{ text: EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] } : { kind: "document", markdown: description.trim() }];
+}
+
+// ---- an execution call whose Claude Code process ended, its retries used up (issue #157) ----------------------------
+
+/** A step as the texts of a process ending name it. */
+export type NamedStep = Readonly<{ id: string; label: string }>;
+/** How the process ended, in words. */
+export function processEndText(end: ProcessEnd): string {
+  switch (end.kind) {
+    case "signal":
+      return `killed by signal ${end.signal}`;
+    case "exit":
+      return `exited with code ${end.code}`;
+  }
+}
+/** The outcome's question: what ended the call, true whatever ended the attempts before the last. */
+export function processEndedQuestion(end: ProcessEnd, attempts: number): string {
+  return `The Claude Code process ${processEndText(end)} on the last of ${attempts} attempts, before it wrote a status report.`;
+}
+/** A step on one line: its id and its label, the label's line breaks and runs of whitespace one space. */
+const stepOnOneLine = (step: NamedStep): string => `${step.id} (${step.label.replace(/\s+/g, " ").trim()})`;
+const STEPS_DONE = "Steps recorded as done:";
+const STEPS_UNFINISHED = "Steps left unfinished:";
+const NO_STEP_DONE = "No step was recorded as done.";
+const NO_STEP_UNFINISHED = "No step was left unfinished.";
+/** The outcome's summary: the steps recorded as done. */
+export function processEndedSummary(done: readonly NamedStep[]): string {
+  return done.length === 0 ? NO_STEP_DONE : `${STEPS_DONE} ${done.map(stepOnOneLine).join(", ")}.`;
+}
+/** The outcome's remaining work: the steps left unfinished. */
+export function processEndedRemaining(unfinished: readonly NamedStep[]): string {
+  return unfinished.length === 0 ? NO_STEP_UNFINISHED : `${STEPS_UNFINISHED} ${unfinished.map(stepOnOneLine).join(", ")}.`;
+}
+/**
+ * The stop's attached material: the question, then one list whose two items at the top level head the steps recorded as
+ * done and those left unfinished, each step an item under its heading (its id a code piece, its label plain words), or
+ * a sentence saying there is none. One list, since a paragraph between two lists would be shown inside the first.
+ */
+export function processEndedDetails(question: string, done: readonly NamedStep[], unfinished: readonly NamedStep[]): readonly ShownBlock[] {
+  const plainPiece = (text: string): Piece => ({ text, ref: "", code: false });
+  const under = (steps: readonly NamedStep[], none: string) =>
+    steps.length === 0 ? [{ level: 1, pieces: [plainPiece(none)] }] : steps.map((st) => ({ level: 1, pieces: [{ text: st.id, ref: "", code: true }, plainPiece(` ${st.label.replace(/\s+/g, " ").trim()}`)] }));
+  return [
+    { kind: "paragraph", pieces: [plainPiece(question)] },
+    { kind: "list", items: [{ level: 0, pieces: [plainPiece(STEPS_DONE)] }, ...under(done, NO_STEP_DONE), { level: 0, pieces: [plainPiece(STEPS_UNFINISHED)] }, ...under(unfinished, NO_STEP_UNFINISHED)] },
+  ];
 }
 
 /**

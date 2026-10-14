@@ -7,10 +7,10 @@ import { stateAtEnd, stateAtStart } from "./runMode.ts";
 import type { ItemId } from "./tracker.ts";
 import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
-import { renderPlanMarkdown } from "./plan.ts";
+import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
-import { plainPieces } from "./pieces.ts";
+import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type WorkExecution, type WorkReviewEnd } from "./prompts.ts";
+import { plainPieces, type ShownBlock } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
@@ -103,6 +103,19 @@ const continuedExecution = (executor: PlannerShape, prompt: string, report: Step
     return yield* continuedExecution(executor, executionContinuingPrompt(outcome.remainingWork), report, phaseLabel);
   });
 
+/**
+ * An execution call whose Claude Code process ended on every attempt (issue #157, decision Q2) as the phase's outcome:
+ * aborted, so that it takes the stop's path, its summary and remaining work the steps recorded as done and left
+ * unfinished, and the stop's attached material the same steps beside the question.
+ */
+const processEndedStop = (ending: S.ExecProcessEnded, records: StepRecords): Readonly<{ outcome: S.ExecOutcome; details: readonly ShownBlock[] }> => {
+  const question = processEndedQuestion(ending.end, ending.attempts);
+  return {
+    outcome: { status: "aborted", summary: processEndedSummary(records.done), question, remainingWork: processEndedRemaining(records.unfinished), userInput: null },
+    details: processEndedDetails(question, records.done, records.unfinished),
+  };
+};
+
 const implementationPhases = (task: string, withRequirements: boolean): Effect.Effect<number, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
@@ -175,7 +188,8 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;
-        const outcome: S.ExecOutcome = ending.status === "processEnded" ? { status: "aborted", summary: "", question: ending.fault, remainingWork: "", userInput: null } : ending;
+        // Issue #157 (Q2): a process that ended on every attempt is an aborted stop, its texts the steps recorded.
+        const { outcome, details } = ending.status === "processEnded" ? processEndedStop(ending, stepRecordsOf(Option.getOrNull(yield* store.loadPlan()))) : { outcome: ending, details: null };
         yield* store.saveExecution(k, outcome);
         yield* store.checkpoint({ subject: "execution", phase: k, round: 0, stage: "executed" });
         yield* ui.notify({ _tag: "ExecutionEnded", phase: k, outcome });
@@ -189,7 +203,7 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
           // A stop is handled as before the work review existed: its input is recorded first.
           yield* ui.say(`Remaining work: ${outcome.remainingWork || "not reported"}`);
           const origin: QuestionOrigin = { kind: "execStop", phase: k, status: outcome.status };
-          const draft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(execStopQuestion()), options: [], attached: attachedOf("stopReport", execStopDetails(outcome.question)), decision: null };
+          const draft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(execStopQuestion()), options: [], attached: attachedOf("stopReport", details ?? execStopDetails(outcome.question)), decision: null };
           const input = outcome.userInput ?? (yield* askOffering((p) => ui.ask(p), execInputPrompt, draft, (a) => a !== ""));
           const question = outcome.question.replace(/\s+/g, " ");
           yield* store.appendDecision({ subject: `stop in execution phase ${k} (${outcome.status}): ${question}`, id: null, decision: input, phase: k, round: 0 });
