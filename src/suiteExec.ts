@@ -40,7 +40,8 @@ const resultOf = (end: RunEnd, output: string, ms: number): SuiteResult => {
 
 /** The live runner: a command through a shell in `cwd`, with `env`, bounded by `ceilingMs`, a run past it a failure.
  * At the ceiling it stops reading at once; after the shell's exit it waits at most `SUITE_CLOSE_GRACE_MS` for the
- * output to close, so a descendant outside the group that holds the output cannot delay the result. */
+ * output to close, so a descendant outside the group that holds the output cannot delay the result; on interruption it
+ * stops reading at once too (W3-R1-2). */
 export const suiteRunner = (env: Readonly<Record<string, string | undefined>>, ceilingMs: number): SuiteRunnerShape => ({
   run: (command: CommandLine, cwd: string): Effect.Effect<SuiteResult> =>
     Effect.callback<SuiteResult>((resume) => {
@@ -95,7 +96,11 @@ export const suiteRunner = (env: Readonly<Record<string, string | undefined>>, c
         const end: RunEnd = { kind: "exited", code, signal };
         exited = end;
         killGroup(child.pid);
-        if (settled) return;
+        // A path that settled first (an interruption, the ceiling, an error) may have left a stream open; destroy is idempotent.
+        if (settled) {
+          stopReading();
+          return;
+        }
         grace = setTimeout(() => {
           stopReading();
           settleEnd(end);
@@ -107,6 +112,8 @@ export const suiteRunner = (env: Readonly<Record<string, string | undefined>>, c
         clearTimeout(timer);
         clearTimeout(grace);
         killGroup(child.pid);
+        // A descendant outside the group may hold the output open; the server outlives the run, so it stops reading (W3-R1-2).
+        stopReading();
       });
     }),
 });

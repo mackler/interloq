@@ -27,6 +27,28 @@ const waitGone = async (pid: number): Promise<boolean> => {
   return !alive(pid);
 };
 
+/** Runs `body`, then asserts that nothing became an uncaught exception during it or in the 100 ms after it. */
+const noneUncaught = async (body: () => Promise<void>): Promise<void> => {
+  const uncaught: unknown[] = [];
+  const listener = (e: unknown): void => void uncaught.push(e);
+  process.on("uncaughtException", listener);
+  try {
+    await body();
+    await sleep(100);
+    assert.deepEqual(uncaught, []);
+  } finally {
+    process.off("uncaughtException", listener);
+  }
+};
+const killQuietly = (pid: number | null): void => {
+  if (pid === null) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+};
+
 test("a command that exits 0 passes with its output", async () => {
   const result = await run("echo hello");
   assert.equal(result._tag, "Passed");
@@ -52,21 +74,14 @@ test("a command past the ceiling is killed with its process group and fails as t
 });
 
 test("an interrupted run kills its process group, and nothing is uncaught", async () => {
-  const uncaught: unknown[] = [];
-  const listener = (e: unknown): void => void uncaught.push(e);
-  process.on("uncaughtException", listener);
-  try {
+  await noneUncaught(async () => {
     const pidFile = path.join(DIR, "interrupted.pid");
     const fiber = Effect.runFork(suiteRunner(process.env, 10_000).run(line(`sleep 30 & echo $! > ${pidFile}; wait`), DIR));
     for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await sleep(20);
     await Effect.runPromise(Fiber.interrupt(fiber));
     const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
     assert.ok(await waitGone(pid), "the suite's process was left running");
-    await sleep(100);
-    assert.deepEqual(uncaught, []);
-  } finally {
-    process.off("uncaughtException", listener);
-  }
+  });
 });
 
 test("the command runs in the given directory with the given environment", async () => {
@@ -85,29 +100,19 @@ test("a directory that does not exist fails as not started", async () => {
 // must not wait for it. The command prints the descendant's pid, which the test kills itself so that it leaks nowhere.
 const DETACHED = `node -e "const c=require('child_process').spawn('sleep',['30'],{detached:true,stdio:'inherit'});console.log('pid='+c.pid);c.unref()"`;
 const withDetached = async (command: string, ceilingMs: number, check: (result: Awaited<ReturnType<typeof run>>, elapsed: number) => void): Promise<void> => {
-  const uncaught: unknown[] = [];
-  const listener = (e: unknown): void => void uncaught.push(e);
-  process.on("uncaughtException", listener);
   let pid: number | null = null;
   try {
-    const started = Date.now();
-    const result = await run(command, ceilingMs);
-    const elapsed = Date.now() - started;
-    const found = /pid=(\d+)/u.exec(result.output);
-    pid = found === null ? null : Number(found[1]);
-    assert.ok(pid !== null, `the output names no detached pid: ${result.output}`);
-    check(result, elapsed);
-    await sleep(100);
-    assert.deepEqual(uncaught, []);
+    await noneUncaught(async () => {
+      const started = Date.now();
+      const result = await run(command, ceilingMs);
+      const elapsed = Date.now() - started;
+      const found = /pid=(\d+)/u.exec(result.output);
+      pid = found === null ? null : Number(found[1]);
+      assert.ok(pid !== null, `the output names no detached pid: ${result.output}`);
+      check(result, elapsed);
+    });
   } finally {
-    process.off("uncaughtException", listener);
-    if (pid !== null) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
-    }
+    killQuietly(pid);
   }
 };
 
@@ -134,19 +139,36 @@ test("a shell that exits 3 while a detached descendant holds the output fails wi
   });
 });
 
+// W3-R1-2: Stop task during the suite stops reading its output, even when a detached descendant holds it. The writer
+// writes every 50 ms into the inherited output; once the runner destroys its read ends, the next write fails with EPIPE,
+// uncaught in the writer, and the writer exits. While the output is still read, it lives on.
+test("an interrupted run stops reading an output a detached descendant holds, and nothing is uncaught", { timeout: 10_000 }, async () => {
+  const pidFile = path.join(DIR, "writer.pid");
+  const writer = path.join(DIR, "writer.js");
+  fs.writeFileSync(writer, `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => process.stdout.write("x"), 50);`);
+  const command = `node -e "require('child_process').spawn(process.execPath,[${JSON.stringify(writer).replaceAll('"', "'")}],{detached:true,stdio:'inherit'}).unref()"; sleep 20`;
+  let pid: number | null = null;
+  try {
+    await noneUncaught(async () => {
+      const fiber = Effect.runFork(suiteRunner(process.env, 10_000).run(line(command), DIR));
+      for (let i = 0; i < 150 && !fs.existsSync(pidFile); i++) await sleep(20);
+      const writerPid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      pid = writerPid;
+      await sleep(200);
+      await Effect.runPromise(Fiber.interrupt(fiber));
+      assert.ok(await waitGone(writerPid), "the detached writer is still alive: its output is still read");
+    });
+  } finally {
+    killQuietly(pid);
+  }
+});
+
 // W2-R1-2: spawn throws synchronously on a NUL character; the edge stays total and reports the run as not started.
 test("a command spawn refuses synchronously fails as not started, and nothing is uncaught", async () => {
-  const uncaught: unknown[] = [];
-  const listener = (e: unknown): void => void uncaught.push(e);
-  process.on("uncaughtException", listener);
-  try {
+  await noneUncaught(async () => {
     // The cast bypasses commandLineOf on purpose, to reach the edge with a value the constructor refuses.
     const result = await Effect.runPromise(suiteRunner(process.env, 1000).run("echo ok\u0000" as CommandLine, DIR));
     assert.equal(result._tag, "Failed");
     assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
-    await sleep(100);
-    assert.deepEqual(uncaught, []);
-  } finally {
-    process.off("uncaughtException", listener);
-  }
+  });
 });
