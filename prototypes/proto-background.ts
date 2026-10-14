@@ -196,7 +196,15 @@ function observeWatch(message: SDKMessage): void {
       if (typeof block === "object" && block !== null && "type" in block && block.type === "tool_result" && "tool_use_id" in block && monitorUses.has(String(block.tool_use_id))) {
         const output = message.tool_use_result;
         log(`Monitor tool_result for ${String(block.tool_use_id)}: tool_use_result ${JSON.stringify(output ?? null)}`);
-        if (typeof output === "object" && output !== null && "taskId" in output && typeof output.taskId === "string") watchTaskId ??= output.taskId;
+        if (typeof output === "object" && output !== null && "taskId" in output && typeof output.taskId === "string") {
+          watchTaskId ??= output.taskId;
+          // A notification without a tool_use_id may have arrived before this result named the task (W1-R1-1).
+          const early = kept.some((k) => k.message.type === "system" && k.message.subtype === "task_notification" && k.message.task_id === watchTaskId);
+          if (early && !watchNotified) {
+            watchNotified = true;
+            notified();
+          }
+        }
       }
     }
   }
