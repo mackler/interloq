@@ -87,3 +87,68 @@ refuse() {
 commit_line() {
   git -C "$(ilcli_root)" log -1 --format='%h %s' "$1"
 }
+
+# What upgrade's search looks for in a process's command line (issue #104): the path at which every project
+# container mounts the installed copy. It is unanchored, because the path may follow interpreter options
+# ('node --inspect /opt/interloq/...', 'env node /opt/interloq/...'); launchers are excluded by their program instead.
+INSTALLED_COPY_PATTERN='/opt/interloq/'
+
+# is_launcher <pgrep line>: succeeds when the line's program, the word after the pid, is docker or
+# docker-compose, by name or by path. A host-side 'docker compose ... exec cc node /opt/interloq/src/web.ts' names
+# the copy in its arguments but runs nothing from it, so it never counts as a user of the copy.
+is_launcher() {
+  local pid program rest
+  read -r pid program rest <<< "$1"
+  [[ $program == docker || $program == docker-compose || $program == */docker || $program == */docker-compose ]]
+}
+
+# search_container <id>: the lines of the processes in container <id> whose command line names the installed
+# copy, launchers dropped, on stdout. Fails with the reason on stdout when the search cannot be made: pgrep exits
+# 1 with nothing on stderr for no match, while docker exec also exits 1, with a message, for a container that is
+# gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none.
+search_container() {
+  local errfile rc=0 out err line
+  errfile=$(mktemp)
+  out=$(docker exec "$1" pgrep -a -f "$INSTALLED_COPY_PATTERN" 2>"$errfile") || rc=$?
+  err=$(head -n 1 "$errfile")
+  rm -f "$errfile"
+  if [[ $rc -eq 1 && -z $err ]]; then return 0; fi
+  if [[ $rc -ne 0 ]]; then
+    printf 'the search failed (exit status %s)%s\n' "$rc" "${err:+: $err}"
+    return 1
+  fi
+  while IFS= read -r line; do
+    if [[ -n $line ]] && ! is_launcher "$line"; then printf '%s\n' "$line"; fi
+  done <<< "$out"
+}
+
+# installed_copy_users: the report of the processes in running containers that use the installed copy, on stdout
+# (empty for none), each container as 'name (id):' with its lines. Fails with the reason on stdout when the check
+# cannot be made: docker missing, docker ps failing, or a container whose search fails. An inconclusive container
+# ends the check, since upgrade changes nothing until every check has passed.
+installed_copy_users() {
+  local errfile rc=0 containers err id name found report=""
+  if ! command -v docker > /dev/null 2>&1; then
+    echo "docker is not available"
+    return 1
+  fi
+  errfile=$(mktemp)
+  containers=$(docker ps --format '{{.ID}} {{.Names}}' 2>"$errfile") || rc=$?
+  err=$(head -n 1 "$errfile")
+  rm -f "$errfile"
+  if [[ $rc -ne 0 ]]; then
+    printf 'docker ps failed (exit status %s)%s\n' "$rc" "${err:+: $err}"
+    return 1
+  fi
+  while read -r id name; do
+    [[ -n $id ]] || continue
+    if ! found=$(search_container "$id"); then
+      printf 'in container %s (%s), %s\n' "$name" "$id" "$found"
+      return 1
+    fi
+    if [[ -n $found ]]; then
+      report+="$name ($id):"$'\n'"$(sed 's/^/  /' <<< "$found")"$'\n'
+    fi
+  done <<< "$containers"
+  printf '%s' "$report"
+}

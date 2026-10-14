@@ -73,3 +73,12 @@ setup() { common_setup; }
   [[ "$text" != *"are not ilcli's"* ]]
   [ ! -s "$STUB_LOG" ]
 }
+
+# Issue #104.
+@test "help upgrade documents --force, what it skips, and that a run outside a container is not detected" {
+  run "$ILCLI" help upgrade
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"--force"* ]]
+  [[ "$output" == *"outside a container"* ]]
+  [ ! -s "$STUB_LOG" ]
+}

@@ -13,7 +13,7 @@ common_setup() {
   export HOME="$T/home"
   mkdir -p "$HOME"
   export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
-  unset STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH
+  unset STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH STUB_DOCKER_PS STUB_DOCKER_EXEC
 }
 
 # The expected log line of a stub call: the command, then each argument in brackets.
@@ -58,3 +58,38 @@ commit_in() {
 clone_dev() { git clone -q "$T/origin.git" "$T/dev"; }
 clone_installed() { git clone -q -b release "$T/origin.git" "$T/installed"; }
 head_of() { git -C "$1" rev-parse "${2:-HEAD}"; }
+
+# container_procs <id> <line>...: the processes `docker exec <id> pgrep …` searches, each line `pid cmdline`.
+container_procs() {
+  local id="$1"
+  shift
+  mkdir -p "$T/exec"
+  printf '%s\n' "$@" > "$T/exec/$id.procs"
+  export STUB_DOCKER_EXEC="$T/exec"
+}
+
+# container_fails <id> <status> <stderr>: `docker exec <id> …` prints <stderr> and exits with <status>.
+container_fails() {
+  mkdir -p "$T/exec"
+  printf '%s\n' "$2" > "$T/exec/$1.status"
+  printf '%s\n' "$3" > "$T/exec/$1.err"
+  export STUB_DOCKER_EXEC="$T/exec"
+}
+
+# path_without_docker: PATH becomes one directory of links to every executable on PATH except docker (the first
+# occurrence of each name, the stubs first), so that docker is missing even where the machine has it.
+path_without_docker() {
+  local dir name f
+  mkdir -p "$T/nodocker"
+  local IFS=:
+  for dir in $PATH; do
+    [[ -d $dir ]] || continue
+    for f in "$dir"/*; do
+      name="${f##*/}"
+      if [[ $name != docker && -x $f && ! -d $f && ! -e $T/nodocker/$name && ! -L $T/nodocker/$name ]]; then
+        ln -s "$f" "$T/nodocker/$name"
+      fi
+    done
+  done
+  export PATH="$T/nodocker"
+}

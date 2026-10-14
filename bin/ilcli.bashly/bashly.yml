@@ -81,6 +81,16 @@ commands:
 
     Run on the host in the installed copy: on branch release tracking origin/release, with no local changes and no commits that origin/release lacks. Nothing is changed if a check fails. npm ci and npm run build run every time, so running it again repeats a failed install or build. Afterwards restart the web server and reload the open tabs.
 
+    Before changing anything, upgrade looks in every running container (docker ps, then docker exec ... pgrep) for a process whose command line names the installed copy, which the containers mount at /opt/interloq: the web server, the Claude Code and Codex binaries, or anything else. A docker launcher on the host does not count. It refuses if it finds one, naming the containers and the command lines. Replacing those files can kill a running agent at any later point until its run ends, not only during the update; a run waiting for an answer still has its web server running, so it is found too.
+
+    It also refuses when it cannot make the check: docker missing, docker ps failing, or a container where the search fails, for example one without pgrep. --force skips the check. A run started outside a container is not detected.
+  flags:
+  - long: --force
+    help: Skip the check for processes using the installed copy
+  examples:
+  - bin/ilcli upgrade           refuses while a container runs anything from the installed copy
+  - bin/ilcli upgrade --force   skips that check
+
 - name: help
   help: Show this text, or the usage of one command
   args:
