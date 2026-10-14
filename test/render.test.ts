@@ -357,3 +357,24 @@ test("W3-R1-1: renderQuestions keeps the history heading out of the question's p
   const question = html.slice(html.indexOf("[Q1]"), html.indexOf(STRONG_HISTORY));
   assert.ok(question.includes("</p>"), html);
 });
+
+// Issue #156: a disagreement Claude Code marked as about what the task requires says so in the pause's facts, and a
+// marked entry of an issue's history or of the idle pause carries the mark.
+test("pauseProse states a marked disagreement after its lead, shows a repetition's answer, and marks a marked entry", async () => {
+  const { pauseProse } = await import("../src/render.ts");
+  const markedEntry = { id: "Q-R1-1", phase: 0, round: 1, source: "review", severity: "major", location: "Q1", problem: "Drop Q1: the code settles it.", evidence: "e", action: "rejected", rationale: "The task allows another reading.", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: true } as LogEntry;
+  const plainEntry = { ...markedEntry, task_dispute: false } as LogEntry;
+  const issueNow = { id: "Q-R2-1", severity: "major" as const, location: "Q1", problem: "Still drop Q1.", evidence: "e2" };
+  const disposition = { id: "Q-R2-1", action: "rejected" as const, rationale: "Either reading is open.", duplicate_of: "Q-R1-1", reverses: "" };
+  const text = (facts: Parameters<typeof pauseProse>[0]) => blocksMarkdown(pauseProse(facts));
+  const markedFacts = pauseProse({ pause: "reraised", id: "Q-R1-1", history: [markedEntry], issue: issueNow, taskDispute: true });
+  assert.equal(piecesText((markedFacts[1] as { pieces: Parameters<typeof piecesText>[0] }).pieces), prompts.TASK_DISPUTE_FACT);
+  assert.ok(!text({ pause: "reraised", id: "Q-R1-1", history: [plainEntry], issue: issueNow, taskDispute: false }).includes(prompts.TASK_DISPUTE_FACT));
+  const repeat = text({ pause: "repeatedUnderNewId", id: "Q-R2-1", repeats: "Q-R1-1", history: [markedEntry], issue: issueNow, disposition, taskDispute: true });
+  assert.ok(repeat.includes(prompts.claudeAnswers(prompts.dispositionWords("rejected"), "Either reading is open.")), repeat);
+  assert.ok(repeat.includes(prompts.TASK_DISPUTE_ENTRY_MARK), repeat);
+  assert.ok(!text({ pause: "reraised", id: "Q-R1-1", history: [plainEntry], issue: issueNow, taskDispute: false }).includes(prompts.TASK_DISPUTE_ENTRY_MARK));
+  const idle = text({ pause: "idle", idle: 2, round: 3, issues: [markedEntry] });
+  for (const part of ["Drop Q1: the code settles it.", "The task allows another reading.", prompts.TASK_DISPUTE_ENTRY_MARK]) assert.ok(idle.includes(part), part);
+  assert.ok(!idle.includes(prompts.TASK_DISPUTE_FACT));
+});

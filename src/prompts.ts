@@ -2529,6 +2529,12 @@ const pauseSubject = (p: PauseOrigin): string => {
   }
 };
 
+/**
+ * The question of a disputed pause whose disagreement Claude Code marked as about what the task requires (issue #156),
+ * its interrogative sentence last; its options are Codex's position and Claude Code's, as in every disputed pause.
+ */
+export const TASK_DISPUTE_QUESTION =
+  "Codex and Claude Code read the task differently on this point: the first option is Codex's reading and the second is Claude Code's. Which reading of the task do you want the work to follow, Codex's or Claude Code's?";
 /** The question a pause of behaviour 7 asks, its interrogative sentence last (issue #34). */
 export function pauseQuestion(p: PauseOrigin): string {
   switch (p.pause) {
@@ -2634,12 +2640,22 @@ export function processEndedDetails(question: string, done: readonly NamedStep[]
   ];
 }
 
+/** The opening sentence of the program's own context paragraphs: what Interloq and the two agents are. */
+const INTERLOQ_SENTENCE =
+  "Interloq, the orchestrator that runs this task, starts two AI agents in this project and passes their work between them: Claude Code, the planning and coding agent, writes the plan and carries it out, and Codex, the reviewing agent, checks each document and the finished work.";
+/**
+ * The program's context of a disputed pause whose disagreement Claude Code marked as about what the task requires
+ * (issue #156): it states that the disagreement is a reading of the task, not the wording of a question.
+ */
+export function taskDisputeContext(heading: string): string {
+  return `${INTERLOQ_SENTENCE} During ${heading}, Codex reviews the questions, or the explanations of their terms, that Interloq will put to you, and Claude Code answers each point. On this point the two agents read the task differently, and Claude Code marked the disagreement as one about what the task requires rather than about how a question is worded. Interloq asks you which reading the work should follow, because what the task requires is yours to decide and you can settle it in a line.`;
+}
 /**
  * The fixed context paragraph of a question the program composes (S7, S10): the components, what they do, where they
  * are, when they act and why, filled in with the facts of the case; shown as written by the program.
  */
 export function fallbackContext(origin: QuestionOrigin): string {
-  const interloq = "Interloq, the orchestrator that runs this task, starts two AI agents in this project and passes their work between them: Claude Code, the planning and coding agent, writes the plan and carries it out, and Codex, the reviewing agent, checks each document and the finished work.";
+  const interloq = INTERLOQ_SENTENCE;
   switch (origin.kind) {
     case "clarification":
     case "followUp":
@@ -2708,6 +2724,11 @@ export function userDecisionLine(round: number, rationale: string): string {
   return `In cycle ${round}, you decided: ${rationale.trim()}`;
 }
 export const HISTORY_HEADING = "What happened to this point before:";
+/** The paragraph of a pause's facts whose disagreement Claude Code marked (issue #156), after the lead. */
+export const TASK_DISPUTE_FACT =
+  "Claude Code marked this disagreement as one about what the task requires, not about how a question is worded: Codex's point and Claude Code's answer are two readings of the task.";
+/** Appended to an entry of an issue's history that Claude Code marked (issue #156). */
+export const TASK_DISPUTE_ENTRY_MARK = "Claude Code marked this as a disagreement about what the task requires.";
 /**
  * The heading of a question's history (issue #133, decision Q1): in conversation.md, and on the question page and the
  * decision page, where it heads a collapsed section of its own. Not HISTORY_HEADING, which heads an issue's history in a

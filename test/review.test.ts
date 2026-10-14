@@ -164,3 +164,21 @@ test("(l) a corrective turn that faults and then succeeds: the loop continues, a
   assert.equal(probe.planner.prompts[3], probe.planner.prompts[2], "the retry repeats the corrective turn");
   assert.deepEqual(probe.ui.asked, []);
 });
+
+// Issue #156: a marked disagreement asks which reading of the task the work should follow, with the program's context
+// saying that it is about what the task requires; an unmarked one asks as before. The options are the two positions.
+test("decisionDraft asks a marked disagreement as a reading of the task, and an unmarked one as before", async () => {
+  const { decisionDraft } = await import("../src/review.ts");
+  const { programContext } = await import("../src/offer.ts");
+  const { piecesText, blocksText } = await import("../src/pieces.ts");
+  const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
+  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute });
+  const markedDraft = decisionDraft("Question review", { kind: "pause", facts: facts(true) }, options, null);
+  assert.equal(piecesText(markedDraft.question), prompts.TASK_DISPUTE_QUESTION);
+  assert.deepEqual(markedDraft.context, { blocks: [{ kind: "paragraph", pieces: [{ text: prompts.taskDisputeContext("Question review"), ref: "", code: false }] }], by: "program" });
+  const plainDraft = decisionDraft("Question review", { kind: "pause", facts: facts(false) }, options, null);
+  assert.equal(piecesText(plainDraft.question), prompts.pauseQuestion({ pause: "reraised", id: "Q-R1-1" }));
+  assert.deepEqual(plainDraft.context, programContext(plainDraft.origin));
+  assert.deepEqual(markedDraft.options.map((o) => o.label), plainDraft.options.map((o) => o.label));
+  assert.ok(blocksText(markedDraft.context.blocks).join("").includes("Question review"));
+});

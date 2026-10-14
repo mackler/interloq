@@ -6,8 +6,8 @@ import { Effect, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
-import { attachedOf, pauseOriginOf, type Question, type QuestionOrigin, validateQuestions } from "./question.ts";
-import { piecesText, plainPieces } from "./pieces.ts";
+import { attachedOf, pauseOriginOf, type Question, taskDisputeOf, type QuestionOrigin, validateQuestions } from "./question.ts";
+import { piecesText, plainBlocks, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
 import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
@@ -86,7 +86,11 @@ export const decisionDraft = (heading: string, asks: Asks, options: readonly Opt
   const pause = pauseOriginOf(asks.facts);
   const origin: QuestionOrigin = { kind: "pause", heading, ...pause };
   // S12: Claude Code writes the context from the pause's facts, which the user reads beside it as prose (S11).
-  return { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.pauseQuestion(pause)), options: numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: "", decision };
+  // Issue #156: a disagreement Claude Code marked asks which reading of the task the work should follow.
+  const taskDispute = taskDisputeOf(asks.facts);
+  const context = taskDispute ? { blocks: plainBlocks(prompts.taskDisputeContext(heading)), by: "program" as const } : programContext(origin);
+  const question = taskDispute ? prompts.TASK_DISPUTE_QUESTION : prompts.pauseQuestion(pause);
+  return { origin, context, history: [], explanations: [], question: plainPieces(question), options: numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: "", decision };
 };
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
 export const plannerDraft = (question: UserQuestion, heading: string, decision: number | null): QuestionDraft => {

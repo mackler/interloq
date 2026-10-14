@@ -4,7 +4,7 @@
 import type { SubjectId } from "./artifacts.ts";
 import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, QUESTION_HISTORY_HEADING, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type ShownBlock, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
-import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
+import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, taskDisputeOf, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
@@ -196,8 +196,10 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
 /** One entry of an issue's history in words, without the record's field names or its empty fields. */
 const entryProse = (e: ShownEntry): string => {
   switch (e.source) {
-    case "review":
-      return words.reviewEntryLine(e.round, e.problem, words.dispositionWords(e.action), e.rationale);
+    case "review": {
+      const line = words.reviewEntryLine(e.round, e.problem, words.dispositionWords(e.action), e.rationale);
+      return e.task_dispute ? `${line} ${words.TASK_DISPUTE_ENTRY_MARK}` : line;
+    }
     case "self_correction":
       return words.selfCorrectionLine(e.round, words.selfCorrectionWords(e.action), e.rationale);
     case "user":
@@ -227,7 +229,7 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
       case "reversal":
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "repeatedUnderNewId":
-        return [...issueProse(facts.issue), ...historyProse(facts.history)];
+        return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "unexplained":
         return [paragraph(words.claudeResponseText(facts.resultText))];
       case "identical":
@@ -236,5 +238,6 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
         return facts.issues.length === 0 ? [] : [paragraph(words.IDLE_ISSUES_HEADING), list(facts.issues.map(entryProse))];
     }
   })();
-  return [paragraph(lead), ...parts.filter((p) => p.kind !== "paragraph" || piecesText(p.pieces).trim() !== "")];
+  const marked = taskDisputeOf(facts) ? [paragraph(words.TASK_DISPUTE_FACT)] : [];
+  return [paragraph(lead), ...marked, ...parts.filter((p) => p.kind !== "paragraph" || piecesText(p.pieces).trim() !== "")];
 };
