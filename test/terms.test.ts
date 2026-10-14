@@ -11,7 +11,7 @@ import type * as S from "../src/schema.ts";
 import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT , runRefinement, refinementFails, refinementFailsWith } from "./helpers.ts";
 import { Result } from "effect";
 import fc from "fast-check";
-import { blocksText, piecesText } from "../src/pieces.ts";
+import { blocksText, piecesText, plainBlocks } from "../src/pieces.ts";
 import type { Piece } from "../src/schema.ts";
 import { termsValidation } from "../src/subjects.ts";
 
@@ -438,6 +438,8 @@ test("issue #156: a marked rejection of the terms raised again is put to the dev
     terms: [{ output: terms("A library.") }, { output: markedResponse }, { output: { ...respond([["T-R1-1", "accepted"]]), ...terms() } }],
     termsReviews: [{ issues: [issue("T-R1-1", objection)] }, { issues: [issue("T-R1-1", objection)] }, { issues: [] }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    // Two context replies that do not match the schema: the context call falls back (W1-R1-1).
+    contexts: [{ output: {} }, { output: {} }],
     execs: [finished],
   });
   await runRefinement(layer);
@@ -447,4 +449,6 @@ test("issue #156: a marked rejection of the terms raised again is put to the dev
   assert.equal(piecesText(pauses[0]!.question), prompts.TASK_DISPUTE_QUESTION);
   const descriptions = pauses[0]!.options.map((o) => piecesText(o.description)).join("\n");
   for (const part of [objection, reading]) assert.ok(descriptions.includes(part), part);
+  // W1-R1-1: the context call falls back, and the program's own context names the reading of the task.
+  assert.deepEqual(pauses[0]!.context, { blocks: plainBlocks(prompts.taskDisputeContext("Terms review")), by: "program" });
 });

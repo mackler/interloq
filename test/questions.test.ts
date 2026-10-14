@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
 import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
-import { blocksText, piecesText } from "../src/pieces.ts";
+import { blocksText, piecesText, plainBlocks } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 type InterviewTurn = typeof S.InterviewTurn.Type;
@@ -449,6 +449,8 @@ test("issue #112: an issue of the question list raised again after a partial acc
 const DROP_Q1 = "Drop Q1: the task text already answers it, so the plan should do the removal.";
 const OTHER_READING = "'Decide whether the app offers' can mean find out what the app does or choose what it should do; the task does not settle which.";
 const markedRejection = (id: string, rationale: string, mark = true) => ({ ...respond([]), dispositions: respond([[id, "rejected", mark]]).dispositions.map((d) => ({ ...d, rationale })) });
+/** Two context replies that do not match the schema: the context call falls back to the program's own context (W1-R1-1). */
+const failedContext = [{ output: {} }, { output: {} }];
 const pausesOf = (ui: Parameters<typeof presentedQuestions>[0]) => presentedQuestions(ui).filter((x) => x.origin.kind === "pause");
 
 test("issue #156: a marked rejection of a request to drop a question, raised again, reaches the developer with both readings", async () => {
@@ -460,6 +462,7 @@ test("issue #156: a marked rejection of a request to drop a question, raised aga
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [] } },
     ],
     reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }],
+    contexts: failedContext,
     execs: [finished],
   });
   await runRefinement(layer);
@@ -471,6 +474,8 @@ test("issue #156: a marked rejection of a request to drop a question, raised aga
   assert.ok(descriptions.includes(DROP_Q1), descriptions);
   assert.ok(descriptions.includes(OTHER_READING), descriptions);
   assert.ok(blocksText(pause.attached?.blocks ?? []).join("\n").includes(prompts.TASK_DISPUTE_FACT));
+  // W1-R1-1: the context call falls back, and the program's own context names the reading of the task.
+  assert.deepEqual(pause.context, { blocks: plainBlocks(prompts.taskDisputeContext("Question review")), by: "program" });
   const conversation = read(probe.dir, "conversation.md");
   assert.ok(!new RegExp(`\\*\\*${prompts.WORDING_DISPUTE_HEADING}\\*\\*[^\\n]*Q-R1-1`).test(conversation), conversation);
   assert.match(read(probe.dir, "user-decisions.md"), /Q-R1-1/);
@@ -513,6 +518,7 @@ test("issue #156: a reversal settled unmarked is put to the developer when the c
       { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
     ],
     reviews: [{ issues: [issue("Q-R1-1", "Q1 is unclear.")] }, { issues: [issue("Q-R2-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    contexts: failedContext,
     execs: [finished],
   });
   await runRefinement(layer);
@@ -521,4 +527,5 @@ test("issue #156: a reversal settled unmarked is put to the developer when the c
   const reversals = pausesOf(probe.ui).filter((x) => x.origin.kind === "pause" && x.origin.pause === "reversal");
   assert.equal(reversals.length, 1, JSON.stringify(presentedSubjects(probe.ui)));
   assert.equal(piecesText(reversals[0]!.question), prompts.TASK_DISPUTE_QUESTION);
+  assert.deepEqual(reversals[0]!.context, { blocks: plainBlocks(prompts.taskDisputeContext("Question review")), by: "program" });
 });
