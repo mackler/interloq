@@ -112,10 +112,12 @@ exit_text() {
 # search_container <id>: the lines of the processes in container <id> whose command line names the installed
 # copy, launchers dropped, on stdout. Fails with the reason on stdout when the search cannot be made: pgrep exits
 # 1 with nothing on stderr for no match, while docker exec also exits 1, with a message, for a container that is
-# gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none.
+# gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none. A temporary file that
+# cannot be created fails it too: it runs in a condition, where errexit is off, so an unchecked mktemp would leave
+# an empty path whose redirection fails silently with status 1, which would read as no match (W1-R1-1).
 search_container() {
   local errfile rc=0 out reason="" line
-  errfile=$(mktemp)
+  errfile=$(mktemp) || { echo "could not create a temporary file for the search"; return 1; }
   out=$(docker exec "$1" pgrep -a -f "$INSTALLED_COPY_PATTERN" 2>"$errfile") || rc=$?
   if [[ $rc -ne 0 && ! ($rc -eq 1 && ! -s $errfile) ]]; then reason="the search failed $(exit_text "$rc" "$errfile")"; fi
   rm -f "$errfile"
@@ -131,15 +133,15 @@ search_container() {
 
 # installed_copy_users: the report of the processes in running containers that use the installed copy, on stdout
 # (empty for none), each container as 'name (id):' with its lines. Fails with the reason on stdout when the check
-# cannot be made: docker missing, docker ps failing, or a container whose search fails. An inconclusive container
-# ends the check, since upgrade changes nothing until every check has passed.
+# cannot be made: docker missing, a temporary file that cannot be created, docker ps failing, or a container whose
+# search fails. An inconclusive container ends the check, since upgrade changes nothing until every check has passed.
 installed_copy_users() {
   local errfile rc=0 containers reason="" id name found report=""
   if ! command -v docker > /dev/null 2>&1; then
     echo "docker is not available"
     return 1
   fi
-  errfile=$(mktemp)
+  errfile=$(mktemp) || { echo "could not create a temporary file for docker ps"; return 1; }
   containers=$(docker ps --format '{{.ID}} {{.Names}}' 2>"$errfile") || rc=$?
   if [[ $rc -ne 0 ]]; then reason="docker ps failed $(exit_text "$rc" "$errfile")"; fi
   rm -f "$errfile"

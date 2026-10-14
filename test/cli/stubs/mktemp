@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Stub of mktemp for test/cli: transparent unless STUB_MKTEMP_FAIL_AFTER is set. Set to n, the first n calls run
+# the real mktemp and every later call fails as the real one does (a message on stderr, exit 1). The calls are
+# counted in ${STUB_LOG}.mktemp, not in $STUB_LOG, whose lines several tests compare.
+# The real mktemp is the first executable of that name on PATH whose resolved path is not this stub's: under
+# path_without_docker the name links to this stub.
+self=$(readlink -f "$0")
+real=""
+IFS=: read -r -a dirs <<< "$PATH"
+for dir in "${dirs[@]}"; do
+  candidate="$dir/mktemp"
+  if [[ -x $candidate && ! -d $candidate && $(readlink -f "$candidate") != "$self" ]]; then
+    real=$candidate
+    break
+  fi
+done
+if [[ -z $real ]]; then
+  echo "stub mktemp: no real mktemp found on PATH" >&2
+  exit 1
+fi
+if [[ -z ${STUB_MKTEMP_FAIL_AFTER:-} ]]; then
+  exec "$real" "$@"
+fi
+echo call >> "${STUB_LOG}.mktemp"
+calls=$(wc -l < "${STUB_LOG}.mktemp")
+if (( calls > STUB_MKTEMP_FAIL_AFTER )); then
+  echo "mktemp: failed to create file via template" >&2
+  exit 1
+fi
+exec "$real" "$@"

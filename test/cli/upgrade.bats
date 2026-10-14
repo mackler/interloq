@@ -317,3 +317,27 @@ refused_naming() {
   [[ "$output" != *"docker compose"* ]] || { echo "$output"; return 1; }
   untouched
 }
+
+# W1-R1-1: a temporary file that cannot be created makes the check inconclusive, never a pass.
+@test "a temporary file that cannot be created for a container's search refuses as inconclusive" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_procs c1 '1 bash'
+  export STUB_MKTEMP_FAIL_AFTER=1
+  upgrade
+  refused_naming "could not check" proj-a c1 "temporary file"
+  untouched
+}
+
+@test "a temporary file that cannot be created for the container listing refuses as inconclusive" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_procs c1 '1 bash'
+  export STUB_MKTEMP_FAIL_AFTER=0
+  upgrade
+  refused_naming "could not check" "temporary file"
+  untouched
+  ! grep -q '^docker \[exec\]' "$STUB_LOG"
+}
