@@ -25,11 +25,25 @@ export const decodeConfigText = (file: string, text: string): Result.Result<Part
 /** The configuration from its three sources, each later one replacing the keys it sets (decided behaviour 9). */
 export const mergeConfig = (shared: Partial<Config>, own: Partial<Config>): Config => ({ ...S.defaultConfig, ...shared, ...own });
 
+/** Issue #162: the source whose value of a key the merge keeps: the project's file, the shared file, or the defaults. */
+export type ConfigOrigin = "own" | "shared" | "defaults";
+export const originOf = (key: keyof Config, shared: Partial<Config>, own: Partial<Config>): ConfigOrigin =>
+  key in own ? "own" : key in shared ? "shared" : "defaults";
+
+/** Issue #162: the merged configuration with the file of each source, so a key's later decoding can name the file it came from. */
+export type SourcedConfig = Readonly<{ config: Config; files: Readonly<Record<Exclude<ConfigOrigin, "defaults">, string>>; shared: Partial<Config>; own: Partial<Config> }>;
+
+/** The file a key's value came from, or null where it is the default (issue #162). */
+export const fileOf = (sourced: SourcedConfig, key: keyof Config): string | null => {
+  const origin = originOf(key, sourced.shared, sourced.own);
+  return origin === "defaults" ? null : sourced.files[origin];
+};
+
 /**
- * The configuration: the defaults, then the shared config file, then <project>/plan-review/config.json
+ * The configuration with its sources: the defaults, then the shared config file, then <project>/plan-review/config.json
  * (decided behaviour 9). Invalid JSON, a wrong type or an unknown key is ConfigInvalid (Q4).
  */
-export const loadConfig = (project: string, sharedFile: string): Effect.Effect<Config, ConfigInvalid | FileSystemError, FileSystem.FileSystem | Path.Path> =>
+export const loadSourcedConfig = (project: string, sharedFile: string): Effect.Effect<SourcedConfig, ConfigInvalid | FileSystemError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -41,7 +55,15 @@ export const loadConfig = (project: string, sharedFile: string): Effect.Effect<C
         const text = yield* io(file, fs.readFileString(file));
         return yield* Effect.fromResult(decodeConfigText(file, text));
       });
+    const ownFile = path.join(path.resolve(project), RECORDS_DIR, pathOf({ kind: "config" }));
     const shared = yield* read(sharedFile);
-    const own = yield* read(path.join(path.resolve(project), RECORDS_DIR, pathOf({ kind: "config" })));
-    return mergeConfig(shared, own);
+    const own = yield* read(ownFile);
+    return { config: mergeConfig(shared, own), files: { shared: sharedFile, own: ownFile }, shared, own };
   });
+
+/**
+ * The configuration: the defaults, then the shared config file, then <project>/plan-review/config.json
+ * (decided behaviour 9). Invalid JSON, a wrong type or an unknown key is ConfigInvalid (Q4).
+ */
+export const loadConfig = (project: string, sharedFile: string): Effect.Effect<Config, ConfigInvalid | FileSystemError, FileSystem.FileSystem | Path.Path> =>
+  Effect.map(loadSourcedConfig(project, sharedFile), (sourced) => sourced.config);

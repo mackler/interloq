@@ -715,6 +715,11 @@ Return an empty questions_for_user array.`;
  * on 5 Oct 2026 (Agent SDK 0.3.283) that the setting, passed through Options.env, takes effect in the bundled CLI.
  */
 export const COMMAND_CEILING_MS = 1_200_000;
+/**
+ * Issue #162 (requirements Q2): the limit on all of one step's check commands together, two minutes. Fixed in the code,
+ * not a setting. A step's check runs only the tests its change touches, and the part of them that fits in this time.
+ */
+export const STEP_CHECK_LIMIT_MS = 120_000;
 
 /** The rule of every prompt that asks for the whole plan (issue #78): no step outlasts one shell command. */
 /**

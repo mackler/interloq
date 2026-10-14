@@ -31,6 +31,8 @@ const arbConfig = record<S.Config>({
     { nil: null },
   ),
   terms: fc.constantFrom(...S.TERMS_MODES),
+  checkCommands: fc.constant([]),
+  suiteCommand: fc.option(nonBlank, { nil: null }),
 });
 const arbIssueId = nonEmpty.map((s) => s as S.IssueId);
 const entryBase = { id: arbIssueId, phase: nonNegativeInt, round: nonNegativeInt, problem: fc.string(), rationale: fc.string(), superseded: fc.boolean() };

@@ -2,7 +2,7 @@
 // (`typeof X.Type`), the JSON Schema for the agents (src/jsonSchema.ts) and runtime validation.
 // Replaces src/types.ts and src/schemas.ts. API names: docs/effect-v4-api.md.
 
-import { Schema, SchemaIssue, Struct } from "effect";
+import { type Brand, Result, Schema, SchemaIssue, Struct } from "effect";
 import { ITEM_STATES, type ItemState } from "./tracker.ts";
 import type { ProcessEnd } from "./transport.ts";
 
@@ -416,7 +416,45 @@ export const Config = Schema.Struct({
    * one question's written when the user asks for them while it is on the screen.
    */
   terms: TermsMode,
+  /**
+   * Issue #162: the project's commands that check each kind of change, a list of `{ change, command }`. Held undecoded:
+   * stepChecksOf decodes it only when an implementation run starts, so a malformed value never refuses a refinement run.
+   */
+  checkCommands: Schema.Unknown,
+  /** Issue #162: the command Interloq runs as the whole suite after a converged work review, or null. Decoded like checkCommands. */
+  suiteCommand: Schema.Unknown,
 });
+
+/** Issue #162: a command of one line with a character other than whitespace, built by commandLineOf alone. */
+export type CommandLine = Brand.Branded<string, "CommandLine">;
+/** Issue #162: a kind of change, a text with a character other than whitespace. */
+export type ChangeKind = Brand.Branded<string, "ChangeKind">;
+/** Why a text is not a command line: it is blank or has a line break. */
+export type InvalidCommandLine = Readonly<{ _tag: "InvalidCommandLine"; text: string }>;
+const isCommandLine = (text: string): boolean => /\S/u.test(text) && !/[\r\n]/u.test(text);
+export const commandLineOf = (text: string): Result.Result<CommandLine, InvalidCommandLine> =>
+  isCommandLine(text) ? Result.succeed(text as CommandLine) : Result.fail({ _tag: "InvalidCommandLine", text });
+const CommandLineSchema = Schema.String.check(Schema.makeFilter((text: string) => isCommandLine(text) || "a command of one line that is not blank")).pipe(Schema.brand("CommandLine"));
+const ChangeKindSchema = Schema.String.check(Schema.makeFilter((text: string) => /\S/u.test(text) || "a description that is not blank")).pipe(Schema.brand("ChangeKind"));
+/** One entry of checkCommands: a kind of change and the command that checks it. */
+export const CheckCommand = Schema.Struct({ change: ChangeKindSchema, command: CommandLineSchema });
+export type CheckCommand = typeof CheckCommand.Type;
+/** The two settings decoded: the project's check commands and its suite command (issue #162). */
+export type StepChecks = Readonly<{ commands: ReadonlyArray<CheckCommand>; suite: CommandLine | null }>;
+/** No commands and no suite: a project without either setting. */
+export const NO_STEP_CHECKS: StepChecks = { commands: [], suite: null };
+/** Why the settings do not decode: the key, the path inside its value ("" at its root) and the message. */
+export type StepChecksInvalid = Readonly<{ key: "checkCommands" | "suiteCommand"; path: string; message: string }>;
+const decodeCheckCommands = Schema.decodeUnknownResult(Schema.Array(CheckCommand), { onExcessProperty: "error" });
+const decodeSuiteCommand = Schema.decodeUnknownResult(Schema.NullOr(CommandLineSchema), { onExcessProperty: "error" });
+/** Issue #162: decodes the two settings, which the configuration holds undecoded; called only when an implementation run starts. */
+export const stepChecksOf = (raw: Readonly<{ checkCommands: unknown; suiteCommand: unknown }>): Result.Result<StepChecks, StepChecksInvalid> => {
+  const commands = decodeCheckCommands(raw.checkCommands);
+  if (Result.isFailure(commands)) return Result.fail({ key: "checkCommands", ...firstIssue(commands.failure) });
+  const suite = decodeSuiteCommand(raw.suiteCommand);
+  if (Result.isFailure(suite)) return Result.fail({ key: "suiteCommand", ...firstIssue(suite.failure) });
+  return Result.succeed({ commands: commands.success, suite: suite.success });
+};
 
 /** A config file: any subset of the keys of Config. Unknown keys are rejected where it is decoded. */
 export const PartialConfig = Config.mapFields(Struct.map(Schema.optionalKey));
@@ -547,4 +585,6 @@ export const defaultConfig: Config = {
   codexModel: null,
   tracker: null,
   terms: "unchecked",
+  checkCommands: [],
+  suiteCommand: null,
 };
