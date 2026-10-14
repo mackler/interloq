@@ -64,3 +64,20 @@ test("q at the stop after a process ending, confirmed, ends the run with 130", a
   const exit = await Effect.runPromiseExit(Effect.scoped(program(scriptedStart(probe.project), wiring)));
   assert.equal(exitCodeOf(exit), 130);
 });
+
+// Issue #162 (W1-R1-1): a continued phase whose later call's process ended keeps the checks its earlier calls reported.
+test("a continued phase whose process then ended gives the work review the checks of its earlier call", async () => {
+  const continuing: ExecCallOutcome = { status: "continuing", summary: "half", remainingWork: "S2 and S3", checks: [{ step: "S1", command: "npm run test:unit", seconds: 30 }] };
+  const { layer, probe } = testLayer(tempRepo(), {
+    answers: ["go on"],
+    steps: [planWrite, { output: respond([["W1-R1-1", "rejected"]]) }, planWrite],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [continuing, endedBy({ kind: "signal", signal: "SIGBUS" }, "Claude Code process terminated by signal SIGBUS"), finished],
+    execScripts: [{ reports: [["S1", "started"], ["S1", "done"]] }, { reports: [["S2", "started"]] }, {}],
+  });
+  assert.equal(await runTask(layer), 2);
+  const workReview = probe.reviewer.prompts[1];
+  assert.ok(workReview.includes("`npm run test:unit` (30 seconds)"), "the work review was not given the earlier call's check");
+  assert.ok(!workReview.includes("none reported"));
+  assert.equal(probe.ui.notified.filter((e) => e._tag === "PhaseBegan" && e.phase.kind === "planning").length, 2);
+});

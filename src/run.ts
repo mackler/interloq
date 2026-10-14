@@ -91,15 +91,21 @@ export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effe
  * converges; succeeds with the number of execution phases. `withRequirements`: the run's requirements.md exists.
  */
 /**
+ * A phase whose last call's Claude Code process ended on every attempt (issue #157), with the checks its earlier calls
+ * reported (issue #162, W1-R1-1): the call that ended has no report and so no checks of its own.
+ */
+type PhaseProcessEnded = Readonly<{ status: "processEnded"; ending: S.ExecProcessEnded; checks: ReadonlyArray<S.StepCheckRun> }>;
+
+/**
  * One execution phase's calls on its own planner (issue #154, decisions Q2 and Q3): a call that ends with status
  * continuing is followed by another in the same session, told to go on with the work it reported left, said on the page
  * and written to conversation.md, with no question and no limit; the phase's outcome is the first other outcome.
  */
-const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string, earlier: ReadonlyArray<S.StepCheckRun> = []): Effect.Effect<S.ExecOutcome | S.ExecProcessEnded, RunError, Decider | Ui | Store> =>
+const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string, earlier: ReadonlyArray<S.StepCheckRun> = []): Effect.Effect<S.ExecOutcome | PhaseProcessEnded, RunError, Decider | Ui | Store> =>
   Effect.gen(function* () {
     const outcome = yield* executor.executing(prompt, report);
     // Issue #162: a continued phase reports the checks of all its calls.
-    if (outcome.status === "processEnded") return outcome;
+    if (outcome.status === "processEnded") return { status: "processEnded", ending: outcome, checks: earlier };
     if (outcome.status !== "continuing") return { ...outcome, checks: [...earlier, ...outcome.checks] };
     const line = continuingLine(phaseLabel, outcome.remainingWork);
     yield* (yield* Ui).say(line);
@@ -112,10 +118,10 @@ const continuedExecution = (executor: PlannerShape, prompt: string, report: Step
  * aborted, so that it takes the stop's path, its summary and remaining work the steps recorded as done and left
  * unfinished, and the stop's attached material the same steps beside the question.
  */
-const processEndedStop = (ending: S.ExecProcessEnded, records: StepRecords): Readonly<{ outcome: S.ExecOutcome; details: readonly ShownBlock[] }> => {
-  const question = processEndedQuestion(ending.end, ending.attempts);
+const processEndedStop = (ended: PhaseProcessEnded, records: StepRecords): Readonly<{ outcome: S.ExecOutcome; details: readonly ShownBlock[] }> => {
+  const question = processEndedQuestion(ended.ending.end, ended.ending.attempts);
   return {
-    outcome: { status: "aborted", summary: processEndedSummary(records.done), question, remainingWork: processEndedRemaining(records.unfinished), userInput: null, checks: [] },
+    outcome: { status: "aborted", summary: processEndedSummary(records.done), question, remainingWork: processEndedRemaining(records.unfinished), userInput: null, checks: ended.checks },
     details: processEndedDetails(question, records.done, records.unfinished),
   };
 };
