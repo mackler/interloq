@@ -30,6 +30,7 @@ const request: prompts.ContextRequest = {
   details,
   explanations: [],
   facts: "The command npm install zod adds the library zod to the project.",
+  fallback: plainBlocks(prompts.fallbackContext(origin)),
 };
 const zod = { id: "z", term: "zod", senses: ["A library that checks that data has the shape a program expects."] };
 const good: QuestionContext = {
@@ -120,7 +121,7 @@ test("G-R1-1: a rephrased question, options and details' prose pass; F1: a chang
 // in the prompt alone and checked by the validation: the seam of the two, for a permission request with an unknown field.
 test("S9 seam: KEEP_SUPPLIED_REFS is in the prompt of a request that supplies a reference, and the validation holds the reply to it", () => {
   const draft = permissionDraft("Bash", { command: "ls", max_depth: 3 });
-  const supplied: prompts.ContextRequest = { origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "" };
+  const supplied: prompts.ContextRequest = { origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "", fallback: plainBlocks(prompts.fallbackContext(origin)) };
   const prompt = prompts.contextPrompt("t", supplied);
   assert.ok(prompt.includes(prompts.KEEP_SUPPLIED_REFS));
   const named = blockPieces(supplied.details).find((p) => p.code && p.ref !== "");
@@ -196,6 +197,14 @@ test("F1 scenario: a context call that alters the command twice leaves Interloq'
   assert.equal(probe.planner.contextPrompts[1], repairOf({ kind: "literalChanged", subject: "" }));
 });
 
+// Issue #156 (W1-R1-1): the fallback is the request's own program context, which a marked pause sets to its own.
+test("W1-R1-1: a context call that cannot succeed shows the request's fallback, marked as the program's", async () => {
+  const blank = { ...good, context: para(" ") };
+  const fallback = plainBlocks(prompts.taskDisputeContext("Question review"));
+  const { written } = run({ contexts: [{ output: blank }, { output: blank }] }, { ...request, fallback });
+  assert.deepEqual(await written(), { context: { blocks: fallback, by: "program" }, history: [], explanations: [] });
+});
+
 test("S10: a context call whose retries are exhausted asks nothing of its own; the program's paragraph stands", async () => {
   const fault = { fault: "read ECONNRESET" };
   const { probe, written } = run({ contexts: [fault, fault], config: { maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 } });
@@ -228,7 +237,7 @@ test("a context call that changes the project halts with ProjectChanged; the fal
 /** A permission request as the context call is given it, from the input of a tool. */
 const permissionRequest = (tool: string, input: Record<string, unknown>): prompts.ContextRequest => {
   const draft = permissionDraft(tool, input);
-  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "" };
+  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "", fallback: [] };
 };
 /** The reply a context call returns when it does exactly what its prompt says: the question as given. */
 const faithful = (request: prompts.ContextRequest): QuestionContext => scriptedContextReply(prompts.contextPrompt("t", request));

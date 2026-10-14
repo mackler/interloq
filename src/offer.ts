@@ -137,7 +137,7 @@ export const limitOptions = (proceed: string | null): readonly OfferedOption[] =
 /**
  * A draft with what a context call wrote (S9; decision G-R1-1): its paragraph and explanations, and the question, the
  * options and the details as it rephrased them; each option keeps its answer, paired by position (S10). Where the call
- * could not succeed, the program's paragraph and its own question stand.
+ * could not succeed, the draft's own context, marked as the program's, and its own question stand (issue #156, W1-R1-1).
  */
 export const withContext = (draft: QuestionDraft, written: ContextWritten): QuestionDraft => ({
   ...draft,
@@ -155,7 +155,7 @@ const explain = (draft: QuestionDraft, facts: string) =>
   Effect.gen(function* () {
     const decider = yield* Decider;
     const options = draft.options.map((o) => o.shown);
-    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts });
+    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts, fallback: requestDetails(draft.context.blocks) });
   });
 
 /**

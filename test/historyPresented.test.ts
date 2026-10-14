@@ -68,7 +68,7 @@ test("a follow-up question carries its current_question's history, and a turn wh
 
 test("a question the program composes gets the context call's history; the fallback has none and is the program's", async () => {
   const draft = permissionDraft("Bash", { command: "npm install zod" });
-  const request = { origin: draft.origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: [], explanations: draft.explanations, facts: "f" };
+  const request = { origin: draft.origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: [], explanations: draft.explanations, facts: "f", fallback: [] };
   const reply = (prompt: string) => ({ ...scriptedContextReply(prompt), history: para(HISTORY) });
   const write = (contexts: S.QuestionContext[] | "fail") => {
     const { layer } = testLayer(tempRepo(), { contexts: contexts === "fail" ? [{ output: { context: 1 } }, { output: { context: 1 } }] : contexts.map((c) => ({ output: c })) });

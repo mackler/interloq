@@ -4,9 +4,9 @@
 
 import { Effect, Result } from "effect";
 import { QuestionInvalid, type RunError } from "./errors.ts";
-import { type ContextRequest, contextFallbackNote, contextPrompt, fallbackContext, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
+import { type ContextRequest, contextFallbackNote, contextPrompt, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
 import { describe } from "./errors.ts";
-import { plainBlocks, type ValueToken, valueTokensOf } from "./pieces.ts";
+import { type ValueToken, valueTokensOf } from "./pieces.ts";
 import { type ContextWritten, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
@@ -54,8 +54,11 @@ export const contextValidation =
     return Result.fail({ error: new QuestionInvalid({ questions }), repair: questionRepairPrompt(questions) });
   };
 
-/** The program's own paragraph (S10), marked as the program's; its question, options, details and explanations stand. */
-export const programWritten = (request: ContextRequest): ContextWritten => ({ context: { blocks: plainBlocks(fallbackContext(request.origin)), by: "program" }, history: [], explanations: request.explanations });
+/**
+ * The program's own context (S10), the request's fallback (issue #156, W1-R1-1: the draft's own, so a marked pause keeps
+ * its), marked as the program's; its question, options, details and explanations stand.
+ */
+export const programWritten = (request: ContextRequest): ContextWritten => ({ context: { blocks: request.fallback, by: "program" }, history: [], explanations: request.explanations });
 
 /**
  * Writes a question's context in a fresh session, which may read the project and change nothing (S33): the agent's

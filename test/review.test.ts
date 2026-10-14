@@ -182,3 +182,36 @@ test("decisionDraft asks a marked disagreement as a reading of the task, and an 
   assert.deepEqual(markedDraft.options.map((o) => o.label), plainDraft.options.map((o) => o.label));
   assert.ok(blocksText(markedDraft.context.blocks).join("").includes("Question review"));
 });
+
+// Issue #156 (W1-R1-1): where the context call cannot succeed, the marked pause keeps its own context, which says the
+// disagreement is about what the task requires; the call is told what that context must say.
+test("a marked pause keeps its context when the context call falls back, and the call is given the task-dispute facts", async () => {
+  const { decisionDraft } = await import("../src/review.ts");
+  const { askOffering, programContext } = await import("../src/offer.ts");
+  const { programWritten } = await import("../src/questionContext.ts");
+  const { plainBlocks } = await import("../src/pieces.ts");
+  const { presentedQuestions } = await import("./helpers.ts");
+  const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
+  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute });
+  const asked = async (taskDispute: boolean) => {
+    const { layer, probe } = testLayer(tempRepo(), { answers: ["1"] });
+    const requests: prompts.ContextRequest[] = [];
+    const decider = { ...noDecider, explain: (request: prompts.ContextRequest) => Effect.sync(() => (requests.push(request), programWritten(request))) };
+    const draft = decisionDraft("Question review", { kind: "pause", facts: facts(taskDispute) }, options, null);
+    await Effect.runPromise(Effect.gen(function* () {
+      yield* (yield* Store).init("the task");
+      const ui = yield* Ui;
+      return yield* askOffering((p) => ui.ask(p), prompts.decisionPrompt, draft);
+    }).pipe(Effect.provideService(Decider, decider), Effect.provide(layer)));
+    return { draft, requests, presented: presentedQuestions(probe.ui)[0] };
+  };
+  const marked = await asked(true);
+  assert.deepEqual(marked.presented.context, { blocks: plainBlocks(prompts.taskDisputeContext("Question review")), by: "program" });
+  assert.equal(marked.requests[0].facts, prompts.TASK_DISPUTE_CONTEXT_FACTS);
+  // The seam: the prompt the context call is given carries the facts.
+  assert.ok(prompts.contextPrompt("t", marked.requests[0]).includes(prompts.TASK_DISPUTE_CONTEXT_FACTS));
+  const unmarked = await asked(false);
+  assert.deepEqual(unmarked.presented.context, programContext(unmarked.draft.origin));
+  assert.equal(unmarked.requests[0].facts, "");
+  assert.ok(!prompts.contextPrompt("t", unmarked.requests[0]).includes("Facts for your understanding"));
+});

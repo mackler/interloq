@@ -2663,6 +2663,12 @@ export function taskDisputeContext(heading: string): string {
   return `${INTERLOQ_SENTENCE} During ${heading}, Codex reviews the questions, or the explanations of their terms, that Interloq will put to you, and Claude Code answers each point. On this point the two agents read the task differently, and Claude Code marked the disagreement as one about what the task requires rather than about how a question is worded. Interloq asks you which reading the work should follow, because what the task requires is yours to decide and you can settle it in a line.`;
 }
 /**
+ * The facts a context call is given for a disputed pause whose disagreement Claude Code marked (issue #156, W1-R1-1):
+ * what its context paragraph must state.
+ */
+export const TASK_DISPUTE_CONTEXT_FACTS =
+  "Claude Code marked this disagreement as one about what the task requires, not about how a question to the user is worded. Your context paragraph must say so, and must say that the question asks which reading of the task the work should follow: Codex's, the first option, or Claude Code's, the second.";
+/**
  * The fixed context paragraph of a question the program composes (S7, S10): the components, what they do, where they
  * are, when they act and why, filled in with the facts of the case; shown as written by the program.
  */
@@ -2795,6 +2801,11 @@ export type ContextRequest = Readonly<{
   explanations: readonly Explanation[];
   /** Further facts of the case in prose (the tool and its input, the counts), or "". */
   facts: string;
+  /**
+   * The program's own context of the question, shown, marked as the program's, where the context call cannot succeed
+   * (issue #156, W1-R1-1); not given to the call.
+   */
+  fallback: readonly Block[];
 }>;
 /** Whether the request holds a code piece with a ref, which the reply must keep (S9, KEEP_SUPPLIED_REFS). */
 const suppliesRefs = (request: ContextRequest): boolean =>

@@ -94,7 +94,7 @@ export const decisionDraft = (heading: string, asks: Asks, options: readonly Opt
   const taskDispute = taskDisputeOf(asks.facts);
   const context = taskDispute ? { blocks: plainBlocks(prompts.taskDisputeContext(heading)), by: "program" as const } : programContext(origin);
   const question = taskDispute ? prompts.TASK_DISPUTE_QUESTION : prompts.pauseQuestion(pause);
-  return { origin, context, history: [], explanations: [], question: plainPieces(question), options: numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: "", decision };
+  return { origin, context, history: [], explanations: [], question: plainPieces(question), options: numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: taskDispute ? prompts.TASK_DISPUTE_CONTEXT_FACTS : "", decision };
 };
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
 export const plannerDraft = (question: UserQuestion, heading: string, decision: number | null): QuestionDraft => {
