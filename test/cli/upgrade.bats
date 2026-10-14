@@ -245,6 +245,16 @@ refused_naming() {
   untouched
 }
 
+@test "a search that fails with stderr beginning with an empty line refuses as inconclusive, nothing touched" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_fails c1 1 $'\nError response from daemon: container c1 is not running'
+  upgrade
+  refused_naming "could not check" proj-a c1 "Error response from daemon"
+  untouched
+}
+
 @test "docker missing refuses as inconclusive, nothing touched" {
   advance release "Tested change"
   remember

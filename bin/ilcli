@@ -399,21 +399,24 @@ is_launcher() {
   [[ $program == docker || $program == docker-compose || $program == */docker || $program == */docker-compose ]]
 }
 
-# run_capturing <command>...: runs the command and sets run_out (its stdout), run_rc (its exit status) and
-# run_err (the first line of its stderr), whatever the status. Its stderr goes to a temporary file, removed on
+# run_capturing <command>...: runs the command and sets run_out (its stdout), run_rc (its exit status),
+# run_had_err (1 when its stderr was nonempty, empty otherwise) and run_err (the first line of its stderr that is
+# not blank, for a message), whatever the status. Its stderr goes to a temporary file, removed on
 # every path. Fails, running nothing, when that file cannot be created: its callers run in a condition, where
 # errexit is off, so an unchecked mktemp would leave an empty path whose redirection fails silently with status 1,
 # which a search would read as no match (W1-R1-1).
 run_capturing() {
   local errfile
-  run_out="" run_rc=0 run_err=""
+  run_out="" run_rc=0 run_err="" run_had_err=""
   errfile=$(mktemp) || return 1
   run_out=$("$@" 2>"$errfile") || run_rc=$?
-  run_err=$(head -n 1 "$errfile")
+  if [[ -s $errfile ]]; then run_had_err=1; fi
+  run_err=$(grep -m 1 '[^[:space:]]' "$errfile" || true)
   rm -f "$errfile"
 }
 
-# exit_text: the status and the first stderr line of the command run_capturing last ran, as one phrase.
+# exit_text: the status and the first stderr line that is not blank of the command run_capturing last ran, as one
+# phrase.
 exit_text() {
   printf '(exit status %s)%s' "$run_rc" "${run_err:+: $run_err}"
 }
@@ -422,12 +425,13 @@ exit_text() {
 # copy, launchers dropped, on stdout. Fails with the reason on stdout when the search cannot be made: pgrep exits
 # 1 with nothing on stderr for no match, while docker exec also exits 1, with a message, for a container that is
 # gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none; and a temporary file
-# that cannot be created makes it inconclusive too.
+# that cannot be created makes it inconclusive too. Silence is tested on the whole of stderr, not its first line,
+# because a daemon's message may begin with an empty line, and an empty first line is not silence (W2-R1-1).
 search_container() {
   local line
   run_capturing docker exec "$1" pgrep -a -f "$INSTALLED_COPY_PATTERN" ||
     { echo "could not create a temporary file for the search"; return 1; }
-  if [[ $run_rc -eq 1 && -z $run_err ]]; then return 0; fi
+  if [[ $run_rc -eq 1 && -z $run_had_err ]]; then return 0; fi
   if [[ $run_rc -ne 0 ]]; then
     printf 'the search failed %s\n' "$(exit_text)"
     return 1
