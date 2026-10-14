@@ -16,7 +16,7 @@
   // ring while closed, filled while open, flat while held open, so the row shows it opens before it is touched; the row
   // keeps one glyph.
   import { LinearProgress } from "m3-svelte";
-  import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
+  import { AGENT_WORKING_LABEL, clarificationProgress, RAIL_CONDITION_LABEL, RAIL_HELD_OPEN_LABEL, railToggleName, stepsCompleteLabel, cycleLine, loopSummary, NO_PHASE_YET, PLAN_LIST_LABEL, PLAN_STEP_STATE_LABEL, planStepLabel, PROGRESS_HEADING, runningFor, stageHeading, stepWorkingLabel, suiteResultText, TIMELINE_STATE_LABEL } from "../../../src/prompts.ts";
   import { elapsedMs } from "../time.ts";
   import { bandKey, currentPlanStep, planStepState, type RoundGroup, type TimelineEntry } from "../state.ts";
   import CircularIndeterminate from "./CircularIndeterminate.svelte";
@@ -140,6 +140,7 @@
         {@render head(node, entry.label, "m3-font-label-large", "data-label", MARK[entry.state], LABEL[entry.state], phaseBusy ? stepWorkingLabel("phaseStep") : null, node._tag === "Disclosure" && node.collapsed.condition !== null ? RAIL_CONDITION_LABEL[node.collapsed.condition] : null)}
         {#if timing._tag === "Ended"}<span class="m3-font-body-small phase-time" data-phase-time>{tookText(timing.phase)}</span>
         {:else if timing._tag === "Running"}<span class="m3-font-body-small phase-time" data-phase-time>{soFarText(timing.phase, now)}</span>{/if}
+        {#if entry.result !== null}<span class="m3-font-body-small phase-result" class:failed={entry.result === "failed"} data-phase-result>{suiteResultText(entry.result)}</span>{/if}
         {#if phaseBusy}{@render elapsed()}{/if}
         <!-- W1-R1-2: one container per row, named by its button whether the row is open or closed: the children when
              open, the collapsed summary when closed. -->
@@ -272,4 +273,7 @@
   .elapsed { color: var(--m3c-on-surface-variant); font-variant-numeric: tabular-nums; }
   .step > .elapsed, .plan-step > .elapsed { display: block; }
   .phase-time { display: block; color: var(--m3c-on-surface-variant); font-variant-numeric: tabular-nums; }
+  /* Issue #162: a Full test suite's result; a failure in the scheme's error color. */
+  .phase-result { display: block; color: var(--m3c-on-surface-variant); }
+  .phase-result.failed { color: var(--m3c-error); }
 </style>

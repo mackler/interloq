@@ -3,8 +3,8 @@
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
-import { type PhaseTiming, phaseTiming, soFarText, tookText } from "./rail.ts";
-import type { TimelineEntry, TimelineState } from "./state.ts";
+import { PLAIN, type PhaseTiming, phaseTiming, railView, soFarText, tookText } from "./rail.ts";
+import { emptyRun, type TimelineEntry, type TimelineState } from "./state.ts";
 import { elapsedMs } from "./time.ts";
 
 /** The text the rail shows for a timing at the instant `at`, as TimelineRail.svelte renders it. */
@@ -24,6 +24,7 @@ const entryOf = (state: TimelineEntry["state"], began: string | null, ended: str
   lastStarted: null,
   acted: [],
   record: null,
+  result: null,
 });
 
 const MIN = Date.parse("2026-01-01T00:00:00.000Z");
@@ -56,5 +57,16 @@ describe("a phase's time (issue #89)", () => {
   test("a phase not begun, or stopped without an end, has no time", () => {
     expect(phaseTiming(entryOf("ahead", null, null))).toEqual({ _tag: "Untimed" });
     expect(phaseTiming(entryOf("stopped", "2026-09-29T10:00:00.000Z", null))).toEqual({ _tag: "Untimed" });
+  });
+});
+
+// Issue #162: a Full test suite row has nothing beneath it, so it is plain, whatever its state.
+describe("the Full test suite row (issue #162)", () => {
+  test("is plain while ahead, running, done and not reached", () => {
+    for (const st of ["ahead", "active", "done", "notReached"] as const) {
+      const entry: TimelineEntry = { ...entryOf(st, null, null), phase: { kind: "suite", n: 1 }, label: "Full test suite" };
+      const run = { ...emptyRun(1), timeline: [entry] };
+      expect(railView(run, false, st === "active").phases[0].node).toBe(PLAIN);
+    }
   });
 });

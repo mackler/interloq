@@ -392,3 +392,13 @@ test("a presented question's attached material decodes with each kind and as nul
   assert.ok(Result.isFailure(decode(question({ kind: "reason", blocks: [] }))));
   assert.ok(Result.isFailure(decode({ ...question(null), attached: undefined, details: [] })));
 });
+
+// Issue #162: a Full test suite phase crosses the protocol like every numbered phase, its kind from NUMBERED_PHASE_KINDS.
+test("a PhaseBegan and a PhaseEnded of a Full test suite decode", () => {
+  for (const event of [{ _tag: "PhaseBegan", phase: { kind: "suite", n: 2 } }, { _tag: "PhaseEnded", phase: { kind: "suite", n: 2 }, result: "failed" }] as const) {
+    const message: ServerMessage = { type: "event", run: 1, seq: 0, time: "2026-10-14T00:00:00.000Z", event: { _tag: "Notified", event } };
+    const decoded = decodeServer(JSON.stringify(message));
+    assert.ok(Result.isSuccess(decoded), JSON.stringify(event));
+    assert.deepEqual(decoded.success, message);
+  }
+});

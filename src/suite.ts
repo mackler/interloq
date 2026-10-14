@@ -13,6 +13,11 @@ export type SuiteResult =
   | Readonly<{ _tag: "Passed"; output: string; ms: number }>
   | Readonly<{ _tag: "Failed"; reason: SuiteFailure; output: string; ms: number }>;
 
+/** A suite run's result as its PhaseEnded names it, which the page keeps on the phase's entry (issue #162). */
+export const SUITE_OUTCOMES = ["passed", "failed"] as const;
+export type SuiteOutcome = (typeof SUITE_OUTCOMES)[number];
+export const suiteOutcomeOf = (result: SuiteResult): SuiteOutcome => (result._tag === "Passed" ? "passed" : "failed");
+
 /** The lines of a failed suite's output that the revision prompt carries (requirements: the last 200). */
 export const SUITE_TAIL_LINES = 200;
 

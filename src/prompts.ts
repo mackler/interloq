@@ -11,7 +11,7 @@ import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
-import { SUITE_TAIL_LINES, type SuiteFailure } from "./suite.ts";
+import { SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -1540,6 +1540,10 @@ export function suitePassedLine(label: string, command: string): string {
 }
 export function suiteFailedLine(label: string, command: string, reason: SuiteFailure, log: string): string {
   return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
+}
+/** Issue #162: a Full test suite's result as the progress rail shows it. */
+export function suiteResultText(outcome: SuiteOutcome): string {
+  return outcome === "passed" ? "Passed" : "Failed";
 }
 /** Issue #162: the name of the phase in which Interloq runs the whole suite after a converged work review. */
 export const FULL_SUITE_PHASE = "Full test suite";

@@ -410,7 +410,7 @@ describe("QuestionPane", () => {
 });
 
 /** The fields of a timeline entry that its tests do not concern: the entry of a phase with no times yet. */
-const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null } as const;
+const fresh = { began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null, result: null } as const;
 
 /**
  * The rail with every node opened by the user (issue #63), so that the tests of what an open node shows are unchanged:
@@ -2681,5 +2681,21 @@ describe("TimelineRail: the tree that collapses", () => {
       expect(one(root, ".entry > button > .mark [role=progressbar]").classList.contains("circular-indeterminate")).toBe(true);
       expect(root.querySelector("[data-busy], .indeterminate")).toBe(null);
     }
+  });
+});
+
+// Issue #162: a Full test suite row shows its result once it ended, a plain row with nothing beneath it.
+describe("TimelineRail: the Full test suite (issue #162)", () => {
+  test("each ended suite run shows its result in words, and a running one shows none", () => {
+    const root = showRail({
+      busy: true,
+      timeline: [
+        { ...fresh, phase: { kind: "suite", n: 1 }, label: "Full test suite 1", state: "done", groups: [], steps: [], plan: null, result: "failed" },
+        { ...fresh, phase: { kind: "suite", n: 2 }, label: "Full test suite 2", state: "active", groups: [], steps: [], plan: null },
+      ],
+    });
+    const results = [...root.querySelectorAll(".entry")].map((e) => e.querySelector(":scope > [data-phase-result]")?.textContent?.trim() ?? null);
+    expect(results).toEqual([prompts.suiteResultText("failed"), null]);
+    expect(root.querySelectorAll(".entry button.rail-toggle").length).toBe(0);
   });
 });

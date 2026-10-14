@@ -10,6 +10,7 @@ import { interviewSays, renderResponse, renderReview, subjectHeading } from "../
 import { piecesText } from "../../src/pieces.ts";
 import { isTermsRequest } from "../../src/input.ts";
 import { correctionCount } from "../../src/issueLog.ts";
+import { SUITE_OUTCOMES, type SuiteOutcome } from "../../src/suite.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
@@ -97,6 +98,8 @@ export type TimelineEntry = Readonly<{
   acted: readonly string[];
   /** An ended Implementation's steps as they stood when it ended, those of `acted` alone (issue #54, Q3, Q6); null before its end. */
   record: RecordedPlan | null;
+  /** Issue #162: a Full test suite's result once it ended, as its PhaseEnded gives it; null for every other phase and before the end. */
+  result: SuiteOutcome | null;
 }>;
 /** An agent call that runs; calls nest when a decision is taken inside an execution call (P1-R2-1). */
 export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; label: string; startedAt: string }>;
@@ -359,7 +362,10 @@ const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
   lastStarted: null,
   acted: [],
   record: null,
+  result: null,
 });
+/** Issue #162: a Full test suite's result as its PhaseEnded gives it; null for every other phase. */
+const suiteResultOf = (phase: Phase, result: string): SuiteOutcome | null => (phase.kind === "suite" ? (SUITE_OUTCOMES.find((o) => o === result) ?? null) : null);
 /** The index of the last element that satisfies `p`, or -1 (the page's library has no findLastIndex). */
 const lastIndex = <T>(list: readonly T[], p: (t: T) => boolean): number => list.reduce((found, t, i) => (p(t) ? i : found), -1);
 /** The entry that the run is in: the active one, else the last one begun. */
@@ -526,7 +532,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return reshow(relabel({ ...next, phase: bandOf(event.phase, time, countIn(next, event.phase)) }));
     }
     case "PhaseEnded":
-      return reshow({ ...run, activity: "", busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null }, "done"), run.plan) : e)) });
+      return reshow({ ...run, activity: "", busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
     case "RoundBegan":
       // A decision loop is a loop inside a phase that the progress panel does not show (D12 of the decision-support plan).
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.

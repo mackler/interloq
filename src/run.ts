@@ -18,7 +18,7 @@ import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
 import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, SuiteRunner, Tracker, Ui } from "./services.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
-import { SUITE_TAIL_LINES, tailLines } from "./suite.ts";
+import { SUITE_TAIL_LINES, suiteOutcomeOf, tailLines } from "./suite.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
 
 /**
@@ -174,7 +174,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const result = yield* runner.run(command, store.project);
         yield* store.saveSuiteLog(n, result.output);
         const log = recordPath(store.root, { kind: "suiteLog", n });
-        yield* ui.notify({ _tag: "PhaseEnded", phase, result: result._tag === "Passed" ? "passed" : "failed" });
+        yield* ui.notify({ _tag: "PhaseEnded", phase, result: suiteOutcomeOf(result) });
         const line = result._tag === "Passed" ? suitePassedLine(name, command) : suiteFailedLine(name, command, result.reason, log);
         yield* ui.say(line);
         yield* store.converse(`${line}\n\n`);

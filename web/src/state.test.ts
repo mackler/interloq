@@ -1766,7 +1766,7 @@ describe("the rail as a tree that collapses", () => {
         const base = emptyRun(1);
         const kinds = ["formulate", "terms", "clarification"] as const;
         const entry: TimelineEntry = {
-          phase: { kind: "execution", n: 1 }, label: "Implementation", state: "active" as const, began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null,
+          phase: { kind: "execution", n: 1 }, label: "Implementation", state: "active" as const, began: null, ended: null, currentStep: null, lastStarted: null, acted: [], record: null, result: null,
           groups: Array.from({ length: groups }, () => group),
           steps: steps.map((g, i) => ({ kind: kinds[i], label: kinds[i], state: "done" as const, count: null, base: { answered: 0, total: 0 }, groups: Array.from({ length: g }, () => group) })),
           plan: plan === null ? null : { stages: plan.map((n, k) => ({ key: `current-${k + 1}`, number: k + 1, title: `t${k}`, steps: Array.from({ length: n }, (_, j) => recorded(`S${k}-${j}`)) })) },
@@ -2022,5 +2022,45 @@ describe("an analysis across the request for terms", () => {
       { _tag: "Answered", prompt: 4, text: "1" },
       ...explainedAt(5),
     ], 5);
+  });
+});
+
+// Issue #162: the whole suite Interloq runs after a converged work review is a phase of the timeline, numbered by the
+// run's suite runs, with its result.
+describe("the Full test suite phase (issue #162)", () => {
+  const begin = (phase: Phase) => notified({ _tag: "PhaseBegan", phase });
+  const end = (phase: Phase, result: string) => notified({ _tag: "PhaseEnded", phase, result });
+  const iteration = (n: number, suite: number): RunEvent[] => [
+    begin({ kind: "planning", n }), end({ kind: "planning", n }, "converged"),
+    begin({ kind: "execution", n }), end({ kind: "execution", n }, "finished"),
+    begin({ kind: "work", n }), end({ kind: "work", n }, "converged"),
+    begin({ kind: "suite", n: suite }),
+  ];
+  const events: RunEvent[] = [
+    started,
+    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", [{ suite: 1 }]) }),
+    ...iteration(1, 1),
+    end({ kind: "suite", n: 1 }, "failed"),
+    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", [{ suite: 1 }, { suite: 2 }]) }),
+    ...iteration(2, 2),
+    end({ kind: "suite", n: 2 }, "passed"),
+  ];
+  test("a failed suite run and a passed one are two entries, numbered, each with its result and its times", () => {
+    for (const s of [fold(live(events)), replayed(events)]) {
+      const suites = s.modes.implementation.run!.timeline.filter((e) => e.phase.kind === "suite");
+      expect(suites.map((e) => [e.label, e.state, e.result])).toEqual([
+        ["Full test suite 1", "done", "failed"],
+        ["Full test suite 2", "done", "passed"],
+      ]);
+      for (const e of suites) expect(e.began !== null && e.ended !== null).toBe(true);
+      expect(s.modes.implementation.run!.timeline.filter((e) => e.phase.kind !== "suite").every((e) => e.result === null)).toBe(true);
+    }
+  });
+  test("a suite run ahead is foreseen, and one under way is active with no result", () => {
+    const s = fold(live(events.slice(0, 2 + iteration(1, 1).length)));
+    const suite = s.modes.implementation.run!.timeline.find((e) => e.phase.kind === "suite")!;
+    expect([suite.label, suite.state, suite.result]).toEqual(["Full test suite", "active", null]);
+    const ahead = fold(live(events.slice(0, 2)));
+    expect(ahead.modes.implementation.run!.timeline.find((e) => e.phase.kind === "suite")?.state).toBe("ahead");
   });
 });
