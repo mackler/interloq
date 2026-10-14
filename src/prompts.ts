@@ -2422,7 +2422,7 @@ Call the tool ${REPORT_STEP_TOOL_NAME} as before when a step begins and when it 
 export function continuingLine(label: string, remainingWork: string): string {
   return `${label} ended a turn with work remaining and nothing for you to decide; Interloq told Claude Code to continue. Remaining work: ${remainingWork.trim() === "" ? "not reported" : remainingWork}`;
 }
-export const executionContinuePrompt = `The connection to the model dropped during this execution phase. The work done so far is in the project, and the steps you reported so far are recorded. Continue from where you were: call the tool ${REPORT_STEP_TOOL_NAME} as before when a step begins and when it is done, and return the status report at the end.`;
+export const executionContinuePrompt = `This execution phase was interrupted: the connection to the model dropped, the Claude Code process ended, or a usage limit was waited out. The work done so far is in the project, and the steps you reported so far are recorded. Continue from where you were: call the tool ${REPORT_STEP_TOOL_NAME} as before when a step begins and when it is done, and return the status report at the end.`;
 
 /** The program's retry on the page's activity line, after the agent's name: a count of attempts, not progress. */
 export function retryActivity(attempt: number, of: number, fault: string): string {

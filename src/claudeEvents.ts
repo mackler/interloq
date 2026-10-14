@@ -5,7 +5,7 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { Result, Schema } from "effect";
 import * as S from "./schema.ts";
-import type { ExecCallOutcome, ExecReport } from "./schema.ts";
+import type { ExecContinuation, ExecOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
 import { type ClaudeFailure, type ProcessEnd, rejectionOf } from "./transport.ts";
 import { backgroundKilledText } from "./prompts.ts";
@@ -118,7 +118,7 @@ export const execReport = (structured: unknown): ExecReport | null => {
  * report is treated as a missing one (status aborted). Execution calls never get a repair turn (decision Q5).
  * `transport` is whether the call's error is a transport fault (src/transport.ts): a valid report before one stands.
  */
-export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, transport = false): ExecCallOutcome => {
+export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, transport = false): ExecOutcome | ExecContinuation => {
   const report = execReport(outcome.structured);
   if (stop !== null) {
     return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input };
@@ -193,7 +193,7 @@ export const waitingOn = (state: BackgroundState): boolean => state.pending.size
  * hook canceled at its timeout, structured-output retries exhausted, hooks never called); the outcome is aborted,
  * which takes the stop's path. A recorded stop takes precedence.
  */
-export const checkBackground = (result: ExecCallOutcome, stop: Stop | null, state: BackgroundState, nameOf: (id: string) => string): ExecCallOutcome => {
+export const checkBackground = (result: ExecOutcome | ExecContinuation, stop: Stop | null, state: BackgroundState, nameOf: (id: string) => string): ExecOutcome | ExecContinuation => {
   if (stop !== null || !waitingOn(state)) return result;
   return { status: "aborted", summary: result.summary, question: backgroundKilledText([...state.pending].map(nameOf)), remainingWork: result.remainingWork, userInput: null };
 };

@@ -4,6 +4,7 @@
 
 import { Schema, SchemaIssue, Struct } from "effect";
 import { ITEM_STATES, type ItemState } from "./tracker.ts";
+import type { ProcessEnd } from "./transport.ts";
 
 export const Severity = Schema.Literals(["blocking", "major", "minor"]);
 
@@ -490,8 +491,14 @@ export type ExecOutcome = typeof ExecOutcome.Type;
  * continues the phase's session without asking. Never a phase's outcome, so it is never recorded or decoded.
  */
 export type ExecContinuation = Readonly<{ status: "continuing"; summary: string; remainingWork: string }>;
-/** The outcome of one execution call: a phase's outcome, or a continuation (issue #154). */
-export type ExecCallOutcome = ExecOutcome | ExecContinuation;
+/**
+ * An execution call whose Claude Code process ended by a signal or a nonzero exit code on its last attempt, its retries
+ * used up (issue #157): `attempts` the attempts made, `fault` the SDK's text. Like a continuation never a phase's
+ * outcome, so it is never recorded or decoded: src/run.ts turns it into an aborted outcome that states the steps.
+ */
+export type ExecProcessEnded = Readonly<{ status: "processEnded"; end: ProcessEnd; attempts: number; fault: string }>;
+/** The outcome of one execution call: a phase's outcome, a continuation (issue #154), or a process ending (issue #157). */
+export type ExecCallOutcome = ExecOutcome | ExecContinuation | ExecProcessEnded;
 export type LogEntry = typeof LogEntry.Type;
 export type ReviewEntry = typeof ReviewEntry.Type;
 export type Config = typeof Config.Type;

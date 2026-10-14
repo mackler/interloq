@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import type { CanUseTool, HookCallback, HookInput, HookJSONOutput, Options, PermissionResult, PreToolUseHookInput, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { Clock, Effect, Fiber, Layer } from "effect";
+import { Clock, Effect, Exit, Fiber, Layer } from "effect";
 import { claudeEnv, makeClaudePlanner, makeClaudePlannerWith, toSdkAnswers } from "../src/claude.ts";
 import { FileSystemError, type RunError } from "../src/errors.ts";
 import type { NamedEnd } from "../src/claudeEvents.ts";
@@ -1714,4 +1714,85 @@ test("a planning call whose process ends after a 503 api_retry is a TransportFau
     assert.deepEqual(out.output, { questions_for_user: [] });
     assert.equal(fake.sdk.calls.length, 2);
   }
+});
+
+// Issue #157: an execution call whose Claude Code process ends is resumed in the phase's session with the continue
+// prompt, as a transport fault is; when the retries are used up it returns processEnded, and nothing is asked.
+const endingThen = (ending: () => Error, before: (call: Parameters<Script>[0]) => Promise<void> = async () => undefined): Script => (call) => (async function* () {
+  yield init("session-exec");
+  await before(call);
+  throw ending();
+})();
+const finishing: Script = () => (async function* () {
+  yield init("session-exec");
+  yield success(report);
+})();
+
+test("an execution whose process is killed by a signal is resumed in its session and finishes; nothing is asked (the regression of issue #157)", async () => {
+  for (const ending of [sdkSignal, sdkExit, () => new Error("Claude Code process terminated by signal SIGBUS")]) {
+    const reports: string[] = [];
+    const reporter = (id: string, status: "started" | "done") => Effect.sync(() => (reports.push(`${id}:${status}`), { text: "ok", isError: false }));
+    const fake = await planner([endingThen(ending, (call) => reportStep(call.options, "S1", "done").then(() => undefined)), finishing], [], quickRetry);
+    const outcome = await run(fake.planner.executing("implement the plan", reporter));
+    assert.equal(outcome.status, "finished");
+    assert.equal(fake.sdk.calls.length, 2);
+    assert.equal(fake.sdk.calls[1].prompt, prompts.executionContinuePrompt);
+    assert.equal(fake.sdk.calls[1].options.resume, "session-exec");
+    assert.ok(fake.sdk.calls[1].options.allowedTools?.includes(prompts.REPORT_STEP_TOOL_NAME));
+    assert.deepEqual(reports, ["S1:done"]);
+    assert.equal(fake.ui.notified.filter((e) => e._tag === "TransportRetrying").length, 1);
+    assert.deepEqual(fake.ui.asked, []);
+  }
+});
+
+test("an execution whose process ends on every attempt returns processEnded with the ending and the attempts; nothing is asked", async () => {
+  const fake = await planner([endingThen(sdkSignal), endingThen(sdkSignal)], [], quickRetry);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(outcome, { status: "processEnded", end: { kind: "signal", signal: "SIGBUS" }, attempts: 2, fault: "Claude Code process terminated by signal SIGBUS" });
+  assert.equal(fake.sdk.calls.length, 2);
+  assert.deepEqual(fake.ui.asked, []);
+});
+
+test("an execution whose attempts end with a 503 api_retry and then the process ending returns processEnded, with no exhaustion pause", async () => {
+  const fake = await planner([throwing(sdkExit(), [retry503]), throwing(sdkExit(), [retry503])], [], quickRetry);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(outcome.status, "processEnded");
+  assert.deepEqual(fake.ui.asked, []);
+});
+
+test("a stop recorded before the process ends ends the call: needs_input, one query", async () => {
+  const questions = [{ question: "A or B?", options: [{ label: "A", description: "a" }] }];
+  const fake = await planner([endingThen(sdkSignal, async (call) => void (await permission(call.options)("AskUserQuestion", { questions }, callContext())))], ["A"], quickRetry);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(outcome.status, "needs_input");
+  assert.equal(fake.sdk.calls.length, 1);
+});
+
+test("a valid finished report delivered before the process ends stands: one query", async () => {
+  const script: Script = () => (async function* () {
+    yield init();
+    yield success(report);
+    throw sdkSignal();
+  })();
+  const fake = await planner([script], [], quickRetry);
+  const outcome = await run(fake.planner.executing("implement the plan", noReporter));
+  assert.equal(outcome.status, "finished");
+  assert.equal(fake.sdk.calls.length, 1);
+});
+
+test("a process ending after the call was interrupted is no process ending: interrupted, one query, no retry", async () => {
+  const script: Script = (call) => (async function* () {
+    yield init();
+    await aborted(call.options);
+    throw new Error("Claude Code process terminated by signal SIGTERM");
+  })();
+  const fake = await planner([script, finishing], [], quickRetry);
+  const reached = fake.sdk.nextCall();
+  const fiber = Effect.runFork(fake.planner.executing("implement the plan", noReporter).pipe(Effect.provideService(Decider, noDecider)));
+  await reached;
+  await sleep(10);
+  const exit = await run(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit));
+  assert.equal(fake.sdk.calls.length, 1);
+  assert.equal(fake.ui.notified.filter((e) => e._tag === "TransportRetrying").length, 0);
 });

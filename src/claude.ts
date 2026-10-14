@@ -7,7 +7,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
 import { type BackgroundState, type CallOutcome, checkBackground, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
-import { ClaudeCallFailed, ClaudeSessionTooLong, type RunError, TransportFault, UsageLimited } from "./errors.ts";
+import { ClaudeCallFailed, ClaudeSessionTooLong, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode, type ProcessEnd, processEndOf } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
@@ -512,7 +512,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
          * prompt, with the same hooks, stop and report_step server. It fails with TransportFault only for a transport fault
          * without a recorded stop and without a valid report; otherwise the outcome is interpreted.
          */
-        const attempt = (n: number): Effect.Effect<ExecCallOutcome, CallbackError | ClaudeSessionTooLong | TransportFault | UsageLimited> =>
+        const attempt = (n: number): Effect.Effect<ExecCallOutcome, CallbackError | ClaudeSessionTooLong | TransportFault | UsageLimited | ProcessEnded> =>
           Effect.gen(function* () {
             // Issue #154: each attempt's background tasks start afresh, since the SDK's level signal is per process.
             const refs: BackgroundRefs = { stop, state: yield* Ref.make(NO_BACKGROUND), names: yield* Ref.make<ReadonlyMap<string, string>>(new Map()), delivered: yield* Ref.make(0) };
@@ -540,21 +540,29 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
               (message) => Ref.update(refs.state, (state) => foldBackground(state, message)).pipe(Effect.andThen(Ref.update(refs.names, (names) => nameTasks(names, message)))),
             );
             const recorded = yield* Ref.get(stop);
-            const kind = outcome.error === null ? null : classifyClaude(outcome.failure).kind;
+            // Issue #157: the one classification with the process ending; callFailure classifies without it.
+            const classified = outcome.error === null ? null : classifyClaude(outcome.failure);
+            const kind = classified === null ? null : classified.kind;
             // Issue #122: a session too long to accept halts the run, whatever was recorded before it; never retried.
             if (kind === "contextTooLong") return yield* Effect.fail(new ClaudeSessionTooLong({ message: outcome.error ?? "" }));
             // Issue #68: a usage limit with a stated reset is waited out like a transport fault is retried, under the
-            // same conditions; a valid report before either stands.
+            // same conditions; a valid report before either stands. Issue #157: so is a process that ended.
             const temporary = kind === "transport" || kind === "limited";
-            if (temporary && recorded === null && execReport(outcome.structured) === null) {
+            const unreported = recorded === null && execReport(outcome.structured) === null;
+            if (classified !== null && classified.kind === "processEnded" && unreported) {
+              return yield* Effect.fail(new ProcessEnded({ agent: "claude", message: outcome.error ?? "", end: classified.end, attempts: n }));
+            }
+            if (temporary && unreported) {
               return yield* Effect.fail(callFailure(outcome.error ?? "", outcome.failure) as TransportFault | UsageLimited);
             }
             // Issue #154: a report made while a command Claude Code started still runs is never the call's end.
             const names = yield* Ref.get(refs.names);
-            return checkBackground(interpretExecution(outcome, recorded, temporary), recorded, yield* Ref.get(refs.state), (id) => taskName(names, id));
+            return checkBackground(interpretExecution(outcome, recorded, temporary || kind === "processEnded"), recorded, yield* Ref.get(refs.state), (id) => taskName(names, id));
           });
         // The retry lives here, where the call's session, stop and reporter are (P2-R2-1): no TransportFault leaves.
+        // Issue #157: nor does a ProcessEnded, which becomes the call's outcome once its retries are used up.
         return yield* withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(
+          Effect.catchTag("ProcessEnded", (e) => Effect.succeed<ExecCallOutcome>({ status: "processEnded", end: e.end, attempts: e.attempts, fault: e.message })),
           Effect.provideService(Ui, ui),
           Effect.provideService(Store, store),
           Effect.provideService(RunConfig, config),

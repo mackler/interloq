@@ -93,7 +93,7 @@ export const run = (task: string): Effect.Effect<number, RunError, Services> =>
  * continuing is followed by another in the same session, told to go on with the work it reported left, said on the page
  * and written to conversation.md, with no question and no limit; the phase's outcome is the first other outcome.
  */
-const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string): Effect.Effect<S.ExecOutcome, RunError, Decider | Ui | Store> =>
+const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string): Effect.Effect<S.ExecOutcome | S.ExecProcessEnded, RunError, Decider | Ui | Store> =>
   Effect.gen(function* () {
     const outcome = yield* executor.executing(prompt, report);
     if (outcome.status !== "continuing") return outcome;
@@ -171,10 +171,11 @@ const implementationPhases = (task: string, withRequirements: boolean): Effect.E
         const executor = yield* planner.fresh;
         // Issue #154 (Q2, Q3): a call that reports work left and nothing to decide is continued in this session, without
         // asking and without limit; the steps' end runs once, when the last call ends.
-        const outcome = yield* continuedExecution(executor, executePrompt(store.root, task, withRequirements), steps.report, label("execution", k)).pipe(
+        const ending = yield* continuedExecution(executor, executePrompt(store.root, task, withRequirements), steps.report, label("execution", k)).pipe(
           Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : steps.end.pipe(Effect.catch((e: RunError) => ui.say(planNotEndedLine(describe(e))))))),
         );
         yield* steps.end;
+        const outcome: S.ExecOutcome = ending.status === "processEnded" ? { status: "aborted", summary: "", question: ending.fault, remainingWork: "", userInput: null } : ending;
         yield* store.saveExecution(k, outcome);
         yield* store.checkpoint({ subject: "execution", phase: k, round: 0, stage: "executed" });
         yield* ui.notify({ _tag: "ExecutionEnded", phase: k, outcome });
