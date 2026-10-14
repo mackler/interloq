@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Clock, Effect, Exit, Fiber, Layer, Option } from "effect";
-import { CodexCallFailed, describe, haltMessage, ProjectChanged, TransportFault, UsageLimited } from "../src/errors.ts";
+import { CodexCallFailed, describe, haltMessage, ProcessEnded, ProjectChanged, TransportFault, UsageLimited } from "../src/errors.ts";
 import { DECIDE, parseTransportAnswer } from "../src/input.ts";
 import { transportOptions } from "../src/offer.ts";
 import { platformLayer } from "../src/platform.ts";
@@ -368,4 +368,77 @@ test("each retry announces its wait's start and end; the next attempt starts at 
     assert.notEqual(countdownView(w, w.untilMs - 1), null);
     assert.equal(countdownView(w, w.untilMs), null);
   });
+});
+
+// Issue #157: an execution call whose Claude Code process ended is retried like a transport fault, under the same
+// budget; when the retries are used up and the last failure was a process ending, it passes through without a pause.
+const SIGBUS_TEXT = "Claude Code process terminated by signal SIGBUS";
+const ended = (n: number) => new ProcessEnded({ agent: "claude", message: SIGBUS_TEXT, end: { kind: "signal", signal: "SIGBUS" }, attempts: n });
+const claudeFault = () => new TransportFault({ agent: "claude", message: "read ECONNRESET", status: null });
+type EndScript = ReadonlyArray<"ended" | "fault" | "ok">;
+const endingScripted = (script: EndScript) => {
+  const calls: number[] = [];
+  const attempt = (n: number): Effect.Effect<string, ProcessEnded | TransportFault> =>
+    Effect.suspend((): Effect.Effect<string, ProcessEnded | TransportFault> => {
+      calls.push(n);
+      const step = script[calls.length - 1] ?? "ok";
+      return step === "ended" ? Effect.fail(ended(n)) : step === "fault" ? Effect.fail(claudeFault()) : Effect.succeed(`reply ${n}`);
+    });
+  return { calls, attempt };
+};
+const withRetries = (layer: Layer.Layer<Store | Ui | RunConfig | Decider>, maxTransportRetries: number) =>
+  Layer.merge(layer, Layer.succeed(RunConfig, { ...S.defaultConfig, maxTransportRetries, transportRetryDelaySeconds: 0.01 }));
+
+test("a process ending, then success: one retry, notified, said and recorded, then recovered; nothing asked", async () => {
+  const { layer, ui, conversation } = await setup([]);
+  const { calls, attempt } = endingScripted(["ended", "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 2"));
+  assert.deepEqual(calls, [1, 2]);
+  assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => e._tag === "TransportRetrying" && e.fault), [SIGBUS_TEXT]);
+  assert.equal(ui.notified.filter((e) => e._tag === "TransportRecovered").length, 1);
+  const line = prompts.transportRetryLine("claude", 1, 2, 0.01, SIGBUS_TEXT);
+  assert.ok(ui.said.includes(line));
+  assert.ok(conversation().includes(line));
+  assert.deepEqual(ui.asked, []);
+});
+
+test("a process ending on every attempt: four attempts with three retries, then the last ProcessEnded, nothing asked", async () => {
+  const { layer, ui } = await setup([]);
+  const { calls, attempt } = endingScripted(["ended", "ended", "ended", "ended", "ok"]);
+  const error = errorOf(await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
+  assert.equal(error._tag, "ProcessEnded");
+  assert.equal((error as ProcessEnded).attempts, 4);
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => e._tag === "TransportRetrying" && e.delaySeconds), [0.01, 0.02, 0.04]);
+  assert.deepEqual(ui.asked, []);
+});
+
+test("one budget for both: a transport fault, then process endings until the retries are used up, ends with ProcessEnded", async () => {
+  const { layer, ui } = await setup([]);
+  const { calls, attempt } = endingScripted(["fault", "ended", "ended", "ended", "ok"]);
+  const error = errorOf(await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
+  assert.equal(error._tag, "ProcessEnded");
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.deepEqual(ui.asked, []);
+});
+
+test("a process ending, then transport faults until the retries are used up: the exhaustion pause is asked", async () => {
+  const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+  const { calls, attempt } = endingScripted(["ended", "fault", "fault", "fault", "ok"]);
+  const error = errorOf(await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
+  assert.equal(error._tag, "AgentUnreachable");
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.equal(ui.asked.length, 1);
+});
+
+test("an interruption during the wait after a process ending ends the call: no further attempt", async () => {
+  const { layer } = await setup([]);
+  const { calls, attempt } = endingScripted(["ended", "ok"]);
+  const slow = Layer.merge(layer, Layer.succeed(RunConfig, { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 60 }));
+  const fiber = Effect.runFork(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(Effect.provide(slow)));
+  await new Promise((r) => setTimeout(r, 100));
+  const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+  assert.deepEqual(calls, [1]);
 });

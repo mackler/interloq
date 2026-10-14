@@ -2,7 +2,7 @@
 // backoff; when the retries are exhausted the user decides.
 
 import { Clock, Duration, Effect, Exit, Result } from "effect";
-import { AgentUnreachable, type RunError, type TransportFault, type UsageLimited } from "./errors.ts";
+import { AgentUnreachable, type ProcessEnded, type RunError, type TransportFault, type UsageLimited } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { askOffering, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
@@ -23,13 +23,17 @@ export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transp
 export const USAGE_LIMIT_MARGIN_SECONDS = 60;
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
+const isProcessEnded = (e: unknown): e is ProcessEnded => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "ProcessEnded";
 const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "UsageLimited";
 
 /**
  * Runs `attempt(1)`, and on a TransportFault runs it again with backoff (`retryDelays`): each retry is notified, said and
  * recorded in conversation.md, waits on the Clock (interruptible), and runs `beforeRetry`, the caller's guard, before
  * `attempt(n + 1)`. When the retries are exhausted the user decides, with decision support's offer: another set of
- * retries (the backoff starts again), or a stop, which fails with AgentUnreachable. Any other failure passes through.
+ * retries (the backoff starts again), or a stop, which fails with AgentUnreachable. A ProcessEnded (issue #157, an
+ * execution call's Claude Code process that ended) is retried in the same way under the same budget, and when the
+ * retries are used up it passes through as it is, with no pause, whatever `onExhausted` says. Any other failure passes
+ * through.
  */
 export const withTransportRetry = <A, E, R>(
   agent: "claude" | "codex",
@@ -75,9 +79,11 @@ export const withTransportRetry = <A, E, R>(
         yield* beforeRetry;
         continue;
       }
-      if (!isFault(error)) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
+      const ended = isProcessEnded(error);
+      if (!isFault(error) && !ended) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
       faulted = true;
       const delay = delays[retried];
+      if (delay === undefined && ended) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
       if (delay !== undefined) {
         retried++;
         // Issue #63: the wait is announced with its start and end, and kept to that end, so that the page can count it

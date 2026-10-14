@@ -2,6 +2,7 @@
 // raw. `describe` produces the text that the program prints. Replaces the single Halt class.
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
+import type { ProcessEnd } from "./transport.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
 import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, analysisInvalidText, sessionTooLongText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
@@ -47,6 +48,12 @@ export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ rea
  * waits until the reset and calls again (src/retry.ts). A limit without a stated reset is not this error.
  */
 export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly resetsAtMs: number; readonly limitType: string | null }> {}
+/**
+ * An execution call whose Claude Code process ended by a signal or a nonzero exit code (issue #157), with its message
+ * and `attempts`, the attempts made when it was raised. Not a RunError: withTransportRetry retries it like a
+ * TransportFault and passes it through once the retries are used up, and src/claude.ts turns it into the call's outcome.
+ */
+export class ProcessEnded extends Data.TaggedError("ProcessEnded")<{ readonly agent: "claude"; readonly message: string; readonly end: ProcessEnd; readonly attempts: number }> {}
 export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null }> {}
 // The tracker's failures (issue #120, part 1). None is a RunError: a failed tracker step of a run is TrackerStepFailed. No field
 // ever holds a credential: the adapter builds them from statuses and its own words, never from a request.
