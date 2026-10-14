@@ -9,9 +9,8 @@ export type ItemState = typeof ItemState.Type;
 
 /**
  * An item's id in its tracker: a text with a character other than whitespace, built by itemIdOf alone. The port's id is
- * a string and each adapter owns its own format: a GitHub issue number is an integer, a Trello card id an opaque
- * string, so the common type cannot be a number. An adapter checks and parses its own format, and an id outside it is
- * an item that does not exist there.
+ * a string and each adapter owns its own format: a GitHub issue number, a GitLab issue's number within its project
+ * (iid). An adapter checks and parses its own format, and an id outside it is an item that does not exist there.
  */
 export type ItemId = Brand.Branded<string, "ItemId">;
 /** Why a text is not an item id: it is blank. */

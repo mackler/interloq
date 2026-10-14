@@ -40,7 +40,7 @@ export const RECORDS_DIR = "plan-review";
 export type RunRoot = Brand.Branded<string, "RunRoot">;
 /** The directory that holds every run's records directory, relative to plan-review/. */
 export const RUNS_DIR = "runs";
-/** The longest item id a root carries; a Trello id is opaque and may be long. */
+/** The longest item id a root carries; an item id is the adapter's own and may be long. */
 const ITEM_IN_ROOT = 40;
 /** A run's root: the time with `:` and `.` replaced by `-`, as the archive names had; an item id's characters outside [A-Za-z0-9] become `_`. Total. */
 export const runRootOf = (mode: RunMode, item: string, startedAtIso: string): RunRoot =>

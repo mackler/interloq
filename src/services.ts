@@ -93,8 +93,8 @@ export class Reviewer extends Context.Service<Reviewer, ReviewerShape>()("plan-r
 export type TrackerError = TrackerUnreachable | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
 /**
  * The project's issue tracker (issue #120, part 1): the four operations are the whole common type (developer's
- * decision). Nothing here names a label, a list or a status: how a state is stored is the adapter's (GitHub: a label
- * name; Trello: a list id). Beside the six services, not one of them: no run requires it yet.
+ * decision). Nothing here names a label, a list or a status: how a state is stored is the adapter's (GitHub and
+ * GitLab: a label name). Beside the six services, not one of them: no run requires it yet.
  */
 export interface TrackerShape {
   /** The open items in a state (requirements, Q2: an item closed in the tracker is in no list). */

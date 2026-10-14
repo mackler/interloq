@@ -4,7 +4,7 @@
 //
 // The section is the opening line, the refinement, and the closing line. The closing line is there because the
 // developer may add text below the section later, which must survive a rewrite, and the refinement may hold headings
-// of its own. Visible Markdown lines rather than HTML comments, since Trello's descriptions do not hide comments.
+// of its own. Visible Markdown lines rather than HTML comments.
 // Appended to a non-empty body, the section is preceded by SEPARATOR, which belongs to it: removing the section
 // removes the separator and gives the body back exactly.
 import { type Brand, Option, Result } from "effect";
