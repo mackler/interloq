@@ -1,7 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
-import { FILE_CHANGE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -22,7 +22,7 @@ const SEVERITY = `Severity: blocking = the work cannot succeed with the file as 
 function logRules(root: RunRoot, logFile: string, idPrefix: string, round: number): string {
   return `${runDir(root)}/${logFile} is a JSON object whose 'entries' list every issue raised in earlier rounds with the planner's disposition and rationale, in order.
 Every entry has id, phase, round, source, problem, action, rationale and superseded. An entry with superseded = true has been replaced by a later entry with the same id; use the later entry.
-An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null.
+An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null. ${TASK_DISPUTE_FIELD} is true where the planner marked its disagreement with the issue as about what the task requires, not about how a question is worded; false otherwise.
 An entry with source 'self_correction' records a correction that the planner made to its own earlier work (action 'accepted', 'plan_error' or 'correction_disputed').
 Every entry with source 'review' or 'self_correction' also has ${FILE_CHANGE_FIELD}: what the program measured in the reviewed file during the planner's response in that round, for all of that round's entries together: changed (true or false), and the numbers of lines added and removed; null where nothing was measured. It is the program's measurement, not the planner's claim. If an 'accepted' or 'partially_accepted' entry's rationale describes amendments that ${FILE_CHANGE_FIELD} does not bear out, raise it as an issue.
 An entry with source 'user' (action 'decided_by_user') contains a decision of the user on that issue, which must be followed.
@@ -518,11 +518,18 @@ Do not use the AskUserQuestion tool.`;
 }
 
 /**
- * Issue #112: why a disagreement between the agents about how a question to the user is worded is not put to the user.
- * The review and response prompts of the question list and of the terms carry it, and their loop does not pause on a
- * disputed issue (disputesSettledBy "agents" in src/subjects.ts).
+ * Issue #112: why a disagreement between the agents about how a question to the user is worded is not put to the user,
+ * and, since issue #156, why one Claude Code marks as about what the task requires is. The review and response prompts
+ * of the question list and of the terms carry it, and their loop pauses on a disputed issue only where Claude Code's
+ * latest answer carries the mark (disputesSettledBy "agents" in src/subjects.ts).
  */
-export const WORDING_DISPUTES = `In this review a disagreement between Codex and Claude Code is about how a question to the user is worded, and it is not put to the user, for three reasons. He is the one person who cannot judge it: whether a word in a question needs explaining to him is a question about what he knows, and he cannot answer it about a question he has not read. Both positions argue from the same rules for every question put to the user, which reach the writer and the reviewers alike, so the disagreement is about applying them, which this review exists to settle. And a stop costs the user time in the part of the run that exists to save it. So an issue raised again, a repetition under a new id, a reversal, a disputed self-correction or a second clarification request does not stop the review, even where the instructions above say the user will decide: Claude Code's disposition stands, its rationale goes back to Codex in the next round, and Codex accepts it or argues again. What stays the user's is everything about the work (the plan, the requirements, the code, what the program should do) and a question whose options differ in what they claim.`;
+export const WORDING_DISPUTES = `In this review a disagreement between Codex and Claude Code about how a question to the user is worded is not put to the user, for three reasons. He is the one person who cannot judge it: whether a word in a question needs explaining to him is a question about what he knows, and he cannot answer it about a question he has not read. Both positions argue from the same rules for every question put to the user, which reach the writer and the reviewers alike, so the disagreement is about applying them, which this review exists to settle. And a stop costs the user time in the part of the run that exists to save it. So for such a disagreement an issue raised again, a repetition under a new id, a reversal, a disputed self-correction or a second clarification request does not stop the review, even where the instructions above say the user will decide: Claude Code's disposition stands, its rationale goes back to Codex in the next round, and Codex accepts it or argues again.
+A disagreement about what the task requires is not about wording: for example, whether a question must be asked or the task text already settles it, or what the program should do. Claude Code marks such a disagreement on its disposition (${TASK_DISPUTE_FIELD}). If Codex raises the issue again, by its id or as a repetition under a new id, or another of those stops arises on it, the user is asked, with Codex's reading and Claude Code's reading as his two options. Codex may instead accept Claude Code's reading in its next review, and then the user is not asked. What stays the user's is everything about the work (the plan, the requirements, the code, what the program should do) and a question whose options differ in what they claim.`;
+/**
+ * Issue #156: when Claude Code marks a disposition as a disagreement about what the task requires. Only the question
+ * list's and the terms' response prompts carry it, since only their schemas have the field; validateRound reads it.
+ */
+export const TASK_DISPUTE_RULE = `Every disposition has ${TASK_DISPUTE_FIELD}. Set it to true on a disposition you do not accept in full ('rejected', 'partially_accepted', 'no_change_needed' or 'clarification_requested') when the disagreement is about what the task requires rather than how a question is worded; when you set it, state in the rationale your reading of the task and why the task text allows it, because the user is shown Codex's issue and your rationale as the two readings. Otherwise set it to false; on 'accepted' it is ignored. A marked disagreement is put to the user if Codex raises the issue again.`;
 /**
  * Issue #112 (the developer's instruction of 7 Oct 2026): where the agents disagree on what a term means, the
  * disagreement need not be resolved; both definitions are shown, as a dictionary gives more than one sense of a word.
@@ -530,9 +537,12 @@ export const WORDING_DISPUTES = `In this review a disagreement between Codex and
 export const TWO_SENSES = "Where Codex and Claude Code disagree on what a term means and both meanings bear on the question, do not dispute it: keep both definitions as senses of the term, in the order given, and the reader is shown both, numbered, as a dictionary gives more than one sense of a word.";
 /** The heading of the line in conversation.md that records a disputed issue the user was not asked about (issue #112). */
 export const WORDING_DISPUTE_HEADING = "Not put to the user:";
-/** A disputed issue of the question list or the terms, recorded instead of a pause (issue #112). */
-export const wordingDisputeLine = (origin: PauseOrigin, heading: string): string =>
-  `${heading}: ${pauseSubject(origin)}. This concerns how a question to the user is worded, which Codex and Claude Code settle between themselves; ${origin.pause === "reraised" ? "Claude Code answers it in this cycle's response" : "Claude Code's disposition stands, and Codex reads its rationale in the next cycle"}.`;
+/**
+ * A disputed issue of the question list or the terms, recorded instead of a pause (issue #112). It asserts nothing
+ * about what the disagreement concerns, which nothing checked; only that Claude Code did not mark it (issue #156).
+ */
+export const unmarkedDisputeLine = (origin: PauseOrigin, heading: string): string =>
+  `${heading}: ${pauseSubject(origin)}. Claude Code did not mark this disagreement as one about what the task requires, so Codex and Claude Code settle it between themselves; ${origin.pause === "reraised" ? "Claude Code answers it in this cycle's response" : "Claude Code's disposition stands, and Codex reads its rationale in the next cycle"}.`;
 
 // ---- question list ------------------------------------------------------------------------------
 
@@ -570,6 +580,7 @@ export function questionRespondPrompt(root: RunRoot, round: number): string {
   return `${runDir(root)}/question-review/review-${round}.json contains a review of the question list in ${runDir(root)}/questions.json.
 ${respondRules(root, "you amend the question list for it")}
 ${WORDING_DISPUTES}
+${TASK_DISPUTE_RULE}
 Return in 'questions' the complete question list after your amendments, including the entries that did not change. Do not modify any file.`;
 }
 
@@ -623,6 +634,7 @@ export function termsRespondPrompt(root: RunRoot, round: number): string {
   return `${recordPath(root, { kind: "review", subject: "terms", round })} contains a review of the explanations of terms in ${runDir(root)}/terms.json.
 ${respondRules(root, "you amend the explanations for it")}
 ${WORDING_DISPUTES}
+${TASK_DISPUTE_RULE}
 ${TWO_SENSES}
 Return in 'entries' the complete explanations after your amendments, including the entries that did not change, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
 ${KEEP_WORDING}`;
@@ -910,9 +922,9 @@ const correctableIds = (ids: readonly string[]): string => ids.join(", ");
  */
 export function correctivePrompt(root: RunRoot, fileLabel: string, round: number, acceptedIds: readonly string[]): string {
   return `${runDir(root)}/${fileLabel} did not change during your response to the review of cycle ${round}, although you accepted ${correctableIds(acceptedIds)} in full or in part.
-Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale.
+Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale; where your response carries ${TASK_DISPUTE_FIELD} and the disagreement is about what the task requires, set it on them.
 Return the complete response again in the same form as before; where your response carries the plan, the question list or the analysis, return it whole, with the amendments applied.
-Only the action and the rationale of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
+Only the action, the rationale and, where your response carries it, ${TASK_DISPUTE_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
 Do not modify any file.`;
 }
 /** What a corrective reply changed that it may not (CorrectionInvalid), as the halt describes it. */
@@ -926,7 +938,7 @@ export function correctionInvalidText(changedIds: readonly string[], other: read
 /** The repair turn of a corrective reply that changed what it may not. */
 export function correctionRepairPrompt(error: Readonly<{ changedIds: readonly string[]; other: readonly string[] }>, acceptedIds: readonly string[]): string {
   return `Your structured output matched the schema, but the program cannot accept it: ${correctionInvalidText(error.changedIds, error.other)}.
-Only the action and the rationale of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
+Only the action, the rationale and, where your response carries it, ${TASK_DISPUTE_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
 Return the complete output again, corrected. Do not modify any file.`;
 }
 

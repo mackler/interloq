@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { test } from "node:test";
+import { Schema } from "effect";
 import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
@@ -952,4 +953,58 @@ test("the texts of a process ending name the ending, the attempts and the steps,
     assert.deepEqual(questionProblems(asQuestion), []);
     assert.ok(attachedOf("stopReport", details) !== null);
   }
+});
+
+// Issue #156: the rule that tells Claude Code when to mark a disagreement and the validation that reads the mark agree:
+// the rule names the field the question list's and the terms' schemas carry, and the round reads it as the rule says.
+test("issue #156: TASK_DISPUTE_RULE names the mark the two response schemas carry, and the round reads it as the rule says", async () => {
+  const { validateReview, validateRound } = await import("../src/round.ts");
+  const { respond, issue } = await import("./helpers.ts");
+  const { Result } = await import("effect");
+  for (const round of [1, 2]) {
+    for (const p of [prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.TASK_DISPUTE_RULE));
+    for (const p of [prompts.planRespondPrompt(TEST_ROOT, 1, round), prompts.decisionRespondPrompt(TEST_ROOT, 1, round), prompts.requirementsRespondPrompt(TEST_ROOT, round), prompts.workRespondPrompt(TEST_ROOT, 1, round, { review: { issues: [] }, log: [], records: null }, workExecution, "t")]) {
+      assert.ok(!p.includes(prompts.TASK_DISPUTE_RULE));
+    }
+  }
+  assert.ok(prompts.TASK_DISPUTE_RULE.includes(S.TASK_DISPUTE_FIELD));
+  assert.ok(S.TASK_DISPUTE_FIELD in S.MarkedDisposition.fields);
+  for (const schema of [S.QuestionListResponse, S.TermsResponse]) {
+    const decoded = Schema.decodeUnknownSync(schema)({ ...respond([["A", "rejected", true]]), questions: [], entries: [] });
+    assert.equal((decoded.dispositions[0] as Record<string, unknown>)[S.TASK_DISPUTE_FIELD], true);
+  }
+  const reviewed = Result.getOrThrow(validateReview({ issues: [issue("A"), issue("B")] }));
+  const r = Result.getOrThrow(validateRound(reviewed, respond([["A", "rejected", true], ["B", "accepted", true]]), [], 0, 1, "Q"));
+  assert.deepEqual(r.dispositions.map((d) => d.taskDispute), [true, false]);
+});
+
+test("issue #156: WORDING_DISPUTES says a marked disagreement is put to the user; the settled line claims no wording", () => {
+  assert.ok(prompts.WORDING_DISPUTES.includes(S.TASK_DISPUTE_FIELD) || prompts.WORDING_DISPUTES.includes("marks"), prompts.WORDING_DISPUTES);
+  assert.match(prompts.WORDING_DISPUTES, /what the task requires/);
+  assert.match(prompts.WORDING_DISPUTES, /raises the issue again/);
+  const line = prompts.unmarkedDisputeLine({ pause: "reraised", id: "Q-R1-1" }, "Question review");
+  assert.ok(!/concerns how a question to the user is worded/.test(line), line);
+  assert.match(line, /did not mark this disagreement as one about what the task requires/);
+  assert.match(line, /settle it between themselves/);
+});
+
+test("issue #156: the log rules name the mark", () => {
+  assert.ok(prompts.questionReviewPrompt(TEST_ROOT, 1).includes(`${S.TASK_DISPUTE_FIELD} is true where`));
+});
+
+// P1-R1-2: the corrective prompt and its repair name the mark among what may differ for the correctable ids, and the
+// validation accepts a change of a correctable disposition's action and mark and refuses a change of another's mark.
+test("issue #156: the corrective prompt names the mark, and correctiveValidation accepts exactly the changes it allows", async () => {
+  const { correctiveValidation } = await import("../src/round.ts");
+  const { respond } = await import("./helpers.ts");
+  const { Result } = await import("effect");
+  const prompt = prompts.correctivePrompt(TEST_ROOT, "questions.json", 1, ["A"]);
+  assert.match(prompt, new RegExp(`Only the action, the rationale and, where your response carries it, ${S.TASK_DISPUTE_FIELD} of A may differ`));
+  assert.ok(prompts.correctionRepairPrompt({ changedIds: ["B"], other: [] }, ["A"]).includes(S.TASK_DISPUTE_FIELD));
+  const previous = respond([["A", "accepted"], ["B", "rejected"]]);
+  const validate = correctiveValidation(previous, ["A"]);
+  assert.ok(Result.isSuccess(validate(respond([["A", "rejected", true], ["B", "rejected"]]))));
+  const refused = validate(respond([["A", "accepted"], ["B", "rejected", true]]));
+  assert.ok(Result.isFailure(refused));
+  assert.deepEqual((refused.failure.error as { changedIds: readonly string[] }).changedIds, ["B"]);
 });

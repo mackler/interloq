@@ -97,8 +97,9 @@ export type ReviewSetup = Readonly<{
   /**
    * Issue #112: who settles a disagreement between Codex and Claude Code over an issue (the disputed pauses of behavior
    * 7: an issue raised again or repeated under a new id, a reversal, a disputed self-correction, a second clarification
-   * request). "user": the pause is asked. "agents": it is not; Claude Code's disposition stands and the loop goes on
-   * (the question list and the terms, whose disputes are about how a question to the user is worded).
+   * request). "user": the pause is asked. "agents" (the question list and the terms): it is not, Claude Code's disposition
+   * stands and the loop goes on, unless Claude Code's latest answer marks the disagreement as about what the task
+   * requires, which is asked (issue #156).
    */
   disputesSettledBy: "user" | "agents";
   maxRounds: number;
@@ -301,7 +302,7 @@ const askedOrSettled = (s: ReviewState, asks: readonly Ask[]): Readonly<{ asked:
     asked: asks.filter((a) => !settles(a)),
     settledAsks,
     settled: settledAsks.flatMap((a) => {
-      const line = prompts.wordingDisputeLine(pauseOriginOf(a.asks.facts), s.setup.heading);
+      const line = prompts.unmarkedDisputeLine(pauseOriginOf(a.asks.facts), s.setup.heading);
       return [say(line), { kind: "Converse", markdown: `**${prompts.WORDING_DISPUTE_HEADING}** ${line}\n\n` } as ReviewCommand];
     }),
   };

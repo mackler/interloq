@@ -69,7 +69,11 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
    * subject with a value has its file's change measured in the issue log (issue #31).
    */
   onUnchanged: "corrective" | "pause" | null;
-  /** Issue #112: who settles a disagreement between the agents over an issue: the user at a pause, or the agents (Claude Code's disposition stands). */
+  /**
+   * Issue #112: who settles a disagreement between the agents over an issue: the user at a pause, or the agents (Claude
+   * Code's disposition stands), except one Claude Code marks as about what the task requires, which the user settles
+   * (issue #156).
+   */
   disputesSettledBy: "user" | "agents";
   /** A decision's subject: the number of the question its analysis is for (S21), which its progress names; absent otherwise. */
   question?: number | null;
