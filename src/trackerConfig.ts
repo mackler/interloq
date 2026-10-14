@@ -5,9 +5,6 @@ import { TrackerCredentialMissing } from "./errors.ts";
 
 /** The GitHub tracker's bearer token: a fine-grained token with Issues read and write on the project's repository. */
 export const GITHUB_TOKEN_VARIABLE = "INTERLOQ_GITHUB_TOKEN";
-/** The Trello tracker's API key and token, with read and write scope on the board; read by trelloCredential. */
-export const TRELLO_KEY_VARIABLE = "INTERLOQ_TRELLO_KEY";
-export const TRELLO_TOKEN_VARIABLE = "INTERLOQ_TRELLO_TOKEN";
 /**
  * The GitLab tracker's token: a project access token of the one GitLab project, with the `api` scope and the Planner
  * role (the developer's answer Q1 in the requirements of the GitLab adapter); read by gitlabCredential.
@@ -18,11 +15,6 @@ export const GITLAB_TOKEN_VARIABLE = "INTERLOQ_GITLAB_TOKEN";
 export type GithubToken = Brand.Branded<string, "GithubToken">;
 /** A GitLab token: a text with a character other than whitespace, built by gitlabCredential alone. */
 export type GitlabToken = Brand.Branded<string, "GitlabToken">;
-/** A Trello API key and a Trello token: texts with a character other than whitespace, built by trelloCredential alone. */
-export type TrelloKey = Brand.Branded<string, "TrelloKey">;
-export type TrelloToken = Brand.Branded<string, "TrelloToken">;
-/** The key and the token together, since Trello needs both on every request. */
-export type TrelloCredential = Readonly<{ key: TrelloKey; token: TrelloToken }>;
 export type Environment = Readonly<Record<string, string | undefined>>;
 
 /** A variable's value when it is set and not blank; otherwise the failure naming the variable, never a value. */
@@ -33,10 +25,6 @@ const nonBlankVariable = (env: Environment, variable: string): Result.Result<str
 
 /** The GitHub token from the environment; an absent or blank variable is refused with its name. */
 export const githubCredential = (env: Environment): Result.Result<GithubToken, TrackerCredentialMissing> => Result.map(nonBlankVariable(env, GITHUB_TOKEN_VARIABLE), (value) => value as GithubToken);
-
-/** The Trello key and token from the environment; the key is read first, and an absent or blank variable is refused with its name. */
-export const trelloCredential = (env: Environment): Result.Result<TrelloCredential, TrackerCredentialMissing> =>
-  Result.flatMap(nonBlankVariable(env, TRELLO_KEY_VARIABLE), (key) => Result.map(nonBlankVariable(env, TRELLO_TOKEN_VARIABLE), (token) => ({ key: key as TrelloKey, token: token as TrelloToken })));
 
 /** The GitLab token from the environment; an absent or blank variable is refused with its name. */
 export const gitlabCredential = (env: Environment): Result.Result<GitlabToken, TrackerCredentialMissing> => Result.map(nonBlankVariable(env, GITLAB_TOKEN_VARIABLE), (value) => value as GitlabToken);
