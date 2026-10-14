@@ -18,13 +18,37 @@
     },
     "remaining_work": {
       "type": "string"
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "seconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "step",
+          "command",
+          "seconds"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
     "status",
     "summary",
     "question",
-    "remaining_work"
+    "remaining_work",
+    "checks"
   ],
   "additionalProperties": false
 }

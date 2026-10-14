@@ -54,7 +54,7 @@ const questionEntry = fc.record({ id: text, context: fc.array(block, { maxLength
 const markedDisposition = fc.tuple(disposition, fc.boolean()).map(([d, task_dispute]) => ({ ...d, task_dispute }));
 const markedListResponse = fc.tuple(plannerResponse, fc.array(markedDisposition, { maxLength: 3 }), fc.array(questionEntry, { maxLength: 2 })).map(([r, dispositions, questions]) => ({ ...r, dispositions, questions }));
 const response = fc.oneof(plannerResponse, markedListResponse);
-const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }) });
+const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }), checks: fc.array(fc.record({ step: text, command: text, seconds: fc.double({ noNaN: true, noDefaultInfinity: true }) }), { maxLength: 2 }) });
 // S5: a question as the user is shown it, with every kind of origin and both kinds of answer.
 const origin = fc.oneof(
   fc.record({ kind: fc.constantFrom("clarification" as const, "followUp" as const), id: text }),

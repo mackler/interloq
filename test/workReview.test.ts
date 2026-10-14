@@ -245,7 +245,7 @@ test("(f3) the same edit during a repair turn halts the same way", async () => {
   await runFails(layer, "ReviewedFileChanged", /changes\.diff/);
 });
 
-const stop = (status: ExecOutcome["status"], userInput: string | null): ExecOutcome => ({ status, summary: "partial", question: "Which database?", remainingWork: "the rest", userInput });
+const stop = (status: ExecOutcome["status"], userInput: string | null): ExecOutcome => ({ status, summary: "partial", question: "Which database?", remainingWork: "the rest", userInput, checks: [] });
 
 test("(i) a needs_input stop is recorded, then the work review runs and converges, then planning 2; the run does not finish there", async () => {
   const { layer, probe } = testLayer(tempRepo(), {

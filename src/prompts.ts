@@ -10,6 +10,7 @@ import type { RunMode } from "./runMode.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
+import { checkTotals } from "./stepChecks.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -915,6 +916,11 @@ export const CONTINUING_STATUS_SENTENCE = "If steps remain and there is no quest
 /** The status of an execution report for a failure that needs the user (issue #154: no longer for work merely left). */
 export const BLOCKED_STATUS_SENTENCE = "Return status 'blocked' only for a failure you cannot correct and that needs the user, for example a command that fails and that you cannot correct or a denied permission, with the description in the question field.";
 /**
+ * Issue #162 (requirements Q4): the report lists each check command the call ran, by the fields of S.StepCheckRun;
+ * Interloq does not measure the duration, Claude Code reports it.
+ */
+export const REPORT_CHECKS_SENTENCE = "In the report's 'checks', list each check command you ran in this call, in the order you ran them: the step's id in 'step', the command exactly as you ran it in 'command', and how long it took in seconds in 'seconds'. List none if you ran none.";
+/**
  * The prompt of an execution call. Each execution phase runs in a Claude Code session of its own (issue #117), which has
  * not seen the planning, so the prompt names the task and the records it must follow.
  */
@@ -926,6 +932,7 @@ If you need information or a decision from the user, or if a remaining step prov
 ${RELAYED_SHAPE}
 ${questionWritingRules()}
 ${planStepCheckRule(checks)}
+${REPORT_CHECKS_SENTENCE}
 ${BACKGROUND_SUITE_SENTENCE}
 ${CONTINUING_STATUS_SENTENCE}
 ${BLOCKED_STATUS_SENTENCE}
@@ -1274,7 +1281,19 @@ export function cycleInvalidText(parts: readonly string[]): string {
 /** What the work review of phase k ended with: convergence, or leaving for a planning phase in a round. */
 export type WorkReviewEnd = "converged" | Readonly<{ revisedInRound: number }>;
 
-export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean): string {
+/**
+ * Issue #162 (requirements Q4, P1-R1-1): the work review's criterion on a step's reported checks, judged by the step's
+ * total across the phase's calls, with the step's id as the issue's location.
+ */
+export const WORK_CHECK_CRITERION = `Raise an issue for a step whose reported checks ran tests its change does not touch, ran a command its text in the plan does not name, or together took longer than ${STEP_CHECK_LIMIT_MS / 60_000} minutes (the step's total, not any single command); for such an issue, put the step's id, not a file path, in the location field.`;
+/** The checks an execution phase reported, per step with each command's seconds and the step's total (issue #162). */
+export const reportedChecksText = (execution: WorkExecution): string => {
+  const totals = checkTotals(execution.outcome.checks);
+  return totals.length === 0
+    ? "none reported"
+    : totals.map((total) => `- ${total.step}: ${total.seconds} seconds in all: ${total.commands.map((c) => `${codeSpan(c.command)} (${c.seconds} seconds)`).join(", ")}`).join("\n");
+};
+export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, execution: WorkExecution): string {
   const prefix = `W${phase}`;
   const log = pathOf({ kind: "log", subject: { work: phase } });
   const changes = pathOf({ kind: "changes", phase });
@@ -1288,6 +1307,9 @@ ${laterRound(root, changes, log, prefix, round)}`;
 Review the work against the plan in ${runDir(root)}/plan.json. ${planStatuses(root)} Steps with status 'done' are implemented; review their work against the plan. Missing work of a step with another status is not an issue.
 ${requirements}Raise an issue for work that does not implement a completed step, contradicts the plan or the requirements, or introduces a defect.
 Put the file path, with a line number where it helps, in the location field.
+${WORK_CHECK_CRITERION}
+The check commands execution phase ${phase} reported, per step:
+${reportedChecksText(execution)}
 ${logRules(root, log, prefix, round)}`;
 }
 
@@ -1346,6 +1368,8 @@ The report of execution phase ${phase}:
 Status: ${execution.outcome.status}
 Summary: ${execution.outcome.summary || "none"}
 Remaining work: ${execution.outcome.remainingWork || "not reported"}${execution.outcome.question === "" ? "" : `\nQuestion at the stop: ${execution.outcome.question}`}
+Check commands run, per step:
+${reportedChecksText(execution)}
 
 The plan as execution phase ${phase} ended (${runDir(root)}/plan.md):
 ${execution.plan}`;

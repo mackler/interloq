@@ -8,7 +8,7 @@ import * as prompts from "../src/prompts.ts";
 
 const review = { issues: [] };
 const response = { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
-const outcome = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null };
+const outcome = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null, checks: [] };
 
 // One example of every variant; the `satisfies` makes a missing tag a type error when the union grows.
 /** The heading the page shows above the conversation (issue #113), and the same text as a pattern. */

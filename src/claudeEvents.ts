@@ -121,24 +121,24 @@ export const execReport = (structured: unknown): ExecReport | null => {
 export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, transport = false): ExecOutcome | ExecContinuation => {
   const report = execReport(outcome.structured);
   if (stop !== null) {
-    return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input };
+    return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input, checks: report?.checks ?? [] };
   }
   // A valid report delivered before a transport fault stands (issue #26, P1-R1-3): it is the call's last act.
   const reportStands = report !== null && (outcome.error === null || transport);
   if (!reportStands) {
     const reason = outcome.error ?? (outcome.structured === null || outcome.structured === undefined ? "no structured output" : "the status report does not match its schema");
-    return { status: "aborted", summary: outcome.resultText, question: `The execution call ended without a status report: ${reason}`, remainingWork: "", userInput: null };
+    return { status: "aborted", summary: outcome.resultText, question: `The execution call ended without a status report: ${reason}`, remainingWork: "", userInput: null, checks: [] };
   }
   const variant = normalizeReport(report);
   switch (variant.kind) {
     case "finished":
-      return { status: "finished", summary: variant.summary, question: "", remainingWork: variant.remainingWork, userInput: null };
+      return { status: "finished", summary: variant.summary, question: "", remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
     case "continuing":
-      return { status: "continuing", summary: variant.summary, remainingWork: variant.remainingWork };
+      return { status: "continuing", summary: variant.summary, remainingWork: variant.remainingWork, checks: variant.checks };
     case "awaiting_input":
-      return { status: "needs_input", summary: variant.summary, question: variant.question, remainingWork: variant.remainingWork, userInput: null };
+      return { status: "needs_input", summary: variant.summary, question: variant.question, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
     case "blocked":
-      return { status: "blocked", summary: variant.summary, question: variant.description, remainingWork: variant.remainingWork, userInput: null };
+      return { status: "blocked", summary: variant.summary, question: variant.description, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
   }
 };
 
@@ -195,7 +195,7 @@ export const waitingOn = (state: BackgroundState): boolean => state.pending.size
  */
 export const checkBackground = (result: ExecOutcome | ExecContinuation, stop: Stop | null, state: BackgroundState, nameOf: (id: string) => string): ExecOutcome | ExecContinuation => {
   if (stop !== null || !waitingOn(state)) return result;
-  return { status: "aborted", summary: result.summary, question: backgroundKilledText([...state.pending].map(nameOf)), remainingWork: result.remainingWork, userInput: null };
+  return { status: "aborted", summary: result.summary, question: backgroundKilledText([...state.pending].map(nameOf)), remainingWork: result.remainingWork, userInput: null, checks: result.checks };
 };
 /** The name of each background task, its description as the SDK first gave it, for the lines and texts naming it. */
 export const nameTasks = (names: ReadonlyMap<string, string>, message: SDKMessage): ReadonlyMap<string, string> => {

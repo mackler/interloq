@@ -140,7 +140,7 @@ test("fileHash by subject; the save operations create their directories", async 
   assert.notEqual(await Effect.runPromise(s.fileHash({ plan: 1 })), "");
   await Effect.runPromise(s.saveReview({ plan: 2 }, 1, { issues: [] }));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, "planning-2", "review-1.json"), "utf8")), { issues: [] });
-  await Effect.runPromise(s.saveExecution(3, { status: "finished", summary: "s", question: "", remainingWork: "", userInput: null }));
+  await Effect.runPromise(s.saveExecution(3, { status: "finished", summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }));
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, "execution-3", "result.json"), "utf8")).status, "finished");
   await Effect.runPromise(s.savePlanWrite(4, { questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] }));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(s.dir, "planning-4", "cc-0.json"), "utf8")), { questions_for_user: [questionOf({ context: "c", question: "q?", terms: [], options: [] })] });

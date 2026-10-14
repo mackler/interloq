@@ -225,7 +225,7 @@ SCENARIOS.planSteps = {
     { output: { ...noQuestions, plan: { stages: [{ number: 1, title: "the schema and its records", steps: [S1, S2] }, { number: 2, title: "the page", steps: [S3] }] } } },
   ],
   reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
-  execs: [{ status: "needs_input", summary: "S1 done", question: "A or B?", remainingWork: "S2", userInput: "B" }],
+  execs: [{ status: "needs_input", summary: "S1 done", question: "A or B?", remainingWork: "S2", userInput: "B", checks: [] }],
   execScripts: [{ reports: [["S1", "started"], ["S1", "done"], ["S2", "started"]] }, { reports: [["S2", "started"]], hang: true }],
 };
 

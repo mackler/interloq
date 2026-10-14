@@ -118,7 +118,7 @@ test("interrupt while the UI waits for input", async () => {
     answers: [{ wait: true }],
     steps: [{ output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }],
-    execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null }],
+    execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null, checks: [] }],
   });
   const exit = await interruptWhen(probe, wiring, probe.ui.nextAsk());
   assertInterrupted(probe, exit);
@@ -219,7 +219,7 @@ test("issue #122: a run of two iterations ends with the implementation's session
   const { wiring, probe } = testWiring(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1", usage: true }, { output: noQuestions, plan: "v2", usage: true }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "B" }, finished],
+    execs: [{ status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "B", checks: [] }, finished],
     execScripts: [{ usage: true }, { usage: true }],
   });
   assert.equal(await runProgram(probe, wiring), 0);

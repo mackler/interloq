@@ -264,7 +264,7 @@ test("over the real adapters and the fake SDK, the run reports both agents' acti
     yield init("s-1");
     yield success({ ...noQuestions, plan: scriptedPlan("step") });
   })();
-  const report = { status: "finished", summary: "done", question: "", remaining_work: "" };
+  const report = { status: "finished", summary: "done", question: "", remaining_work: "", checks: [] };
   const sdk = new FakeSdk([writePlan, messages(init("s-1"), success(report))], [turn(JSON.stringify({ issues: [] })), turn(JSON.stringify({ issues: [] }))]);
   const h = await harness(repo, [{}], (options) => ({ ...testWiring(repo, options).wiring, sdk, agents: Layer.mergeAll(claudePlannerLayer, codexReviewerLayer) }));
   const id = await started(h);

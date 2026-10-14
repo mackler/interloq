@@ -81,7 +81,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   review: Schema.Struct({ issues: Schema.Array(Issue) }),
   plannerResponse: Schema.Struct(plannerFields),
   planWrite: Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) }),
-  execReport: Schema.Struct({ status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]), summary: Str, question: Str, remaining_work: Str }),
+  execReport: Schema.Struct({ status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]), summary: Str, question: Str, remaining_work: Str, checks: Schema.Array(Schema.Struct({ step: Str, command: Str, seconds: Schema.Finite })) }),
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
   questionListResponse: Schema.Struct({ ...markedFields, questions: Schema.Array(QuestionEntry) }),
   interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),

@@ -30,7 +30,7 @@ test("the log rules name the entries list, the three sources and null references
 test("the log rules explain file_change with the keys the log entries carry", () => {
   const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e" }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
-  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), questionReviewPrompt(TEST_ROOT, 1), prompts.requirementsReviewPrompt(TEST_ROOT, 1), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), questionReviewPrompt(TEST_ROOT, 1), prompts.requirementsReviewPrompt(TEST_ROOT, 1), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution)]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
     for (const key of ["changed", "added", "removed"]) {
       assert.match(text, new RegExp(`\\b${key}\\b`));
@@ -53,15 +53,15 @@ test("the interview prompts ask for the current question's parts under the rules
 
 // Plan step 2.6: the prompts of the work review and the revision of the plan after an execution phase.
 test("the work review prompt names the change record, the plan, the requirements, the log and the ids", () => {
-  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true);
+  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true, workExecution);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-2\/changes\.diff/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/plan\.json/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/requirements\.md/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.match(first, /W2-R1-1/);
   assert.match(first, /Missing work of a step with another status is not an issue/);
-  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false), /requirements\.md/);
-  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true);
+  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false, workExecution), /requirements\.md/);
+  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true, workExecution);
   assert.match(later, /W2-R3-1/);
   assert.match(later, /changes\.diff has been rewritten/);
 });
@@ -431,7 +431,7 @@ test("each clause of the id rule is enforced by validatePlan, and the repair pro
 });
 
 test("the plan review and the work review read plan.json with its statuses", () => {
-  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false)]) {
+  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, workExecution)]) {
     assert.match(text, /plan-review\/runs\/[^/\s]+\/plan\.json/);
     assert.match(text, /status 'done'/);
     assert.doesNotMatch(text, /plan-review\/runs\/[^/\s]+\/plan\.md/);
@@ -883,7 +883,7 @@ test("issue #117: executePrompt names the task, the requirements where they exis
 // Issue #117: the work response runs in the main session, the execution in a session of its own, so the response's
 // prompt carries the execution's report and the plan instead of saying they are in its context.
 test("issue #117: workRespondPrompt carries the execution's report and the plan, and does not say they are in its context", () => {
-  const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B" }, plan: "# The plan\n\nS1 done\n" };
+  const execution = { outcome: { status: "needs_input" as const, summary: "the summary of S1", question: "A or B?", remainingWork: "S2 and S3", userInput: "B", checks: [] }, plan: "# The plan\n\nS1 done\n" };
   const text = prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, execution, "t");
   for (const part of [execution.outcome.summary, execution.outcome.remainingWork, execution.outcome.question, execution.outcome.status, execution.plan]) assert.ok(text.includes(part), part);
   assert.doesNotMatch(text, /in your context/);

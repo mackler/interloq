@@ -66,7 +66,16 @@ const agentSchemas = {
   // Issue #154 (Q2): the report's fourth status, beyond the frozen legacy schema, which stays frozen.
   execReport: {
     effect: S.ExecReport,
-    legacy: { ...legacy.execReportSchema, properties: { ...legacy.execReportSchema.properties, status: { type: "string", enum: ["finished", "continuing", "needs_input", "blocked"] } } },
+    // Issue #162: the check commands the call ran, each with its step and its duration in seconds.
+    legacy: {
+      ...legacy.execReportSchema,
+      properties: {
+        ...legacy.execReportSchema.properties,
+        status: { type: "string", enum: ["finished", "continuing", "needs_input", "blocked"] },
+        checks: { type: "array", items: { type: "object", properties: { step: { type: "string" }, command: { type: "string" }, seconds: { type: "number" } }, required: ["step", "command", "seconds"], additionalProperties: false } },
+      },
+      required: [...legacy.execReportSchema.required, "checks"],
+    },
   },
   questionList: { effect: S.QuestionList, legacy: withContext(legacy.questionListSchema) },
   questionListResponse: { effect: S.QuestionListResponse, legacy: withMark(withContext(withQuestions(legacy.questionListResponseSchema))) },

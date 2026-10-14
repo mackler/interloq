@@ -317,7 +317,7 @@ test("every write of the Store to a guarded record is in its journal, with the e
     ["saveCorrection", store.saveCorrection({ plan: 1 }, 1, 1, response)],
     ["saveRound", store.saveRound({ plan: 1 }, { round: 1, kind: "no_response", review: { issues: [] } } as never)],
     ["savePlanWrite", store.savePlanWrite(1, { questions_for_user: [] } as never)],
-    ["saveExecution", store.saveExecution(1, { status: "finished", summary: "", question: "", remainingWork: "", userInput: null })],
+    ["saveExecution", store.saveExecution(1, { status: "finished", summary: "", question: "", remainingWork: "", userInput: null, checks: [] })],
     ["saveQuestions", store.saveQuestions("task", [])],
     ["writeRequirements", store.writeRequirements("# R\n")],
     ["savePlan", store.savePlan(plan)],

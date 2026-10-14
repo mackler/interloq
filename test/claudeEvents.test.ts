@@ -69,30 +69,30 @@ test("reduceMessages marks a stream that ended before a result as partial, with 
 const complete = (structured: unknown, resultText = "") => ({ sessionId: "s", costUsd: 1, structured, resultText, error: null, partial: false, failure: null });
 
 test("interpretExecution returns the report when it is valid and there is no stop", () => {
-  const outcome = interpretExecution(complete({ status: "finished", summary: "all done", question: "", remaining_work: "" }), null);
-  assert.deepEqual(outcome, { status: "finished", summary: "all done", question: "", remainingWork: "", userInput: null });
+  const outcome = interpretExecution(complete({ status: "finished", summary: "all done", question: "", remaining_work: "", checks: [] }), null);
+  assert.deepEqual(outcome, { status: "finished", summary: "all done", question: "", remainingWork: "", userInput: null, checks: [] });
 });
 
 // Issue #154 (Q2): work left and nothing for the user to decide is its own status, which the run continues without asking.
 test("interpretExecution reads a continuing report as a continuation", () => {
-  const outcome = interpretExecution(complete({ status: "continuing", summary: "half", question: "ignored", remaining_work: "S3 and S4" }), null);
-  assert.deepEqual(outcome, { status: "continuing", summary: "half", remainingWork: "S3 and S4" });
+  const outcome = interpretExecution(complete({ status: "continuing", summary: "half", question: "ignored", remaining_work: "S3 and S4", checks: [] }), null);
+  assert.deepEqual(outcome, { status: "continuing", summary: "half", remainingWork: "S3 and S4", checks: [] });
 });
 
 test("interpretExecution: a recorded stop takes precedence over a continuing report, and one before a transport fault stands", () => {
   const stop = { question: "A or B?", input: "A or B? -> A" };
-  const report = { status: "continuing", summary: "s", question: "", remaining_work: "w" };
-  assert.deepEqual(interpretExecution(complete(report), stop), { status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "A or B? -> A" });
-  assert.deepEqual(interpretExecution({ ...complete(report), error: "socket hang up" }, null, true), { status: "continuing", summary: "s", remainingWork: "w" });
+  const report = { status: "continuing", summary: "s", question: "", remaining_work: "w", checks: [] };
+  assert.deepEqual(interpretExecution(complete(report), stop), { status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "A or B? -> A", checks: [] });
+  assert.deepEqual(interpretExecution({ ...complete(report), error: "socket hang up" }, null, true), { status: "continuing", summary: "s", remainingWork: "w", checks: [] });
   assert.equal(interpretExecution({ ...complete(report), error: "error_during_execution" }, null, false).status, "aborted");
 });
 
 test("interpretExecution gives a recorded stop precedence over the report, valid or not", () => {
   const stop = { question: "A or B?", input: "A or B? -> A" };
-  const valid = interpretExecution(complete({ status: "finished", summary: "s", question: "", remaining_work: "w" }), stop);
-  assert.deepEqual(valid, { status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "A or B? -> A" });
+  const valid = interpretExecution(complete({ status: "finished", summary: "s", question: "", remaining_work: "w", checks: [] }), stop);
+  assert.deepEqual(valid, { status: "needs_input", summary: "s", question: "A or B?", remainingWork: "w", userInput: "A or B? -> A", checks: [] });
   const invalid = interpretExecution(complete({ status: "bogus" }), stop);
-  assert.deepEqual(invalid, { status: "needs_input", summary: "", question: "A or B?", remainingWork: "", userInput: "A or B? -> A" });
+  assert.deepEqual(invalid, { status: "needs_input", summary: "", question: "A or B?", remainingWork: "", userInput: "A or B? -> A", checks: [] });
 });
 
 test("interpretExecution treats a missing or invalid report and a call error as aborted, keeping the result text", () => {
@@ -140,7 +140,7 @@ test("an assistant error followed by a message without error is cleared; one rig
 
 // Issue #26 (S20, P1-R1-3): a valid status report delivered before a transport fault stands.
 test("interpretExecution: a valid report with a transport error stands; with another error it is aborted; a stop wins", () => {
-  const report = { status: "finished", summary: "all done", question: "", remaining_work: "" };
+  const report = { status: "finished", summary: "all done", question: "", remaining_work: "", checks: [] };
   const faulted = { ...complete(report), error: "read ECONNRESET", partial: true, failure: { streamCode: "ECONNRESET", apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null, processEnd: null } };
   assert.equal(interpretExecution(faulted, null, true).status, "finished");
   assert.equal(interpretExecution(faulted, null, false).status, "aborted");
@@ -178,12 +178,12 @@ test("checkBackground aborts any outcome while a task is pending, names it, and 
   const { backgroundKilledText } = await import("../src/prompts.ts");
   const { started, notification } = await import("./backgroundMessages.ts");
   const pending = foldBackground(NO_BACKGROUND, started("t1"));
-  const finished = { status: "finished" as const, summary: "s", question: "", remainingWork: "w", userInput: null };
+  const finished = { status: "finished" as const, summary: "s", question: "", remainingWork: "w", userInput: null, checks: [] };
   const nameOf = (id: string) => `the suite (${id})`;
-  for (const result of [finished, { status: "continuing" as const, summary: "s", remainingWork: "w" }]) {
-    assert.deepEqual(checkBackground(result, null, pending, nameOf), { status: "aborted", summary: "s", question: backgroundKilledText(["the suite (t1)"]), remainingWork: "w", userInput: null });
+  for (const result of [finished, { status: "continuing" as const, summary: "s", remainingWork: "w", checks: [] }]) {
+    assert.deepEqual(checkBackground(result, null, pending, nameOf), { status: "aborted", summary: "s", question: backgroundKilledText(["the suite (t1)"]), remainingWork: "w", userInput: null, checks: [] });
   }
-  const stopped = { status: "needs_input" as const, summary: "s", question: "A?", remainingWork: "w", userInput: "A" };
+  const stopped = { status: "needs_input" as const, summary: "s", question: "A?", remainingWork: "w", userInput: "A", checks: [] };
   assert.equal(checkBackground(stopped, { question: "A?", input: "A" }, pending, nameOf), stopped);
   assert.equal(checkBackground(finished, null, foldBackground(pending, notification("t1", "completed", "/x")), nameOf), finished);
 });
@@ -193,4 +193,13 @@ test("reduceMessages keeps a stream failure's process ending, and none without a
   const end = { kind: "signal" as const, signal: "SIGBUS" };
   assert.deepEqual(reduceMessages([init()], "Claude Code process terminated by signal SIGBUS", null, end).failure?.processEnd, end);
   assert.equal(reduceMessages([init(), assistantText("half")], null, null, end).failure?.processEnd, null);
+});
+
+// Issue #162: the report's checks reach the outcome, and a stop keeps the checks its report gave.
+test("interpretExecution carries the report's checks to the outcome", () => {
+  const checks = [{ step: "S1", command: "npm run check", seconds: 9 }];
+  assert.deepEqual(interpretExecution(complete({ status: "finished", summary: "s", question: "", remaining_work: "", checks }), null).checks, checks);
+  assert.deepEqual(interpretExecution(complete({ status: "continuing", summary: "s", question: "", remaining_work: "w", checks }), null).checks, checks);
+  assert.deepEqual(interpretExecution(complete({ status: "blocked", summary: "s", question: "q", remaining_work: "w", checks }), { question: "q?", input: "a" }).checks, checks);
+  assert.deepEqual(interpretExecution(complete({ status: "finished", summary: "s", question: "" }), null).checks, []);
 });

@@ -13,8 +13,8 @@ import type { ExecCallOutcome } from "../src/schema.ts";
 import { finished, runTask, scriptedStart, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
-const continuing = (remainingWork: string): ExecCallOutcome => ({ status: "continuing", summary: "part done", remainingWork });
-const blocked: ExecCallOutcome = { status: "blocked", summary: "s", question: "the database is down", remainingWork: "S1", userInput: null };
+const continuing = (remainingWork: string): ExecCallOutcome => ({ status: "continuing", summary: "part done", remainingWork, checks: [] });
+const blocked: ExecCallOutcome = { status: "blocked", summary: "s", question: "the database is down", remainingWork: "S1", userInput: null, checks: [] };
 const decisionsOf = (dir: string): string => {
   const file = path.join(dir, "user-decisions.md");
   return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
@@ -112,4 +112,18 @@ test("a step left started by a continuing call is still started when the continu
   const changed = probe.ui.notified.flatMap((e) => (e._tag === "PlanChanged" ? [`${e.phase}:${e.plan.stages[0].steps[0].status}`] : []));
   // No unfinished between the calls: the steps' end did not run until the last call ended.
   assert.deepEqual(changed, ["1:pending", "1:started", "1:done"]);
+});
+
+// Issue #162 (P1-R1-1): the checks of every call of a continued phase reach the work review, a step reported in two
+// calls totaled once.
+test("issue #162: a continued phase's checks from both calls reach the work review, one step's total across them", async () => {
+  const first: ExecCallOutcome = { status: "continuing", summary: "part done", remainingWork: "S1", checks: [{ step: "S1", command: "npm run test:unit", seconds: 70 }] };
+  const second: ExecCallOutcome = { ...finished, checks: [{ step: "S1", command: "npm run test:unit", seconds: 60 }] };
+  const { layer, probe } = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [first, second] });
+  assert.equal(await runTask(layer), 1);
+  const workReview = probe.reviewer.prompts[1];
+  assert.ok(workReview.includes("S1: 130 seconds in all"), workReview.slice(-800));
+  assert.ok(workReview.includes("`npm run test:unit` (70 seconds), `npm run test:unit` (60 seconds)"));
+  const recorded = JSON.parse(fs.readFileSync(path.join(probe.dir, "execution-1", "result.json"), "utf8"));
+  assert.equal(JSON.stringify(recorded).includes('"seconds":70'), true, "the recorded outcome holds the first call's check");
 });

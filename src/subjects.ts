@@ -230,7 +230,7 @@ export function workSubject(task: string, phase: number, withRequirements: boole
     phase: phaseOf(id),
     heading: subjectHeading(id),
     fileLabel: "changes.diff",
-    reviewPrompt: (root, round) => prompts.workReviewPrompt(root, phase, round, withRequirements),
+    reviewPrompt: (root, round) => prompts.workReviewPrompt(root, phase, round, withRequirements, execution),
     respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution, task), schema: S.PlannerResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
     // Never issued: leaveOnDecision ends the loop instead of a planning call (G-R1-1); typed as the plan's.
     applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks), schema: S.PlanWrite, after: null, validate: null },

@@ -266,11 +266,21 @@ export const InterviewTurn = Schema.Struct({
   summary: Schema.String,
 });
 
+/**
+ * Issue #162 (requirements Q4): one check command Claude Code ran in an execution call, with the step it checked and how
+ * long it took in seconds, as Claude Code reports it; Interloq does not measure it. Plain fields, so that acceptance by
+ * an agent never depends on a keyword such as minLength.
+ */
+export const StepCheckRun = Schema.Struct({ step: Schema.String, command: Schema.String, seconds: Schema.Finite });
+export type StepCheckRun = typeof StepCheckRun.Type;
+
 export const ExecReport = Schema.Struct({
   status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]),
   summary: Schema.String,
   question: Schema.String,
   remaining_work: Schema.String,
+  /** Issue #162: every check command the call ran, with its step and its duration. */
+  checks: Schema.Array(StepCheckRun),
 });
 
 export const ExecOutcome = Schema.Struct({
@@ -280,6 +290,8 @@ export const ExecOutcome = Schema.Struct({
   remainingWork: Schema.String,
   // Set when the user's input was already read during the phase (a question from Claude Code).
   userInput: Schema.NullOr(Schema.String),
+  /** Issue #162: the check commands the phase's calls reported, in order; none where no report was given. */
+  checks: Schema.Array(StepCheckRun),
 });
 
 // Constraints for the program's own records (finding 5 of docs/functional-design-review.md). The seven agent
@@ -546,7 +558,7 @@ export type ExecOutcome = typeof ExecOutcome.Type;
  * One execution call that ended with work left and nothing for the user to decide (issue #154, decision Q2): the run
  * continues the phase's session without asking. Never a phase's outcome, so it is never recorded or decoded.
  */
-export type ExecContinuation = Readonly<{ status: "continuing"; summary: string; remainingWork: string }>;
+export type ExecContinuation = Readonly<{ status: "continuing"; summary: string; remainingWork: string; checks: ReadonlyArray<StepCheckRun> }>;
 /**
  * An execution call whose Claude Code process ended by a signal or a nonzero exit code on its last attempt, its retries
  * used up (issue #157): `attempts` the attempts made, `fault` the SDK's text. Like a continuation never a phase's

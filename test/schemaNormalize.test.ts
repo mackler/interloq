@@ -17,9 +17,9 @@ test("normalizeTurn: a summary is proposed only when complete is true and the su
 });
 
 test("normalizeReport: finished, awaiting input with the question, blocked with the description", () => {
-  assert.deepEqual(normalizeReport({ status: "finished", summary: "s", question: "ignored", remaining_work: "" }), { kind: "finished", summary: "s", remainingWork: "" });
-  assert.deepEqual(normalizeReport({ status: "needs_input", summary: "s", question: "A or B?", remaining_work: "w" }), { kind: "awaiting_input", question: "A or B?", summary: "s", remainingWork: "w" });
-  assert.deepEqual(normalizeReport({ status: "blocked", summary: "s", question: "no network", remaining_work: "w" }), { kind: "blocked", description: "no network", summary: "s", remainingWork: "w" });
+  assert.deepEqual(normalizeReport({ status: "finished", summary: "s", question: "ignored", remaining_work: "", checks: [] }), { kind: "finished", summary: "s", remainingWork: "", checks: [] });
+  assert.deepEqual(normalizeReport({ status: "needs_input", summary: "s", question: "A or B?", remaining_work: "w", checks: [] }), { kind: "awaiting_input", question: "A or B?", summary: "s", remainingWork: "w", checks: [] });
+  assert.deepEqual(normalizeReport({ status: "blocked", summary: "s", question: "no network", remaining_work: "w", checks: [] }), { kind: "blocked", description: "no network", summary: "s", remainingWork: "w", checks: [] });
 });
 
 const q = (id: string, defaultAnswer: string) => entryOf({ id, context: "c", question: "q?", reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: defaultAnswer });

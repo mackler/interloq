@@ -267,7 +267,7 @@ test("the cycle limit maps a number to more cycles, p to Proceed where offered, 
 // Decision support, plan step 3.5: the offer at a review pause, at the plan writer's question and at the cycle limit,
 // in a whole run over the scripted agents.
 const noQuestions = { questions_for_user: [] };
-const finishedExec = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null };
+const finishedExec = { status: "finished" as const, summary: "done", question: "", remainingWork: "", userInput: null, checks: [] };
 const twoColumns = (a: string, b: string): DecisionAnalysis => ({ ...analysis(), decision: "d", columns: [{ ...analysis().columns[0], option: a }, { ...analysis().columns[1], option: b }] });
 const runTaskWith = async (options: TestOptions) => {
   const t = testLayer(tempRepo(), options);
@@ -468,7 +468,7 @@ test("a decision names its phase by the run's count: Planning in a run of one it
   await Effect.runPromise(run("task").pipe(Effect.provide(one.layer)));
   assert.ok(analysisPrompt(one.probe.planner.prompts).includes(expected(1, 1)), analysisPrompt(one.probe.planner.prompts).slice(-600));
 
-  const stopped = { status: "needs_input" as const, summary: "s", question: "A or B?", remainingWork: "w", userInput: "B" };
+  const stopped = { status: "needs_input" as const, summary: "s", question: "A or B?", remainingWork: "w", userInput: "B", checks: [] };
   const two = testLayer(tempRepo(), {
     answers: ["/decide", "1"],
     steps: [{ output: noQuestions, plan: "v1" }, { output: asking }, { output: analysis() }, { output: noQuestions }],

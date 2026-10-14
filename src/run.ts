@@ -93,14 +93,16 @@ export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effe
  * continuing is followed by another in the same session, told to go on with the work it reported left, said on the page
  * and written to conversation.md, with no question and no limit; the phase's outcome is the first other outcome.
  */
-const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string): Effect.Effect<S.ExecOutcome | S.ExecProcessEnded, RunError, Decider | Ui | Store> =>
+const continuedExecution = (executor: PlannerShape, prompt: string, report: StepReporter, phaseLabel: string, earlier: ReadonlyArray<S.StepCheckRun> = []): Effect.Effect<S.ExecOutcome | S.ExecProcessEnded, RunError, Decider | Ui | Store> =>
   Effect.gen(function* () {
     const outcome = yield* executor.executing(prompt, report);
-    if (outcome.status !== "continuing") return outcome;
+    // Issue #162: a continued phase reports the checks of all its calls.
+    if (outcome.status === "processEnded") return outcome;
+    if (outcome.status !== "continuing") return { ...outcome, checks: [...earlier, ...outcome.checks] };
     const line = continuingLine(phaseLabel, outcome.remainingWork);
     yield* (yield* Ui).say(line);
     yield* (yield* Store).converse(`${line}\n\n`);
-    return yield* continuedExecution(executor, executionContinuingPrompt(outcome.remainingWork), report, phaseLabel);
+    return yield* continuedExecution(executor, executionContinuingPrompt(outcome.remainingWork), report, phaseLabel, [...earlier, ...outcome.checks]);
   });
 
 /**
@@ -111,7 +113,7 @@ const continuedExecution = (executor: PlannerShape, prompt: string, report: Step
 const processEndedStop = (ending: S.ExecProcessEnded, records: StepRecords): Readonly<{ outcome: S.ExecOutcome; details: readonly ShownBlock[] }> => {
   const question = processEndedQuestion(ending.end, ending.attempts);
   return {
-    outcome: { status: "aborted", summary: processEndedSummary(records.done), question, remainingWork: processEndedRemaining(records.unfinished), userInput: null },
+    outcome: { status: "aborted", summary: processEndedSummary(records.done), question, remainingWork: processEndedRemaining(records.unfinished), userInput: null, checks: [] },
     details: processEndedDetails(question, records.done, records.unfinished),
   };
 };

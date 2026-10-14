@@ -20,13 +20,15 @@ export const normalizeTurn = (turn: InterviewTurn): TurnVariant => {
 };
 
 /** The status report of an execution call, by outcome: the `question` field is a question only when input is awaited, a description when blocked. */
+/** What every report carries: its summary, its remaining work and the check commands it ran (issue #162). */
+type ReportCommon = Readonly<{ summary: string; remainingWork: string; checks: ExecReport["checks"] }>;
 export type ReportVariant =
-  | Readonly<{ kind: "finished"; summary: string; remainingWork: string }>
-  | Readonly<{ kind: "continuing"; summary: string; remainingWork: string }>
-  | Readonly<{ kind: "awaiting_input"; question: string; summary: string; remainingWork: string }>
-  | Readonly<{ kind: "blocked"; description: string; summary: string; remainingWork: string }>;
+  | (ReportCommon & Readonly<{ kind: "finished" }>)
+  | (ReportCommon & Readonly<{ kind: "continuing" }>)
+  | (ReportCommon & Readonly<{ kind: "awaiting_input"; question: string }>)
+  | (ReportCommon & Readonly<{ kind: "blocked"; description: string }>);
 export const normalizeReport = (report: ExecReport): ReportVariant => {
-  const common = { summary: report.summary, remainingWork: report.remaining_work };
+  const common = { summary: report.summary, remainingWork: report.remaining_work, checks: report.checks };
   switch (report.status) {
     case "finished":
       return { kind: "finished", ...common };
