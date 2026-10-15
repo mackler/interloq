@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import { Clock, Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect";
-import { ServerFault } from "../src/errors.ts";
+import { ServerFault, TrackerAuthRefused, TrackerUnreachable } from "../src/errors.ts";
 import { Reviewer, Tracker } from "../src/services.ts";
 import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
@@ -12,7 +12,7 @@ import { refinementOf, withoutRefinement, withRefinement } from "../src/refineme
 import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { checkCommandInvalidText, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { checkCommandInvalidText, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
@@ -460,4 +460,78 @@ test("issue #162: an npm command in a project with no package.json halts, naming
   assert.equal(await runProgram(probe, wiring), 1);
   assert.ok(said(probe).includes(checkCommandInvalidText([{ _tag: "NoManifest", command: "npm test" as CommandLine }])), said(probe));
   assert.deepEqual(probe.planner.prompts, []);
+});
+
+// Issue #171 (S11, requirements Q3, the developer's decision of 15 Oct 2026): the run's first read of its item is
+// repeated like every tracker request; its waits, its question and the answer are held until the run creates
+// conversation.md, and its question carries no Help me decide, since the records directory is created only after the
+// item has been read.
+describe("the first read of the item, repeated", () => {
+  const FAST = { maxTrackerRetries: 2, trackerRetryDelaySeconds: 0.01 };
+  const unreached = () => new TrackerUnreachable({ tracker: "GitHub", message: "reached no answer from GitHub", status: null });
+  const failReads = (tracker: ReturnType<typeof fakeTrackerOf>, times: number, error: TrackerUnreachable | TrackerAuthRefused = unreached()) =>
+    Effect.runPromise(Effect.forEach(Array.from({ length: times }), () => tracker.failNext("read", error), { discard: true }));
+  const conversationOf = (probe: WiringProbe): string => fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  const readLine = (attempt: number, delay: number) => trackerRetryLine("GitHub", "reading item 1", attempt, 2, delay, unreached().message);
+
+  test("a first read that reached no answer twice runs on, and conversation.md holds both waits before the item's line", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 2);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST });
+    assert.equal(await runProgram(probe, wiring), 0);
+    const conversation = conversationOf(probe);
+    const first = conversation.indexOf(readLine(1, 0.01));
+    const second = conversation.indexOf(readLine(2, 0.02));
+    const started = conversation.indexOf(itemStartedLine("implementation", scriptedItem.id, scriptedItem.title));
+    assert.ok(first >= 0 && second > first && started > second, conversation);
+  });
+
+  test("a first read whose repeats run out asks without Help me decide, and Stop halts with 1, the failure named, and no records directory", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 3);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["s"] });
+    assert.equal(await runProgram(probe, wiring), 1);
+    assert.deepEqual(probe.ui.asked, [transportPrompt]);
+    assert.match(said(probe), /HALTED: the GitHub issue tracker could not be reached: reached no answer from GitHub/);
+    assert.deepEqual(probe.planner.prompts, []);
+    assert.ok(!fs.existsSync(path.join(probe.project, "plan-review", "runs")), "a records directory was created");
+  });
+
+  test("Retry again, then a read that succeeds: the run goes on, the question and the decision in conversation.md", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 3);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["r"] });
+    assert.equal(await runProgram(probe, wiring), 0);
+    const conversation = conversationOf(probe);
+    assert.ok(conversation.includes(trackerExhaustedQuestion("GitHub", "reading item 1")), conversation);
+    assert.ok(conversation.includes(trackerDecisionLine("retry", "GitHub", "reading item 1")));
+  });
+
+  test("a refused credential at the first read halts at once, with no question", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 1, new TrackerAuthRefused({ tracker: "GitHub", status: 401 }));
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST });
+    assert.equal(await runProgram(probe, wiring), 1);
+    assert.deepEqual(probe.ui.asked, []);
+    assert.match(said(probe), /HALTED: the GitHub issue tracker refused the credential \(HTTP status 401\)/);
+  });
+
+  test("End the run at the first read's question ends the run with 130", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 3);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["q"] });
+    assert.equal(await runProgram(probe, wiring), 130);
+    assert.match(said(probe), /INTERRUPTED by the user\./);
+  });
+
+  test("Stop task during a first-read wait ends the run with 130", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 1);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: { maxTrackerRetries: 2, trackerRetryDelaySeconds: 60 } });
+    const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)));
+    for (let waited = 0; !probe.ui.notified.some((e) => e._tag === "TrackerRetrying") && waited < 10_000; waited += 10) await sleep(10);
+    assert.ok(probe.ui.notified.some((e) => e._tag === "TrackerRetrying"), "the wait never began");
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
+  });
 });

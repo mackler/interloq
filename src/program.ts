@@ -4,11 +4,12 @@
 import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText } from "./errors.ts";
+import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped } from "./errors.ts";
+import { heldTrackerEnv, readWithRetry } from "./trackerRetry.ts";
 import { blankItemText, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "./services.ts";
+import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, Ui, type UiShape } from "./services.ts";
 import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
 import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
@@ -70,20 +71,26 @@ export const taskTextOf = (mode: RunMode, item: TrackerItem): Result.Result<Task
 /** What a run starts with until the program reads its item (S5 of issue #120 replaces it with RunStart). */
 export type TaskStart = Readonly<{ task: Task; project: string }>;
 
+const TRACKER_ERROR_TAGS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
+const isTrackerError = (error: TrackerError | RunError): error is TrackerError => TRACKER_ERROR_TAGS.has(error._tag);
+
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
 
 /** How a run ended when it finished: a refinement run, or an implementation run with its number of execution phases. */
 type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implementation"; phases: number }>;
 /** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
-type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>> }>;
+type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>, UserStopped> }>;
 /**
  * The mode of a started run with what only that mode carries (issue #142): a refinement run's choice of how the agreed
  * questions' terms are explained; an implementation run has no question phase, so it carries no choice.
  */
 type StartedKind = Readonly<{ mode: "refinement"; terms: TermsMode }> | Readonly<{ mode: "implementation" }>;
-/** What a run has read before its records exist: its task, and its tracker (none for a run started from a task). */
-type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null }>;
+/**
+ * What a run has read before its records exist: its task, and its tracker (none for a run started from a task); and
+ * `held`, the records of the first read's repeats (issue #171), written to conversation.md once the run creates it.
+ */
+type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null; held: readonly string[] }>;
 
 /**
  * The server's fault as a run sees it (issue #158): `fault` is failed with ServerFault when the server meets an error it
@@ -98,7 +105,8 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  * Runs the program and returns the code the run ends with (behavior 11); everything else is said through the Ui.
  * Issue #120: the run reads its item from the project's tracker, before any agent call, and its task text is the item's
  * (taskTextOf); a tracker that is not configured or cannot be reached, an item it cannot read, a malformed section or a
- * blank text halts the run with 1 before any agent exists.
+ * blank text halts the run with 1 before any agent exists. Issue #171: the read is repeated like every tracker request,
+ * and an unreachable tracker halts only when the developer answers Stop to the question its exhausted repeats ask.
  * A typed error of the run says HALTED and gives 1; UserStopped (End the run: q, /quit, the page's button) says
  * INTERRUPTED and gives 130 (S24). An interruption (Stop task) says INTERRUPTED from a finalizer and leaves the
  * fiber interrupted; `exitCodeOf` turns that into 130. In every case the main Claude Code session id and the usage
@@ -114,20 +122,26 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal): 
         Effect.gen(function* () {
           const layer = wiring.tracker(config);
           if (Result.isFailure(layer)) return Result.fail(trackerFailureText(layer.failure));
-          const read = yield* Effect.exit(Effect.flatMap(Tracker, (t) => t.read(start.item)).pipe(Effect.provide(layer.success)));
+          // Issue #171 (requirements Q3): the first read is repeated like every tracker request; its records are held
+          // until conversation.md exists, and its question carries no Help me decide (the developer's decision of 15 Oct 2026).
+          const held = yield* Ref.make<readonly string[]>([]);
+          const read = yield* Effect.exit(Effect.flatMap(Tracker, (t) => readWithRetry(t, start.item, heldTrackerEnv(ui, config, held))).pipe(Effect.provide(layer.success)));
           if (Exit.isFailure(read)) {
             const error = Cause.findErrorOption(read.cause);
             if (Option.isNone(error)) return yield* Effect.die(Cause.squash(read.cause));
-            return Result.fail(trackerFailureText(error.value));
+            const failure = error.value;
+            if (failure._tag === "UserStopped") return yield* Effect.fail(failure);
+            return Result.fail(isTrackerError(failure) ? trackerFailureText(failure) : describe(failure));
           }
           const item = read.value;
+          const heldRecords = yield* Ref.get(held);
           yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
           // An implementation run's requirements are the item's section, where it has one (S7).
           const section = readRefinement(item.body);
           if (Result.isFailure(section)) return Result.fail(sectionMalformedText(item.id, section.failure.reason));
           return Result.mapBoth(taskTextOf(start.mode, item), {
             onFailure: (e) => (e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason)),
-            onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success) }),
+            onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success), held: heldRecords }),
           });
         }),
     },
@@ -137,7 +151,7 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal): 
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
-  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null })) }, wiring);
+  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null, held: [] })) }, wiring);
 
 /**
  * The signal's fault fails when the server meets an error it cannot trace to one run (issue #158): every stage of the
@@ -202,13 +216,22 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       const decisionFormat = formatExit.value;
 
       // Issue #120: the item and its task text, read from the tracker before any agent exists and before the records exist.
-      const taskRead = yield* start.task(config, ui);
+      const taskExit = yield* Effect.exit(start.task(config, ui));
+      if (Exit.isFailure(taskExit)) {
+        const error = Cause.findErrorOption(taskExit.cause);
+        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(taskExit.cause));
+        // Issue #171: End the run at the first read's question, before the run has records.
+        yield* ui.say("\nINTERRUPTED by the user.");
+        yield* tail(null, yield* store(planned, []));
+        return 130;
+      }
+      const taskRead = taskExit.value;
       if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
-      const { task, tracker, requirements } = taskRead.success;
+      const { task, tracker, requirements, held } = taskRead.success;
 
       // Issue #162: an implementation run decodes its check commands and checks their npm scripts against the project's
       // package.json; a refinement run reads neither setting, so a malformed value never refuses it.
-      if (mode === "refinement") return { config, decisionFormat, task, tracker, requirements, checks: NO_STEP_CHECKS } as const;
+      if (mode === "refinement") return { config, decisionFormat, task, tracker, requirements, held, checks: NO_STEP_CHECKS } as const;
       const checks = stepChecksOf(config);
       if (Result.isFailure(checks)) {
         const { key, path: inside, message } = checks.failure;
@@ -227,7 +250,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       }
       const problems = manifestProblems(listedCommands(checks.success), manifest.value);
       if (problems.length > 0) return yield* halted(describe(new CheckCommandInvalid({ problems })), null, yield* store(planned, []));
-      return { config, decisionFormat, task, tracker, requirements, checks: checks.success } as const;
+      return { config, decisionFormat, task, tracker, requirements, held, checks: checks.success } as const;
     });
     // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
     const rootRef = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
@@ -271,7 +294,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
     const prepared = yield* orFault(prepare, []);
     if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []);
     if (typeof prepared.value === "number") return prepared.value;
-    const { config, decisionFormat, task, tracker, requirements, checks } = prepared.value;
+    const { config, decisionFormat, task, tracker, requirements, held, checks } = prepared.value;
 
     /**
      * The run's directory, its store and its services, raced with the fault (W1-R1-1 of issue #158). The allocation
@@ -324,8 +347,8 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal): Effec
       kind.mode === "refinement"
         ? tracker === null
           ? Effect.die(new Error("a refinement run is started from an item, with its tracker"))
-          : refinementRun(task, start.item, kind.terms).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
-        : (tracker === null ? run(task, checks) : implementationRun(task, start.item, requirements, checks).pipe(Effect.provide(tracker))).pipe(
+          : refinementRun(task, start.item, kind.terms, held).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
+        : (tracker === null ? run(task, checks) : implementationRun(task, start.item, requirements, checks, held).pipe(Effect.provide(tracker))).pipe(
             Effect.provide(context),
             Effect.map((phases) => ({ mode: "implementation", phases }) as const),
           );

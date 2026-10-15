@@ -29,7 +29,7 @@ import { planField, planSubject, planValidation, savePlan, workSubject } from ".
  * records stand, and no state that was not written is claimed. A halted or stopped refinement sets nothing, and the item
  * stays unrefined.
  */
-export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode): Effect.Effect<void, RunError, Services | Tracker> =>
+export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, held: readonly string[] = []): Effect.Effect<void, RunError, Services | Tracker> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -38,6 +38,7 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode): E
     const tracker = yield* Tracker;
     const phase: Phase = { kind: "questions" };
     yield* store.init(task);
+    yield* converseHeld(held);
     yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
     yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", iterationsOf(1)) });
@@ -67,6 +68,13 @@ const writeStep = (tracker: TrackerShape, write: TrackerWrite, env: TrackerRetry
     Effect.catchTag("TrackerWriteFailed", (e) => Effect.fail(new TrackerStepFailed({ item: write.item, step, cause: trackerFailureText(e.error), done, check: e.check }))),
   );
 
+/**
+ * The records of the run's first read of its item, held until conversation.md exists (issue #171, requirements Q3):
+ * written right after it is created, so that the record is in the order of events.
+ */
+const converseHeld = (held: readonly string[]): Effect.Effect<void, RunError, Store> =>
+  Effect.flatMap(Store, (store) => Effect.forEach(held, (markdown) => store.converse(markdown), { discard: true }));
+
 /** The first line of a task: an item's title (taskTextOf puts it first). */
 const firstLine = (task: string): string => task.split("\n")[0] ?? "";
 
@@ -77,11 +85,12 @@ const firstLine = (task: string): string => task.split("\n")[0] ?? "";
  * executes and reviews, and sets the item to implemented when the run finishes. A run that halts or is stopped sets
  * nothing more, and Interloq never moves an item backward. Succeeds with the number of execution phases.
  */
-export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks): Effect.Effect<number, RunError, Services | Tracker | SuiteRunner> =>
+export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks, held: readonly string[] = []): Effect.Effect<number, RunError, Services | Tracker | SuiteRunner> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const tracker = yield* Tracker;
     yield* store.init(task);
+    yield* converseHeld(held);
     yield* store.converse(`${itemStartedLine("implementation", item, firstLine(task))}\n\n`);
     const env = yield* runTrackerEnv;
     const start = stateAtStart("implementation");
