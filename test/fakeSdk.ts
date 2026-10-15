@@ -34,8 +34,9 @@ export const rateLimit = (info: SDKRateLimitInfo, sessionId = "session-1"): SDKM
 /** The assistant's rate_limit error and the failed result that end a call rejected for a usage limit. */
 export const limitError = (): SDKMessage =>
   ({ type: "assistant", error: "rate_limit", message: { content: [{ type: "text", text: "You've hit your session limit" }] } }) as unknown as SDKMessage;
-export const limitResult = (): SDKMessage =>
-  ({ type: "result", subtype: "success", is_error: true, api_error_status: 429, terminal_reason: "api_error", result: "You've hit your session limit", total_cost_usd: 0.1, num_turns: 1 }) as unknown as SDKMessage;
+/** The error result of a usage limit; `text` is its result text, the form of 15 Oct 2026 naming a reset (issue #170). */
+export const limitResult = (text = "You've hit your session limit"): SDKMessage =>
+  ({ type: "result", subtype: "success", is_error: true, api_error_status: 429, terminal_reason: "api_error", result: text, total_cost_usd: 0.1, num_turns: 1 }) as unknown as SDKMessage;
 
 /** The messages of one call, with no callback to the adapter. */
 export const messages = (...list: SDKMessage[]): Script =>

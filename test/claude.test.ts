@@ -25,6 +25,7 @@ import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limit
 import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
+import { timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 
 /** Runs an effect with a Decider that no test here expects to be used, unless a test gives its own. */
 const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape = noDecider): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Decider, decider)));
@@ -797,9 +798,11 @@ test("progress after an api_retry or an assistant error clears it: a later strea
   assert.equal(await failedTag(await planner([throwing(new Error("broke"), [serverError])])), "TransportFault");
 });
 
-test("an api_retry with 429 before an ECONNRESET is ClaudeCallFailed (P1-R1-2)", async () => {
+// P1-R1-2: the rate limit outranks the dropped connection; since issue #170 a rate limit with no reset is a usage limit
+// with no known end, not ClaudeCallFailed.
+test("an api_retry with 429 before an ECONNRESET is UsageLimited, never a TransportFault (P1-R1-2, issue #170)", async () => {
   const retry = { type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 429, error: "rate_limit" } as unknown as SDKMessage;
-  assert.equal(await failedTag(await planner([throwing(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }), [retry])])), "ClaudeCallFailed");
+  assert.equal(await failedTag(await planner([throwing(Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }), [retry])])), "UsageLimited");
 });
 
 test("an api_retry message is notified as AgentReconnecting", async () => {
@@ -1068,19 +1071,34 @@ test("an execution call rejected with a reset waits, resumes its session with th
   assert.equal(fake.ui.notified.filter((e) => e._tag === "UsageLimitWaiting").length, 1);
 });
 
-test("without a reset, or with no rate-limit event at all: planning fails with ClaudeCallFailed and execution is aborted, with no wait", async () => {
+// Issue #170: the refusal of 15 Oct 2026, an error result naming its reset with no rate-limit event at all.
+test("a planning call whose error result names a reset, with no rate-limit event, fails with UsageLimited by that time of day", async () => {
+  const text = "You've hit your session limit · resets 11:10pm (UTC)";
+  const p = await planner([messages(init("session-exec"), limitError(), limitResult(text))]);
+  const result = await run(Effect.result(p.planner.planning("write the plan", schema)));
+  assert.ok(result._tag === "Failure");
+  const limited = result.failure as { _tag: string; reset: unknown; limitType: string | null };
+  assert.deepEqual([limited._tag, limited.reset, limited.limitType], ["UsageLimited", { kind: "timeOfDay", at: timeOfDayIn(text) }, null]);
+});
+
+// Issue #170 (requirement Q2): a usage limit with no usable reset is no longer permanent.
+test("without a reset, or with no rate-limit event at all: planning fails with UsageLimited with no known end, and execution waits 5 minutes and resumes", async () => {
   for (const [resetsAt, rateEvent] of [[undefined, true], [LIMIT_RESET_S, false]] as const) {
     const p = await planner([limitedCall(resetsAt, undefined, rateEvent)]);
     const result = await run(Effect.result(p.planner.planning("write the plan", schema)));
     assert.ok(result._tag === "Failure");
-    assert.equal(tag(result.failure), "ClaudeCallFailed");
-    const e = await planner([limitedCall(resetsAt, undefined, rateEvent)]);
+    assert.equal(tag(result.failure), "UsageLimited");
+    assert.deepEqual((result.failure as { reset: unknown }).reset, { kind: "unknown" });
+    const e = await planner([limitedCall(resetsAt, undefined, rateEvent), messages(init("session-exec"), success(report))]);
     const { clock, sleeps } = steppingClock(LIMIT_START);
     const outcome = await run(e.planner.executing("implement the plan", noReporter).pipe(Effect.provideService(Clock.Clock, clock)));
-    assert.equal(outcome.status, "aborted");
-    assert.deepEqual(sleeps, []);
-    assert.equal(e.sdk.calls.length, 1);
-    assert.ok(!e.ui.notified.some((ev) => ev._tag === "UsageLimitWaiting"));
+    assert.equal(outcome.status, "finished");
+    assert.deepEqual(sleeps, [USAGE_LIMIT_RETRY_SECONDS * 1000]);
+    assert.equal(e.sdk.calls.length, 2);
+    assert.equal(e.sdk.calls[1].prompt, prompts.executionContinuePrompt);
+    assert.equal(e.sdk.calls[1].options.resume, "session-exec");
+    assert.deepEqual(e.ui.asked, []);
+    assert.deepEqual(e.ui.notified.flatMap((ev) => (ev._tag === "UsageLimitWaiting" ? [ev.basis] : [])), [{ kind: "noKnownEnd", attempt: 1 }]);
   }
 });
 

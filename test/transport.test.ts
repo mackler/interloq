@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CONTEXT_TOO_LONG_PATTERN, type ClaudeFailure, classifyClaude, classifyCodex, processEndOf, rejectionOf } from "../src/transport.ts";
+import { timeOfDayIn } from "../src/limitReset.ts";
 
 const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(failure).kind === "transport";
 
@@ -113,11 +114,11 @@ test("rejectionOf: a rejection with a finite positive reset carries it in millis
   assert.equal(rejectionOf({ status: "allowed_warning", resetsAt: RESET_S }), null);
 });
 
-test("Claude: a rejection with a reset beside the rate_limit error is limited, with the instant; without a reset it is permanent", () => {
+test("Claude: a rejection with a reset beside the rate_limit error is limited, with the instant; without a reset it has no known end", () => {
   const withReset = f({ assistantError: "rate_limit", terminalReason: "api_error", rejection: limitedAt(RESET_S) });
   assert.deepEqual(classifyClaude(withReset), { kind: "limited", reset: { kind: "instant", atMs: RESET_S * 1000 }, limitType: "five_hour" });
-  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit", rejection: { kind: "withoutReset", limitType: "five_hour" } })), { kind: "permanent" });
-  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit" })), { kind: "permanent" });
+  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit", rejection: { kind: "withoutReset", limitType: "five_hour" } })), { kind: "limited", reset: { kind: "unknown" }, limitType: "five_hour" });
+  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit" })), { kind: "limited", reset: { kind: "unknown" }, limitType: null });
   assert.deepEqual(classifyClaude(f({ apiStatus: 429, rejection: limitedAt(RESET_S) })).kind, "limited");
 });
 
@@ -126,6 +127,31 @@ test("Claude: other permanent evidence wins over a rejection with a reset; a net
   assert.deepEqual(classifyClaude(f({ apiStatus: 401, rejection: limitedAt(RESET_S) })), { kind: "permanent" });
   assert.equal(classifyClaude(f({ streamCode: "ECONNRESET", rejection: limitedAt(RESET_S) })).kind, "limited");
   assert.equal(classifyClaude(f({ apiStatus: 503, rejection: limitedAt(RESET_S) })).kind, "limited");
+});
+
+// Issue #170: the reset the error result's text names, with no rate-limit event, and a rate limit with no known end.
+const TEXT_15_OCT = "You've hit your session limit · resets 11:10pm (UTC)";
+const AT_15_OCT = timeOfDayIn(TEXT_15_OCT);
+
+test("Claude: the text of 15 Oct 2026 with no event is limited by its time of day, whatever the status and assistant error", () => {
+  assert.ok(AT_15_OCT !== null);
+  for (const apiStatus of [null, 429, 400])
+    for (const assistantError of [null, "rate_limit"])
+      assert.deepEqual(classifyClaude(f({ resultText: TEXT_15_OCT, apiStatus, assistantError, terminalReason: "api_error" })), { kind: "limited", reset: { kind: "timeOfDay", at: AT_15_OCT }, limitType: null }, `${apiStatus} ${assistantError}`);
+});
+
+test("Claude: an event with a reset beside the text gives the event's instant", () => {
+  assert.deepEqual(classifyClaude(f({ resultText: TEXT_15_OCT, assistantError: "rate_limit", rejection: limitedAt(RESET_S) })), { kind: "limited", reset: { kind: "instant", atMs: RESET_S * 1000 }, limitType: "five_hour" });
+});
+
+test("Claude: a rate limit with no usable reset has no known end; other permanent evidence without a reset text stays permanent", () => {
+  const unknown = (limitType: string | null) => ({ kind: "limited", reset: { kind: "unknown" }, limitType });
+  assert.deepEqual(classifyClaude(f({ rejection: { kind: "withoutReset", limitType: "seven_day" } })), unknown("seven_day"));
+  assert.deepEqual(classifyClaude(f({ apiStatus: 429 })), unknown(null));
+  assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit" })), unknown(null));
+  assert.deepEqual(classifyClaude(f({ retrySeen: { status: 429, error: "rate_limit" } })), unknown(null));
+  assert.deepEqual(classifyClaude(f({ assistantError: "billing_error", resultText: "You've hit your session limit" })), { kind: "permanent" });
+  assert.deepEqual(classifyClaude(f({ apiStatus: 400, assistantError: "rate_limit" })), { kind: "permanent" });
 });
 
 // Issue #122: a rejection because the session's history is too long is a kind of its own, checked first.
@@ -184,7 +210,7 @@ test("Claude: permanent evidence, a rejection and the session's length win over 
   assert.equal(classifyClaude(f({ processEnd: bus, assistantError: "billing_error" })).kind, "permanent");
   assert.equal(classifyClaude(f({ processEnd: bus, subtype: "error_max_turns" })).kind, "permanent");
   assert.equal(classifyClaude(f({ processEnd: bus, rejection: { kind: "withReset", resetsAtMs: 5000, limitType: null } })).kind, "limited");
-  assert.equal(classifyClaude(f({ processEnd: bus, rejection: { kind: "withoutReset", limitType: null } })).kind, "permanent");
+  assert.equal(classifyClaude(f({ processEnd: bus, rejection: { kind: "withoutReset", limitType: null } })).kind, "limited");
   assert.equal(classifyClaude(f({ processEnd: bus, resultText: "Prompt is too long" })).kind, "contextTooLong");
 });
 

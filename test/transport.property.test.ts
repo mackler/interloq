@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
 import { type ClaudeFailure, classifyClaude, NETWORK_CODES, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
+import { timeOfDayIn } from "../src/limitReset.ts";
 
 // Issue #68 (issue #66 applies): the classification of a failed Claude Code call over arbitrary facts.
 const RUNS = { numRuns: 500, seed: 20261007 };
@@ -24,7 +25,7 @@ const facts: fc.Arbitrary<ClaudeFailure> = fc.record({
   retrySeen: fc.option(fc.record({ status, error: fc.constantFrom(...PERMANENT_ASSISTANT_ERRORS, "server_error", "unknown") }), { nil: null }),
   subtype: fc.option(fc.constantFrom(...STOPPING, "success", "error_during_execution"), { nil: null }),
   rejection,
-  resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error", "Request too large for the model"), { nil: null }),
+  resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error", "Request too large for the model", "You've hit your session limit · resets 11:10pm (UTC)"), { nil: null }),
   processEnd: fc.option(fc.oneof(fc.record({ kind: fc.constant("signal" as const), signal: fc.constantFrom("SIGBUS", "SIGKILL", "SIGTERM") }), fc.record({ kind: fc.constant("exit" as const), code: fc.integer({ min: 1, max: 255 }) })), { nil: null }),
 });
 /** The failures without a process ending (issue #157): the domain of the properties stated before it. */
@@ -39,6 +40,13 @@ const otherPermanent = (x: ClaudeFailure): boolean =>
   otherPermanentError(x.assistantError) ||
   (x.retrySeen !== null && ((is4xx(x.retrySeen.status) && x.retrySeen.status !== 429) || otherPermanentError(x.retrySeen.error))) ||
   (x.subtype !== null && STOPPING.includes(x.subtype));
+
+/** Issue #170: the error result's text names a reset Interloq reads. */
+const hasTextReset = (x: ClaudeFailure): boolean => x.resultText !== null && timeOfDayIn(x.resultText) !== null;
+/** Issue #170: any evidence of a rate limit: a rejection, a 429, or the rate_limit error, in the result or an api_retry. */
+const rateLimitEvidence = (x: ClaudeFailure): boolean =>
+  x.rejection !== null || x.apiStatus === 429 || x.assistantError === "rate_limit" || (x.retrySeen !== null && (x.retrySeen.status === 429 || x.retrySeen.error === "rate_limit"));
+const withResetEvent = (x: ClaudeFailure): boolean => x.rejection !== null && x.rejection.kind === "withReset";
 
 /** The oracle: the classification before issue #68, which knew no rejection. */
 const transportBefore = (x: ClaudeFailure): boolean => {
@@ -56,16 +64,18 @@ const transportBefore = (x: ClaudeFailure): boolean => {
   );
 };
 
-test("property: limited if and only if the rejection carries a reset and no permanent evidence but the rate limit is present", () => {
+test("property: limited if and only if a reset text, or a rate limit without other permanent evidence; the reset by its source", () => {
   fc.assert(
     fc.property(before157, (x) => {
       const kind = classifyClaude(x);
-      const expected = x.rejection !== null && x.rejection.kind === "withReset" && !otherPermanent(x);
+      const expected = hasTextReset(x) || (!otherPermanent(x) && rateLimitEvidence(x));
       assert.equal(kind.kind === "limited", expected);
-      if (kind.kind === "limited" && x.rejection?.kind === "withReset") {
-        assert.deepEqual(kind.reset, { kind: "instant", atMs: x.rejection.resetsAtMs });
-        assert.equal(kind.limitType, x.rejection.limitType);
-      }
+      if (kind.kind !== "limited") return;
+      if (x.rejection !== null && x.rejection.kind === "withReset") assert.deepEqual(kind.reset, { kind: "instant", atMs: x.rejection.resetsAtMs });
+      else if (hasTextReset(x)) assert.equal(kind.reset.kind, "timeOfDay");
+      else assert.deepEqual(kind.reset, { kind: "unknown" });
+      assert.equal(kind.reset.kind === "instant", withResetEvent(x));
+      assert.equal(kind.limitType, x.rejection?.limitType ?? null);
     }),
     RUNS,
   );
@@ -73,26 +83,28 @@ test("property: limited if and only if the rejection carries a reset and no perm
 
 test("property: permanent evidence other than the rate limit always gives permanent", () => {
   fc.assert(
-    fc.property(facts.filter(otherPermanent), (x) => assert.deepEqual(classifyClaude(x), { kind: "permanent" })),
+    fc.property(facts.filter((x) => otherPermanent(x) && !hasTextReset(x)), (x) => assert.deepEqual(classifyClaude(x), { kind: "permanent" })),
     RUNS,
   );
 });
 
-test("property: without a rejection, the classification is the one before issue #68", () => {
+test("property: without a rejection, a reset text or any rate-limit evidence, the classification is the one before issue #68", () => {
   fc.assert(
     fc.property(before157, (x) => {
       const without = { ...x, rejection: null };
+      fc.pre(!rateLimitEvidence(without) && !hasTextReset(without));
       assert.equal(classifyClaude(without).kind, transportBefore(without) ? "transport" : "permanent");
     }),
     RUNS,
   );
 });
 
-test("property: a rejection without a reset is never retried nor waited for", () => {
+test("property: a rejection without a reset, and no other permanent evidence or reset text, has no known end", () => {
   fc.assert(
     fc.property(facts, (x) => {
       const without = { ...x, rejection: { kind: "withoutReset" as const, limitType: null } };
-      assert.deepEqual(classifyClaude(without), { kind: "permanent" });
+      fc.pre(!otherPermanent(without) && !hasTextReset(without));
+      assert.deepEqual(classifyClaude(without), { kind: "limited", reset: { kind: "unknown" }, limitType: null });
     }),
     RUNS,
   );
@@ -111,9 +123,9 @@ test("property: an error result whose text says the prompt is too long, in any c
   );
 });
 
-test("property: a text without the phrase classifies as no text does, the classification before issue #122", () => {
+test("property: a text with neither the phrase nor a reset classifies as no text does, the classification before issue #122", () => {
   fc.assert(
-    fc.property(facts, (x) => assert.deepEqual(classifyClaude(x), classifyClaude({ ...x, resultText: null }))),
+    fc.property(facts.filter((x) => !hasTextReset(x)), (x) => assert.deepEqual(classifyClaude(x), classifyClaude({ ...x, resultText: null }))),
     RUNS,
   );
 });
@@ -164,7 +176,7 @@ test("a text without the SDK's phrases is no ending", () => {
 // Issue #157: a process ending is classified after the session's length, the permanent evidence and the usage-limit
 // rejections, and before the transport evidence.
 const CONTEXT = /prompt is too long/i;
-const outranks = (x: ClaudeFailure): boolean => otherPermanent(x) || x.rejection !== null || is4xx(x.apiStatus) && x.apiStatus === 429 || x.assistantError === "rate_limit" || (x.retrySeen !== null && (x.retrySeen.status === 429 || x.retrySeen.error === "rate_limit")) || (x.resultText !== null && CONTEXT.test(x.resultText));
+const outranks = (x: ClaudeFailure): boolean => otherPermanent(x) || hasTextReset(x) || x.rejection !== null || is4xx(x.apiStatus) && x.apiStatus === 429 || x.assistantError === "rate_limit" || (x.retrySeen !== null && (x.retrySeen.status === 429 || x.retrySeen.error === "rate_limit")) || (x.resultText !== null && CONTEXT.test(x.resultText));
 
 /** A failure with a process ending and, beside it, transport evidence or none, but nothing that outranks it. */
 const endedOnly: fc.Arbitrary<ClaudeFailure> = fc.record({

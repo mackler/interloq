@@ -1,6 +1,6 @@
 // The classification of the agents' failures (issue #26): the one place where an SDK's failure is inspected to decide
 // whether a retry could fix it. Pure: no I/O, no Effect.
-import type { LimitReset } from "./limitReset.ts";
+import { type LimitReset, timeOfDayIn } from "./limitReset.ts";
 
 /**
  * What src/claudeEvents.ts keeps of a failed Claude Code call. The terminal facts (the result's status, reason and
@@ -27,7 +27,8 @@ export type ClaudeFailure = Readonly<{
 
 /**
  * A usage-limit rejection of Claude Code (issue #68), in its two cases: one that states the instant the limit lifts
- * (milliseconds since the epoch), which the program waits for, and one that does not, which stays permanent.
+ * (milliseconds since the epoch), which the program waits for, and one that does not, a limit with no known end unless
+ * the error result's text names its reset (issue #170).
  */
 export type Rejection =
   | Readonly<{ kind: "withReset"; resetsAtMs: number; limitType: string | null }>
@@ -93,8 +94,8 @@ export const processEndOf = (thrown: unknown): ProcessEnd | null => {
 };
 
 /**
- * What a failed Claude Code call is (issue #68): permanent, a transport fault, a usage limit with a stated reset, a
- * session too long (issue #122), or a process that ended abnormally (issue #157).
+ * What a failed Claude Code call is (issue #68): permanent, a transport fault, a usage limit with its reset as far as it
+ * is known (issues #68 and #170), a session too long (issue #122), or a process that ended abnormally (issue #157).
  */
 export type FailureKind =
   | Readonly<{ kind: "permanent" }>
@@ -161,33 +162,44 @@ const is5xx = (s: number | null): boolean => s !== null && s >= 500 && s <= 599;
 const PERMANENT: FailureKind = { kind: "permanent" };
 const TRANSPORT: FailureKind = { kind: "transport" };
 const CONTEXT_TOO_LONG: FailureKind = { kind: "contextTooLong" };
+const UNKNOWN_RESET: LimitReset = { kind: "unknown" };
 
-/** A rate limit's evidence: a 429, or the rate_limit error. Permanent unless a rejection states its reset (issue #68). */
+/** A rate limit's evidence: a 429, or the rate_limit error. */
 const isRateLimit = (status: number | null, error: string | null): boolean => status === 429 || error === "rate_limit";
 const isOtherPermanentError = (e: string | null): boolean => e !== null && e !== "rate_limit" && PERMANENT_ASSISTANT_ERRORS.includes(e);
 
 /**
- * What a failed Claude Code call is, by the facts kept of it. A rejection because the session is too long is checked
- * first (issue #122), since it usually carries a 4xx status as well; then permanent evidence other than the rate limit;
- * then a usage-limit rejection that states its reset is `limited` (issue #68), whatever else the facts hold; then the
- * rate limit, or a rejection without a reset, is permanent; then a process that ended by a signal or a nonzero exit
- * (issue #157), the call's terminal fact, is `processEnded`; then the transport evidence. `terminalReason` alone is
- * never sufficient. A planning or context call classifies its failure with `processEnd` null (src/claude.ts,
- * `callFailure`), so only an execution call is ever `processEnded`.
+ * What a failed Claude Code call is, by the facts kept of it, in this order of evidence:
+ * 1. A rejection because the session is too long (issue #122), since it usually carries a 4xx status as well.
+ * 2. A reset the error result's text names (issue #170, `timeOfDayIn`): `limited`, by the instant of a rate-limit
+ *    event's reset where one states it, else by the text's time of day. It comes before other permanent evidence
+ *    because the text was the one fact the refusal of 15 Oct 2026 recorded, and its form occurs in no other error.
+ * 3. Permanent evidence other than the rate limit.
+ * 4. A usage-limit rejection that states its reset (issue #68): `limited` with its instant.
+ * 5. A rate limit with no usable reset (a rejection without one, a 429, the rate_limit error, in the result or an
+ *    api_retry): `limited` with no known end (issue #170), where it was permanent before.
+ * 6. A process that ended by a signal or a nonzero exit (issue #157), the call's terminal fact: `processEnded`.
+ * 7. The transport evidence; anything else is permanent.
+ * `terminalReason` alone is never sufficient. A planning or context call classifies its failure with `processEnd` null
+ * (src/claude.ts, `callFailure`), so only an execution call is ever `processEnded`.
  */
 export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
   if (failure === null) return PERMANENT;
   const { streamCode, apiStatus, assistantError, retrySeen, subtype, rejection, resultText } = failure;
   if (resultText !== null && CONTEXT_TOO_LONG_PATTERN.test(resultText)) return CONTEXT_TOO_LONG;
+  const limitType = rejection?.limitType ?? null;
+  const eventReset: LimitReset | null = rejection !== null && rejection.kind === "withReset" ? { kind: "instant", atMs: rejection.resetsAtMs } : null;
+  const textReset = resultText === null ? null : timeOfDayIn(resultText);
+  if (textReset !== null) return { kind: "limited", reset: eventReset ?? { kind: "timeOfDay", at: textReset }, limitType };
   const otherPermanent =
     (is4xx(apiStatus) && !isRateLimit(apiStatus, null)) ||
     isOtherPermanentError(assistantError) ||
     (retrySeen !== null && ((is4xx(retrySeen.status) && !isRateLimit(retrySeen.status, null)) || isOtherPermanentError(retrySeen.error))) ||
     (subtype !== null && STOPPING_SUBTYPES.includes(subtype));
   if (otherPermanent) return PERMANENT;
-  if (rejection !== null && rejection.kind === "withReset") return { kind: "limited", reset: { kind: "instant", atMs: rejection.resetsAtMs }, limitType: rejection.limitType };
+  if (eventReset !== null) return { kind: "limited", reset: eventReset, limitType };
   const rateLimited = rejection !== null || isRateLimit(apiStatus, assistantError) || (retrySeen !== null && isRateLimit(retrySeen.status, retrySeen.error));
-  if (rateLimited) return PERMANENT;
+  if (rateLimited) return { kind: "limited", reset: UNKNOWN_RESET, limitType };
   if (failure.processEnd !== null) return { kind: "processEnded", end: failure.processEnd };
   const transport =
     (streamCode !== null && NETWORK_CODES.includes(streamCode)) ||
