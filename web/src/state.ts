@@ -624,7 +624,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
-      return { ...run, limitWait: { agent: event.agent, limitType: event.limitType, fromMs: event.fromMs, untilMs: event.untilMs }, activity: `${AGENT[event.agent]} — ${usageLimitActivity(event.limitType, event.untilMs)}` };
+      return { ...run, limitWait: { agent: event.agent, limitType: event.limitType, fromMs: event.fromMs, untilMs: event.untilMs }, activity: `${AGENT[event.agent]} — ${usageLimitActivity(event.limitType, event.basis, event.untilMs)}` };
     case "UsageLimitLifted":
       return { ...run, limitWait: null, activity: run.calls.at(-1)?.label ?? "" };
     case "AgentCallEnded": {

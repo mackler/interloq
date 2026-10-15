@@ -15,6 +15,7 @@ import { SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.
 import type { ReviewThread } from "./reviewThread.ts";
 import type { WriteCheck } from "./errors.ts";
 import type { TrackerOperation } from "./trackerRetry.ts";
+import { type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -2489,17 +2490,45 @@ export function limitName(limitType: string | null): string {
 export function utcMinute(ms: number): string {
   return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
-/** The start of a wait for a usage limit, as the page and conversation.md show it (issue #68). */
-export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string | null, untilMs: number): string {
-  return `${agentName(agent)}: ${limitName(limitType)} reached; Interloq waits until ${utcMinute(untilMs)}, then continues`;
+/** The interval of the tries at a usage limit with no known end, in words (issue #170). */
+const RETRY_INTERVAL_TEXT = `${USAGE_LIMIT_RETRY_SECONDS / 60} minutes`;
+/**
+ * The start of a wait for a usage limit, as the page and conversation.md show it (issue #68), by what the wait rests on
+ * (issue #170): a stated reset; a stated reset already past, tried again a minute later; or no stated end, tried every
+ * 5 minutes. Only a stated reset is said to end the limit.
+ */
+export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string | null, basis: LimitWaitBasis, untilMs: number): string {
+  const reached = `${agentName(agent)}: ${limitName(limitType)} reached`;
+  switch (basis.kind) {
+    case "reset":
+      return `${reached}; Interloq waits until ${utcMinute(untilMs)}, then continues`;
+    case "pastReset":
+      return `${reached}; its stated reset, ${utcMinute(basis.namedMs)}, has already passed; Interloq tries again at ${utcMinute(untilMs)}`;
+    case "noKnownEnd":
+      return `${reached} with no stated end; Interloq makes try ${basis.attempt} at ${utcMinute(untilMs)}, and tries every ${RETRY_INTERVAL_TEXT} until ${agentName(agent)} accepts a request`;
+  }
+}
+/** The end of a wait for a usage limit whose end was not stated (issue #170): a try, with no claim that the limit lifted. */
+export function usageLimitTryingAgainLine(agent: "claude" | "codex"): string {
+  return `${agentName(agent)}: trying again after the wait for the usage limit`;
 }
 /** The end of a wait for a usage limit (issue #68). */
 export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
   return `${agentName(agent)}: the usage limit has lifted after ${durationText(waitedMs)}; continuing`;
 }
-/** The page's activity line during a wait for a usage limit (issue #68): what is waited for and until when. */
-export function usageLimitActivity(limitType: string | null, untilMs: number): string {
-  return `${limitName(limitType)} reached — waiting until ${utcMinute(untilMs)}`;
+/**
+ * The page's activity line during a wait for a usage limit (issue #68): what is waited for and until when, by what the
+ * wait rests on (issue #170).
+ */
+export function usageLimitActivity(limitType: string | null, basis: LimitWaitBasis, untilMs: number): string {
+  switch (basis.kind) {
+    case "reset":
+      return `${limitName(limitType)} reached — waiting until ${utcMinute(untilMs)}`;
+    case "pastReset":
+      return `${limitName(limitType)} reached — its stated reset ${utcMinute(basis.namedMs)} has passed; trying again at ${utcMinute(untilMs)}`;
+    case "noKnownEnd":
+      return `${limitName(limitType)} reached, no stated end — try ${basis.attempt} at ${utcMinute(untilMs)}, every ${RETRY_INTERVAL_TEXT}`;
+  }
 }
 /** The time remaining of a wait whose end is known, beside its indicator on the page: a usage limit's (issue #68), a retry's (issue #63). */
 export function remainingTime(remainingMs: number): string {

@@ -228,10 +228,10 @@ test("a usage limit with a reset: one wait until the reset plus the margin, noti
   assert.equal(guards, 1);
   const until = reset + MARGIN_MS;
   assert.deepEqual(ui.notified.filter((e) => e._tag === "UsageLimitWaiting" || e._tag === "UsageLimitLifted" || e._tag === "TransportRecovered"), [
-    { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: START, untilMs: until },
+    { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", basis: { kind: "reset" }, fromMs: START, untilMs: until },
     { _tag: "UsageLimitLifted", agent: "claude", waitedMs: until - START },
   ]);
-  const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", until);
+  const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, until);
   const liftedLine = prompts.usageLimitLiftedLine("claude", until - START);
   assert.ok(ui.said.includes(waitLine), "the wait line was not said");
   assert.ok(conversation().includes(waitLine) && conversation().includes(liftedLine), "the wait is not in conversation.md");
@@ -245,7 +245,7 @@ test("a usage limit with a reset: one wait until the reset plus the margin, noti
 
 test("the wait lines name the limit and the instant it lifts in UTC, and the time waited", () => {
   const until = Date.UTC(2026, 8, 30, 8, 11);
-  assert.equal(prompts.usageLimitWaitLine("claude", "five_hour", until), "Claude Code: five-hour session limit reached; Interloq waits until 2026-09-30 08:11 UTC, then continues");
+  assert.equal(prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, until), "Claude Code: five-hour session limit reached; Interloq waits until 2026-09-30 08:11 UTC, then continues");
   assert.equal(prompts.usageLimitLiftedLine("claude", 9_060_000), "Claude Code: the usage limit has lifted after 2:31:00; continuing");
   assert.equal(prompts.limitName("seven_day"), "weekly limit");
   assert.equal(prompts.limitName(null), "usage limit");

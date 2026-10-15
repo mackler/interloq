@@ -148,6 +148,13 @@ export const PresentedQuestionSchema = Schema.Struct({
   decision: Schema.NullOr(Int),
 });
 
+/** LimitWaitBasis of src/limitReset.ts (issue #170): what a usage limit's wait rests on; a try is counted from 1. */
+const LimitWaitBasisSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("reset") }),
+  Schema.Struct({ kind: Schema.Literal("pastReset"), namedMs: Schema.Finite }),
+  Schema.Struct({ kind: Schema.Literal("noKnownEnd"), attempt: S.PositiveInt }),
+]);
+
 /** UiEvent of src/uiEvents.ts, variant by variant. */
 export const UiEventSchema = Schema.Union([
   tagged("PhaseBegan", { phase: PhaseSchema }),
@@ -167,7 +174,7 @@ export const UiEventSchema = Schema.Union([
   tagged("TransportRecovered", { agent: AgentSchema }),
   tagged("TrackerRetrying", { tracker: Str, what: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
   tagged("TrackerRecovered", { tracker: Str }),
-  tagged("UsageLimitWaiting", { agent: AgentSchema, limitType: Schema.NullOr(Str), fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  tagged("UsageLimitWaiting", { agent: AgentSchema, limitType: Schema.NullOr(Str), basis: LimitWaitBasisSchema, fromMs: Schema.Finite, untilMs: Schema.Finite }),
   tagged("UsageLimitLifted", { agent: AgentSchema, waitedMs: Schema.Finite }),
   tagged("AgentReconnecting", { agent: AgentSchema, by: Schema.Literal("sdk"), attempt: Schema.NullOr(Int), of: Schema.NullOr(Int), delayMs: Schema.NullOr(Int), detail: Str }),
   tagged("InterviewTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),

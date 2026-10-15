@@ -35,7 +35,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   // Issue #171: the tracker's repeats.
   TrackerRetrying: [{ _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 0, untilMs: 30_000 }, /^GitHub: request failed while reading item 155, retry 2 of 5 in 30 s \(no answer\)$/],
   TrackerRecovered: [{ _tag: "TrackerRecovered", tracker: "GitHub" }, /^GitHub: request succeeded$/],
-  UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
+  UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
   UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],
   InterviewTurn: [{ _tag: "InterviewTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],
   TermsBegan: [{ _tag: "TermsBegan" }, /^explanations of terms begun$/],
@@ -90,4 +90,15 @@ test("foreseenPhases: each iteration's suite run follows its Code review, number
   assert.deepEqual(names([{ suite: 1 }]), ["Planning", "Implementation", "Code review", "Full test suite"]);
   assert.deepEqual(names([{ suite: 1 }, { suite: 2 }]), ["Planning 1", "Implementation 1", "Code review 1", "Full test suite 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite 2"]);
   assert.deepEqual(names([{ suite: null }, { suite: 1 }]), ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite"]);
+});
+
+// Issue #170: each basis of a usage limit's wait is described by the prompts' line for it.
+test("describeEvent of a usage limit's wait is usageLimitWaitLine for each basis", () => {
+  for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: 1_800_000 }, { kind: "noKnownEnd", attempt: 3 }] as const) {
+    const event: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", limitType: null, basis, fromMs: 0, untilMs: 300_000 };
+    assert.equal(describeEvent(event), prompts.usageLimitWaitLine("claude", null, basis, 300_000));
+  }
+  assert.match(prompts.usageLimitWaitLine("claude", null, { kind: "pastReset", namedMs: 1_800_000 }, 300_000), /stated reset, 1970-01-01 00:30 UTC, has already passed; Interloq tries again at 1970-01-01 00:05 UTC$/);
+  assert.match(prompts.usageLimitWaitLine("claude", null, { kind: "noKnownEnd", attempt: 3 }, 300_000), /no stated end; Interloq makes try 3 at 1970-01-01 00:05 UTC/);
+  assert.match(prompts.usageLimitWaitLine("claude", null, { kind: "noKnownEnd", attempt: 3 }, 300_000), /every 5 minutes/);
 });

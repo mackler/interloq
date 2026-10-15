@@ -1537,16 +1537,24 @@ describe("a wait for a usage limit", () => {
   const UNTIL = FROM + 9_060_000;
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false };
-  const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: FROM, untilMs: UNTIL };
+  const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
   const lifted: UiEvent = { _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_060_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("the wait sets limitWait, and the activity line names the limit and the instant it lifts", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor)])) {
       expect(s.modes.implementation.run?.limitWait).toEqual({ agent: "claude", limitType: "five_hour", fromMs: FROM, untilMs: UNTIL });
-      expect(s.modes.implementation.run?.activity).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", UNTIL)}`);
+      expect(s.modes.implementation.run?.activity).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`);
       expect(s.modes.implementation.run?.activity).toContain("five-hour session limit");
       expect(s.modes.implementation.run?.activity).toContain("08:03 UTC");
+    }
+  });
+
+  // Issue #170: the activity line of each basis is the prompts' text for that basis (one event gives both sides).
+  test("the activity line of each basis is usageLimitActivity for it", () => {
+    for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: FROM - 60_000 }, { kind: "noKnownEnd", attempt: 2 }] as const) {
+      const event: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", limitType: null, basis, fromMs: FROM, untilMs: UNTIL };
+      for (const s of both([started, notified(call), notified(failed), notified(event)])) expect(s.modes.implementation.run?.activity).toBe(`Claude — ${prompts.usageLimitActivity(event.limitType, event.basis, event.untilMs)}`);
     }
   });
 

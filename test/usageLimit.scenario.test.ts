@@ -28,7 +28,7 @@ test("a plan write that hits a five-hour limit waits until it lifts, resumes, an
   assert.deepEqual(sleeps, [UNTIL - START]);
   assert.equal(probe.planner.prompts.length, 2);
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
-  const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", UNTIL);
+  const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, UNTIL);
   const liftedLine = prompts.usageLimitLiftedLine("claude", UNTIL - START);
   assert.ok(conversation.indexOf(waitLine) >= 0 && conversation.indexOf(waitLine) < conversation.indexOf(liftedLine), "the wait and its end are not in conversation.md in order");
   const waits = fs.readFileSync(path.join(probe.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.kind === "usage_limit_wait");

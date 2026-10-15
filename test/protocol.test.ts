@@ -37,6 +37,12 @@ const block = fc.oneof(
 );
 const shownBlock = fc.oneof(block, fc.record({ kind: fc.constant("document" as const), markdown: text }));
 const explanation = fc.record({ id: text, term: text, senses: fc.array(text, { minLength: 1, maxLength: 2 }) });
+// Issue #170: what a usage limit's wait rests on.
+const limitBasis = fc.oneof(
+  fc.constant({ kind: "reset" as const }),
+  fc.record({ kind: fc.constant("pastReset" as const), namedMs: nat }),
+  fc.record({ kind: fc.constant("noKnownEnd" as const), attempt: fc.integer({ min: 1, max: 1000 }) }),
+);
 const sense = text.filter((t) => t.trim() !== "").map((t) => t as Sense);
 const shownExplanation = fc.record({ id: text, term: text, senses: fc.tuple(sense, fc.array(sense, { maxLength: 1 })).map(([first, rest]): Senses => [first, ...rest]) });
 const pieceOption = fc.record({ label: pieces, description: pieces });
@@ -108,6 +114,9 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   // Issue #171.
   fc.record({ _tag: fc.constant("TrackerRetrying" as const), tracker: text, what: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TrackerRecovered" as const), tracker: text }),
+  // Issue #170: a usage limit's wait with its basis.
+  fc.record({ _tag: fc.constant("UsageLimitWaiting" as const), agent, limitType: fc.option(text, { nil: null }), basis: limitBasis, fromMs: nat, untilMs: nat }),
+  fc.record({ _tag: fc.constant("UsageLimitLifted" as const), agent, waitedMs: nat }),
   // Issue #26: the SDK's own reconnection.
   fc.record({ _tag: fc.constant("AgentReconnecting" as const), agent, by: fc.constant("sdk" as const), attempt: fc.option(nat, { nil: null }), of: fc.option(nat, { nil: null }), delayMs: fc.option(nat, { nil: null }), detail: text }),
   // Issue #6: the phases known of the run.
@@ -406,4 +415,14 @@ test("a PhaseBegan and a PhaseEnded of a Full test suite decode", () => {
     assert.ok(Result.isSuccess(decoded), JSON.stringify(event));
     assert.deepEqual(decoded.success, message);
   }
+});
+
+// Issue #170: a usage limit's wait carries its basis; a try with no known end counts from 1.
+test("a usage limit's wait decodes with each basis, and not with a try numbered 0 or without its basis", () => {
+  const frame = (event: unknown) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
+  const waiting = { _tag: "UsageLimitWaiting", agent: "claude", limitType: null, fromMs: 0, untilMs: 300_000 };
+  for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: 5 }, { kind: "noKnownEnd", attempt: 1 }])
+    assert.deepEqual(decoded(decodeServer(frame({ ...waiting, basis }))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...waiting, basis } } });
+  assert.ok(Result.isFailure(decodeServer(frame({ ...waiting, basis: { kind: "noKnownEnd", attempt: 0 } }))));
+  assert.ok(Result.isFailure(decodeServer(frame(waiting))));
 });
