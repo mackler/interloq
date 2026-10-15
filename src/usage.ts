@@ -24,8 +24,14 @@ export type LimitWait = Readonly<{
   outcome: "lifted" | "elapsed" | "interrupted";
 }>;
 
-/** The lines of usage.jsonl: the calls' usage and the waits. */
-export type UsageLines = Readonly<{ calls: readonly UsageLine[]; waits: readonly LimitWait[] }>;
+/**
+ * One rate-limit notice of a Claude Code request (issue #170, requirement Q3): the session it arrived in, and the SDK's
+ * rate_limit_info as the SDK gave it, whole, so that a field a later SDK adds is kept too.
+ */
+export type RateLimitNotice = Readonly<{ session: string | null; info: Readonly<Record<string, unknown>> }>;
+
+/** The lines of usage.jsonl: the calls' usage, the waits, and the rate-limit notices (issue #170). */
+export type UsageLines = Readonly<{ calls: readonly UsageLine[]; waits: readonly LimitWait[]; notices: readonly RateLimitNotice[] }>;
 
 export type UsageSummary = Readonly<{
   claudeCalls: number;
@@ -44,7 +50,8 @@ export type UsageSummary = Readonly<{
   lastInterrupted: boolean;
 }>;
 
-export const summarizeUsage = ({ calls: lines, waits }: UsageLines): UsageSummary => {
+/** The summary of the calls and the waits; the rate-limit notices count for nothing in it (issue #170). */
+export const summarizeUsage = ({ calls: lines, waits }: Pick<UsageLines, "calls" | "waits">): UsageSummary => {
   const claude = lines.flatMap((l) => (l.agent === "claude" ? [l] : []));
   const codex = lines.flatMap((l) => (l.agent === "codex" ? [l] : []));
   // The Agent SDK's total is the running total of a session, so a session counts its last value;

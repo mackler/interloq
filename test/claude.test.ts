@@ -1071,6 +1071,21 @@ test("an execution call rejected with a reset waits, resumes its session with th
   assert.equal(fake.ui.notified.filter((e) => e._tag === "UsageLimitWaiting").length, 1);
 });
 
+// Issue #170 (requirement Q3): every rate-limit notice of every request, successful or failed, is a line of usage.jsonl.
+test("the rate-limit notices of a successful and a failed call are written to usage.jsonl with the session and the info as sent", async () => {
+  const allowed = { status: "allowed" as const, resetsAt: 1_792_000_000, rateLimitType: "five_hour" as const, utilization: 0.4 };
+  const warning = { status: "allowed_warning" as const, resetsAt: 1_792_000_000, rateLimitType: "seven_day" as const, utilization: 0.92 };
+  const rejected = { status: "rejected" as const, rateLimitType: "five_hour" as const };
+  const fake = await planner([
+    messages(init("session-ok"), rateLimit(allowed), rateLimit(warning), success({ questions_for_user: [] })),
+    messages(init("session-ok"), rateLimit(rejected), limitError(), limitResult()),
+  ]);
+  await run(fake.planner.planning("write the plan", schema));
+  await run(Effect.result(fake.planner.planning("write the plan again", schema)));
+  const notices = fs.readFileSync(path.join(fake.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.kind === "rate_limit_event");
+  assert.deepEqual(notices.map(({ time: _time, ...rest }) => rest), [allowed, warning, rejected].map((info) => ({ version: 2, kind: "rate_limit_event", agent: "claude", session: "session-ok", rate_limit_info: info })));
+});
+
 // Issue #170: the refusal of 15 Oct 2026, an error result naming its reset with no rate-limit event at all.
 test("a planning call whose error result names a reset, with no rate-limit event, fails with UsageLimited by that time of day", async () => {
   const text = "You've hit your session limit · resets 11:10pm (UTC)";

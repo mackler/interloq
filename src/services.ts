@@ -13,7 +13,7 @@ import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcom
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
-import type { LimitWait, UsageLine, UsageLines } from "./usage.ts";
+import type { LimitWait, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
@@ -183,6 +183,8 @@ export interface StoreShape {
   usageLines(): Effect.Effect<UsageLines, StoreError>;
   /** One wait for a usage limit, as actually spent (issue #68), appended to usage.jsonl when the wait ends. */
   recordLimitWait(wait: LimitWait): Effect.Effect<void, StoreError>;
+  /** One rate-limit notice of a Claude Code request, appended to usage.jsonl as it arrives (issue #170). */
+  recordRateLimit(notice: RateLimitNotice): Effect.Effect<void, StoreError>;
   /**
    * The hash of what a subject's rounds observe (behaviour 7): the reviewed file's content; for a work review the
    * diff recomputed from the baseline and the current tree (Q14). "" when it does not exist.

@@ -374,6 +374,10 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
                 if (show === "tools") yield* ui.say(`  [claude: ${block.name} ${target}]`);
               }
             }
+          } else if (message.type === "rate_limit_event") {
+            // Issue #170 (requirement Q3): every notice of every request, kept whole, so that a later refusal shows
+            // which notices arrived.
+            yield* store.recordRateLimit({ session: yield* Ref.get(session), info: message.rate_limit_info });
           } else if (message.type === "system" && message.subtype === "api_retry") {
             // Issue #26: the SDK's own retry of a failed request, invisible until now.
             yield* ui.notify({ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: message.attempt, of: message.max_retries, delayMs: message.retry_delay_ms, detail: prompts.apiRetryDetail(message.error_status, message.error) });

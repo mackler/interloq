@@ -435,3 +435,23 @@ test("a record is replaced atomically: a failure between the temporary file and 
   assert.ok(fs.readdirSync(s.dir).some((n) => n.includes(".tmp-")), "the temporary file of the failed write was expected to remain");
   assert.equal((await Effect.runPromise(s.usageLines())).calls.length, 0);
 });
+
+// Issue #170 (requirement Q3): every rate-limit notice of a Claude Code request is a line of usage.jsonl, its info whole.
+test("recordRateLimit appends a rate_limit_event line, and usageLines returns notices, calls and waits each in its place", async () => {
+  const s = await initialised();
+  const from = Date.UTC(2026, 9, 15, 0, 57);
+  const info = { status: "allowed_warning", resetsAt: 1_792_000_000, rateLimitType: "five_hour", utilization: 0.91, isUsingOverage: false, someFieldOfALaterSdk: { nested: [1, 2] } };
+  const wait = { agent: "claude" as const, limitType: null, basis: "noKnownEnd" as const, fromMs: from, untilMs: from + 300_000, endedMs: from + 300_000, outcome: "elapsed" as const };
+  await Effect.runPromise(s.recordRateLimit({ session: "s-1", info }));
+  await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s-1", turns: 1, totalCostUsd: 0.5 }));
+  await Effect.runPromise(s.recordLimitWait(wait));
+  await Effect.runPromise(s.recordRateLimit({ session: null, info: { status: "rejected" } }));
+  const lines = fs.readFileSync(path.join(s.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  const { time, ...first } = lines[0] ?? {};
+  assert.equal(typeof time, "string");
+  assert.deepEqual(first, { version: 2, kind: "rate_limit_event", agent: "claude", session: "s-1", rate_limit_info: info });
+  const read = await Effect.runPromise(s.usageLines());
+  assert.deepEqual(read.notices, [{ session: "s-1", info }, { session: null, info: { status: "rejected" } }]);
+  assert.deepEqual(read.calls, [{ agent: "claude", session: "s-1", turns: 1, totalCostUsd: 0.5 }]);
+  assert.deepEqual(read.waits, [wait]);
+});

@@ -15,7 +15,7 @@ import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
-import type { LimitWait, UsageLine } from "./usage.ts";
+import type { LimitWait, RateLimitNotice, UsageLine } from "./usage.ts";
 
 /**
  * The store of one run of one project (issue #120): its records are under <project>/plan-review/<root>/, a root that
@@ -287,11 +287,15 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       /** The usage lines of either version in their per-agent shape (src/usage.ts folds them); no file gives none. */
       usageLines: () =>
         Effect.gen(function* () {
-          if (!(yield* exists(usageFile))) return { calls: [], waits: [] };
+          if (!(yield* exists(usageFile))) return { calls: [], waits: [], notices: [] };
           const records = yield* Effect.fromResult(readUsage(usageFile, yield* readText(usageFile)));
+          // Each record in its place by its kind; a call's line has none (issue #170).
           const waits = records.flatMap((r): LimitWait[] =>
-            "kind" in r ? [{ agent: r.agent, limitType: r.limit_type, basis: r.basis, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until), endedMs: Date.parse(r.ended), outcome: r.outcome }] : [],
+            "kind" in r && r.kind === "usage_limit_wait"
+              ? [{ agent: r.agent, limitType: r.limit_type, basis: r.basis, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until), endedMs: Date.parse(r.ended), outcome: r.outcome }]
+              : [],
           );
+          const notices = records.flatMap((r): RateLimitNotice[] => ("kind" in r && r.kind === "rate_limit_event" ? [{ session: r.session, info: r.rate_limit_info }] : []));
           const calls = records.flatMap((r): UsageLine[] =>
             "kind" in r
               ? []
@@ -299,13 +303,19 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
                 ? [{ agent: "claude", session: r.session, turns: r.num_turns, totalCostUsd: r.total_cost_usd }]
                 : [{ agent: "codex", thread: r.thread, inputTokens: r.input_tokens, outputTokens: r.output_tokens }],
           );
-          return { calls, waits };
+          return { calls, waits, notices };
         }),
       /** A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one. */
       recordLimitWait: (wait) =>
         Effect.gen(function* () {
           const iso = (ms: number) => new Date(ms).toISOString();
           const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait", agent: wait.agent, time: yield* now, limit_type: wait.limitType, basis: wait.basis, from: iso(wait.fromMs), until: iso(wait.untilMs), ended: iso(wait.endedMs), outcome: wait.outcome };
+          yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
+        }),
+      /** A rate-limit notice of a Claude Code request, its info whole (issue #170). */
+      recordRateLimit: (notice) =>
+        Effect.gen(function* () {
+          const record: UsageRecord = { version: VERSION, kind: "rate_limit_event", agent: "claude", time: yield* now, session: notice.session, rate_limit_info: notice.info };
           yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
         }),
       fileHash: (subject) =>

@@ -4,7 +4,7 @@ import { callCosts, costWarningOf, renderUsage, summarizeUsage, type LimitWait, 
 
 // Findings 9 and 27 of docs/functional-design-review.md; decision Q8 (unknown sessions counted separately).
 const claude = (session: string | null, totalCostUsd: number, turns = 1): UsageLine => ({ agent: "claude", session, turns, totalCostUsd });
-const only = (calls: readonly UsageLine[]): UsageLines => ({ calls, waits: [] });
+const only = (calls: readonly UsageLine[]): UsageLines => ({ calls, waits: [], notices: [] });
 const noWaits = { limitWaits: 0, waitedMs: 0, lastInterrupted: false };
 const codex = (inputTokens: number, outputTokens: number): UsageLine => ({ agent: "codex", thread: "t", inputTokens, outputTokens });
 
@@ -58,6 +58,14 @@ test("summarizeUsage: an elapsed wait counts and sums like a lifted one", () => 
   assert.deepEqual(elapsed, lifted);
   assert.equal(elapsed.limitWaits, 2);
   assert.equal(elapsed.waitedMs, 600_000);
+});
+
+// Issue #170: the rate-limit notices change no count, cost or wait.
+test("summarizeUsage, callCosts and costWarningOf ignore the rate-limit notices", () => {
+  const calls: UsageLine[] = [{ agent: "claude", session: "s", turns: 2, totalCostUsd: 1 }, { agent: "claude", session: "s", turns: 1, totalCostUsd: 9 }];
+  const notices = [{ session: "s", info: { status: "rejected", resetsAt: 5 } }, { session: null, info: { status: "allowed" } }];
+  const lines: UsageLines = { calls, waits: [], notices };
+  assert.deepEqual(summarizeUsage(lines), summarizeUsage({ calls, waits: [] }));
 });
 
 // Issue #122: the cost of each Claude Code call, attributed to its session, and the warning it decides.

@@ -518,7 +518,19 @@ export const LimitWaitUsage = Schema.Struct({
   ended: Schema.String,
   outcome: Schema.Literals(LIMIT_WAIT_OUTCOMES),
 });
-export const UsageRecord = Schema.Union([LimitWaitUsage, ClaudeUsage, CodexUsage]);
+/**
+ * One rate-limit notice of a Claude Code request (issue #170, requirement Q3): the SDK's rate_limit_info kept whole as
+ * the SDK gave it (SDKRateLimitInfo: status, resetsAt, rateLimitType, utilization, the overage fields and the rest).
+ */
+export const RateLimitNoticeUsage = Schema.Struct({
+  version: Schema.Literal(2),
+  kind: Schema.Literal("rate_limit_event"),
+  agent: Schema.Literal("claude"),
+  time: Schema.String,
+  session: Schema.NullOr(Schema.String),
+  rate_limit_info: Schema.Record(Schema.String, Schema.Unknown),
+});
+export const UsageRecord = Schema.Union([LimitWaitUsage, RateLimitNoticeUsage, ClaudeUsage, CodexUsage]);
 
 // The types, under the names the program used before the schemas existed.
 export type Severity = typeof Severity.Type;
