@@ -400,6 +400,13 @@ export const Config = Schema.Struct({
   /** The wait before the first retry in seconds; it doubles on each further retry. */
   transportRetryDelaySeconds: Schema.Finite.check(Schema.isGreaterThan(0)),
   /**
+   * Issue #171 (requirements Q1): the repeats of a tracker request that failed for want of an answer or with a server
+   * error, before the developer is asked. `maxTransportRetries` and `transportRetryDelaySeconds` govern the agents alone.
+   */
+  maxTrackerRetries: PositiveInt,
+  /** Issue #171: the wait before a tracker request's first repeat in seconds; it doubles on each further repeat. */
+  trackerRetryDelaySeconds: Schema.Finite.check(Schema.isGreaterThan(0)),
+  /**
    * Issue #122: the amount in US dollars above which one Claude Code request's cost (the growth of its session's running
    * total) is warned about on the page and in conversation.md.
    */
@@ -585,6 +592,8 @@ export const defaultConfig: Config = {
   maxIdleRounds: 2,
   maxTransportRetries: 3,
   transportRetryDelaySeconds: 5,
+  maxTrackerRetries: 5,
+  trackerRetryDelaySeconds: 15,
   costWarningUsd: 5,
   codexTurnInputLimit: 500_000,
   countMinor: true,

@@ -11,9 +11,13 @@ import { plainPieces } from "./pieces.ts";
 import type { Config } from "./schema.ts";
 import { type Decider, RunConfig, Store, Ui } from "./services.ts";
 
+/** The waits before repeat 1, 2, …, count in seconds: the first wait, doubled on each further repeat (issues #26, #171). */
+export const backoffDelays = (count: number, firstSeconds: number): readonly number[] =>
+  Array.from({ length: count }, (_, k) => firstSeconds * 2 ** k);
+
 /** The waits before retry 1, 2, …, maxTransportRetries in seconds: the configured delay, doubled on each retry. */
 export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transportRetryDelaySeconds">): readonly number[] =>
-  Array.from({ length: config.maxTransportRetries }, (_, k) => config.transportRetryDelaySeconds * 2 ** k);
+  backoffDelays(config.maxTransportRetries, config.transportRetryDelaySeconds);
 
 /**
  * The margin added to a usage limit's stated reset (issue #68): the wait lasts until the reset plus this, and never less

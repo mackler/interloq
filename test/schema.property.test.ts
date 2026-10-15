@@ -21,6 +21,8 @@ const arbConfig = record<S.Config>({
   maxIdleRounds: positiveInt,
   maxTransportRetries: positiveInt,
   transportRetryDelaySeconds: fc.double({ min: Number.MIN_VALUE, max: 1e6, noNaN: true, noDefaultInfinity: true }),
+  maxTrackerRetries: positiveInt,
+  trackerRetryDelaySeconds: fc.double({ min: Number.MIN_VALUE, max: 1e6, noNaN: true, noDefaultInfinity: true }),
   costWarningUsd: fc.double({ min: Number.MIN_VALUE, max: 1e6, noNaN: true, noDefaultInfinity: true }),
   codexTurnInputLimit: positiveInt,
   countMinor: fc.boolean(),
