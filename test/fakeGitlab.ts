@@ -82,21 +82,24 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
   const stub = makeStub(server.handler);
   const token = Result.getOrThrow(gitlabCredential({ INTERLOQ_GITLAB_TOKEN: "glpat-FAKE" }));
   const adapter = Effect.runSync(gitlabTracker({ kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS }, token).pipe(Effect.provide(stub.layer)));
-  const failures = Effect.runSync(Ref.make<readonly (readonly [TrackerOperation, TrackerError])[]>([]));
+  type Scripted = Readonly<{ operation: TrackerOperation; error: TrackerError; when: "before" | "after" }>;
+  const failures = Effect.runSync(Ref.make<readonly Scripted[]>([]));
   const reads = Effect.runSync(Ref.make<readonly ItemId[]>([]));
-  const scripted = (operation: TrackerOperation): Effect.Effect<void, TrackerError> =>
+  const scriptedAt = (operation: TrackerOperation, when: Scripted["when"]): Effect.Effect<void, TrackerError> =>
     Effect.flatMap(
-      Ref.modify(failures, (fs): readonly [TrackerError | null, readonly (readonly [TrackerOperation, TrackerError])[]] => {
-        const i = fs.findIndex(([op]) => op === operation);
-        return i < 0 ? [null, fs] : [fs[i][1], fs.filter((_, j) => j !== i)];
+      Ref.modify(failures, (fs): readonly [TrackerError | null, readonly Scripted[]] => {
+        const i = fs.findIndex((f) => f.operation === operation && f.when === when);
+        return i < 0 ? [null, fs] : [fs[i].error, fs.filter((_, j) => j !== i)];
       }),
       (error) => (error === null ? Effect.void : Effect.fail(error)),
     );
+  const scripted = (operation: TrackerOperation) => scriptedAt(operation, "before");
+  const after = (operation: TrackerOperation) => scriptedAt(operation, "after");
   const tracker: TrackerShape = {
     list: (state) => Effect.andThen(scripted("list"), adapter.list(state)),
     read: (id) => Effect.andThen(Ref.update(reads, (rs) => [...rs, id]), Effect.andThen(scripted("read"), adapter.read(id))),
-    writeRefinement: (id, refinement) => Effect.andThen(scripted("writeRefinement"), adapter.writeRefinement(id, refinement)),
-    setState: (id, state) => Effect.andThen(scripted("setState"), adapter.setState(id, state)),
+    writeRefinement: (id, refinement) => Effect.andThen(scripted("writeRefinement"), Effect.andThen(adapter.writeRefinement(id, refinement), after("writeRefinement"))),
+    setState: (id, state) => Effect.andThen(scripted("setState"), Effect.andThen(adapter.setState(id, state), after("setState"))),
   };
   const items = Effect.sync((): readonly FakeItem[] =>
     [...server.issues().values()].flatMap((issue) => {
@@ -108,7 +111,8 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     tracker,
     items,
     reads: Ref.get(reads),
-    failNext: (operation, error) => Ref.update(failures, (fs) => [...fs, [operation, error] as const]),
+    failNext: (operation, error) => Ref.update(failures, (fs): readonly Scripted[] => [...fs, { operation, error, when: "before" }]),
+    failAfterNext: (operation, error) => Ref.update(failures, (fs): readonly Scripted[] => [...fs, { operation, error, when: "after" }]),
     sent: stub.sent,
     close: server.close,
     server,

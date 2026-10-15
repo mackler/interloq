@@ -54,3 +54,18 @@ test("a scripted failure fails the next call of that operation alone", async () 
   assert.equal((await run(tracker.list("unrefined"))).length, 2);
   assert.equal((await run(tracker.read(id("1")))).id, "1");
 });
+
+// Issue #171: a write the tracker applied and then answered with a server error, as GitLab did with PUT 98 on 14 Oct 2026.
+test("a failure after the next write applies the write, then fails it, once", async () => {
+  const { tracker, failAfterNext } = await run(makeFakeTracker(ITEMS));
+  const error = new TrackerUnreachable({ tracker: "GitHub", message: "answered 500", status: 500 });
+  await run(failAfterNext("writeRefinement", error));
+  const r = Result.getOrThrow(refinementOf("the requirements"));
+  assert.equal(await run(Effect.flip(tracker.writeRefinement(id("1"), r))), error);
+  assert.ok((await run(tracker.read(id("1")))).body.includes("the requirements"));
+  await run(failAfterNext("setState", error));
+  assert.equal(await run(Effect.flip(tracker.setState(id("1"), "refined"))), error);
+  assert.equal((await run(tracker.read(id("1")))).state, "refined");
+  await run(tracker.setState(id("1"), "implementing"));
+  assert.equal((await run(tracker.read(id("1")))).state, "implementing");
+});

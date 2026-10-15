@@ -17,21 +17,27 @@ export type FakeTracker = Readonly<{
   reads: Effect.Effect<readonly ItemId[]>;
   /** The next call of `operation` fails with `error`, once. */
   failNext: (operation: TrackerOperation, error: TrackerError) => Effect.Effect<void>;
+  /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied). */
+  failAfterNext: (operation: "writeRefinement" | "setState", error: TrackerError) => Effect.Effect<void>;
 }>;
 
-type State = Readonly<{ items: readonly FakeItem[]; failures: readonly (readonly [TrackerOperation, TrackerError])[]; reads: readonly ItemId[] }>;
+/** A scripted failure: before the operation changes anything, or after a write applied its change (issue #171). */
+type Scripted = Readonly<{ operation: TrackerOperation; error: TrackerError; when: "before" | "after" }>;
+type State = Readonly<{ items: readonly FakeItem[]; failures: readonly Scripted[]; reads: readonly ItemId[] }>;
 
 export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<FakeTracker> =>
   Effect.map(Ref.make<State>({ items: initial, failures: [], reads: [] }), (ref) => {
-    /** The scripted failure of this operation, taken, or none. */
-    const scripted = (operation: TrackerOperation): Effect.Effect<void, TrackerError> =>
+    /** The scripted failure of this operation at this moment, taken, or none. */
+    const scriptedAt = (operation: TrackerOperation, when: Scripted["when"]): Effect.Effect<void, TrackerError> =>
       Effect.flatMap(
         Ref.modify(ref, (s): readonly [TrackerError | null, State] => {
-          const i = s.failures.findIndex(([op]) => op === operation);
-          return i < 0 ? [null, s] : [s.failures[i][1], { ...s, failures: s.failures.filter((_, j) => j !== i) }];
+          const i = s.failures.findIndex((f) => f.operation === operation && f.when === when);
+          return i < 0 ? [null, s] : [s.failures[i].error, { ...s, failures: s.failures.filter((_, j) => j !== i) }];
         }),
         (error) => (error === null ? Effect.void : Effect.fail(error)),
       );
+    const scripted = (operation: TrackerOperation) => scriptedAt(operation, "before");
+    const after = (operation: TrackerOperation) => scriptedAt(operation, "after");
     const find = (id: ItemId): Effect.Effect<FakeItem, TrackerError> =>
       Effect.flatMap(Ref.get(ref), (s) => {
         const item = s.items.find((i) => i.id === id);
@@ -49,13 +55,15 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
           const body = withRefinement(item.body, refinement);
           if (Result.isFailure(body)) return yield* Effect.fail(new TrackerBodyInvalid({ id, message: body.failure.reason }));
           yield* replace({ ...item, body: body.success });
+          yield* after("writeRefinement");
         }),
-      setState: (id, state) => Effect.andThen(scripted("setState"), Effect.flatMap(find(id), (item) => replace({ ...item, state }))),
+      setState: (id, state) => Effect.andThen(scripted("setState"), Effect.flatMap(find(id), (item) => Effect.andThen(replace({ ...item, state }), after("setState")))),
     };
     return {
       tracker,
       items: Effect.map(Ref.get(ref), (s) => s.items),
       reads: Effect.map(Ref.get(ref), (s) => s.reads),
-      failNext: (operation, error) => Ref.update(ref, (s) => ({ ...s, failures: [...s.failures, [operation, error] as const] })),
+      failNext: (operation, error) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "before" }] })),
+      failAfterNext: (operation, error) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "after" }] })),
     };
   });
