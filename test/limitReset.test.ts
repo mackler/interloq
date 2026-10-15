@@ -52,6 +52,33 @@ test("any other form is not read", () => {
     assert.equal(timeOfDayIn(text), null, text);
 });
 
+test("a text with anything after the zone, a digit before the reset, or a date word is not read (W2-R1-1)", () => {
+  for (const text of [
+    "You've hit your session limit · resets 11:10pm (UTC) on Oct 16, 2026",
+    "You've hit your session limit · resets 11:10pm (UTC), Oct 16",
+    "You've hit your session limit · resets 11:10pm (UTC) tomorrow",
+    "Oct 16 · resets 11:10pm (UTC)",
+    "16 Oct · resets 11:10pm (UTC)",
+    "03-04 · resets 11:10pm (UTC)",
+    "2026-10-16: resets 11:10pm (UTC)",
+    "10/16 resets 11:10pm (UTC)",
+    "October · resets 11:10pm (UTC)",
+    "Friday · resets 11:10pm (UTC)",
+    "Tomorrow · resets 11:10pm (UTC)",
+  ])
+    assert.equal(timeOfDayIn(text), null, text);
+});
+
+test("the observed form is read with a final period or trailing whitespace, after prose, and with a zone carrying digits", () => {
+  const utc = { hour: 23, minute: 10, zone: "UTC" };
+  assert.deepEqual(read(`${TEXT_15_OCT}.`), utc);
+  assert.deepEqual(read(`${TEXT_15_OCT}\n`), utc);
+  assert.deepEqual(read(`${TEXT_15_OCT}   `), utc);
+  assert.deepEqual(read("You may retry later · resets 11:10pm (UTC)"), utc);
+  assert.deepEqual(read("You've hit your session limit · resets 11:10pm (Etc/GMT+5)"), { hour: 23, minute: 10, zone: "Etc/GMT+5" });
+  assert.deepEqual(read("You've hit your session limit · resets 11:10pm (Etc/GMT-3)"), { hour: 23, minute: 10, zone: "Etc/GMT-3" });
+});
+
 test("timeZoneOf and clockTimeOf refuse what is not a zone or a time", () => {
   assert.ok(Result.isSuccess(timeZoneOf("UTC")));
   assert.ok(Result.isSuccess(timeZoneOf("Europe/Berlin")));

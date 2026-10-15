@@ -5,7 +5,7 @@ import fc from "fast-check";
 import { instantOn, NO_LIMIT_WAIT, planLimitWait, timeOfDayIn, USAGE_LIMIT_MARGIN_SECONDS } from "../src/limitReset.ts";
 
 const RUNS = { numRuns: 300, seed: 20261015 };
-const ZONES = ["UTC", "Asia/Kolkata", "America/New_York"] as const;
+const ZONES = ["UTC", "Asia/Kolkata", "America/New_York", "Etc/GMT+5"] as const;
 const DAY_MS = 24 * 3600 * 1000;
 
 const arbTime = fc.record({
@@ -33,6 +33,31 @@ test("a text in the recognized form reads back to its time and zone", () => {
       const at = timeOfDayIn(textOf(t, zone));
       assert.ok(at !== null);
       assert.deepEqual({ hour: at.time.hour, minute: at.time.minute, zone: at.zone as string }, { hour: hour24(t), minute: t.minute, zone });
+    }),
+    RUNS,
+  );
+});
+
+test("the recognized form followed by anything but whitespace or one final period is not read", () => {
+  const arbSuffix = fc
+    .tuple(fc.constantFrom(" ", ","), fc.string({ minLength: 1, maxLength: 20 }))
+    .map(([lead, rest]) => lead + rest)
+    .filter((s) => !/^\s*\.?\s*$/.test(s));
+  fc.assert(
+    fc.property(arbTime, fc.constantFrom(...ZONES), arbSuffix, (t, zone, suffix) => {
+      assert.equal(timeOfDayIn(textOf(t, zone) + suffix), null);
+    }),
+    RUNS,
+  );
+});
+
+test("a digit anywhere before the reset makes the text unread", () => {
+  const arbPrefix = fc
+    .tuple(fc.string({ maxLength: 15 }), fc.integer({ min: 0, max: 9 }), fc.string({ maxLength: 15 }))
+    .map(([a, d, b]) => `${a}${d}${b} · `);
+  fc.assert(
+    fc.property(arbTime, fc.constantFrom(...ZONES), arbPrefix, (t, zone, prefix) => {
+      assert.equal(timeOfDayIn(prefix + textOf(t, zone).replace("You've hit your session limit · ", "")), null);
     }),
     RUNS,
   );

@@ -49,15 +49,25 @@ export type LimitReset =
 
 /**
  * The one form of a reset in an error result's text that Interloq reads, the form seen on 15 Oct 2026:
- * `resets <h>:<mm>am|pm (<zone>)`, the meridiem in any case. A form with a date does not match, since a date stands
- * between "resets" and the time.
+ * `resets <h>:<mm>am|pm (<zone>)`, the meridiem in any case. It is read only where it ends the text (trailing
+ * whitespace and one final period allowed), no digit stands before it and the text has no date word
+ * (`DATE_WORD_PATTERN`), so that nothing that may name a day is discarded. The zone may carry digits (`Etc/GMT+5`),
+ * since timeZoneOf validates it as a zone. Any other text falls to the 5-minute retry of a limit with no known end.
  */
-export const RESET_TEXT_PATTERN = /\bresets (\d{1,2}):(\d{2})(am|pm) \(([^()\s]+)\)/i;
+export const RESET_TEXT_PATTERN = /\bresets (\d{1,2}):(\d{2})(am|pm) \(([^()\s]+)\)\s*\.?\s*$/i;
+
+/**
+ * A word that may name a day: a month's name or abbreviation other than "may", which is an ordinary English word (a
+ * date with May carries a day number, which the digit rule refuses), a weekday's, and today, tomorrow, yesterday.
+ */
+export const DATE_WORD_PATTERN =
+  /\b(?:jan|january|feb|february|mar|march|apr|april|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december|mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday|today|tomorrow|yesterday)\b/i;
 
 /** The time of day and zone an error result's text names as its reset, or null for any other text. */
 export const timeOfDayIn = (text: string): TimeOfDay | null => {
   const m = RESET_TEXT_PATTERN.exec(text);
   if (m === null || m[1] === undefined || m[2] === undefined || m[3] === undefined || m[4] === undefined) return null;
+  if (/\d/.test(text.slice(0, m.index)) || DATE_WORD_PATTERN.test(text)) return null;
   const time = clockTimeOf(Number(m[1]), Number(m[2]), m[3].toLowerCase() as Meridiem);
   const zone = timeZoneOf(m[4]);
   return Result.isSuccess(time) && Result.isSuccess(zone) ? { time: time.success, zone: zone.success } : null;
