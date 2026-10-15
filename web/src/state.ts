@@ -136,7 +136,8 @@ export type RunView = Readonly<{
    * The program's retry of a transport fault while it lasts (issue #26): shown on the activity line with the retried call
    * of its agent; every call's end clears it (W1-R1-3).
    */
-  retry: Readonly<{ agent: "claude" | "codex"; text: string; wait: Countdown | null }> | null;
+  /** A retry while it lasts: an agent's call (issue #26), or a request to the tracker (issue #171), which no agent call is. */
+  retry: Readonly<{ agent: "claude" | "codex" | "tracker"; text: string; wait: Countdown | null }> | null;
   /** A wait for a usage limit while it lasts (issue #68): from its start to its scheduled end, both known. */
   limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
@@ -614,10 +615,13 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "TransportRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
-    // Issue #171: the tracker's repeats; the page shows them from S6 of the plan.
-    case "TrackerRetrying":
+    // Issue #171: a tracker request's repeat, counted down like an agent's retry and named by its tracker.
+    case "TrackerRetrying": {
+      const text = retryActivity(event.attempt, event.of, event.fault);
+      return { ...run, retry: { agent: "tracker", text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${event.tracker} — ${text}` };
+    }
     case "TrackerRecovered":
-      return run;
+      return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
       return { ...run, limitWait: { agent: event.agent, limitType: event.limitType, fromMs: event.fromMs, untilMs: event.untilMs }, activity: `${AGENT[event.agent]} — ${usageLimitActivity(event.limitType, event.untilMs)}` };

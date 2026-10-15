@@ -1833,6 +1833,18 @@ describe("the countdown of a retry's wait", () => {
     }
     for (const s of both([started, notified(call), notified(failed), notified(retrying), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(s.modes.implementation.run?.retry).toBe(null);
   });
+  // Issue #171: a tracker request's repeat is counted down the same way, named by its tracker.
+  test("a TrackerRetrying sets the wait and an activity naming the tracker; TrackerRecovered clears it", () => {
+    const trackerRetrying: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 1000, untilMs: 31_000 };
+    for (const s of both([started, notified(trackerRetrying)])) {
+      expect(s.modes.implementation.run?.retry).toEqual({ agent: "tracker", text: "connection lost, retry 2 of 5 (no answer)", wait: { fromMs: 1000, untilMs: 31_000 } });
+      expect(s.modes.implementation.run?.activity).toBe("GitHub — connection lost, retry 2 of 5 (no answer)");
+    }
+    for (const s of both([started, notified(call), notified(trackerRetrying), notified({ _tag: "TrackerRecovered", tracker: "GitHub" })])) {
+      expect(s.modes.implementation.run?.retry).toBe(null);
+      expect(s.modes.implementation.run?.activity).toBe("Codex — review");
+    }
+  });
   test("countdownView: the fraction elapsed and the time remaining while the wait lasts, nothing at and after its end", () => {
     expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 1000)).toEqual({ percent: 0, remainingMs: 5000 });
     expect(countdownView({ fromMs: 1000, untilMs: 6000 }, 3500)).toEqual({ percent: 50, remainingMs: 2500 });

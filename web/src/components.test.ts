@@ -1821,6 +1821,31 @@ test("the activity line counts down the wait before a retry with a determinate p
   }
 });
 
+// Issue #171: a tracker request's repeat is counted down on the activity line as an agent's retry is.
+test("the activity line counts down the wait before a tracker request's repeat, naming the tracker", () => {
+  vi.useFakeTimers();
+  try {
+    const now = Date.UTC(2026, 9, 15, 12, 0, 0);
+    vi.setSystemTime(now);
+    const time = "2026-10-15T12:00:00Z";
+    const event: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 1, of: 5, delaySeconds: 15, fault: "no answer", fromMs: now - 3000, untilMs: now + 12_000 };
+    const messages: ServerMessage[] = [
+      { type: "hello", location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+      { type: "replay", ui: [], runs: [] },
+      { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "155", title: "t" } } },
+      { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event } },
+    ];
+    const run = messages.reduce(reduce, initialState).modes.refinement.run;
+    const root = show(ActivityLine, { text: run?.activity ?? "", retry: run?.retry?.wait ?? null });
+    expect(one(root, "[data-activity]").textContent).toContain("GitHub");
+    const bar = one(root, "[role=progressbar]");
+    expect(Number(bar.getAttribute("aria-valuenow"))).toBe(20);
+    expect(one(root, "[data-remaining]").textContent).toBe("0:12 left");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 // P1-R1-2: the countdown goes at the wait's end, between two ticks and with no further event (a wait received late, as
 // after a replay), for a retry's wait and a usage limit's alike.
 test("a countdown received 250 ms before its end is gone at its end, before the next one-second tick", () => {
