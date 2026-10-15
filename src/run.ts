@@ -16,7 +16,8 @@ import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, revi
 import { askOffering, programContext } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
-import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, SuiteRunner, Tracker, Ui } from "./services.ts";
+import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
+import { runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
 import { SUITE_TAIL_LINES, suiteOutcomeOf, tailLines } from "./suite.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
@@ -47,13 +48,24 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode): E
       yield* ui.say(NOTHING_TO_SETTLE);
     }
     const { requirements } = yield* store.readContext();
-    const failed = (step: TrackerStep, cause: string, done: string | null) => Effect.fail(new TrackerStepFailed({ item, step, cause, done, check: null }));
+    const kept = requirementsKeptText(store.requirements);
     const refinement = refinementOf(requirements ?? "");
-    if (Result.isFailure(refinement)) return yield* failed("writeRefinement", refinementInvalidText(refinement.failure.reason, store.requirements), requirementsKeptText(store.requirements));
-    yield* tracker.writeRefinement(item, refinement.success).pipe(Effect.catch((e) => failed("writeRefinement", trackerFailureText(e), requirementsKeptText(store.requirements))));
-    yield* tracker.setState(item, stateAtEnd("refinement")).pipe(Effect.catch((e) => failed("setRefined", trackerFailureText(e), requirementsKeptText(store.requirements))));
+    if (Result.isFailure(refinement)) return yield* Effect.fail(new TrackerStepFailed({ item, step: "writeRefinement", cause: refinementInvalidText(refinement.failure.reason, store.requirements), done: kept, check: null }));
+    // Issue #171: the write-back closes the question phase, so its exhaustion question's decision is bound to that phase.
+    const env = yield* runTrackerEnv.pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
+    yield* writeStep(tracker, { kind: "writeRefinement", item, refinement: refinement.success }, env, "writeRefinement", kept);
+    yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("refinement") }, env, "setRefined", kept);
     yield* ui.say(refinementWrittenLine(item, store.requirements));
   });
+
+/**
+ * A write of a run to its item through the tracker retry (issue #171); one that fails for good halts with
+ * TrackerStepFailed, naming the step, the cause and what the item held after the last attempt.
+ */
+const writeStep = (tracker: TrackerShape, write: TrackerWrite, env: TrackerRetryEnv, step: TrackerStep, done: string | null): Effect.Effect<void, RunError> =>
+  writeWithRetry(tracker, write, env).pipe(
+    Effect.catchTag("TrackerWriteFailed", (e) => Effect.fail(new TrackerStepFailed({ item: write.item, step, cause: trackerFailureText(e.error), done, check: e.check }))),
+  );
 
 /** The first line of a task: an item's title (taskTextOf puts it first). */
 const firstLine = (task: string): string => task.split("\n")[0] ?? "";
@@ -71,11 +83,12 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
     const tracker = yield* Tracker;
     yield* store.init(task);
     yield* store.converse(`${itemStartedLine("implementation", item, firstLine(task))}\n\n`);
+    const env = yield* runTrackerEnv;
     const start = stateAtStart("implementation");
-    if (start !== null) yield* tracker.setState(item, start).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplementing", cause: trackerFailureText(e), done: null, check: null }))));
+    if (start !== null) yield* writeStep(tracker, { kind: "setState", item, state: start }, env, "setImplementing", null);
     if (requirements !== null) yield* store.writeRequirements(requirements);
     const phases = yield* implementationPhases(task, requirements !== null, checks);
-    yield* tracker.setState(item, stateAtEnd("implementation")).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplemented", cause: trackerFailureText(e), done: null, check: null }))));
+    yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("implementation") }, env, "setImplemented", null);
     return phases;
   });
 

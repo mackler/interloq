@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Effect, Exit, Option, Result } from "effect";
 import { recordPath } from "../src/artifacts.ts";
-import { describe, TrackerUnreachable } from "../src/errors.ts";
+import { describe, TrackerRequestRefused } from "../src/errors.ts";
 import { readRefinement, refinementOf, withRefinement } from "../src/refinement.ts";
 import { implementationRun } from "../src/run.ts";
 import { itemIdOf } from "../src/tracker.ts";
@@ -88,7 +88,7 @@ test("a halt in the work review and a stop leave the item implementing", async (
 
 test("an item that cannot be set to implementing halts the run before any agent call", async () => {
   const tracker = fakeTrackerOf([withSection]);
-  await Effect.runPromise(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
+  await Effect.runPromise(tracker.failNext("setState", new TrackerRequestRefused({ tracker: "GitHub", status: 422, message: "connection reset" })));
   const { exit, probe } = await implement(withSection, converging, tracker);
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
@@ -99,7 +99,7 @@ test("an item that cannot be set to implementing halts the run before any agent 
 
 test("an item that cannot be set to implemented at the end keeps the records and says the work is done and the item stays implementing", async () => {
   const tracker = fakeTrackerOf([withSection]);
-  const failLater = () => Effect.runSync(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "timeout", status: null })));
+  const failLater = () => Effect.runSync(tracker.failNext("setState", new TrackerRequestRefused({ tracker: "GitHub", status: 422, message: "timeout" })));
   const { exit, probe } = await implement(withSection, { ...converging, execs: [finished], steps: [{ output: noQuestions, plan: "v1", onCall: failLater }] }, tracker);
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
