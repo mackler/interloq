@@ -24,6 +24,11 @@ export type GitlabServer = Readonly<{
   issues: () => ReadonlyMap<number, ServerIssue>;
   /** Closes an issue as a user would in GitLab, without a request. */
   close: (iid: number) => void;
+  /**
+   * Issue #171: the next PUT whose JSON body has `field` is answered 500, after applying it (`applied`, as GitLab's
+   * PUT 98 of 14 Oct 2026) or without applying it, once.
+   */
+  failNextPut: (field: string, applied: boolean) => void;
 }>;
 
 const PAGE_SIZE_DEFAULT = 20;
@@ -31,6 +36,7 @@ const names = (text: unknown): readonly string[] => (typeof text === "string" &&
 
 export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
   const issues = new Map(initial.map((issue) => [issue.iid, issue]));
+  const putFailures: { field: string; applied: boolean }[] = [];
   const handler = (r: SentRequest): Answer => {
     const parts = r.url.pathname.split("/");
     const last = parts.at(-1);
@@ -48,6 +54,9 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
     if (r.method === "GET") return json(issue);
     if (r.method === "PUT") {
       const body = JSON.parse(r.body ?? "{}") as Record<string, unknown>;
+      const failing = putFailures.findIndex((f) => Object.hasOwn(body, f.field));
+      const failure = failing < 0 ? null : putFailures.splice(failing, 1)[0]!;
+      if (failure !== null && !failure.applied) return json({ message: "500 Internal Server Error" }, 500);
       const removed = names(body.remove_labels);
       const kept = issue.labels.filter((l) => !removed.includes(l));
       const next: ServerIssue = {
@@ -57,13 +66,14 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
         state: body.state_event === "close" ? "closed" : body.state_event === "reopen" ? "opened" : issue.state,
       };
       issues.set(issue.iid, next);
-      return json(next);
+      return failure !== null ? json({ message: "500 Internal Server Error" }, 500) : json(next);
     }
     return json({ message: "405 Method Not Allowed" }, 405);
   };
   return {
     handler,
     issues: () => new Map(issues),
+    failNextPut: (field, applied) => void putFailures.push({ field, applied }),
     close: (iid) => {
       const issue = issues.get(iid);
       if (issue !== undefined) issues.set(iid, { ...issue, state: "closed" });

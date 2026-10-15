@@ -116,3 +116,28 @@ test("an implementation run whose issue is closed during the run halts at setImp
   assert.deepEqual(issue120(gitlab).labels, ["Implementing"]);
   assert.equal(issue120(gitlab).state, "closed");
 });
+
+// Issue #171: the loss of 14 Oct 2026 in iou-notes, reproduced through the real GitLab adapter: PUT 98 answered 500 and
+// GitLab had applied the write, so the item got its section and never its label. The read-back finds the section.
+const FAST = { maxTrackerRetries: 2, trackerRetryDelaySeconds: 0.01 };
+test("a refinement whose PUT of the description answers 500 after applying it goes on: one section, and the Refined label", async () => {
+  const gitlab = fakeGitlabTracker([serverIssue(120, ["Unrefined"], { title: "Two modes", description: DEVELOPER })]);
+  gitlab.server.failNextPut("description", true);
+  const { exit } = await refine({ ...oneQuestion(), config: FAST }, gitlab);
+  assert.ok(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+  const description = issue120(gitlab).description ?? "";
+  assert.equal(description.split("## Refined using Interloq").length - 1, 1);
+  assert.deepEqual(issue120(gitlab).labels, ["Refined"]);
+  assert.equal(writes(gitlab).filter((r) => (r.body ?? "").includes("description")).length, 1);
+});
+
+test("a refinement whose PUT of the description answers 500 without applying it is repeated and ends with one section", async () => {
+  const gitlab = fakeGitlabTracker([serverIssue(120, ["Unrefined"], { title: "Two modes", description: DEVELOPER })]);
+  gitlab.server.failNextPut("description", false);
+  const { exit } = await refine({ ...oneQuestion(), config: FAST }, gitlab);
+  assert.ok(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
+  const description = issue120(gitlab).description ?? "";
+  assert.equal(description.split("## Refined using Interloq").length - 1, 1);
+  assert.deepEqual(issue120(gitlab).labels, ["Refined"]);
+  assert.equal(writes(gitlab).filter((r) => (r.body ?? "").includes("description")).length, 2);
+});
