@@ -50,7 +50,7 @@ test("the work subject: its id, file, prompts and policies", () => {
   assert.deepEqual(work.id, { work: 2 });
   assert.equal(work.heading, "Work review 2");
   assert.equal(work.fileLabel, "changes.diff");
-  assert.match(work.reviewPrompt(TEST_ROOT, 1), /work-review-2\/changes\.diff/);
+  assert.match(work.reviewPrompt(TEST_ROOT, 1, "continued"), /work-review-2\/changes\.diff/);
   assert.match(work.respond.prompt(TEST_ROOT, 1, { review: { issues: [] }, log: [], records: { changes: "", requirements: null, decisions: "" } }), /work-review-2\/review-1\.json/);
   assert.deepEqual([work.proceed, work.leaveOnAcceptance, work.leaveOnDecision, work.amend], [null, true, true, null]);
   assert.notEqual(work.prepare, null);

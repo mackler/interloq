@@ -16,7 +16,7 @@ import * as S from "../src/schema.ts";
 
 // Decision Q5: the prompts describe the version-2 issue log (an object with entries; three sources; null references).
 test("the log rules name the entries list, the three sources and null references", () => {
-  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), questionReviewPrompt(TEST_ROOT, 1)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued")]) {
     assert.match(text, /'entries'/);
     assert.match(text, /source 'review'/);
     assert.match(text, /source 'self_correction'/);
@@ -30,7 +30,7 @@ test("the log rules name the entries list, the three sources and null references
 test("the log rules explain file_change with the keys the log entries carry", () => {
   const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e" }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
-  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), questionReviewPrompt(TEST_ROOT, 1), prompts.requirementsReviewPrompt(TEST_ROOT, 1), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution)]) {
+  for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued"), prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution, "continued")]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
     for (const key of ["changed", "added", "removed"]) {
       assert.match(text, new RegExp(`\\b${key}\\b`));
@@ -53,15 +53,15 @@ test("the interview prompts ask for the current question's parts under the rules
 
 // Plan step 2.6: the prompts of the work review and the revision of the plan after an execution phase.
 test("the work review prompt names the change record, the plan, the requirements, the log and the ids", () => {
-  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true, workExecution);
+  const first = prompts.workReviewPrompt(TEST_ROOT, 2, 1, true, workExecution, "continued");
   assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-2\/changes\.diff/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/plan\.json/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/requirements\.md/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/work-review-log\.json/);
   assert.match(first, /W2-R1-1/);
   assert.match(first, /Missing work of a step with another status is not an issue/);
-  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false, workExecution), /requirements\.md/);
-  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true, workExecution);
+  assert.doesNotMatch(prompts.workReviewPrompt(TEST_ROOT, 2, 1, false, workExecution, "continued"), /requirements\.md/);
+  const later = prompts.workReviewPrompt(TEST_ROOT, 2, 3, true, workExecution, "continued");
   assert.match(later, /W2-R3-1/);
   assert.match(later, /changes\.diff has been rewritten/);
 });
@@ -270,14 +270,14 @@ test("the analysis prompt carries the format byte for byte, the binding sentence
 });
 
 test("the decision review prompt carries the format in its first round, names the analysis and the question, and the ids D<k>-R<n>-<i>", () => {
-  const first = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 1);
+  const first = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 1, "continued");
   assert.ok(first.includes(FORMAT), "the format is not in the first review prompt verbatim");
   assert.match(first, /plan-review\/runs\/[^/\s]+\/decision-3\/analysis\.json/);
   assert.match(first, /plan-review\/runs\/[^/\s]+\/decision-3\/question\.json/);
   assert.match(first, /D3-R1-1/);
   assert.match(first, /recommendation/);
   assert.match(first, /ids begin with D3-/);
-  const later = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 2);
+  const later = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 2, "continued");
   assert.match(later, /D3-R2-1/);
   assert.match(later, /plan-review\/runs\/[^/\s]+\/decision-3\/analysis\.json/);
 });
@@ -326,7 +326,7 @@ test("the analysis prompt maps the amended format: Also, sequences, headings and
 });
 
 test("the decision review prompt says the program places both headings and the labels, and how an unclear option is represented", () => {
-  const first = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 1);
+  const first = prompts.decisionReviewPrompt(TEST_ROOT, FORMAT, 3, 1, "continued");
   assert.match(first, /places the headings "Advantages:" and "Disadvantages:" and the labels of the entries \("Advantage 1:", "Disadvantage 1:"\)/);
   assert.match(first, /kind "unclear"/);
   assert.match(first, /"Also,"/);
@@ -431,12 +431,12 @@ test("each clause of the id rule is enforced by validatePlan, and the repair pro
 });
 
 test("the plan review and the work review read plan.json with its statuses", () => {
-  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, workExecution)]) {
+  for (const text of [prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, workExecution, "continued")]) {
     assert.match(text, /plan-review\/runs\/[^/\s]+\/plan\.json/);
     assert.match(text, /status 'done'/);
     assert.doesNotMatch(text, /plan-review\/runs\/[^/\s]+\/plan\.md/);
   }
-  assert.match(prompts.planReviewPrompt(TEST_ROOT, 1, 2, false, NO_STEP_CHECKS), /plan-review\/runs\/[^/\s]+\/plan\.json/);
+  assert.match(prompts.planReviewPrompt(TEST_ROOT, 1, 2, false, NO_STEP_CHECKS, "continued"), /plan-review\/runs\/[^/\s]+\/plan\.json/);
 });
 
 // Issue #6 (numbering): a kind with one instance in the run carries no number; with two or more, every one does.
@@ -816,7 +816,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
   const own = [/only if its answer/, /only questions that/, /is unnecessary because/, /determines (it|the answer)/, /user alone can answer/];
   const texts: Readonly<Record<string, string>> = {
     questionListPrompt: prompts.questionListPrompt("t"),
-    questionReviewPrompt: prompts.questionReviewPrompt(TEST_ROOT, 1),
+    questionReviewPrompt: prompts.questionReviewPrompt(TEST_ROOT, 1, "continued"),
     questionRespondPrompt: prompts.questionRespondPrompt(TEST_ROOT, 1),
     initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
     revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
@@ -837,8 +837,8 @@ test("no prompt that asks for a question states an inclusion test of its own", (
 // the user; the plan's do not, since its disputes stay the user's.
 test("issue #112: WORDING_DISPUTES reaches the question list's and the terms' review and response prompts, and not the plan's", () => {
   for (const round of [1, 2]) {
-    for (const p of [prompts.questionReviewPrompt(TEST_ROOT, round), prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsReviewPrompt(TEST_ROOT, round), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
-    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true, NO_STEP_CHECKS), prompts.planRespondPrompt(TEST_ROOT, 1, round, NO_STEP_CHECKS)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.questionReviewPrompt(TEST_ROOT, round, "continued"), prompts.questionRespondPrompt(TEST_ROOT, round), prompts.termsReviewPrompt(TEST_ROOT, round, "continued"), prompts.termsRespondPrompt(TEST_ROOT, round)]) assert.ok(p.includes(prompts.WORDING_DISPUTES));
+    for (const p of [prompts.planReviewPrompt(TEST_ROOT, 1, round, true, NO_STEP_CHECKS, "continued"), prompts.planRespondPrompt(TEST_ROOT, 1, round, NO_STEP_CHECKS)]) assert.ok(!p.includes(prompts.WORDING_DISPUTES));
   }
   for (const reason of ["cannot judge", "same rules", "time"]) assert.ok(prompts.WORDING_DISPUTES.includes(reason), reason);
 });
@@ -1021,7 +1021,7 @@ test("issue #156: WORDING_DISPUTES says a marked disagreement is put to the user
 });
 
 test("issue #156: the log rules name the mark", () => {
-  assert.ok(prompts.questionReviewPrompt(TEST_ROOT, 1).includes(`${S.TASK_DISPUTE_FIELD} is true where`));
+  assert.ok(prompts.questionReviewPrompt(TEST_ROOT, 1, "continued").includes(`${S.TASK_DISPUTE_FIELD} is true where`));
 });
 
 // P1-R1-2: the corrective prompt and its repair name the mark among what may differ for the correctable ids, and the
@@ -1040,3 +1040,43 @@ test("issue #156: the corrective prompt names the mark, and correctiveValidation
   assert.ok(Result.isFailure(refused));
   assert.deepEqual((refused.failure.error as { changedIds: readonly string[] }).changedIds, ["B"]);
 });
+
+// Issue #165 (requirements Q1): a round in a new Codex thread gets the first round's whole instructions for that round,
+// preceded by newThreadSentence; a round in the continued thread keeps the later-round text; round 1 is unchanged.
+{
+  const SAME_RULES = "under the same rules as before";
+  const cases: ReadonlyArray<[string, (round: number, thread: "continued" | "new") => string, string, string]> = [
+    ["question list", (r, t) => prompts.questionReviewPrompt(TEST_ROOT, r, t), "Q", "questions-log.json"],
+    ["terms", (r, t) => prompts.termsReviewPrompt(TEST_ROOT, r, t), "T", "terms-log.json"],
+    ["requirements", (r, t) => prompts.requirementsReviewPrompt(TEST_ROOT, r, t), "G", "requirements-log.json"],
+    ["plan", (r, t) => prompts.planReviewPrompt(TEST_ROOT, 1, r, true, NO_STEP_CHECKS, t), "P1", "issue-log.json"],
+    ["work", (r, t) => prompts.workReviewPrompt(TEST_ROOT, 1, r, true, workExecution, t), "W1", "work-review-log.json"],
+    ["decision", (r, t) => prompts.decisionReviewPrompt(TEST_ROOT, "the format", 2, r, t), "D2", "decision-log.json"],
+  ];
+  for (const [name, prompt, prefix, log] of cases) {
+    test(`the ${name} review: a new thread's round carries the first round's instructions, a continued one the later-round text`, () => {
+      const continued = prompt(3, "continued");
+      const fresh = prompt(3, "new");
+      assert.ok(continued.includes(SAME_RULES), "the continued round lost its later-round text");
+      assert.ok(!fresh.includes(SAME_RULES), "the new thread is told to follow rules it has not seen");
+      assert.ok(fresh.startsWith(prompts.newThreadSentence(TEST_ROOT, log, 3)), "the new thread's prompt does not open with the new-thread sentence");
+      // The first round's instructions, built for round 3: the log rules with round 3's id form.
+      const firstRoundBody = prompt(1, "new").replace(/-R1-1, (\S+)-R1-2/u, `-R3-1, $1-R3-2`);
+      assert.ok(fresh.endsWith(firstRoundBody), "the new thread's prompt is not the first round's instructions for its round");
+      assert.ok(fresh.includes(`${prefix}-R3-1`));
+      assert.ok(fresh.includes(log));
+      assert.equal(prompt(1, "new"), prompt(1, "continued"), "round 1 depends on the thread");
+      assert.ok(!prompt(1, "new").includes(prompts.newThreadSentence(TEST_ROOT, log, 1)));
+    });
+  }
+  test("the decision review's new thread names the entries of its own decision", () => {
+    assert.match(prompts.decisionReviewPrompt(TEST_ROOT, "f", 2, 3, "new"), /ids begin with D2-/u);
+  });
+  test("the plan review's new thread carries the step check criterion", () => {
+    assert.ok(prompts.planReviewPrompt(TEST_ROOT, 1, 3, false, NO_STEP_CHECKS, "new").includes(prompts.STEP_CHECK_REVIEW_CRITERION));
+  });
+  test("threadRestartLine names the heading, the round, the turn's input, the limit and the setting", () => {
+    const line = prompts.threadRestartLine("Plan review", 4, 826_111, 500_000);
+    for (const part of ["Plan review", "826,111", "500,000", "codexTurnInputLimit", "round 4"]) assert.ok(line.includes(part), `the line lacks ${part}`);
+  });
+}

@@ -34,7 +34,7 @@ test("the question list prompt carries the writer's rules and asks for a context
   assert.ok(list.includes(prompts.questionWritingRules()));
   assert.match(list, /context: the context paragraph that precedes the question/);
   assert.match(list, /The rules apply to the question, its reason, its proposed answers and its default alike/);
-  const review = prompts.questionReviewPrompt(TEST_ROOT, 1);
+  const review = prompts.questionReviewPrompt(TEST_ROOT, 1, "continued");
   assert.ok(review.includes(prompts.questionReviewCriteria()));
   // The criteria the review had before stay; ambiguity is the criterion of determinateOptions since issue #96.
   assert.match(review, /a question combines several decisions/);

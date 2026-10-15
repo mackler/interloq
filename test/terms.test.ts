@@ -57,8 +57,8 @@ test("the terms are written in a fresh session after the question review converg
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")), { version: 2, entries: terms().entries });
   assert.equal(probe.planner.termsPrompts[0], prompts.termsPrompt(TEST_ROOT, "task"));
   assert.ok(probe.planner.termsPrompts[0].includes(prompts.questionWritingRules()));
-  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.termsReviewPrompt(TEST_ROOT, 1)));
-  assert.ok(prompts.termsReviewPrompt(TEST_ROOT, 1).includes(prompts.questionReviewCriteria()));
+  assert.ok(probe.reviewer.prompts.some((p) => p === prompts.termsReviewPrompt(TEST_ROOT, 1, "continued")));
+  assert.ok(prompts.termsReviewPrompt(TEST_ROOT, 1, "continued").includes(prompts.questionReviewCriteria()));
   assert.ok(fs.existsSync(path.join(probe.dir, "terms-review", "review-1.json")));
   assert.deepEqual(JSON.parse(read(probe.dir, "terms-log.json")), { version: 2, entries: [] });
   assert.match(read(probe.dir, "conversation.md"), /## Terms review, round 1/);
@@ -265,7 +265,7 @@ test("unchecked: one terms call, no terms review, the explanations written and p
   });
   await runRefinement(layer, "task", "unchecked");
   assert.deepEqual(probe.planner.termsPrompts, [prompts.termsPrompt(TEST_ROOT, "task")]);
-  assert.ok(!probe.reviewer.prompts.includes(prompts.termsReviewPrompt(TEST_ROOT, 1)));
+  assert.ok(!probe.reviewer.prompts.includes(prompts.termsReviewPrompt(TEST_ROOT, 1, "continued")));
   assert.equal(fs.existsSync(path.join(probe.dir, "terms-review")), false);
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")), { version: 2, entries: terms().entries });
   assert.deepEqual(presentedQuestions(probe.ui)[0].explanations, [zod]);
@@ -366,7 +366,7 @@ test("onRequest: /terms writes the question's explanations in a fresh session an
   assert.deepEqual(probe.planner.termsPrompts, [requestPrompt]);
   const session = [...probe.planner.history].find(([, sent]) => sent.includes(requestPrompt))?.[0];
   assert.ok(session !== undefined && session !== "test-session", `the request ran in ${session}`);
-  assert.ok(!probe.reviewer.prompts.includes(prompts.termsReviewPrompt(TEST_ROOT, 1)));
+  assert.ok(!probe.reviewer.prompts.includes(prompts.termsReviewPrompt(TEST_ROOT, 1, "continued")));
   const [first, again] = presentedQuestions(probe.ui);
   assert.deepEqual([first.number, again.number], [1, 1]);
   assert.deepEqual(first.explanations, []);

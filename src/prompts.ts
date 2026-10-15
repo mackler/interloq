@@ -12,6 +12,7 @@ import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
 import { SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
+import type { ReviewThread } from "./reviewThread.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -45,6 +46,28 @@ function laterRound(root: RunRoot, file: string, logFile: string, idPrefix: stri
   return `The planner has answered your issues; the answers are in ${runDir(root)}/${logFile}, and ${runDir(root)}/${file} may have been amended.
 Read both files again and review ${runDir(root)}/${file} again under the same rules as before. New issues receive ids of the form ${idPrefix}-R${round}-1, ${idPrefix}-R${round}-2, and so on.`;
 }
+
+/**
+ * The opening of a later round's prompt in a new Codex thread (issue #165, requirements Q1): the thread has not seen the
+ * earlier rounds, so the issue log, which carries them, is named, and the first round's instructions follow.
+ */
+export const newThreadSentence = (root: RunRoot, logFile: string, round: number): string =>
+  `This is round ${round} of this review. Its earlier rounds were held in another conversation, which you cannot see; every issue raised in them, with the planner's disposition and rationale, is in ${runDir(root)}/${logFile}, and the reviewed file may have been amended since. Review the file again in full under the instructions below, taking that log into account.`;
+
+/**
+ * A review prompt by its round and thread (issue #165): round 1 is the first round's instructions; a later round in the
+ * loop's continued thread is the later-round text, which refers to the instructions the thread holds; a later round in a
+ * new thread is `newThreadSentence` and then the first round's instructions built for that round.
+ */
+const byThread = (round: number, thread: ReviewThread, logFile: string, root: RunRoot, later: () => string, first: () => string): string =>
+  round === 1 ? first() : thread === "continued" ? later() : `${newThreadSentence(root, logFile, round)}\n${first()}`;
+
+/**
+ * The line said on the page and written to conversation.md when a review's next round starts a new Codex thread
+ * (issue #165, the requirements' open point).
+ */
+export const threadRestartLine = (heading: string, round: number, inputTokens: number, limit: number): string =>
+  `${heading}: Codex's last turn took ${inputTokens.toLocaleString("en-US")} input tokens, more than the ${limit.toLocaleString("en-US")} set by codexTurnInputLimit; round ${round} starts a new Codex thread, which reads the issue log instead of the earlier conversation.`;
 
 /** The heading of the explanations of terms: in conversation.md (decision Q6) and in a relayed question's text (S13). */
 export const TERMS_HEADING = "Terms:";
@@ -567,16 +590,16 @@ Return an empty list if no question is needed. Do not modify any file. Do not us
 Task: ${task}`;
 }
 
-export function questionReviewPrompt(root: RunRoot, round: number): string {
-  if (round > 1) return `${laterRound(root, pathOf({ kind: "questions" }), pathOf({ kind: "log", subject: "questions" }), "Q", round)}\n${WORDING_DISPUTES}`;
-  return `Review the question list in ${runDir(root)}/questions.json against the task text in the same file and against the codebase. Do not modify any file.
+export function questionReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
+  const log = pathOf({ kind: "log", subject: "questions" });
+  return byThread(round, thread, log, root, () => `${laterRound(root, pathOf({ kind: "questions" }), log, "Q", round)}\n${WORDING_DISPUTES}`, () => `Review the question list in ${runDir(root)}/questions.json against the task text in the same file and against the codebase. Do not modify any file.
 The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
 Raise an issue when: a question whose answer the plan needs is missing; a question combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
 ${questionReviewCriteria()}
 These criteria apply to the question, its context, its reason, its proposed answers and its default alike. Any question in the list may be put to decision support, which works out the arguments for and against each proposed answer, so hold every proposed answer to that standard.
 Put the question id, or 'list' for an issue that concerns the list as a whole, in the location field.
-${logRules(root, pathOf({ kind: "log", subject: "questions" }), "Q", round)}
-${WORDING_DISPUTES}`;
+${logRules(root, log, "Q", round)}
+${WORDING_DISPUTES}`);
 }
 
 export function questionRespondPrompt(root: RunRoot, round: number): string {
@@ -622,16 +645,16 @@ If the question needs no explanation, its entry has an empty explanations list a
 Task: ${task}`;
 }
 /** Codex's review of the explanations (S17): the criteria of every question, as they apply to the terms. */
-export function termsReviewPrompt(root: RunRoot, round: number): string {
-  if (round > 1) return `${laterRound(root, pathOf({ kind: "terms" }), pathOf({ kind: "log", subject: "terms" }), "T", round)}\n${WORDING_DISPUTES}`;
-  return `Review the explanations of terms in ${runDir(root)}/terms.json against the agreed question list in ${runDir(root)}/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
+export function termsReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
+  const log = pathOf({ kind: "log", subject: "terms" });
+  return byThread(round, thread, log, root, () => `${laterRound(root, pathOf({ kind: "terms" }), log, "T", round)}\n${WORDING_DISPUTES}`, () => `Review the explanations of terms in ${runDir(root)}/terms.json against the agreed question list in ${runDir(root)}/questions.json and against the codebase. Do not modify any file. The list itself is agreed; review the explanations.
 Each entry of terms.json names a question by its id and holds its explanations, each with its id, term and senses (one or more definitions, shown numbered where there are several), and the question's context, question, reason and proposed answers divided into pieces; a piece whose ref is an explanation's id is the words that explanation explains. The user reads each explanation on those words while he answers the question; he may never have seen this codebase. The wording of the question is agreed and cannot change; only its division into pieces and the explanations can.
 ${questionReviewCriteria()}
 Raise an issue about the explanations only: a word or phrase the reader may not know that has no explanation in a question in which it occurs, or a piece that uses it and does not refer to it; a sense that is wrong, a cross-reference, uses another unexplained term, or does not make its term intelligible to a reader who has never seen this codebase.
 ${TWO_SENSES}
 Put the question id, with the term, in the location field.
-${logRules(root, pathOf({ kind: "log", subject: "terms" }), "T", round)}
-${WORDING_DISPUTES}`;
+${logRules(root, log, "T", round)}
+${WORDING_DISPUTES}`);
 }
 export function termsRespondPrompt(root: RunRoot, round: number): string {
   return `${recordPath(root, { kind: "review", subject: "terms", round })} contains a review of the explanations of terms in ${runDir(root)}/terms.json.
@@ -687,13 +710,13 @@ export function interviewNotConfirmed(text: string): string {
 
 // ---- requirements -------------------------------------------------------------------------------
 
-export function requirementsReviewPrompt(root: RunRoot, round: number): string {
-  if (round > 1) return laterRound(root, pathOf({ kind: "requirements" }), pathOf({ kind: "log", subject: "requirements" }), "G", round);
-  return `Review ${runDir(root)}/requirements.md. It is the result of an interview between the planner and the user, confirmed by the user. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
+export function requirementsReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
+  const log = pathOf({ kind: "log", subject: "requirements" });
+  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the result of an interview between the planner and the user, confirmed by the user. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
 The planner will write an implementation plan from the task and this file.
 Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent. An agreed question listed under 'Skipped questions' was not put to the user because his answer to another question denied its premise; it is not an issue unless you name what in the task, the codebase or the file establishes that premise.
 Put the question id or the heading in the location field.
-${logRules(root, pathOf({ kind: "log", subject: "requirements" }), "G", round)}`;
+${logRules(root, log, "G", round)}`);
 }
 
 export function requirementsRespondPrompt(root: RunRoot, round: number): string {
@@ -813,9 +836,12 @@ ${planIdRule(root)}
 Do not modify any file.
 Return an empty questions_for_user array.`;
 
-export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, checks: StepChecks): string {
+export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, checks: StepChecks, thread: ReviewThread): string {
   const prefix = `P${phase}`;
-  if (round > 1) return laterRound(root, pathOf({ kind: "planFile" }), pathOf({ kind: "log", subject: { plan: phase } }), prefix, round);
+  const log = pathOf({ kind: "log", subject: { plan: phase } });
+  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "planFile" }), log, prefix, round), () => planReviewFirst(root, log, prefix, round, withRequirements, checks));
+}
+function planReviewFirst(root: RunRoot, log: string, prefix: string, round: number, withRequirements: boolean, checks: StepChecks): string {
   const requirements = withRequirements
     ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions. It must be followed; raise an issue when a plan step contradicts it or omits something it requires.\n`
     : "";
@@ -825,7 +851,7 @@ The plan writer was given this rule on how a step checks its change:
 ${planStepCheckRule(checks)}
 ${STEP_CHECK_REVIEW_CRITERION}
 Put the step's id in the location field.
-${logRules(root, pathOf({ kind: "log", subject: { plan: phase } }), prefix, round)}`;
+${logRules(root, log, prefix, round)}`;
 }
 
 export function planRespondPrompt(root: RunRoot, phase: number, round: number, checks: StepChecks): string {
@@ -1294,13 +1320,16 @@ export const reportedChecksText = (execution: WorkExecution): string => {
     ? "none reported"
     : totals.map((total) => `- ${total.step}: ${total.seconds} seconds in all: ${total.commands.map((c) => `${codeSpan(c.command)} (${c.seconds} seconds)`).join(", ")}`).join("\n");
 };
-export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, execution: WorkExecution): string {
+export function workReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, execution: WorkExecution, thread: ReviewThread): string {
   const prefix = `W${phase}`;
   const log = pathOf({ kind: "log", subject: { work: phase } });
   const changes = pathOf({ kind: "changes", phase });
-  if (round > 1)
-    return `${runDir(root)}/${changes} has been rewritten from the current project for this round.
+  const later = () => `${runDir(root)}/${changes} has been rewritten from the current project for this round.
 ${laterRound(root, changes, log, prefix, round)}`;
+  return byThread(round, thread, log, root, later, () => workReviewFirst(root, { phase, prefix, log, changes }, round, withRequirements, execution));
+}
+function workReviewFirst(root: RunRoot, names: Readonly<{ phase: number; prefix: string; log: string; changes: string }>, round: number, withRequirements: boolean, execution: WorkExecution): string {
+  const { phase, prefix, log, changes } = names;
   const requirements = withRequirements
     ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions. Raise an issue when the work contradicts it or omits something it requires of a completed step.\n`
     : "";
@@ -1881,13 +1910,12 @@ Return the complete output again, corrected. Do not modify any file.`;
 }
 
 /** Codex's review of decision k's analysis, against the format and the question. */
-export function decisionReviewPrompt(root: RunRoot, format: string, k: number, round: number): string {
+export function decisionReviewPrompt(root: RunRoot, format: string, k: number, round: number, thread: ReviewThread): string {
   const prefix = `D${k}`;
   const analysis = pathOf({ kind: "analysis", decision: k });
   const log = pathOf({ kind: "log", subject: { decision: k } });
   const own = `${runDir(root)}/${log} holds the issues of every decision of the run; the issues of this decision are the entries whose ids begin with ${prefix}-, and only those concern this review.`;
-  if (round > 1) return `${own}\n${laterRound(root, analysis, log, prefix, round)}`;
-  return `Review the representation of the arguments for and against the options of a decision in ${runDir(root)}/${analysis} (its field 'analysis'). The question and its options are in ${runDir(root)}/${pathOf({ kind: "decisionQuestion", decision: k })}. Do not modify any file.
+  return byThread(round, thread, log, root, () => `${own}\n${laterRound(root, analysis, log, prefix, round)}`, () => `Review the representation of the arguments for and against the options of a decision in ${runDir(root)}/${analysis} (its field 'analysis'). The question and its options are in ${runDir(root)}/${pathOf({ kind: "decisionQuestion", decision: k })}. Do not modify any file.
 The representation must follow the instructions below. The program renders it: it places the headings "Advantages:" and "Disadvantages:" and the labels of the entries ("Advantage 1:", "Disadvantage 1:"), offsets each counterargument from the element it disputes, and assigns the equivalence symbols from the field equivalent_to, which names the id of the equivalent entry; do not raise an issue about those. A column of kind "unclear" is how the representation states, in place of an option's arguments, what is unclear about the option and which readings are possible; review whether the option is in fact unclear in that sense and whether the statement says so. Counterarguments, defenses and counterarguments to a defense that stand together begin with "But,", "On the other hand," or "Then again," for the first and "Also," for each further one.
 
 ${DECISION_FORMAT_AUTHORITY}
@@ -1897,7 +1925,7 @@ ${format}
 Raise an issue for every departure from these instructions, for example: an element absent or false in an entry; an entry whose effect on persons is not stated; an entry placed in a column contrary to the placement rules; an outcome listed that is the same under every option; a counterargument that disputes no element of its entry or is not placed at the element it disputes, or that does not begin with the required words; a reversal not listed in full as an entry; an argument equivalent to an entry that repeats its content instead of referring to it; a claim of a measurement, figure, source or property that is invented, or an unknown value assumed instead of stated as unknown; an argument, counterargument or defense that an informed person could make and that is missing; a column missing or not matching an option; a recommendation that is not supported by the comparison that "Recommendation" requires. The context of the run is in the project and under ${runDir(root)}/.
 Put the entry id or the argument id, with the column's option, in the location field.
 ${own}
-${logRules(root, log, prefix, round)}`;
+${logRules(root, log, prefix, round)}`);
 }
 
 /** Claude Code's response to a review of decision k: the dispositions and the complete amended analysis. */

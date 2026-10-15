@@ -6,6 +6,7 @@ import { Effect, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
+import type { ReviewThread } from "./reviewThread.ts";
 import { attachedOf, pauseOriginOf, type Question, taskDisputeOf, type QuestionOrigin, validateQuestions } from "./question.ts";
 import { piecesText, plainBlocks, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
@@ -50,7 +51,8 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   /** Name of the reviewed file as used in messages, for example "plan.md". */
   fileLabel: string;
   /** Codex's review prompt, naming the run's own records (issue #120: the run's root). */
-  reviewPrompt: (root: RunRoot, round: number) => string;
+  /** The review's prompt for a round, by the Codex thread it is sent to (issue #165). */
+  reviewPrompt: (root: RunRoot, round: number, thread: ReviewThread) => string;
   /** Claude Code's response to a review. */
   respond: Operation<R>;
   /** The call that applies the user's decisions; its prompt does not depend on the round. */
@@ -428,7 +430,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
             // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
-            const { value: review } = yield* decodeValidating("codex", ReviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
+            const { value: review } = yield* decodeValidating("codex", ReviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, "continued"))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {
