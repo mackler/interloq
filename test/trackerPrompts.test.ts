@@ -82,3 +82,24 @@ test("TrackerStepFailed with each check round-trips through decodeRunError and i
     if (said !== null) assert.match(haltMessage(error) ?? "", said);
   }
 });
+
+test("a halted tracker step whose write was attempted names the step as not completed and asserts nothing of its outcome (W1-R1-1)", () => {
+  for (const step of prompts.TRACKER_STEPS) {
+    const text = prompts.trackerStepFailedText("98", step, "the cause", null, { kind: "unchecked" });
+    assert.match(text, /could not be checked after the last attempt/u);
+    assert.match(text, /could not be completed/u);
+    for (const claim of [/stays implementing/u, /was not changed to refined/u, /could not be set to/u, /could not be written/u]) assert.doesNotMatch(text, claim);
+  }
+  const attempted = (step: prompts.TrackerStep) => prompts.trackerStepFailedText("98", step, "c", null, { kind: "unchecked" });
+  assert.match(attempted("writeRefinement"), /its state was not changed/u);
+  assert.match(attempted("setRefined"), /the requirements were written to item 98/u);
+  assert.match(attempted("setImplementing"), /so the run made no agent call/u);
+});
+
+test("a halted tracker step with no write sent keeps its wording", () => {
+  const said = (step: prompts.TrackerStep) => prompts.trackerStepFailedText("98", step, "c", null, null);
+  assert.match(said("setImplementing"), /item 98 could not be set to implementing, so the run made no agent call/u);
+  assert.match(said("writeRefinement"), /the requirements could not be written to item 98, and its state was not changed/u);
+  assert.match(said("setRefined"), /but its state was not changed to refined/u);
+  assert.match(said("setImplemented"), /could not be set to implemented and stays implementing/u);
+});

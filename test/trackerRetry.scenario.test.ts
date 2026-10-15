@@ -101,9 +101,20 @@ test("an implementation whose state cannot be set to implementing asks, with the
   const { exit, probe } = await implement(tracker, converging(["s"]));
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
-  assert.match(describe(error), /could not be set to implementing[^]*After the last attempt, item 171 was in the state refined\./u);
+  assert.match(describe(error), /setting item 171 to implementing could not be completed[^]*After the last attempt, item 171 was in the state refined\./u);
   assert.deepEqual(probe.ui.asked, [prompts.withOffer(prompts.transportPrompt)]);
   assert.deepEqual([probe.planner.prompts, probe.reviewer.prompts], [[], []]);
+});
+
+test("an implemented state applied and answered 500, whose read-backs all fail, halts saying the item could not be checked, never that it stays implementing (W1-R1-1)", async () => {
+  const tracker = fakeTrackerOf([refined]);
+  await Effect.runPromise(Effect.all([tracker.failAfterNext("setState", serverError(), "implemented"), tracker.failAfterNext("setState", serverError(), "implemented"), tracker.failNext("read", unreached()), tracker.failNext("read", unreached())], { discard: true }));
+  const { exit } = await implement(tracker, { ...converging(["s"]), config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 } });
+  const error = failureOf(exit);
+  assert.equal(error._tag, "TrackerStepFailed");
+  assert.match(describe(error), /could not be checked after the last attempt/u);
+  assert.doesNotMatch(describe(error), /stays implementing/u);
+  assert.equal((await itemOf(tracker, refined.id)).state, "implemented");
 });
 
 test("the same answered Retry again, then succeeding: the run goes on and finishes implemented", async () => {

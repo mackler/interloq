@@ -92,18 +92,18 @@ test("an item that cannot be set to implementing halts the run before any agent 
   const { exit, probe } = await implement(withSection, converging, tracker);
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
-  assert.match(describe(error), /could not be set to implementing, so the run made no agent call: [^]*connection reset/);
+  assert.match(describe(error), /setting item 120 to implementing could not be completed, so the run made no agent call: [^]*connection reset/);
   assert.deepEqual([probe.planner.prompts, probe.reviewer.prompts], [[], []]);
   assert.equal(await stateOf(tracker, withSection), "refined");
 });
 
-test("an item that cannot be set to implemented at the end keeps the records and says the work is done and the item stays implementing", async () => {
+test("an item that cannot be set to implemented at the end keeps the records and says the work is done and that setting it to implemented could not be completed", async () => {
   const tracker = fakeTrackerOf([withSection]);
   const failLater = () => Effect.runSync(tracker.failNext("setState", new TrackerRequestRefused({ tracker: "GitHub", status: 422, message: "timeout" })));
   const { exit, probe } = await implement(withSection, { ...converging, execs: [finished], steps: [{ output: noQuestions, plan: "v1", onCall: failLater }] }, tracker);
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
-  assert.match(describe(error), /the work is done, but item 120 could not be set to implemented and stays implementing: [^]*timeout[^]*records of the run are kept/);
+  assert.match(describe(error), /the work is done, but setting item 120 to implemented could not be completed: [^]*timeout[^]*records of the run are kept/);
   assert.equal(await stateOf(tracker, withSection), "implementing");
   assert.ok(fs.existsSync(path.join(probe.dir, "plan.json")));
 });

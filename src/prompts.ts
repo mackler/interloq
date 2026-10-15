@@ -1290,13 +1290,21 @@ export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "setRefined"
 export type TrackerStep = (typeof TRACKER_STEPS)[number];
 /** A tracker step that failed: what was not done, the cause, and that the records stand (behavior 11). */
 export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null, check: WriteCheck | null): string {
-  const what: Record<TrackerStep, string> = {
+  /** No write was sent, so each lead may say what the item holds. */
+  const unsent: Record<TrackerStep, string> = {
     setImplementing: `item ${item} could not be set to implementing, so the run made no agent call`,
     writeRefinement: `the requirements could not be written to item ${item}, and its state was not changed`,
     setRefined: `the requirements were written to item ${item}, but its state was not changed to refined`,
     setImplemented: `the work is done, but item ${item} could not be set to implemented and stays implementing`,
   };
-  return `${what[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
+  /** A write was attempted (W1-R1-1): the lead asserts nothing of its outcome, which the check alone states. */
+  const attempted: Record<TrackerStep, string> = {
+    setImplementing: `setting item ${item} to implementing could not be completed, so the run made no agent call`,
+    writeRefinement: `writing the requirements to item ${item} could not be completed, and its state was not changed`,
+    setRefined: `the requirements were written to item ${item}, but setting it to refined could not be completed`,
+    setImplemented: `the work is done, but setting item ${item} to implemented could not be completed`,
+  };
+  return `${(check === null ? unsent : attempted)[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
 }
 /** Issue #171 (requirements Q2): what the item held after the last write of a halted tracker step, or that it could not be checked. */
 export function writeCheckText(item: string, check: WriteCheck): string {

@@ -69,3 +69,15 @@ test("a failure after the next write applies the write, then fails it, once", as
   await run(tracker.setState(id("1"), "implementing"));
   assert.equal((await run(tracker.read(id("1")))).state, "implementing");
 });
+
+// W1-R1-1: a failure that names a state matches only a setState to that state, so a scenario can target one write.
+test("a failure after the next write to a named state leaves a setState to another state alone", async () => {
+  const { tracker, failAfterNext } = await run(makeFakeTracker(ITEMS));
+  const error = new TrackerUnreachable({ tracker: "GitHub", message: "answered 500", status: 500 });
+  await run(failAfterNext("setState", error, "implemented"));
+  await run(tracker.setState(id("2"), "implementing"));
+  assert.equal((await run(tracker.read(id("2")))).state, "implementing");
+  assert.equal(await run(Effect.flip(tracker.setState(id("2"), "implemented"))), error);
+  assert.equal((await run(tracker.read(id("2")))).state, "implemented");
+  await run(tracker.setState(id("2"), "implemented"));
+});

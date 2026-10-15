@@ -4,7 +4,7 @@ import { Effect, Ref, Result } from "effect";
 import { TrackerBodyInvalid, TrackerItemNotFound } from "../src/errors.ts";
 import { withRefinement } from "../src/refinement.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
-import type { ItemId, TrackerItem } from "../src/tracker.ts";
+import type { ItemId, ItemState, TrackerItem } from "../src/tracker.ts";
 
 /** An item as the fake holds it: what the port shows, and whether it is open in the tracker. */
 export type FakeItem = TrackerItem & Readonly<{ open: boolean }>;
@@ -15,29 +15,29 @@ export type FakeTracker = Readonly<{
   items: Effect.Effect<readonly FakeItem[]>;
   /** The ids the tracker was asked to read, in order (issue #120: the seam between the page's item and the run's). */
   reads: Effect.Effect<readonly ItemId[]>;
-  /** The next call of `operation` fails with `error`, once. */
-  failNext: (operation: TrackerOperation, error: TrackerError) => Effect.Effect<void>;
-  /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied). */
-  failAfterNext: (operation: "writeRefinement" | "setState", error: TrackerError) => Effect.Effect<void>;
+  /** The next call of `operation` fails with `error`, once; with `state`, only a `setState` to that state matches. */
+  failNext: (operation: TrackerOperation, error: TrackerError, state?: ItemState) => Effect.Effect<void>;
+  /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied); with `state`, only a `setState` to that state matches (W1-R1-1). */
+  failAfterNext: (operation: "writeRefinement" | "setState", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
 }>;
 
 /** A scripted failure: before the operation changes anything, or after a write applied its change (issue #171). */
-type Scripted = Readonly<{ operation: TrackerOperation; error: TrackerError; when: "before" | "after" }>;
+type Scripted = Readonly<{ operation: TrackerOperation; error: TrackerError; when: "before" | "after"; state?: ItemState }>;
 type State = Readonly<{ items: readonly FakeItem[]; failures: readonly Scripted[]; reads: readonly ItemId[] }>;
 
 export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<FakeTracker> =>
   Effect.map(Ref.make<State>({ items: initial, failures: [], reads: [] }), (ref) => {
     /** The scripted failure of this operation at this moment, taken, or none. */
-    const scriptedAt = (operation: TrackerOperation, when: Scripted["when"]): Effect.Effect<void, TrackerError> =>
+    const scriptedAt = (operation: TrackerOperation, when: Scripted["when"], target?: ItemState): Effect.Effect<void, TrackerError> =>
       Effect.flatMap(
         Ref.modify(ref, (s): readonly [TrackerError | null, State] => {
-          const i = s.failures.findIndex((f) => f.operation === operation && f.when === when);
+          const i = s.failures.findIndex((f) => f.operation === operation && f.when === when && (f.state === undefined || f.state === target));
           return i < 0 ? [null, s] : [s.failures[i].error, { ...s, failures: s.failures.filter((_, j) => j !== i) }];
         }),
         (error) => (error === null ? Effect.void : Effect.fail(error)),
       );
-    const scripted = (operation: TrackerOperation) => scriptedAt(operation, "before");
-    const after = (operation: TrackerOperation) => scriptedAt(operation, "after");
+    const scripted = (operation: TrackerOperation, target?: ItemState) => scriptedAt(operation, "before", target);
+    const after = (operation: TrackerOperation, target?: ItemState) => scriptedAt(operation, "after", target);
     const find = (id: ItemId): Effect.Effect<FakeItem, TrackerError> =>
       Effect.flatMap(Ref.get(ref), (s) => {
         const item = s.items.find((i) => i.id === id);
@@ -57,13 +57,13 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
           yield* replace({ ...item, body: body.success });
           yield* after("writeRefinement");
         }),
-      setState: (id, state) => Effect.andThen(scripted("setState"), Effect.flatMap(find(id), (item) => Effect.andThen(replace({ ...item, state }), after("setState")))),
+      setState: (id, state) => Effect.andThen(scripted("setState", state), Effect.flatMap(find(id), (item) => Effect.andThen(replace({ ...item, state }), after("setState", state)))),
     };
     return {
       tracker,
       items: Effect.map(Ref.get(ref), (s) => s.items),
       reads: Effect.map(Ref.get(ref), (s) => s.reads),
-      failNext: (operation, error) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "before" }] })),
-      failAfterNext: (operation, error) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "after" }] })),
+      failNext: (operation, error, state) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "before", ...(state === undefined ? {} : { state }) }] })),
+      failAfterNext: (operation, error, state) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "after", ...(state === undefined ? {} : { state }) }] })),
     };
   });

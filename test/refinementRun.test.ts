@@ -106,7 +106,7 @@ test("a refinement whose section cannot be written keeps its records, sets no st
   const { exit, probe } = refine(oneQuestion, tracker);
   const error = failureOf(await exit);
   assert.equal(error._tag, "TrackerStepFailed");
-  assert.match(describe(error), /could not be written to item 120[^]*connection reset[^]*records of the run are kept/);
+  assert.match(describe(error), /writing the requirements to item 120 could not be completed[^]*connection reset[^]*records of the run are kept/);
   assert.deepEqual(await held(tracker), item);
   assert.match(fs.readFileSync(probe.requirements, "utf8"), /Q1: A/);
 });
@@ -117,7 +117,7 @@ test("a refinement whose state cannot be set keeps the section written, the stat
   const { exit } = refine(oneQuestion, tracker);
   const error = failureOf(await exit);
   assert.equal(error._tag, "TrackerStepFailed");
-  assert.match(describe(error), /were written to item 120, but its state was not changed to refined: [^]*timeout/);
+  assert.match(describe(error), /were written to item 120, but setting it to refined could not be completed: [^]*timeout/);
   const after = await held(tracker);
   assert.equal(after.state, "unrefined");
   assert.ok(Option.isSome(Result.getOrThrow(readRefinement(after.body))));
