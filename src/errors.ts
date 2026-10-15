@@ -3,6 +3,7 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import type { ProcessEnd } from "./transport.ts";
+import { ItemState } from "./tracker.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
 import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
@@ -145,7 +146,18 @@ export class ServerFault extends Data.TaggedError("ServerFault")<{ readonly mess
  * was done and what was not, so that no state that was not written is claimed. `cause` is the tracker's failure as
  * trackerFailureText says it, never a credential; `done` what the run did before, or null.
  */
-export class TrackerStepFailed extends Data.TaggedError("TrackerStepFailed")<{ readonly item: string; readonly step: TrackerStep; readonly cause: string; readonly done: string | null }> {}
+/** Issue #171 (requirements Q2): what an item held, read back after a write that did not land. */
+export const HeldStateSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("noSection") }),
+  Schema.Struct({ kind: Schema.Literal("otherSection") }),
+  Schema.Struct({ kind: Schema.Literal("state"), state: ItemState }),
+]);
+export type HeldState = typeof HeldStateSchema.Type;
+/** Issue #171 (requirements Q2): what a halt says about the item after the last write: what it held, or that it could not be checked. */
+export const WriteCheckSchema = Schema.Union([Schema.Struct({ kind: Schema.Literal("unchecked") }), Schema.Struct({ kind: Schema.Literal("held"), held: HeldStateSchema })]);
+export type WriteCheck = typeof WriteCheckSchema.Type;
+/** A tracker step of a run that failed; `check` is the item after the last write, null where no write was sent (issue #171). */
+export class TrackerStepFailed extends Data.TaggedError("TrackerStepFailed")<{ readonly item: string; readonly step: TrackerStep; readonly cause: string; readonly done: string | null; readonly check: WriteCheck | null }> {}
 
 /** A tracker's failure, or why there is none, as the program says it (issue #120). */
 export const trackerFailureText = (error: TrackerUnreachable | TrackerRequestRefused | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous | NoTracker | TrackerCredentialMissing): string => {
@@ -274,7 +286,7 @@ export const describe = (error: RunErrorFields): string => {
     case "InterviewTurnInvalid":
       return interviewTurnInvalidText(error.problems);
     case "TrackerStepFailed":
-      return trackerStepFailedText(error.item, error.step, error.cause, error.done);
+      return trackerStepFailedText(error.item, error.step, error.cause, error.done, error.check);
     case "ServerFault":
       return serverFaultText(error.message);
     case "Interrupted":
@@ -337,7 +349,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnSkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
-  Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String) }),
+  Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),
   Schema.Struct({ _tag: Schema.Literal("ServerFault"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);

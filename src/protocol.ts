@@ -127,6 +127,7 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("limit"), ...withHeading, limit: Int }),
   Schema.Struct({ kind: Schema.Literal("unchanged"), ...withHeading, fileLabel: Str, accepted: Schema.Array(Str) }),
   Schema.Struct({ kind: Schema.Literal("transport"), agent: AgentSchema, what: Str, attempts: Int, fault: Str }),
+  Schema.Struct({ kind: Schema.Literal("tracker"), tracker: Str, what: Str, attempts: Int, fault: Str }),
 ]);
 /** ShownBlock of src/pieces.ts: an agent's block, or the program's own document shown whole. */
 const ShownBlockSchema = Schema.Union([S.ParagraphBlock, S.ListBlock, S.CodeBlock, Schema.Struct({ kind: Schema.Literal("document"), markdown: Str })]);

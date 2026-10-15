@@ -119,6 +119,14 @@ export const transportOptions = (): readonly OfferedOption[] => {
     own(prompts.TRANSPORT_STOP, d.stop, { token: prompts.TRANSPORT_ANSWERS.stop }, (answer: string) => parseTransportAnswer(answer) === "stop"),
   ];
 };
+/** Issue #171: the tracker's exhaustion question, with the transport pause's labels and answers and the tracker's descriptions. */
+export const trackerOptions = (): readonly OfferedOption[] => {
+  const d = prompts.trackerOptionDescriptions();
+  return [
+    own(prompts.TRANSPORT_RETRY_AGAIN, d.retry, { token: prompts.TRANSPORT_ANSWERS.retry }, (answer: string) => parseTransportAnswer(answer) === "retry"),
+    own(prompts.TRANSPORT_STOP, d.stop, { token: prompts.TRANSPORT_ANSWERS.stop }, (answer: string) => parseTransportAnswer(answer) === "stop"),
+  ];
+};
 /**
  * The cycle limit (decision Q6): p proceeds where offered, a number adds cycles, and every other answer stops the run
  * (the review loop halts on it), so "2" is never read as the second option.

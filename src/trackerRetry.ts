@@ -3,7 +3,7 @@
 // writes as data, the waits, which failures are repeated, and whether the item already holds a write's outcome.
 
 import { Option, Result } from "effect";
-import type { TrackerUnreachable } from "./errors.ts";
+import type { HeldState, TrackerUnreachable } from "./errors.ts";
 import { type Refinement, readRefinement } from "./refinement.ts";
 import { backoffDelays } from "./retry.ts";
 import type { Config } from "./schema.ts";
@@ -14,6 +14,9 @@ import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 export type TrackerWrite =
   | Readonly<{ kind: "writeRefinement"; item: ItemId; refinement: Refinement }>
   | Readonly<{ kind: "setState"; item: ItemId; state: ItemState }>;
+
+/** A request of a run to its tracker: the first read of its item, or one of its writes. */
+export type TrackerOperation = Readonly<{ kind: "read"; item: ItemId }> | TrackerWrite;
 
 export type TrackerRetrySettings = Pick<Config, "maxTrackerRetries" | "trackerRetryDelaySeconds">;
 
@@ -30,14 +33,8 @@ export const retryable = (error: TrackerError): error is TrackerUnreachable => e
  */
 export const uncertainWrite = (error: TrackerError): boolean => error._tag === "TrackerUnreachable" && error.status !== null;
 
-/** What the item held, read back after a write that did not land. */
-export type HeldState =
-  | Readonly<{ kind: "noSection" }>
-  | Readonly<{ kind: "otherSection" }>
-  | Readonly<{ kind: "state"; state: ItemState }>;
-
-/** What a halt says about the item after the last write (requirements Q2): what it held, or that it could not be checked. */
-export type WriteCheck = Readonly<{ kind: "unchecked" }> | Readonly<{ kind: "held"; held: HeldState }>;
+/** HeldState and WriteCheck are declared with their schemas in src/errors.ts, where TrackerStepFailed decodes them. */
+export type { HeldState, WriteCheck } from "./errors.ts";
 
 /** Success when the item already holds the write's outcome; otherwise what it held. A malformed section is another section. */
 export const landed = (write: TrackerWrite, item: TrackerItem): Result.Result<void, HeldState> => {

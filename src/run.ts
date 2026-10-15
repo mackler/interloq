@@ -47,7 +47,7 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode): E
       yield* ui.say(NOTHING_TO_SETTLE);
     }
     const { requirements } = yield* store.readContext();
-    const failed = (step: TrackerStep, cause: string, done: string | null) => Effect.fail(new TrackerStepFailed({ item, step, cause, done }));
+    const failed = (step: TrackerStep, cause: string, done: string | null) => Effect.fail(new TrackerStepFailed({ item, step, cause, done, check: null }));
     const refinement = refinementOf(requirements ?? "");
     if (Result.isFailure(refinement)) return yield* failed("writeRefinement", refinementInvalidText(refinement.failure.reason, store.requirements), requirementsKeptText(store.requirements));
     yield* tracker.writeRefinement(item, refinement.success).pipe(Effect.catch((e) => failed("writeRefinement", trackerFailureText(e), requirementsKeptText(store.requirements))));
@@ -72,10 +72,10 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
     yield* store.init(task);
     yield* store.converse(`${itemStartedLine("implementation", item, firstLine(task))}\n\n`);
     const start = stateAtStart("implementation");
-    if (start !== null) yield* tracker.setState(item, start).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplementing", cause: trackerFailureText(e), done: null }))));
+    if (start !== null) yield* tracker.setState(item, start).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplementing", cause: trackerFailureText(e), done: null, check: null }))));
     if (requirements !== null) yield* store.writeRequirements(requirements);
     const phases = yield* implementationPhases(task, requirements !== null, checks);
-    yield* tracker.setState(item, stateAtEnd("implementation")).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplemented", cause: trackerFailureText(e), done: null }))));
+    yield* tracker.setState(item, stateAtEnd("implementation")).pipe(Effect.catch((e) => Effect.fail(new TrackerStepFailed({ item, step: "setImplemented", cause: trackerFailureText(e), done: null, check: null }))));
     return phases;
   });
 

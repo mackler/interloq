@@ -13,6 +13,8 @@ import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
 import { SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
 import type { ReviewThread } from "./reviewThread.ts";
+import type { WriteCheck } from "./errors.ts";
+import type { TrackerOperation } from "./trackerRetry.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -1287,14 +1289,65 @@ export const TRACKER_FAILURE_TEXTS = {
 export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "setRefined", "setImplemented"] as const;
 export type TrackerStep = (typeof TRACKER_STEPS)[number];
 /** A tracker step that failed: what was not done, the cause, and that the records stand (behavior 11). */
-export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null): string {
+export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null, check: WriteCheck | null): string {
   const what: Record<TrackerStep, string> = {
     setImplementing: `item ${item} could not be set to implementing, so the run made no agent call`,
     writeRefinement: `the requirements could not be written to item ${item}, and its state was not changed`,
     setRefined: `the requirements were written to item ${item}, but its state was not changed to refined`,
     setImplemented: `the work is done, but item ${item} could not be set to implemented and stays implementing`,
   };
-  return `${what[step]}: ${cause}.${done === null ? "" : ` ${done}`} The records of the run are kept.`;
+  return `${what[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
+}
+/** Issue #171 (requirements Q2): what the item held after the last write of a halted tracker step, or that it could not be checked. */
+export function writeCheckText(item: string, check: WriteCheck): string {
+  if (check.kind === "unchecked") return `Item ${item} could not be checked after the last attempt.`;
+  switch (check.held.kind) {
+    case "noSection":
+      return `After the last attempt, item ${item} held no Refined using Interloq section.`;
+    case "otherSection":
+      return `After the last attempt, item ${item} held a Refined using Interloq section other than the run's requirements.`;
+    case "state":
+      return `After the last attempt, item ${item} was in the state ${check.held.state}.`;
+  }
+}
+
+// ---- the tracker retry (issue #171) ---------------------------------------------------------------------------------
+
+/** A request of a run to its tracker in words: reading item 155, writing the requirements to item 155, setting item 155 to refined. */
+export function trackerOperationText(op: TrackerOperation): string {
+  switch (op.kind) {
+    case "read":
+      return `reading item ${op.item}`;
+    case "writeRefinement":
+      return `writing the requirements to item ${op.item}`;
+    case "setState":
+      return `setting item ${op.item} to ${op.state}`;
+  }
+}
+/** A repeat of a failed tracker request, as the page and conversation.md show it. */
+export function trackerRetryLine(tracker: string, what: string, attempt: number, of: number, delaySeconds: number, fault: string): string {
+  return `${tracker}: request failed while ${what}, retry ${attempt} of ${of} in ${delaySeconds} s (${fault})`;
+}
+/** A tracker request that succeeded after a repeat. */
+export function trackerRecoveredLine(tracker: string): string {
+  return `${tracker}: request succeeded`;
+}
+/** A write the tracker answered with a server error, which the item read back showed applied (requirements Q2): nothing is repeated or asked. */
+export function trackerWriteLandedLine(tracker: string, what: string): string {
+  return `${tracker}: the request failed while ${what}, but the item read back shows it was applied; the run goes on`;
+}
+/** The question when a tracker request's repeats are used up: the tracker and the request; the attempts and the failure are under the fault's heading. */
+export function trackerExhaustedQuestion(tracker: string, what: string): string {
+  return `The ${tracker} issue tracker could not be reached for ${what}; the attempts and the last error are shown under "${attachedHeading("fault")}". Do you want Interloq to try the request again, or to stop the run?`;
+}
+export function trackerOptionDescriptions(): Readonly<{ retry: string; stop: string }> {
+  return {
+    retry: "Interloq makes the request again, with another full set of repeats and the waits between them starting again from the shortest.",
+    stop: "the run ends here with exit code 1, and its records are kept.",
+  };
+}
+export function trackerDecisionLine(answer: "retry" | "stop", tracker: string, what: string): string {
+  return `**User decision:** ${answer === "retry" ? "retry again" : "stop the run"} after the ${tracker} issue tracker could not be reached for ${what}.\n\n`;
 }
 
 export function decisionFormatUnreadableText(file: string, message: string): string {
@@ -2655,6 +2708,8 @@ const originText = (origin: QuestionOrigin): string => {
       return `Asked because Claude Code accepted points of the review in ${origin.heading} but did not change the file`;
     case "transport":
       return `Asked because ${origin.agent === "claude" ? "Claude Code" : "Codex"} could not be reached`;
+    case "tracker":
+      return `Asked because the ${origin.tracker} issue tracker could not be reached`;
   }
 };
 
@@ -2854,6 +2909,8 @@ export function fallbackContext(origin: QuestionOrigin): string {
       return `${interloq} During ${origin.heading}, Claude Code accepted points ${origin.accepted.join(", ")} of Codex's review but did not change ${origin.fileLabel}, the file under review, even after being told so. Interloq asks you how to continue, because an accepted point that changes nothing would otherwise be reviewed again and again.`;
     case "transport":
       return `${interloq} Every call to an agent goes over the network. ${agentWords(origin.agent)} could not be reached for ${origin.what} after ${origin.attempts} attempts; the last error is shown below. Interloq waited and tried again automatically. It now asks you whether to try again or stop the run; the run's records are kept either way.`;
+    case "tracker":
+      return `Interloq reads and updates this run's item in the project's issue tracker, ${origin.tracker}, at the start and at the end of a run. The request failed while ${origin.what} after ${origin.attempts} attempts, with waits between them; the last error is shown below. Interloq now asks you whether to try again or stop the run; the run's records are kept either way. A repeated request reaches the same result as one that succeeded, because every request sets the full intended state of the item.`;
   }
 }
 
