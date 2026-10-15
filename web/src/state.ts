@@ -614,6 +614,10 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "TransportRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
+    // Issue #171: the tracker's repeats; the page shows them from S6 of the plan.
+    case "TrackerRetrying":
+    case "TrackerRecovered":
+      return run;
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
       return { ...run, limitWait: { agent: event.agent, limitType: event.limitType, fromMs: event.fromMs, untilMs: event.untilMs }, activity: `${AGENT[event.agent]} — ${usageLimitActivity(event.limitType, event.untilMs)}` };

@@ -165,6 +165,8 @@ export const UiEventSchema = Schema.Union([
   tagged("AgentCallEnded", { agent: AgentSchema, ok: Schema.Boolean }),
   tagged("TransportRetrying", { agent: AgentSchema, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
   tagged("TransportRecovered", { agent: AgentSchema }),
+  tagged("TrackerRetrying", { tracker: Str, what: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  tagged("TrackerRecovered", { tracker: Str }),
   tagged("UsageLimitWaiting", { agent: AgentSchema, limitType: Schema.NullOr(Str), fromMs: Schema.Finite, untilMs: Schema.Finite }),
   tagged("UsageLimitLifted", { agent: AgentSchema, waitedMs: Schema.Finite }),
   tagged("AgentReconnecting", { agent: AgentSchema, by: Schema.Literal("sdk"), attempt: Schema.NullOr(Int), of: Schema.NullOr(Int), delayMs: Schema.NullOr(Int), detail: Str }),

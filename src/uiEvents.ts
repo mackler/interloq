@@ -1,7 +1,7 @@
 // The structured events of a run for a user interface (decision Q5): the scripted Ui records them, the web Ui turns them into the page's panels, activity line and progress. Pure; types only from src/.
 
 import { type SubjectId, subjectDir } from "./artifacts.ts";
-import { agentReconnectingLine, cycleHeading, phaseLabel, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
+import { agentReconnectingLine, cycleHeading, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { TermsResponse } from "./schema.ts";
 import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion } from "./schema.ts";
@@ -41,6 +41,13 @@ export type UiEvent =
   | Readonly<{ _tag: "TransportRetrying"; agent: Agent; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
   /** A call succeeded after a retry. */
   | Readonly<{ _tag: "TransportRecovered"; agent: Agent }>
+  /**
+   * Issue #171: the program repeats a tracker request that reached no answer or a server error: repeat `attempt` of
+   * `of` of `what` (the request in words), after `delaySeconds`, from `fromMs` to `untilMs`.
+   */
+  | Readonly<{ _tag: "TrackerRetrying"; tracker: string; what: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
+  /** A tracker request succeeded after a repeat, or the item read back showed a write applied. */
+  | Readonly<{ _tag: "TrackerRecovered"; tracker: string }>
   // Issue #68: a wait for a usage limit with a stated reset, from its start to its scheduled end, and its end.
   | Readonly<{ _tag: "UsageLimitWaiting"; agent: Agent; limitType: string | null; fromMs: number; untilMs: number }>
   | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; waitedMs: number }>
@@ -145,6 +152,10 @@ export const describeEvent = (event: UiEvent): string => {
       return transportRetryLine(event.agent, event.attempt, event.of, event.delaySeconds, event.fault);
     case "TransportRecovered":
       return transportRecoveredLine(event.agent);
+    case "TrackerRetrying":
+      return trackerRetryLine(event.tracker, event.what, event.attempt, event.of, event.delaySeconds, event.fault);
+    case "TrackerRecovered":
+      return trackerRecoveredLine(event.tracker);
     case "UsageLimitWaiting":
       return usageLimitWaitLine(event.agent, event.limitType, event.untilMs);
     case "UsageLimitLifted":

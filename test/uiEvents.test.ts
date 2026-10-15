@@ -32,6 +32,9 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   AgentReconnecting: [{ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503" }, /Claude Code: reconnecting 2 of 10 in 1\.5 s \(status 503\)/],
   TransportRetrying: [{ _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 }, /Codex: connection lost, retry 2 of 3 in 10 s \(stream disconnected\)/],
   TransportRecovered: [{ _tag: "TransportRecovered", agent: "claude" }, /Claude Code: connection restored/],
+  // Issue #171: the tracker's repeats.
+  TrackerRetrying: [{ _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 0, untilMs: 30_000 }, /^GitHub: request failed while reading item 155, retry 2 of 5 in 30 s \(no answer\)$/],
+  TrackerRecovered: [{ _tag: "TrackerRecovered", tracker: "GitHub" }, /^GitHub: request succeeded$/],
   UsageLimitWaiting: [{ _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", fromMs: 0, untilMs: 9_000_000 }, /^Claude Code: five-hour session limit reached; Interloq waits until 1970-01-01 02:30 UTC, then continues$/],
   UsageLimitLifted: [{ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_000_000 }, /^Claude Code: the usage limit has lifted after 2:30:00; continuing$/],
   InterviewTurn: [{ _tag: "InterviewTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],

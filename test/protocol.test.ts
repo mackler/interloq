@@ -105,6 +105,9 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   // Issue #26: the program's retry and its recovery.
   fc.record({ _tag: fc.constant("TransportRetrying" as const), agent, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TransportRecovered" as const), agent }),
+  // Issue #171.
+  fc.record({ _tag: fc.constant("TrackerRetrying" as const), tracker: text, what: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
+  fc.record({ _tag: fc.constant("TrackerRecovered" as const), tracker: text }),
   // Issue #26: the SDK's own reconnection.
   fc.record({ _tag: fc.constant("AgentReconnecting" as const), agent, by: fc.constant("sdk" as const), attempt: fc.option(nat, { nil: null }), of: fc.option(nat, { nil: null }), delayMs: fc.option(nat, { nil: null }), detail: text }),
   // Issue #6: the phases known of the run.
