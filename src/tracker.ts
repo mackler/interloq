@@ -20,7 +20,7 @@ export const itemIdOf = (text: string): Result.Result<ItemId, InvalidItemId> =>
 
 /**
  * The address of an item's own page in its tracker (issue #125): an absolute https address, built by itemUrlOf alone.
- * The page puts it in a link's href, so no other scheme (javascript:, data:, http:) is a value of the type. All three
+ * The page puts it in a link's href, so no other scheme (javascript:, data:, http:) is a value of the type. Both
  * trackers serve their pages over https.
  */
 export type ItemUrl = Brand.Branded<string, "ItemUrl">;
