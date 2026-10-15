@@ -404,6 +404,12 @@ export const Config = Schema.Struct({
    * total) is warned about on the page and in conversation.md.
    */
   costWarningUsd: Schema.Finite.check(Schema.isGreaterThan(0)),
+  /**
+   * Issue #165 (requirements Q1): the input tokens of one Codex review turn (the `input_tokens` Codex reports for the
+   * turn, the figure usage.jsonl records with its thread id) above which the next round of that review loop starts a new
+   * Codex thread.
+   */
+  codexTurnInputLimit: PositiveInt,
   countMinor: Schema.Boolean,
   execPermissionMode: Schema.Literals(["auto", "acceptEdits", "bypassPermissions", "default"]),
   claudeModel: Schema.NullOr(Schema.String),
@@ -580,6 +586,7 @@ export const defaultConfig: Config = {
   maxTransportRetries: 3,
   transportRetryDelaySeconds: 5,
   costWarningUsd: 5,
+  codexTurnInputLimit: 500_000,
   countMinor: true,
   execPermissionMode: "auto",
   claudeModel: null,

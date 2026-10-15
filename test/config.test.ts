@@ -240,6 +240,24 @@ test("a costWarningUsd of 0, a negative number, a string or a non-finite number 
   }
 });
 
+// Issue #165 (requirements Q1): the input tokens of one Codex turn above which the next round starts a new thread.
+test("codexTurnInputLimit defaults to 500,000, and the project's file overrides the shared one", async () => {
+  const { project, shared, projectFile } = setup();
+  assert.equal((await load(project, shared)).codexTurnInputLimit, 500_000);
+  fs.writeFileSync(shared, JSON.stringify({ codexTurnInputLimit: 800000 }));
+  assert.equal((await load(project, shared)).codexTurnInputLimit, 800_000);
+  fs.writeFileSync(projectFile, JSON.stringify({ codexTurnInputLimit: 250000 }));
+  assert.equal((await load(project, shared)).codexTurnInputLimit, 250_000);
+});
+
+test("a codexTurnInputLimit of 0, a negative number, a fraction, a string or a non-finite number stops the program with ConfigInvalid", async () => {
+  for (const text of ['{"codexTurnInputLimit": 0}', '{"codexTurnInputLimit": -1}', '{"codexTurnInputLimit": 1.5}', '{"codexTurnInputLimit": "500000"}', '{"codexTurnInputLimit": 1e999}']) {
+    const { project, shared, projectFile } = setup();
+    fs.writeFileSync(projectFile, text);
+    await failsWith(project, shared, "ConfigInvalid", /codexTurnInputLimit/);
+  }
+});
+
 // Issue #142 (requirements Q6, Q7): the explanations of the agreed questions' terms in a refinement run, under behavior 9.
 import { mergeConfig } from "../src/config.ts";
 

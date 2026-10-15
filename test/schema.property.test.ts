@@ -22,6 +22,7 @@ const arbConfig = record<S.Config>({
   maxTransportRetries: positiveInt,
   transportRetryDelaySeconds: fc.double({ min: Number.MIN_VALUE, max: 1e6, noNaN: true, noDefaultInfinity: true }),
   costWarningUsd: fc.double({ min: Number.MIN_VALUE, max: 1e6, noNaN: true, noDefaultInfinity: true }),
+  codexTurnInputLimit: positiveInt,
   countMinor: fc.boolean(),
   execPermissionMode: fc.constantFrom("auto", "acceptEdits", "bypassPermissions", "default"),
   claudeModel: fc.option(fc.string(), { nil: null }),
