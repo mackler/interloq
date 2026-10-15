@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { instantOn, timeOfDayIn } from "../src/limitReset.ts";
+import { instantOn, NO_LIMIT_WAIT, planLimitWait, timeOfDayIn, USAGE_LIMIT_MARGIN_SECONDS } from "../src/limitReset.ts";
 
 const RUNS = { numRuns: 300, seed: 20261015 };
 const ZONES = ["UTC", "Asia/Kolkata", "America/New_York"] as const;
@@ -61,6 +61,42 @@ test("in America/New_York, day 0 lies within 25 hours of the start of the refusa
       const sinceMidnight = (w.hour * 60 + w.minute) * 60_000 + (refused % 60_000);
       const dayStart = refused - sinceMidnight;
       assert.ok(day0 >= dayStart - 3600_000 && day0 < dayStart + 25 * 3600_000, `${new Date(day0).toISOString()} vs ${new Date(refused).toISOString()}`);
+    }),
+    RUNS,
+  );
+});
+
+// S2: planLimitWait over any refusal and time of day in UTC.
+const MARGIN = USAGE_LIMIT_MARGIN_SECONDS * 1000;
+
+test("from no earlier wait, a time of day is waited for within a day, or tried a minute after the refusal", () => {
+  fc.assert(
+    fc.property(arbTime, arbInstant, (t, refused) => {
+      const at = timeOfDayIn(textOf(t, "UTC"));
+      assert.ok(at !== null);
+      const p = planLimitWait({ kind: "timeOfDay", at }, refused, NO_LIMIT_WAIT);
+      const named = p.untilMs - MARGIN;
+      if (p.basis.kind === "reset") assert.ok(named >= refused && named < refused + DAY_MS);
+      else {
+        assert.equal(p.basis.kind, "pastReset");
+        assert.equal(named, refused);
+      }
+      assert.ok(p.untilMs > refused);
+    }),
+    RUNS,
+  );
+});
+
+test("after a past reset was tried, a time of day is always waited for, within a day", () => {
+  fc.assert(
+    fc.property(arbTime, arbInstant, fc.nat({ max: 5 }), (t, refused, unknownAttempts) => {
+      const at = timeOfDayIn(textOf(t, "UTC"));
+      assert.ok(at !== null);
+      const p = planLimitWait({ kind: "timeOfDay", at }, refused, { pastTried: true, unknownAttempts });
+      assert.equal(p.basis.kind, "reset");
+      const named = p.untilMs - MARGIN;
+      assert.ok(named >= refused && named <= refused + DAY_MS);
+      assert.ok(p.untilMs > refused);
     }),
     RUNS,
   );

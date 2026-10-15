@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
-import { clockTimeOf, instantOn, timeOfDayIn, timeZoneOf } from "../src/limitReset.ts";
+import { clockTimeOf, instantOn, type LimitWaitState, NO_LIMIT_WAIT, planLimitWait, timeOfDayIn, timeZoneOf, USAGE_LIMIT_MARGIN_SECONDS, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 
 const TEXT_15_OCT = "You've hit your session limit · resets 11:10pm (UTC)";
 const REFUSED_15_OCT = Date.parse("2026-10-15T00:57:16Z");
@@ -62,4 +62,59 @@ test("timeZoneOf and clockTimeOf refuse what is not a zone or a time", () => {
   assert.ok(Result.isFailure(clockTimeOf(5, 60, "pm")));
   const t = clockTimeOf(12, 0, "am");
   assert.ok(Result.isSuccess(t) && t.success.hour === 0);
+});
+
+// S2: planLimitWait.
+const MARGIN = USAGE_LIMIT_MARGIN_SECONDS * 1000;
+const at = (text: string) => {
+  const t = timeOfDayIn(text);
+  assert.ok(t !== null);
+  return { kind: "timeOfDay", at: t } as const;
+};
+
+test("an instant waits until it plus the margin, and a past instant one minute", () => {
+  const p = planLimitWait({ kind: "instant", atMs: REFUSED_15_OCT + 3600_000 }, REFUSED_15_OCT, NO_LIMIT_WAIT);
+  assert.deepEqual(p, { basis: { kind: "reset" }, untilMs: REFUSED_15_OCT + 3600_000 + MARGIN, next: NO_LIMIT_WAIT });
+  const past = planLimitWait({ kind: "instant", atMs: REFUSED_15_OCT - 3600_000 }, REFUSED_15_OCT, NO_LIMIT_WAIT);
+  assert.equal(past.untilMs, REFUSED_15_OCT + MARGIN);
+});
+
+test("the run of 15 Oct 2026 waits until 23:11 UTC", () => {
+  const p = planLimitWait(at(TEXT_15_OCT), REFUSED_15_OCT, NO_LIMIT_WAIT);
+  assert.deepEqual(p.basis, { kind: "reset" });
+  assert.equal(new Date(p.untilMs).toISOString(), "2026-10-15T23:11:00.000Z");
+  assert.deepEqual(p.next, NO_LIMIT_WAIT);
+});
+
+test("Q4: an earlier time is tried a minute later; earlier again waits for the next day", () => {
+  const reset = at("resets 12:30am (UTC)");
+  const first = planLimitWait(reset, REFUSED_15_OCT, NO_LIMIT_WAIT);
+  assert.deepEqual(first.basis, { kind: "pastReset", namedMs: Date.parse("2026-10-15T00:30:00Z") });
+  assert.equal(first.untilMs, REFUSED_15_OCT + MARGIN);
+  assert.deepEqual(first.next, { pastTried: true, unknownAttempts: 0 });
+  const again = first.untilMs + 2000;
+  const second = planLimitWait(reset, again, first.next);
+  assert.deepEqual(second.basis, { kind: "reset" });
+  assert.equal(new Date(second.untilMs).toISOString(), "2026-10-16T00:31:00.000Z");
+  assert.deepEqual(second.next, NO_LIMIT_WAIT);
+});
+
+test("Q4: an earlier time, then a later one, waits for the later one that day", () => {
+  const first = planLimitWait(at("resets 12:30am (UTC)"), REFUSED_15_OCT, NO_LIMIT_WAIT);
+  const second = planLimitWait(at("resets 5:00am (UTC)"), first.untilMs, first.next);
+  assert.deepEqual(second.basis, { kind: "reset" });
+  assert.equal(new Date(second.untilMs).toISOString(), "2026-10-15T05:01:00.000Z");
+});
+
+test("Q2: no known end tries every 5 minutes, counting the tries; it clears a past reset's try", () => {
+  let state: LimitWaitState = { pastTried: true, unknownAttempts: 0 };
+  let now = REFUSED_15_OCT;
+  for (const attempt of [1, 2, 3]) {
+    const p = planLimitWait({ kind: "unknown" }, now, state);
+    assert.deepEqual(p.basis, { kind: "noKnownEnd", attempt });
+    assert.equal(p.untilMs, now + USAGE_LIMIT_RETRY_SECONDS * 1000);
+    assert.deepEqual(p.next, { pastTried: false, unknownAttempts: attempt });
+    state = p.next;
+    now = p.untilMs + 1000;
+  }
 });

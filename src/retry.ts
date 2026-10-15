@@ -19,12 +19,8 @@ export const backoffDelays = (count: number, firstSeconds: number): readonly num
 export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transportRetryDelaySeconds">): readonly number[] =>
   backoffDelays(config.maxTransportRetries, config.transportRetryDelaySeconds);
 
-/**
- * The margin added to a usage limit's stated reset (issue #68): the wait lasts until the reset plus this, and never less
- * than this, so that a reset stated in the past or a clock behind the server's cannot make the program call again at
- * once. Neither a threshold nor a setting.
- */
-export const USAGE_LIMIT_MARGIN_SECONDS = 60;
+import { USAGE_LIMIT_MARGIN_SECONDS } from "./limitReset.ts";
+export { USAGE_LIMIT_MARGIN_SECONDS };
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
 const isProcessEnded = (e: unknown): e is ProcessEnded => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "ProcessEnded";

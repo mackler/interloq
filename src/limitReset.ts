@@ -96,3 +96,59 @@ export const instantOn = (at: TimeOfDay, dayOfMs: number, dayOffset: 0 | 1): num
   const first = guess - offsetAt(guess, at.zone);
   return guess - offsetAt(first, at.zone);
 };
+
+/**
+ * The margin added to a usage limit's stated reset (issue #68): the wait lasts until the reset plus this, and never less
+ * than this, so that a reset stated in the past or a clock behind the server's cannot make the program call again at
+ * once. Neither a threshold nor a setting.
+ */
+export const USAGE_LIMIT_MARGIN_SECONDS = 60;
+
+/**
+ * The wait before another try at a usage limit with no known end (issue #170, requirement Q2): a constant, not a
+ * setting.
+ */
+export const USAGE_LIMIT_RETRY_SECONDS = 300;
+
+/**
+ * What a usage limit's wait rests on: a stated reset (from a rate-limit event or the error result's text); a time of
+ * day the text named that was already past at the refusal, tried again one minute after it (requirement Q4); or no
+ * usable reset, tried again every 5 minutes (requirement Q2), `attempt` counting the consecutive tries from 1.
+ */
+export type LimitWaitBasis =
+  | Readonly<{ kind: "reset" }>
+  | Readonly<{ kind: "pastReset"; namedMs: number }>
+  | Readonly<{ kind: "noKnownEnd"; attempt: number }>;
+
+/** What the waits of one call so far carry to the next refusal: a past reset tried once, the tries with no known end. */
+export type LimitWaitState = Readonly<{ pastTried: boolean; unknownAttempts: number }>;
+export const NO_LIMIT_WAIT: LimitWaitState = { pastTried: false, unknownAttempts: 0 };
+
+/** One refusal's wait: its basis, its end, and the state the next refusal of the same call starts from. */
+export type LimitWaitPlan = Readonly<{ basis: LimitWaitBasis; untilMs: number; next: LimitWaitState }>;
+
+const MARGIN_MS = USAGE_LIMIT_MARGIN_SECONDS * 1000;
+const RESET: LimitWaitBasis = { kind: "reset" };
+
+/**
+ * How long a refusal for a usage limit waits (issues #68 and #170). An instant is waited for plus the margin, and a past
+ * instant for the margin alone. A time of day is that day's when it is not earlier than the refusal (requirement Q1);
+ * an earlier one is tried once a minute after the refusal, and if the next refusal names a time still earlier than it,
+ * that time is waited for on the next day (Q4). No usable reset is tried every 5 minutes with no limit (Q2).
+ */
+export const planLimitWait = (reset: LimitReset, refusedAtMs: number, state: LimitWaitState): LimitWaitPlan => {
+  switch (reset.kind) {
+    case "instant":
+      return { basis: RESET, untilMs: Math.max(reset.atMs, refusedAtMs) + MARGIN_MS, next: NO_LIMIT_WAIT };
+    case "timeOfDay": {
+      const today = instantOn(reset.at, refusedAtMs, 0);
+      if (today >= refusedAtMs) return { basis: RESET, untilMs: today + MARGIN_MS, next: NO_LIMIT_WAIT };
+      if (!state.pastTried) return { basis: { kind: "pastReset", namedMs: today }, untilMs: refusedAtMs + MARGIN_MS, next: { pastTried: true, unknownAttempts: 0 } };
+      return { basis: RESET, untilMs: instantOn(reset.at, refusedAtMs, 1) + MARGIN_MS, next: NO_LIMIT_WAIT };
+    }
+    case "unknown": {
+      const attempt = state.unknownAttempts + 1;
+      return { basis: { kind: "noKnownEnd", attempt }, untilMs: refusedAtMs + USAGE_LIMIT_RETRY_SECONDS * 1000, next: { pastTried: false, unknownAttempts: attempt } };
+    }
+  }
+};
