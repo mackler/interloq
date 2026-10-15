@@ -71,7 +71,7 @@ export const withTransportRetry = <A, E, R>(
         yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, limitType: error.limitType, basis: { kind: "reset" }, fromMs, untilMs });
         yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, { kind: "reset" }, untilMs));
         const record = (outcome: "lifted" | "interrupted") =>
-          Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ agent: error.agent, limitType: error.limitType, fromMs, untilMs, endedMs, outcome })));
+          Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ agent: error.agent, limitType: error.limitType, basis: "reset", fromMs, untilMs, endedMs, outcome })));
         yield* Effect.sleep(Duration.millis(untilMs - fromMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? "lifted" : "interrupted")));
         const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
         yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });

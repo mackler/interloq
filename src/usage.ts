@@ -1,6 +1,7 @@
 // The usage summary as a pure fold over the lines of usage.jsonl (findings 9 and 27 of the functional design
 // review; decision Q8). The store reads the lines; program.ts renders the summary.
 
+import type { LimitWaitBasis } from "./limitReset.ts";
 import { durationText } from "./prompts.ts";
 
 /** One line of usage.jsonl, per agent. A Claude Code line's session is null when the SDK reported none. */
@@ -12,7 +13,16 @@ export type UsageLine =
  * One wait for a Claude Code usage limit (issue #68): when it began, the end scheduled (the reset plus the margin), when
  * it actually ended and how. Only the actual span counts as waited.
  */
-export type LimitWait = Readonly<{ agent: "claude"; limitType: string | null; fromMs: number; untilMs: number; endedMs: number; outcome: "lifted" | "interrupted" }>;
+export type LimitWait = Readonly<{
+  agent: "claude";
+  limitType: string | null;
+  /** What the wait rested on (issue #170). */
+  basis: LimitWaitBasis["kind"];
+  fromMs: number;
+  untilMs: number;
+  endedMs: number;
+  outcome: "lifted" | "elapsed" | "interrupted";
+}>;
 
 /** The lines of usage.jsonl: the calls' usage and the waits. */
 export type UsageLines = Readonly<{ calls: readonly UsageLine[]; waits: readonly LimitWait[] }>;

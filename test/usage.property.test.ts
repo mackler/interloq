@@ -64,8 +64,8 @@ test("property: earlier totals of a session do not change the result, and interl
 
 // Issue #68: the time waited is the sum of the waits' actual spans, whatever their scheduled ends.
 const arbWait: fc.Arbitrary<LimitWait> = fc
-  .tuple(fc.nat(1e12), fc.nat(1e9), fc.nat(1e9), fc.constantFrom("lifted" as const, "interrupted" as const))
-  .map(([fromMs, scheduled, actual, outcome]) => ({ agent: "claude", limitType: null, fromMs, untilMs: fromMs + scheduled, endedMs: fromMs + actual, outcome }));
+  .tuple(fc.nat(1e12), fc.nat(1e9), fc.nat(1e9), fc.constantFrom("lifted" as const, "elapsed" as const, "interrupted" as const), fc.constantFrom("reset" as const, "pastReset" as const, "noKnownEnd" as const))
+  .map(([fromMs, scheduled, actual, outcome, basis]) => ({ agent: "claude", limitType: null, basis, fromMs, untilMs: fromMs + scheduled, endedMs: fromMs + actual, outcome }));
 
 test("property: waitedMs is the sum of endedMs - fromMs over the waits, and limitWaits their count", () => {
   fc.assert(

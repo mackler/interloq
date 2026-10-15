@@ -104,17 +104,30 @@ test("init archives nothing and leaves plan-review/config.json alone; the record
 test("recordLimitWait appends a usage_limit_wait line, and usageLines returns it under waits and the calls under calls", async () => {
   const s = await initialised();
   const from = Date.UTC(2026, 9, 7, 5, 32);
-  const wait = { agent: "claude" as const, limitType: "five_hour", fromMs: from, untilMs: from + 9_000_000, endedMs: from + 60_000, outcome: "interrupted" as const };
+  const wait = { agent: "claude" as const, limitType: "five_hour", basis: "reset" as const, fromMs: from, untilMs: from + 9_000_000, endedMs: from + 60_000, outcome: "interrupted" as const };
   await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s", turns: 1, totalCostUsd: 1.5 }));
   await Effect.runPromise(s.recordLimitWait(wait));
   const lines = fs.readFileSync(path.join(s.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
   assert.equal(lines.length, 2);
   const { time, ...line } = lines[1] ?? {};
   assert.equal(typeof time, "string");
-  assert.deepEqual(line, { version: 2, kind: "usage_limit_wait", agent: "claude", limit_type: "five_hour", from: new Date(from).toISOString(), until: new Date(from + 9_000_000).toISOString(), ended: new Date(from + 60_000).toISOString(), outcome: "interrupted" });
+  assert.deepEqual(line, { version: 2, kind: "usage_limit_wait", agent: "claude", limit_type: "five_hour", basis: "reset", from: new Date(from).toISOString(), until: new Date(from + 9_000_000).toISOString(), ended: new Date(from + 60_000).toISOString(), outcome: "interrupted" });
   const read = await Effect.runPromise(s.usageLines());
   assert.deepEqual(read.waits, [wait]);
   assert.deepEqual(read.calls, [{ agent: "claude", session: "s", turns: 1, totalCostUsd: 1.5 }]);
+});
+
+// Issue #170: a wait's basis and the outcome of a wait whose end was not stated round-trip through usage.jsonl.
+test("recordLimitWait keeps each basis and outcome, and usageLines reads them back", async () => {
+  const s = await initialised();
+  const from = Date.UTC(2026, 9, 15, 0, 57);
+  const waits = [
+    { agent: "claude" as const, limitType: null, basis: "pastReset" as const, fromMs: from, untilMs: from + 60_000, endedMs: from + 60_000, outcome: "elapsed" as const },
+    { agent: "claude" as const, limitType: "five_hour", basis: "noKnownEnd" as const, fromMs: from, untilMs: from + 300_000, endedMs: from + 300_000, outcome: "elapsed" as const },
+    { agent: "claude" as const, limitType: null, basis: "reset" as const, fromMs: from, untilMs: from + 600_000, endedMs: from + 600_000, outcome: "lifted" as const },
+  ];
+  for (const w of waits) await Effect.runPromise(s.recordLimitWait(w));
+  assert.deepEqual((await Effect.runPromise(s.usageLines())).waits, waits);
 });
 
 test("the records: decisions, feedback, usage and the invalid-reply files", async () => {

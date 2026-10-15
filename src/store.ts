@@ -290,7 +290,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           if (!(yield* exists(usageFile))) return { calls: [], waits: [] };
           const records = yield* Effect.fromResult(readUsage(usageFile, yield* readText(usageFile)));
           const waits = records.flatMap((r): LimitWait[] =>
-            "kind" in r ? [{ agent: r.agent, limitType: r.limit_type, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until), endedMs: Date.parse(r.ended), outcome: r.outcome }] : [],
+            "kind" in r ? [{ agent: r.agent, limitType: r.limit_type, basis: r.basis, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until), endedMs: Date.parse(r.ended), outcome: r.outcome }] : [],
           );
           const calls = records.flatMap((r): UsageLine[] =>
             "kind" in r
@@ -305,7 +305,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       recordLimitWait: (wait) =>
         Effect.gen(function* () {
           const iso = (ms: number) => new Date(ms).toISOString();
-          const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait", agent: wait.agent, time: yield* now, limit_type: wait.limitType, from: iso(wait.fromMs), until: iso(wait.untilMs), ended: iso(wait.endedMs), outcome: wait.outcome };
+          const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait", agent: wait.agent, time: yield* now, limit_type: wait.limitType, basis: wait.basis, from: iso(wait.fromMs), until: iso(wait.untilMs), ended: iso(wait.endedMs), outcome: wait.outcome };
           yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
         }),
       fileHash: (subject) =>

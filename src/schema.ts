@@ -498,6 +498,13 @@ export const CodexUsage = Schema.Struct({
   input_tokens: NonNegativeInt,
   output_tokens: NonNegativeInt,
 });
+/** What a usage limit's wait rested on (issue #170): the kinds of LimitWaitBasis of src/limitReset.ts. */
+export const LIMIT_WAIT_BASES = ["reset", "pastReset", "noKnownEnd"] as const;
+/**
+ * How a usage limit's wait ended: `lifted`, a stated reset's wait ran to its end; `elapsed` (issue #170), a wait whose
+ * end was not stated ran to its end, which says nothing about the limit; `interrupted`.
+ */
+export const LIMIT_WAIT_OUTCOMES = ["lifted", "elapsed", "interrupted"] as const;
 /** One wait for a Claude Code usage limit (issue #68): the scheduled end apart from the actual one, and how it ended. */
 export const LimitWaitUsage = Schema.Struct({
   version: Schema.Literal(2),
@@ -505,10 +512,11 @@ export const LimitWaitUsage = Schema.Struct({
   agent: Schema.Literal("claude"),
   time: Schema.String,
   limit_type: Schema.NullOr(Schema.String),
+  basis: Schema.Literals(LIMIT_WAIT_BASES),
   from: Schema.String,
   until: Schema.String,
   ended: Schema.String,
-  outcome: Schema.Literals(["lifted", "interrupted"]),
+  outcome: Schema.Literals(LIMIT_WAIT_OUTCOMES),
 });
 export const UsageRecord = Schema.Union([LimitWaitUsage, ClaudeUsage, CodexUsage]);
 

@@ -29,7 +29,7 @@ test("renderUsage: the known text, plus the unidentified calls when there are an
 });
 
 // Issue #68: the waits for a usage limit count as actually spent.
-const wait = (fromMs: number, untilMs: number, endedMs: number, outcome: "lifted" | "interrupted" = "lifted"): LimitWait => ({ agent: "claude", limitType: "five_hour", fromMs, untilMs, endedMs, outcome });
+const wait = (fromMs: number, untilMs: number, endedMs: number, outcome: LimitWait["outcome"] = "lifted"): LimitWait => ({ agent: "claude", limitType: "five_hour", basis: outcome === "elapsed" ? "noKnownEnd" : "reset", fromMs, untilMs, endedMs, outcome });
 const WEEK = 7 * 24 * 3600 * 1000;
 
 test("summarizeUsage: an interrupted wait for a weekly limit counts the minute it lasted, not the week", () => {
@@ -49,6 +49,15 @@ test("renderUsage: the waits, only when there was one, with the last interrupted
   assert.equal(two, `${plain} Waited for Claude Code's usage limits: 2 times, 1:30:00 in all.`);
   const interrupted = renderUsage(summarizeUsage({ calls: [], waits: [wait(0, WEEK, 60_000, "interrupted")] }), "plan-review/usage.jsonl");
   assert.equal(interrupted, `${plain} Waited for Claude Code's usage limits: 1 time, 1:00 in all (the last interrupted).`);
+});
+
+// Issue #170: a wait whose end was not stated, which ran to its end, counts like one that lifted.
+test("summarizeUsage: an elapsed wait counts and sums like a lifted one", () => {
+  const elapsed = summarizeUsage({ calls: [], waits: [wait(0, 300_000, 300_000, "elapsed"), wait(0, 300_000, 300_000, "elapsed")] });
+  const lifted = summarizeUsage({ calls: [], waits: [wait(0, 300_000, 300_000), wait(0, 300_000, 300_000)] });
+  assert.deepEqual(elapsed, lifted);
+  assert.equal(elapsed.limitWaits, 2);
+  assert.equal(elapsed.waitedMs, 600_000);
 });
 
 // Issue #122: the cost of each Claude Code call, attributed to its session, and the warning it decides.
