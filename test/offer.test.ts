@@ -75,3 +75,38 @@ test("presentedQuestion numbers the draft and keeps each option's answer, not it
     { label: plain(prompts.PERMISSION_DENY), description: plain(prompts.PERMISSION_DENY_DESCRIPTION), answer: { token: "n" } },
   ]);
 });
+
+// Issue #171 (S7, the developer's decision of 15 Oct 2026): a question asked before the run's records and Decider exist,
+// the first read's exhaustion question: numbered and presented, recorded through the function given, asked through the
+// ask given, with no offer of decision support.
+test("askUnoffered presents one numbered question, records it through the given function, asks without the offer, and asks again after a rejected answer", async () => {
+  const { Effect } = await import("effect");
+  const { askUnoffered, programContext, trackerOptions } = await import("../src/offer.ts");
+  const { ScriptedUi } = await import("./helpers.ts");
+  const ui = new ScriptedUi([]);
+  const recorded: string[] = [];
+  const prompted: string[] = [];
+  const answers = ["", "r"];
+  const origin = { kind: "tracker", tracker: "GitHub", what: "reading item 155", attempts: 6, fault: "no answer" } as const;
+  const draft = { origin, context: programContext(origin), history: [], explanations: [], question: plain(prompts.trackerExhaustedQuestion("GitHub", "reading item 155")), options: trackerOptions(), attached: null, decision: null };
+  const answer = await Effect.runPromise(
+    askUnoffered(
+      (prompt: string) => Effect.sync(() => (prompted.push(prompt), answers.shift() ?? "s")),
+      ui,
+      (text: string) => Effect.sync(() => void recorded.push(text)),
+      prompts.transportPrompt,
+      draft,
+      (a: string) => parseTransportAnswer(a) !== null,
+    ),
+  );
+  assert.equal(answer, "r");
+  assert.deepEqual(prompted, [prompts.transportPrompt, prompts.transportPrompt]);
+  assert.ok(prompted.every((p) => p !== prompts.withOffer(prompts.transportPrompt)));
+  assert.deepEqual(ui.asked, []);
+  const presented = ui.notified.filter((e) => e._tag === "QuestionPresented");
+  assert.equal(presented.length, 2);
+  assert.ok(presented.every((e) => e._tag === "QuestionPresented" && e.question.number === 1 && e.question.origin.kind === "tracker"));
+  assert.equal(ui.notified.filter((e) => e._tag === "AnswerRejected").length, 1);
+  assert.equal(recorded.length, 1);
+  assert.match(recorded[0] ?? "", /GitHub issue tracker could not be reached/u);
+});

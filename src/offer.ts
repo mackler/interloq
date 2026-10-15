@@ -11,7 +11,7 @@ import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import { attachedMarkdown, renderChoice, renderQuestionRecord, termItem } from "./render.ts";
-import { Decider, Store, Ui } from "./services.ts";
+import { Decider, Store, Ui, type UiShape } from "./services.ts";
 
 // ---- the offer (D2) ------------------------------------------------------------------------------------
 
@@ -164,6 +164,33 @@ const explain = (draft: QuestionDraft, facts: string) =>
     const decider = yield* Decider;
     const options = draft.options.map((o) => o.shown);
     return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts, fallback: requestDetails(draft.context.blocks) });
+  });
+
+/**
+ * Asks a question with no offer of decision support (issue #171, the developer's decision of 15 Oct 2026): the run's
+ * first read of its item, before its records directory, Store and Decider exist. Like `askOffering` it numbers the
+ * question, presents it and records it, through `record`, which the caller holds until conversation.md exists; it asks
+ * `hint` through the caller's `ask`, never with the offer line, and an answer `acceptable` rejects is followed by
+ * AnswerRejected and the question presented and asked again. It has no request for terms, since a question the program
+ * composes carries no explanations to request.
+ */
+export const askUnoffered = <E>(
+  ask: (prompt: string) => Effect.Effect<string, E>,
+  ui: UiShape,
+  record: (text: string) => Effect.Effect<void>,
+  hint: string,
+  draft: QuestionDraft,
+  acceptable: (answer: string) => boolean,
+): Effect.Effect<string, E | QuestionInvalid> =>
+  Effect.gen(function* () {
+    const question = yield* Effect.fromResult(presentedQuestion(draft, yield* ui.nextQuestion));
+    const present = ui.notify({ _tag: "QuestionPresented", question });
+    yield* present;
+    yield* record(renderQuestionRecord(question));
+    const asked: Effect.Effect<string, E> = Effect.flatMap(ask(hint), (answer) =>
+      acceptable(answer) ? Effect.succeed(answer) : ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present), Effect.andThen(Effect.suspend(() => asked))),
+    );
+    return yield* asked;
   });
 
 /**
