@@ -6,7 +6,7 @@ import { Effect, Ref, Result, Schema } from "effect";
 import { type RunRoot, type SubjectId, subjectDir } from "./artifacts.ts";
 import { AgentReplyInvalid, ProjectChanged, RecordsChanged, ReviewedFileChanged, type RunError } from "./errors.ts";
 import type { LoopResult } from "./uiEvents.ts";
-import type { ReviewThread } from "./reviewThread.ts";
+import { largestInput, threadAfter, type ReviewThread } from "./reviewThread.ts";
 import { attachedOf, pauseOriginOf, type Question, taskDisputeOf, type QuestionOrigin, validateQuestions } from "./question.ts";
 import { piecesText, plainBlocks, plainPieces } from "./pieces.ts";
 import { pauseProse } from "./render.ts";
@@ -316,8 +316,11 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
     const phase = subject.phase;
     /** The decision this loop works out, whose questions belong to it (issue #57); null for the other subjects. */
     const within = typeof id === "object" && "decision" in id ? id.decision : null;
-    // One thread per review loop (behaviour 5): the session is held by this loop, not by the adapter.
-    const session = yield* reviewer.startPhase;
+    // One thread per review loop (behaviour 5): the session is held by this loop, not by the adapter. Issue #165: until a
+    // turn's input passes codexTurnInputLimit, after which the next round starts a new thread.
+    const session = yield* Ref.make(yield* reviewer.startPhase);
+    /** The input tokens of the current round's Codex turns, its review and any repair turn of it (issue #165). */
+    const roundInputs = yield* Ref.make<readonly (number | null)[]>([]);
 
     // Codex runs without a sandbox, so the project and the reviewed file are compared after every turn,
     // including a repair turn. A refinement run compares the reviewed file alone (the developer's instruction of
@@ -345,11 +348,32 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
         });
         const attempt = () =>
           Effect.gen(function* () {
-            const reply = yield* Effect.result(session.review(text));
+            const reply = yield* Effect.result((yield* Ref.get(session)).review(text));
             yield* check;
-            return yield* Effect.fromResult(reply);
+            const accepted = yield* Effect.fromResult(reply);
+            yield* Ref.update(roundInputs, (inputs) => [...inputs, accepted.inputTokens]);
+            return accepted;
           });
         return yield* withTransportRetry("codex", transportReviewWhat(heading), attempt, check);
+      });
+
+    /**
+     * The thread of a round's review (issue #165, requirements Q1): round 1 is the loop's first thread; a later round
+     * starts a new thread when a Codex turn of the round before it passed the limit, said on the page and written to
+     * conversation.md, asking nothing. The inputs counted start afresh with every round.
+     */
+    const roundThread = (round: number) =>
+      Effect.gen(function* () {
+        const inputs = yield* Ref.getAndSet(roundInputs, []);
+        if (round === 1) return "new" satisfies ReviewThread;
+        const thread = threadAfter(inputs, config.codexTurnInputLimit);
+        if (thread === "new") {
+          yield* Ref.set(session, yield* reviewer.startPhase);
+          const line = prompts.threadRestartLine(heading, round, largestInput(inputs) ?? 0, config.codexTurnInputLimit);
+          yield* ui.say(line);
+          yield* store.converse(line);
+        }
+        return thread;
       });
 
     /** Every reply of a round as it arrived, written to the round's file before it is decoded or validated (issue #151). */
@@ -427,10 +451,11 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           case "AskDecision":
             return { kind: "DecisionGiven", text: yield* askDecisionQuestion(decisionDraft(heading, command.asks, command.options, within)) };
           case "CallReviewer": {
+            const thread = yield* roundThread(command.round);
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
             // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
-            const { value: review } = yield* decodeValidating("codex", ReviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, "continued"))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
+            const { value: review } = yield* decodeValidating("codex", ReviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, thread))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {

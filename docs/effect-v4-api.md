@@ -88,6 +88,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Cause.squash` | Cause.d.ts:827 | `(self) => unknown` |
 | `Cause.pretty` | Cause.d.ts:1192 | `(cause) => string` |
 | `Ref.make` / `get` / `set` / `update` | Ref.d.ts:149 / 175 / 210 / 587 | `make(value) => Effect<Ref<A>>`; `set(self, value)`; `update(self, f)` |
+| `Ref.getAndSet` (read 15 Oct 2026, issue #165) | Ref.d.ts:240 | dual: `(self, value) => Effect<A>`: the previous value; the Codex turn inputs of a review round in `src/review.ts`, read and cleared as the next round begins |
 | `Ref.updateAndGet` (read 29 Sep, S6 of issues #46 and #59) | Ref.d.ts:617 | dual: `(self, f: (a) => A) => Effect<A>`: the new value; the run's question counter in `src/webUi.ts` |
 | `Ref.modify` (read 26 Sep, web GUI stage 3.2) | Ref.d.ts:397 | dual: `(self, f: (a) => readonly [B, A]) => Effect<B>`: reads and replaces in one step (the web Ui's prompt table, the run manager's state; issue #154: the count of background-task ends already given to Claude Code in `src/claude.ts`) |
 
