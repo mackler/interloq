@@ -86,10 +86,28 @@ test("a 401 and a 403 are TrackerAuthRefused, not an empty list", async () => {
   }
 });
 
-test("a transport failure, a 500 and a 404 on the repository are TrackerUnreachable", async () => {
-  for (const answer of ["transport", json({}, 500), json({ message: "Not Found" }, 404)] as const) {
-    const error = await failure(makeStub(() => answer), (t) => t.list("refined"));
+// Issue #171: an answer outside 2xx and 4xx is TrackerUnreachable with its status, a request that reached no answer with
+// none; any other 4xx is TrackerRequestRefused, which is never repeated.
+test("a 500 and a 503 are TrackerUnreachable with their status, a transport failure with none, over the plain and the filtered client", async () => {
+  for (const filtered of [false, true]) {
+    for (const status of [500, 503]) {
+      const error = await failure(makeStub(() => json({}, status), { filtered }), (t) => t.list("refined"));
+      assert.deepEqual(error._tag === "TrackerUnreachable" && error.status, status);
+    }
+    const error = await failure(makeStub(() => "transport", { filtered }), (t) => t.list("refined"));
     assert.equal(error._tag, "TrackerUnreachable");
+    assert.equal(error._tag === "TrackerUnreachable" && error.status, null);
+  }
+});
+
+test("a 404 on the repository, a 422 and a 429 are TrackerRequestRefused, over the plain and the filtered client", async () => {
+  for (const filtered of [false, true]) {
+    for (const status of [404, 422, 429]) {
+      const error = await failure(makeStub(() => json({ message: "x" }, status), { filtered }), (t) => t.list("refined"));
+      assert.deepEqual(error._tag === "TrackerRequestRefused" && error.status, status);
+    }
+    const error = await failure(makeStub(() => json({ message: "x" }, 422), { filtered }), (t) => t.setState(id("4"), "refined"));
+    assert.equal(error._tag, "TrackerRequestRefused");
   }
 });
 

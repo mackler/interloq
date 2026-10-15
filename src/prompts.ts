@@ -1277,6 +1277,7 @@ export const TRACKER_FAILURE_TEXTS = {
   noTracker: "no issue tracker is configured: set the key tracker in the shared config.json of Interloq or in plan-review/config.json of the project",
   credentialMissing: (variable: string) => `the issue tracker's credential is missing: the environment variable ${variable} is not set`,
   unreachable: (tracker: string, message: string) => `the ${tracker} issue tracker could not be reached: ${message}`,
+  requestRefused: (tracker: string, message: string) => `the ${tracker} issue tracker refused the request: ${message}`,
   authRefused: (tracker: string, status: number) => `the ${tracker} issue tracker refused the credential (HTTP status ${status})`,
   notFound: (id: string) => `the issue tracker has no item ${id}`,
   bodyInvalid: (id: string, message: string) => `item ${id} of the issue tracker could not be read: ${message}`,

@@ -49,7 +49,7 @@ test("a state change moves the item between lists", async () => {
 
 test("a scripted failure fails the next call of that operation alone", async () => {
   const { tracker, failNext } = await run(makeFakeTracker(ITEMS));
-  await run(failNext("list", new TrackerUnreachable({ tracker: "fake", message: "down" })));
+  await run(failNext("list", new TrackerUnreachable({ tracker: "fake", message: "down", status: null })));
   assert.equal((await run(Effect.flip(tracker.list("unrefined"))))._tag, "TrackerUnreachable");
   assert.equal((await run(tracker.list("unrefined"))).length, 2);
   assert.equal((await run(tracker.read(id("1")))).id, "1");

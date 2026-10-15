@@ -75,7 +75,7 @@ test("a refinement run with an empty agreed list ends successfully, writes the s
 // W2-R1-1 of work review 2: the empty list's line is written before the tracker steps, so it claims neither of them.
 test("a refinement with an empty agreed list whose section cannot be written claims no write-back and no state", async () => {
   const tracker = fakeTrackerOf([item]);
-  await Effect.runPromise(tracker.failNext("writeRefinement", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset" })));
+  await Effect.runPromise(tracker.failNext("writeRefinement", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
   const { exit, probe } = refine({ steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }] }, tracker);
   assert.equal(failureOf(await exit)._tag, "TrackerStepFailed");
   const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
@@ -102,7 +102,7 @@ test("a refinement run that halts or is stopped leaves the item unrefined and it
 
 test("a refinement whose section cannot be written keeps its records, sets no state, and halts naming the step", async () => {
   const tracker = fakeTrackerOf([item]);
-  await Effect.runPromise(tracker.failNext("writeRefinement", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset" })));
+  await Effect.runPromise(tracker.failNext("writeRefinement", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
   const { exit, probe } = refine(oneQuestion, tracker);
   const error = failureOf(await exit);
   assert.equal(error._tag, "TrackerStepFailed");
@@ -113,7 +113,7 @@ test("a refinement whose section cannot be written keeps its records, sets no st
 
 test("a refinement whose state cannot be set keeps the section written, the state unchanged, and says so", async () => {
   const tracker = fakeTrackerOf([item]);
-  await Effect.runPromise(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "timeout" })));
+  await Effect.runPromise(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "timeout", status: null })));
   const { exit } = refine(oneQuestion, tracker);
   const error = failureOf(await exit);
   assert.equal(error._tag, "TrackerStepFailed");

@@ -63,8 +63,17 @@ export class ProcessEnded extends Data.TaggedError("ProcessEnded")<{ readonly ag
 export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null }> {}
 // The tracker's failures (issue #120, part 1). None is a RunError: a failed tracker step of a run is TrackerStepFailed. No field
 // ever holds a credential: the adapter builds them from statuses and its own words, never from a request.
-/** The network failed, or the tracker answered with a status that is no success and none of the cases below. */
-export class TrackerUnreachable extends Data.TaggedError("TrackerUnreachable")<{ readonly tracker: string; readonly message: string }> {}
+/**
+ * The request reached no answer (`status` null), or the tracker answered with a status that is neither a success nor a
+ * 4xx, a 5xx in practice (`status` that status; issue #171). The one tracker failure the tracker retry repeats; with a
+ * status, a write it answered may have been applied, so the retry reads the item back.
+ */
+export class TrackerUnreachable extends Data.TaggedError("TrackerUnreachable")<{ readonly tracker: string; readonly message: string; readonly status: number | null }> {}
+/**
+ * Issue #171: the tracker answered with a 4xx other than a refused credential or an item not found (a 409, a 422, a
+ * 429, a 404 on a listing). Permanent, like a 4xx of an agent (behavior 14): never repeated.
+ */
+export class TrackerRequestRefused extends Data.TaggedError("TrackerRequestRefused")<{ readonly tracker: string; readonly status: number; readonly message: string }> {}
 /** The tracker refused the credential (401 or 403): never an empty list. */
 export class TrackerAuthRefused extends Data.TaggedError("TrackerAuthRefused")<{ readonly tracker: string; readonly status: number }> {}
 /** No item with this id: not in the tracker, not in the adapter's format, or not an item (a GitHub pull request). */
@@ -139,7 +148,7 @@ export class ServerFault extends Data.TaggedError("ServerFault")<{ readonly mess
 export class TrackerStepFailed extends Data.TaggedError("TrackerStepFailed")<{ readonly item: string; readonly step: TrackerStep; readonly cause: string; readonly done: string | null }> {}
 
 /** A tracker's failure, or why there is none, as the program says it (issue #120). */
-export const trackerFailureText = (error: TrackerUnreachable | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous | NoTracker | TrackerCredentialMissing): string => {
+export const trackerFailureText = (error: TrackerUnreachable | TrackerRequestRefused | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous | NoTracker | TrackerCredentialMissing): string => {
   switch (error._tag) {
     case "NoTracker":
       return TRACKER_FAILURE_TEXTS.noTracker;
@@ -147,6 +156,8 @@ export const trackerFailureText = (error: TrackerUnreachable | TrackerAuthRefuse
       return TRACKER_FAILURE_TEXTS.credentialMissing(error.variable);
     case "TrackerUnreachable":
       return TRACKER_FAILURE_TEXTS.unreachable(error.tracker, error.message);
+    case "TrackerRequestRefused":
+      return TRACKER_FAILURE_TEXTS.requestRefused(error.tracker, error.message);
     case "TrackerAuthRefused":
       return TRACKER_FAILURE_TEXTS.authRefused(error.tracker, error.status);
     case "TrackerItemNotFound":

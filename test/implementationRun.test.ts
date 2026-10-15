@@ -88,7 +88,7 @@ test("a halt in the work review and a stop leave the item implementing", async (
 
 test("an item that cannot be set to implementing halts the run before any agent call", async () => {
   const tracker = fakeTrackerOf([withSection]);
-  await Effect.runPromise(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset" })));
+  await Effect.runPromise(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
   const { exit, probe } = await implement(withSection, converging, tracker);
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");
@@ -99,7 +99,7 @@ test("an item that cannot be set to implementing halts the run before any agent 
 
 test("an item that cannot be set to implemented at the end keeps the records and says the work is done and the item stays implementing", async () => {
   const tracker = fakeTrackerOf([withSection]);
-  const failLater = () => Effect.runSync(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "timeout" })));
+  const failLater = () => Effect.runSync(tracker.failNext("setState", new TrackerUnreachable({ tracker: "GitHub", message: "timeout", status: null })));
   const { exit, probe } = await implement(withSection, { ...converging, execs: [finished], steps: [{ output: noQuestions, plan: "v1", onCall: failLater }] }, tracker);
   const error = failureOf(exit);
   assert.equal(error._tag, "TrackerStepFailed");

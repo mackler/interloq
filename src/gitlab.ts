@@ -53,14 +53,14 @@ const clientFailure = (error: HttpClientError.HttpClientError, method: string, t
   const reason = error.reason;
   switch (reason._tag) {
     case "StatusCodeError":
-      return gitlabStatusFailure(reason.response.status, method, target) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitLab's answer to ${method} ${gitlabTargetName(target)} with status ${reason.response.status}` });
+      return gitlabStatusFailure(reason.response.status, method, target) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitLab's answer to ${method} ${gitlabTargetName(target)} with status ${reason.response.status}`, status: reason.response.status });
     case "DecodeError":
     case "EmptyBodyError":
       return new TrackerBodyInvalid({ id: gitlabTargetName(target), message: "GitLab's answer could not be decoded" });
     case "TransportError":
     case "EncodeError":
     case "InvalidUrlError":
-      return new TrackerUnreachable({ tracker: TRACKER, message: `the request ${method} ${gitlabTargetName(target)} reached no answer from GitLab` });
+      return new TrackerUnreachable({ tracker: TRACKER, message: `the request ${method} ${gitlabTargetName(target)} reached no answer from GitLab`, status: null });
   }
 };
 

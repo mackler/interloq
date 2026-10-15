@@ -514,7 +514,7 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
     // Issue #142: the Refinement tab's listing carries the configured choice of terms, which its control starts at.
     assert.deepEqual(listed, mode === "refinement" ? { mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { mode, result: { _tag: "Listed", items } });
   }
-  await run(h.tracker.failNext("list", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset" })));
+  await run(h.tracker.failNext("list", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
   assert.deepEqual(await run(h.manager.listItems("refinement")), { mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: connection reset" } });
 
   const shared = path.join(tempDir("pr-shared-"), "config.json");

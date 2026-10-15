@@ -4,7 +4,7 @@
 // HttpClientError or its request, which carry the Authorization header.
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
-import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
+import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
 import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import type { GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
@@ -31,7 +31,10 @@ export const statusFailure = (status: number, method: string, target: Target): T
   if (status >= 200 && status <= 299) return null;
   if (status === 401 || status === 403) return new TrackerAuthRefused({ tracker: TRACKER, status });
   if ((status === 404 || status === 410) && target.kind === "item") return new TrackerItemNotFound({ id: target.id });
-  return new TrackerUnreachable({ tracker: TRACKER, message: `GitHub answered ${method} ${named(target)} with status ${status}` });
+  const message = `GitHub answered ${method} ${named(target)} with status ${status}`;
+  // Issue #171: any other 4xx is permanent; anything else, a 5xx in practice, is unreachable with its status.
+  if (status >= 400 && status <= 499) return new TrackerRequestRefused({ tracker: TRACKER, status, message });
+  return new TrackerUnreachable({ tracker: TRACKER, message, status });
 };
 
 /**
@@ -42,14 +45,14 @@ const clientFailure = (error: HttpClientError.HttpClientError, method: string, t
   const reason = error.reason;
   switch (reason._tag) {
     case "StatusCodeError":
-      return statusFailure(reason.response.status, method, target) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitHub's answer to ${method} ${named(target)} with status ${reason.response.status}` });
+      return statusFailure(reason.response.status, method, target) ?? new TrackerUnreachable({ tracker: TRACKER, message: `the client refused GitHub's answer to ${method} ${named(target)} with status ${reason.response.status}`, status: reason.response.status });
     case "DecodeError":
     case "EmptyBodyError":
       return new TrackerBodyInvalid({ id: named(target), message: "GitHub's answer could not be decoded" });
     case "TransportError":
     case "EncodeError":
     case "InvalidUrlError":
-      return new TrackerUnreachable({ tracker: TRACKER, message: `the request ${method} ${named(target)} reached no answer from GitHub` });
+      return new TrackerUnreachable({ tracker: TRACKER, message: `the request ${method} ${named(target)} reached no answer from GitHub`, status: null });
   }
 };
 

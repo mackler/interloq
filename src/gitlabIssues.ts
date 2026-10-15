@@ -5,7 +5,7 @@
 // (the developer's decision of 9 Oct 2026). GitLab Free has no scoped labels, so nothing in GitLab enforces the one
 // label: an open issue with none or with several is a typed failure naming its labels, never a guess.
 import { Option, Result, Schema } from "effect";
-import { TrackerAuthRefused, TrackerItemNotFound, TrackerUnreachable } from "./errors.ts";
+import { TrackerAuthRefused, TrackerItemNotFound, TrackerRequestRefused, TrackerUnreachable } from "./errors.ts";
 import { type Refinement, type SectionMalformed, withRefinement } from "./refinement.ts";
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
@@ -103,13 +103,18 @@ export const gitlabTargetName = (target: GitlabTarget): string => (target.kind =
 /**
  * What a status of GitLab's answer means, or null for a 2xx: the one mapping, never built from a client error object,
  * whose request carries the token. A 401 or 403 is the token refused, a refusal by its Planner role included. A 404 on
- * a listing is a project path that does not exist, a fault of the configuration, not a missing item.
+ * a listing is a project path that does not exist, a fault of the configuration, not a missing item: like any other 4xx
+ * it is TrackerRequestRefused, never repeated (issue #171), and a status outside 2xx and 4xx is TrackerUnreachable.
  */
 export const gitlabStatusFailure = (status: number, method: string, target: GitlabTarget): TrackerError | null => {
   if (status >= 200 && status <= 299) return null;
   if (status === 401 || status === 403) return new TrackerAuthRefused({ tracker: TRACKER, status });
   if (status === 404 && target.kind === "item") return new TrackerItemNotFound({ id: target.id });
-  return new TrackerUnreachable({ tracker: TRACKER, message: `GitLab answered ${method} ${gitlabTargetName(target)} with status ${status}` });
+  const message = `GitLab answered ${method} ${gitlabTargetName(target)} with status ${status}`;
+  // Issue #171: any other 4xx, a 404 on a listing (a wrong project) included, is permanent; anything else, a 5xx in
+  // practice, is unreachable with its status.
+  if (status >= 400 && status <= 499) return new TrackerRequestRefused({ tracker: TRACKER, status, message });
+  return new TrackerUnreachable({ tracker: TRACKER, message, status });
 };
 
 /** The attempts of one request whose connection is refused, the first included. */

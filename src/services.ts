@@ -3,7 +3,7 @@
 
 import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
-import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
+import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { RunMode } from "./runMode.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
@@ -95,7 +95,7 @@ export interface ReviewerShape {
 export class Reviewer extends Context.Service<Reviewer, ReviewerShape>()("plan-review/Reviewer") {}
 
 /** What the tracker port can fail with (issue #120, part 1; the fifth, an ambiguous state, by requirements Q3). */
-export type TrackerError = TrackerUnreachable | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
+export type TrackerError = TrackerUnreachable | TrackerRequestRefused | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
 /**
  * The project's issue tracker (issue #120, part 1): the four operations are the whole common type (developer's
  * decision). Nothing here names a label, a list or a status: how a state is stored is the adapter's (GitHub and
