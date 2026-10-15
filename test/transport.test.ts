@@ -115,7 +115,7 @@ test("rejectionOf: a rejection with a finite positive reset carries it in millis
 
 test("Claude: a rejection with a reset beside the rate_limit error is limited, with the instant; without a reset it is permanent", () => {
   const withReset = f({ assistantError: "rate_limit", terminalReason: "api_error", rejection: limitedAt(RESET_S) });
-  assert.deepEqual(classifyClaude(withReset), { kind: "limited", resetsAtMs: RESET_S * 1000, limitType: "five_hour" });
+  assert.deepEqual(classifyClaude(withReset), { kind: "limited", reset: { kind: "instant", atMs: RESET_S * 1000 }, limitType: "five_hour" });
   assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit", rejection: { kind: "withoutReset", limitType: "five_hour" } })), { kind: "permanent" });
   assert.deepEqual(classifyClaude(f({ assistantError: "rate_limit" })), { kind: "permanent" });
   assert.deepEqual(classifyClaude(f({ apiStatus: 429, rejection: limitedAt(RESET_S) })).kind, "limited");

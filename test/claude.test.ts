@@ -1031,8 +1031,8 @@ test("a planning call rejected with a reset fails with UsageLimited carrying the
   const limitedOnce = await planner([limitedCall(LIMIT_RESET_S)]);
   const result = await run(Effect.result(limitedOnce.planner.planning("write the plan", schema)));
   assert.ok(result._tag === "Failure");
-  const limited = result.failure as { _tag: string; message: string; resetsAtMs: number; limitType: string | null };
-  assert.deepEqual([limited._tag, limited.message, limited.resetsAtMs, limited.limitType], ["UsageLimited", "You've hit your session limit", LIMIT_RESET_S * 1000, "five_hour"]);
+  const limited = result.failure as { _tag: string; message: string; reset: unknown; limitType: string | null };
+  assert.deepEqual([limited._tag, limited.message, limited.reset, limited.limitType], ["UsageLimited", "You've hit your session limit", { kind: "instant", atMs: LIMIT_RESET_S * 1000 }, "five_hour"]);
 
   const fake = await planner([limitedCall(LIMIT_RESET_S), messages(init("session-exec"), success({ questions_for_user: [] }))]);
   const { clock, sleeps } = steppingClock(LIMIT_START);

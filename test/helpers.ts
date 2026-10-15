@@ -19,6 +19,7 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
 import type { Schema } from "effect";
 import type { RunError } from "../src/errors.ts";
+import type { LimitReset } from "../src/limitReset.ts";
 import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
 import { type RunStart, type Task, taskOf, type Wiring } from "../src/program.ts";
@@ -268,11 +269,12 @@ export const questionEntry = (id: string, question: string, answers: readonly (r
  */
 /** `fault` fails the call with a TransportFault of that message after its other effects (issue #26). */
 /**
- * `limit` fails the call with UsageLimited, a usage limit with a stated reset, after its other effects (issue #68);
+ * `limit` fails the call with UsageLimited, a usage limit with its reset as far as it is known, after its other effects
+ * (issues #68 and #170);
  * `callFailed` fails it with ClaudeCallFailed, as the adapter fails a usage limit without one; `sessionTooLong` fails it
  * with ClaudeSessionTooLong, as the adapter fails a request refused because its session is too long (issue #122).
  */
-export type PlanningStep = { fault?: string; sessionTooLong?: string; limit?: Readonly<{ resetsAtMs: number; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean };
+export type PlanningStep = { fault?: string; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean };
 
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
@@ -406,7 +408,7 @@ export class ScriptedPlanner implements PlannerShape {
       if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
       if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
       if (step.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
-      if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", resetsAtMs: step.limit.resetsAtMs, limitType: step.limit.limitType }));
+      if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
       return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
     });
   }

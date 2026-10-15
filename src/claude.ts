@@ -32,10 +32,10 @@ const BACKGROUND_POLL_MS = 50;
 type CallbackError = RunError;
 /**
  * A failed call: TransportFault when src/transport.ts identifies a transport fault (issue #26), UsageLimited for a usage
- * limit with a stated reset (issue #68), ClaudeSessionTooLong for a session too long to accept (issue #122),
- * ClaudeCallFailed otherwise.
+ * limit (issues #68 and #170), ClaudeSessionTooLong for a session too long to accept (issue #122), ClaudeCallFailed
+ * otherwise. Exported so that the scripted planner of test/helpers.ts fails a call by the same mapping (issue #170).
  */
-const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | ClaudeSessionTooLong | TransportFault | UsageLimited => {
+export const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCallFailed | ClaudeSessionTooLong | TransportFault | UsageLimited => {
   // Issue #157 (P1-R1-1): classified without the process ending, so a planning or context call keeps the
   // classification it had before; only an execution call's attempt classifies with it.
   const kind = classifyClaude(failure === null ? null : { ...failure, processEnd: null });
@@ -43,7 +43,7 @@ const callFailure = (message: string, failure: ClaudeFailure | null): ClaudeCall
     case "transport":
       return new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null });
     case "limited":
-      return new UsageLimited({ agent: "claude", message, resetsAtMs: kind.resetsAtMs, limitType: kind.limitType });
+      return new UsageLimited({ agent: "claude", message, reset: kind.reset, limitType: kind.limitType });
     case "contextTooLong":
       return new ClaudeSessionTooLong({ message });
     case "permanent":

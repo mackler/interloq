@@ -17,7 +17,7 @@ const UNTIL = RESET + USAGE_LIMIT_MARGIN_SECONDS * 1000;
 
 test("a plan write that hits a five-hour limit waits until it lifts, resumes, and the run finishes; the wait is recorded and printed", async () => {
   const { wiring, probe } = testWiring(tempRepo(), {
-    steps: [{ limit: { resetsAtMs: RESET, limitType: "five_hour" } }, { output: noQuestions, plan: "v1" }],
+    steps: [{ limit: { reset: { kind: "instant", atMs: RESET }, limitType: "five_hour" } }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
   });

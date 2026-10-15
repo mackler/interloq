@@ -63,7 +63,7 @@ test("property: limited if and only if the rejection carries a reset and no perm
       const expected = x.rejection !== null && x.rejection.kind === "withReset" && !otherPermanent(x);
       assert.equal(kind.kind === "limited", expected);
       if (kind.kind === "limited" && x.rejection?.kind === "withReset") {
-        assert.equal(kind.resetsAtMs, x.rejection.resetsAtMs);
+        assert.deepEqual(kind.reset, { kind: "instant", atMs: x.rejection.resetsAtMs });
         assert.equal(kind.limitType, x.rejection.limitType);
       }
     }),

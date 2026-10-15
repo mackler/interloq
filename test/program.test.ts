@@ -193,7 +193,7 @@ test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; decline
 test("interrupt one minute into a weekly usage-limit wait: the summary printed reports one minute waited, not a week", async () => {
   const START = Date.UTC(2026, 8, 30, 5, 32);
   const WEEK = 7 * 24 * 3_600_000;
-  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ limit: { resetsAtMs: START + WEEK, limitType: "seven_day" } }] });
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ limit: { reset: { kind: "instant", atMs: START + WEEK }, limitType: "seven_day" } }] });
   let reached: () => void = () => undefined;
   const waiting = new Promise<void>((r) => (reached = r));
   let time = START;

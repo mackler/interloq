@@ -3,6 +3,7 @@
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
 import type { ProcessEnd } from "./transport.ts";
+import type { LimitReset } from "./limitReset.ts";
 import { ItemState } from "./tracker.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
@@ -54,7 +55,12 @@ export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ rea
  * A Claude Code call rejected for a usage limit that states when it lifts (issue #68): not a RunError, since its caller
  * waits until the reset and calls again (src/retry.ts). A limit without a stated reset is not this error.
  */
-export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly resetsAtMs: number; readonly limitType: string | null }> {}
+/**
+ * A Claude Code call refused for a usage limit (issues #68 and #170), with its reset as far as it is known: an instant a
+ * rate-limit event stated, a time of day the error result's text named, or none. Not a RunError: withTransportRetry
+ * waits each one out by planLimitWait of src/limitReset.ts.
+ */
+export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly reset: LimitReset; readonly limitType: string | null }> {}
 /**
  * An execution call whose Claude Code process ended by a signal or a nonzero exit code (issue #157), with its message
  * and `attempts`, the attempts made when it was raised. Not a RunError: withTransportRetry retries it like a

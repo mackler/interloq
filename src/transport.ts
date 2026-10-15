@@ -1,5 +1,6 @@
 // The classification of the agents' failures (issue #26): the one place where an SDK's failure is inspected to decide
 // whether a retry could fix it. Pure: no I/O, no Effect.
+import type { LimitReset } from "./limitReset.ts";
 
 /**
  * What src/claudeEvents.ts keeps of a failed Claude Code call. The terminal facts (the result's status, reason and
@@ -98,7 +99,7 @@ export const processEndOf = (thrown: unknown): ProcessEnd | null => {
 export type FailureKind =
   | Readonly<{ kind: "permanent" }>
   | Readonly<{ kind: "transport" }>
-  | Readonly<{ kind: "limited"; resetsAtMs: number; limitType: string | null }>
+  | Readonly<{ kind: "limited"; reset: LimitReset; limitType: string | null }>
   | Readonly<{ kind: "contextTooLong" }>
   | Readonly<{ kind: "processEnded"; end: ProcessEnd }>;
 
@@ -184,7 +185,7 @@ export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
     (retrySeen !== null && ((is4xx(retrySeen.status) && !isRateLimit(retrySeen.status, null)) || isOtherPermanentError(retrySeen.error))) ||
     (subtype !== null && STOPPING_SUBTYPES.includes(subtype));
   if (otherPermanent) return PERMANENT;
-  if (rejection !== null && rejection.kind === "withReset") return { kind: "limited", resetsAtMs: rejection.resetsAtMs, limitType: rejection.limitType };
+  if (rejection !== null && rejection.kind === "withReset") return { kind: "limited", reset: { kind: "instant", atMs: rejection.resetsAtMs }, limitType: rejection.limitType };
   const rateLimited = rejection !== null || isRateLimit(apiStatus, assistantError) || (retrySeen !== null && isRateLimit(retrySeen.status, retrySeen.error));
   if (rateLimited) return PERMANENT;
   if (failure.processEnd !== null) return { kind: "processEnded", end: failure.processEnd };

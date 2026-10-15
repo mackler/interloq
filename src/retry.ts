@@ -19,7 +19,7 @@ export const backoffDelays = (count: number, firstSeconds: number): readonly num
 export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transportRetryDelaySeconds">): readonly number[] =>
   backoffDelays(config.maxTransportRetries, config.transportRetryDelaySeconds);
 
-import { USAGE_LIMIT_MARGIN_SECONDS } from "./limitReset.ts";
+import { type LimitWaitState, NO_LIMIT_WAIT, planLimitWait, USAGE_LIMIT_MARGIN_SECONDS } from "./limitReset.ts";
 export { USAGE_LIMIT_MARGIN_SECONDS };
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
@@ -33,7 +33,8 @@ const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e 
  * retries (the backoff starts again), or a stop, which fails with AgentUnreachable. A ProcessEnded (issue #157, an
  * execution call's Claude Code process that ended) is retried in the same way under the same budget, and when the
  * retries are used up it passes through as it is, with no pause, whatever `onExhausted` says. Any other failure passes
- * through.
+ * through. A UsageLimited (issues #68 and #170) is waited out for as long as planLimitWait decides, with no question
+ * and without spending the transport budget, then `beforeRetry` and the next attempt.
  */
 export const withTransportRetry = <A, E, R>(
   agent: "claude" | "codex",
@@ -53,6 +54,8 @@ export const withTransportRetry = <A, E, R>(
     const delays = retryDelays(config);
     const say = (text: string) => ui.say(text).pipe(Effect.andThen(store.converse(`${text}\n\n`)));
     let retried = 0;
+    /** What the usage-limit waits of this call carry to its next refusal (issue #170); a transport fault clears it. */
+    let limitState: LimitWaitState = NO_LIMIT_WAIT;
     /** Whether the last failure was a transport fault, so that a success is a recovered connection. */
     let faulted = false;
     for (let n = 1; ; n++) {
@@ -63,22 +66,28 @@ export const withTransportRetry = <A, E, R>(
       }
       const error = result.failure;
       if (isLimited(error)) {
-        // Issue #68: a usage limit with a stated reset is waited out on the Clock, never asked; the wait is recorded
-        // as actually spent when it ends, an interrupted one included (P1-R1-1), before the program prints the summary.
+        // Issues #68 and #170: a usage limit is waited out on the Clock, never asked, for as long as planLimitWait
+        // decides from its reset; the wait is recorded as actually spent when it ends, an interrupted one included
+        // (P1-R1-1), before the program prints the summary. Only a stated reset's end is said to lift the limit.
         faulted = false;
         const fromMs = yield* Clock.currentTimeMillis;
-        const untilMs = Math.max(error.resetsAtMs, fromMs) + USAGE_LIMIT_MARGIN_SECONDS * 1000;
-        yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, limitType: error.limitType, basis: { kind: "reset" }, fromMs, untilMs });
-        yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, { kind: "reset" }, untilMs));
-        const record = (outcome: "lifted" | "interrupted") =>
-          Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ agent: error.agent, limitType: error.limitType, basis: "reset", fromMs, untilMs, endedMs, outcome })));
-        yield* Effect.sleep(Duration.millis(untilMs - fromMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? "lifted" : "interrupted")));
-        const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
-        yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
-        yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
+        const { basis, untilMs, next } = planLimitWait(error.reset, fromMs, limitState);
+        limitState = next;
+        yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, limitType: error.limitType, basis, fromMs, untilMs });
+        yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
+        const ranOut = basis.kind === "reset" ? "lifted" : "elapsed";
+        const record = (outcome: "lifted" | "elapsed" | "interrupted") =>
+          Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs, endedMs, outcome })));
+        yield* Effect.sleep(Duration.millis(untilMs - fromMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? ranOut : "interrupted")));
+        if (basis.kind === "reset") {
+          const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
+          yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
+          yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
+        } else yield* say(prompts.usageLimitTryingAgainLine(error.agent));
         yield* beforeRetry;
         continue;
       }
+      limitState = NO_LIMIT_WAIT;
       const ended = isProcessEnded(error);
       if (!isFault(error) && !ended) return yield* Effect.fail(error as Exclude<E, TransportFault | UsageLimited>);
       faulted = true;

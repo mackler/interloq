@@ -10,6 +10,7 @@ import { transportOptions } from "../src/offer.ts";
 import { platformLayer } from "../src/platform.ts";
 import * as prompts from "../src/prompts.ts";
 import { retryDelays, USAGE_LIMIT_MARGIN_SECONDS, withTransportRetry } from "../src/retry.ts";
+import { type LimitReset, timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import * as S from "../src/schema.ts";
 import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/services.ts";
 import { makeStore } from "../src/store.ts";
@@ -200,7 +201,15 @@ test("at the exhaustion pause, the attached material holds the attempts and the 
 // Issue #68: a usage limit with a stated reset is waited out on the Clock, and the call is made again; nothing is asked.
 const START = Date.UTC(2026, 8, 30, 5, 32);
 const MARGIN_MS = USAGE_LIMIT_MARGIN_SECONDS * 1000;
-const limited = (resetsAtMs: number, limitType: string | null = "five_hour") => new UsageLimited({ agent: "claude", message: "You've hit your session limit", resetsAtMs, limitType });
+const limitedBy = (reset: LimitReset, limitType: string | null = "five_hour") => new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset, limitType });
+const limited = (atMs: number, limitType: string | null = "five_hour") => limitedBy({ kind: "instant", atMs }, limitType);
+/** Issue #170: the reset an error result's text names, as the adapter reads it. */
+const timeOfDay = (text: string): LimitReset => {
+  const at = timeOfDayIn(text);
+  assert.ok(at !== null, text);
+  return { kind: "timeOfDay", at };
+};
+const UNKNOWN: LimitReset = { kind: "unknown" };
 type LimitScript = ReadonlyArray<UsageLimited | "fault" | "ok">;
 const limitScripted = (script: LimitScript) => {
   const calls: number[] = [];
@@ -320,13 +329,95 @@ test("an interruption one minute into a weekly wait: no further attempt, no lift
   assert.equal(waits[0]?.until, new Date(START + WEEK + MARGIN_MS).toISOString());
 });
 
+// Issue #170: a time of day read from the error text, the reset already past (Q4), and no known end (Q2).
+const REFUSED_15_OCT = Date.parse("2026-10-15T00:57:16Z");
+const RETRY_MS = USAGE_LIMIT_RETRY_SECONDS * 1000;
+const limitWaits = (ui: ScriptedUi) => ui.notified.flatMap((e) => (e._tag === "UsageLimitWaiting" ? [e] : []));
+
+test("a time of day later than the refusal: one wait until that time plus a minute, the run of 15 Oct 2026", async () => {
+  const { layer, ui, usage } = await setup([]);
+  const { clock, sleeps } = steppingClock(REFUSED_15_OCT);
+  const { calls, attempt } = limitScripted([limitedBy(timeOfDay("You've hit your session limit · resets 11:10pm (UTC)"), null), "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 2"));
+  assert.deepEqual(calls, [1, 2]);
+  assert.deepEqual(sleeps, [Date.parse("2026-10-15T23:11:00Z") - REFUSED_15_OCT]);
+  assert.deepEqual(limitWaits(ui).map((e) => e.basis), [{ kind: "reset" }]);
+  assert.ok(ui.notified.some((e) => e._tag === "UsageLimitLifted"));
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["reset", "lifted"]]);
+  assert.deepEqual(ui.asked, []);
+});
+
+test("Q4: a time earlier than the refusal is tried a minute later; earlier again, it is waited for the next day", async () => {
+  const { layer, ui, usage, conversation } = await setup([]);
+  const { clock, sleeps } = steppingClock(REFUSED_15_OCT);
+  const earlier = timeOfDay("You've hit your session limit · resets 12:30am (UTC)");
+  const { calls, attempt } = limitScripted([limitedBy(earlier, null), limitedBy(earlier, null), "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 3"));
+  assert.deepEqual(calls, [1, 2, 3]);
+  const second = REFUSED_15_OCT + MARGIN_MS;
+  assert.deepEqual(sleeps, [MARGIN_MS, Date.parse("2026-10-16T00:31:00Z") - second]);
+  assert.deepEqual(limitWaits(ui).map((e) => e.basis), [{ kind: "pastReset", namedMs: Date.parse("2026-10-15T00:30:00Z") }, { kind: "reset" }]);
+  assert.ok(conversation().includes(prompts.usageLimitTryingAgainLine("claude")), "the try after the past reset is not recorded");
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["pastReset", "elapsed"], ["reset", "lifted"]]);
+  assert.deepEqual(ui.asked, []);
+});
+
+test("Q2: no known end is tried every 5 minutes, each try counted and said, nothing asked, until a request succeeds", async () => {
+  const { layer, ui, usage, conversation } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const { calls, attempt } = limitScripted([limitedBy(UNKNOWN, null), limitedBy(UNKNOWN, null), limitedBy(UNKNOWN, null), "ok"]);
+  let guards = 0;
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.sync(() => void guards++)).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 4"));
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.deepEqual(sleeps, [RETRY_MS, RETRY_MS, RETRY_MS]);
+  assert.equal(guards, 3);
+  const waits = limitWaits(ui);
+  assert.deepEqual(waits.map((e) => e.basis), [1, 2, 3].map((attempt) => ({ kind: "noKnownEnd", attempt })));
+  for (const e of waits) assert.ok(conversation().includes(prompts.usageLimitWaitLine("claude", null, e.basis, e.untilMs)), "a try is not in conversation.md");
+  assert.ok(!ui.notified.some((e) => e._tag === "UsageLimitLifted"), "a wait with no known end is not said to have lifted");
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [1, 2, 3].map(() => ["noKnownEnd", "elapsed"]));
+  assert.deepEqual(ui.asked, []);
+});
+
+test("Q2: a transport fault between two limits with no known end restarts their count", async () => {
+  const { layer, ui } = await setup([]);
+  const { clock } = steppingClock(START);
+  const { attempt } = limitScripted([limitedBy(UNKNOWN), limitedBy(UNKNOWN), "fault", limitedBy(UNKNOWN), "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 5"));
+  assert.deepEqual(limitWaits(ui).map((e) => e.basis), [1, 2, 1].map((attempt) => ({ kind: "noKnownEnd", attempt })));
+});
+
+test("Q2: an interruption during a wait with no known end records it interrupted, with no further try", async () => {
+  const { layer, usage } = await setup([]);
+  let reached: () => void = () => undefined;
+  const waiting = new Promise<void>((r) => (reached = r));
+  let time = START;
+  const clock: Clock.Clock = {
+    ...steppingClock(START).clock,
+    currentTimeMillis: Effect.sync(() => time),
+    currentTimeMillisUnsafe: () => time,
+    sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
+  };
+  const { calls, attempt } = limitScripted([limitedBy(UNKNOWN), "ok"]);
+  const fiber = Effect.runFork(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
+  await waiting;
+  const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+  assert.deepEqual(calls, [1]);
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["noKnownEnd", "interrupted"]]);
+});
+
 // The records guard of a read-only call (Claude Code's response to a work review) holds across the wait as across a
 // backoff: the program's own writes pass, an outside write to a guarded record halts.
 const workRunWithLimit = (onSleep: (repo: string) => void) => {
   const repo = tempRepo();
   const response = respond([["W1-R1-1", "rejected"]]);
   const { layer, probe } = testLayer(repo, {
-    steps: [{ output: { questions_for_user: [] }, plan: "v1" }, { output: response, limit: { resetsAtMs: START + 1000, limitType: "five_hour" } }, { output: response }],
+    steps: [{ output: { questions_for_user: [] }, plan: "v1" }, { output: response, limit: { reset: { kind: "instant", atMs: START + 1000 }, limitType: "five_hour" } }, { output: response }],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }],
     execs: [finished],
   });
