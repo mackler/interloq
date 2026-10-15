@@ -79,9 +79,14 @@ export interface PlannerShape {
 export class Planner extends Context.Service<Planner, PlannerShape>()("plan-review/Planner") {}
 
 /** One review loop's thread (behaviour 5). Every call goes to the thread the session was started with. */
+/**
+ * One review turn's reply (issue #165): the text as Codex produced it, which the caller decodes, and the turn's input
+ * tokens as Codex reported them (the figure usage.jsonl records), null where Codex reported no usage for the turn.
+ */
+export type ReviewReply = Readonly<{ text: string; inputTokens: number | null }>;
 export interface ReviewSession {
-  /** One review turn. Returns the reply text as Codex produced it; the caller decodes it. */
-  review(prompt: string): Effect.Effect<string, ReviewerError | TransportFault>;
+  /** One review turn. Returns the reply with the turn's input tokens; the caller decodes the text. */
+  review(prompt: string): Effect.Effect<ReviewReply, ReviewerError | TransportFault>;
 }
 export interface ReviewerShape {
   /** Starts a new thread and returns the session bound to it. Called at the start of every review loop. A start failure is a typed error (finding 11). */

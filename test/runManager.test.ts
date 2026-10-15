@@ -600,7 +600,7 @@ test("a start whose tracker read is pending when haltAll is called is refused at
 /** A wiring whose Codex turn signals `reached` and then runs `turn`. */
 const reviewing = (repo: string, reach: () => void, turn: Effect.Effect<string>) => (options: TestOptions) => {
   const wiring = testWiring(repo, options).wiring;
-  const reviewer = Layer.succeed(Reviewer, { startPhase: Effect.succeed({ review: () => Effect.sync(reach).pipe(Effect.andThen(turn)) }) });
+  const reviewer = Layer.succeed(Reviewer, { startPhase: Effect.succeed({ review: () => Effect.sync(reach).pipe(Effect.andThen(turn), Effect.map((text) => ({ text, inputTokens: null }))) }) });
   return { ...wiring, agents: Layer.merge(wiring.agents, reviewer) };
 };
 

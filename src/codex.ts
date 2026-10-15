@@ -63,7 +63,7 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread): ReviewSessi
       const outcome = reduceTurn(seen);
       if (outcome.kind === "failed") return yield* Effect.fail(turnFailure(outcome.message));
       if (outcome.usage !== null) yield* store.recordUsage({ agent: "codex", thread: thread.id, inputTokens: outcome.usage.input_tokens, outputTokens: outcome.usage.output_tokens });
-      return outcome.finalResponse;
+      return { text: outcome.finalResponse, inputTokens: outcome.usage?.input_tokens ?? null };
     }).pipe(Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "codex", ok: Exit.isSuccess(exit) }))),
 });
 

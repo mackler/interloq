@@ -54,9 +54,11 @@ test("the configured model is passed, and no model key is set when codexModel is
 test("review passes agentJsonSchema(Review) as outputSchema and records usage", async () => {
   const fake = await reviewer([turn(JSON.stringify({ issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e" }] }))]);
   const session = await run(fake.reviewer.startPhase);
-  const text = await run(session.review("review the plan"));
+  const reply = await run(session.review("review the plan"));
 
-  assert.deepEqual(JSON.parse(text).issues.map((i: { id: string }) => i.id), ["A"]);
+  // Issue #165: the reply carries the turn's input tokens, the figure recorded in usage.jsonl.
+  assert.equal(reply.inputTokens, 10);
+  assert.deepEqual(JSON.parse(reply.text).issues.map((i: { id: string }) => i.id), ["A"]);
   assert.deepEqual(fake.sdk.threads[0].calls[0].turnOptions?.outputSchema, agentJsonSchema(S.Review));
   assert.equal(fake.sdk.threads[0].calls[0].input, "review the plan");
   const usage = JSON.parse(fs.readFileSync(path.join(fake.dir, "usage.jsonl"), "utf8").trim());
@@ -75,7 +77,7 @@ test("a failed turn fails with CodexCallFailed", async () => {
 test("the reviewer returns a reply without an issues array unchanged to the caller", async () => {
   const fake = await reviewer([turn(JSON.stringify({ findings: [] }))]);
   const session = await run(fake.reviewer.startPhase);
-  assert.equal(await run(session.review("review the plan")), JSON.stringify({ findings: [] }));
+  assert.equal((await run(session.review("review the plan"))).text, JSON.stringify({ findings: [] }));
 });
 
 // Finding 11 / recommendation C: the session is a value bound to its thread, not a nullable Ref in the adapter.
@@ -163,7 +165,7 @@ test("the final response is the text of the last agent message", async () => {
   const earlier = [{ type: "item.completed", item: { id: "m0", type: "agent_message", text: "thinking" } }] as ThreadEvent[];
   const fake = await reviewer([turn("final", undefined, earlier)]);
   const session = await run(fake.reviewer.startPhase);
-  assert.equal(await run(session.review("review")), "final");
+  assert.equal((await run(session.review("review"))).text, "final");
 });
 
 test("turn.failed, a stream error event, and a turn without an agent message fail with CodexCallFailed", async () => {
@@ -187,7 +189,7 @@ test("an error notice followed by a completed turn succeeds, and the notice is n
   const empty = JSON.stringify({ issues: [] });
   const fake = await reviewer([turn(empty, undefined, [errorEvent(reconnecting)])]);
   const session = await run(fake.reviewer.startPhase);
-  assert.equal(await run(session.review("review")), empty);
+  assert.equal((await run(session.review("review"))).text, empty);
   assert.deepEqual(
     fake.ui.notified.filter((e) => e._tag === "AgentReconnecting"),
     [{ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: reconnecting }],

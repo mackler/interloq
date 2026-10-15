@@ -428,7 +428,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
             // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
-            const { value: review } = yield* decodeValidating("codex", ReviewText, yield* reviewCall(subject.reviewPrompt(store.root, command.round)), (r) => reviewCall(r.prompt), reviewValidation, rawSave(command.round, "review"));
+            const { value: review } = yield* decodeValidating("codex", ReviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {

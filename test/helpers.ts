@@ -32,7 +32,7 @@ import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsM
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
-import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
+import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
 import { type DeciderDeps, deciderLayer } from "../src/decision.ts";
@@ -468,9 +468,10 @@ export class ScriptedPlanner implements PlannerShape {
 
 /**
  * A scripted review. `plan` makes the reviewer change plan.json, the plan's reviewed file, during its turn, as Codex could.
- * `raw` replaces the reply text, for a reply that is not a review (or not JSON).
+ * `raw` replaces the reply text, for a reply that is not a review (or not JSON). `inputTokens` is the turn's input as
+ * Codex would report it (issue #165), null without one.
  */
-export type ReviewStep = Review & { fault?: string; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void };
+export type ReviewStep = Review & { inputTokens?: number; fault?: string; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void };
 
 export class ScriptedReviewer implements ReviewerShape {
   phases = 0;
@@ -488,16 +489,16 @@ export class ScriptedReviewer implements ReviewerShape {
     const phase = ++this.phases;
     return {
       /** Returns the reply text as Codex would: the caller decodes it. */
-      review: (prompt: string): Effect.Effect<string, TransportFault> =>
+      review: (prompt: string): Effect.Effect<ReviewReply, TransportFault> =>
         Effect.sync(() => this.turn(prompt, phase)).pipe(
-          Effect.flatMap((reply) => (reply.fault === null ? Effect.succeed(reply.text) : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null })))),
+          Effect.flatMap((reply) => (reply.fault === null ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens }) : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null })))),
         ),
     };
   });
   /** One scripted turn: its effects on the files, then its reply text, or the fault it fails with. */
   /** The reviews of the terms (S17), apart from `reviews`; without one, a terms review raises no issue. */
   termsReviews: ReviewStep[] = [];
-  private turn(prompt: string, phase: number): { text: string; fault: string | null } {
+  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null } {
     this.prompts.push(prompt);
     this.callPhases.push(phase);
     const terms = prompt.includes(`/${pathOf({ kind: "terms" })}`);
@@ -508,7 +509,7 @@ export class ScriptedReviewer implements ReviewerShape {
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
     if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues }), fault: step.fault ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null };
   }
 }
 
