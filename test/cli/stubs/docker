@@ -15,6 +15,11 @@
 #   exits with that status. Otherwise it reads `<id>.procs` (lines `pid cmdline`; absent: no processes), prints
 #   each line whose cmdline matches the pattern under `grep -E`, as `pgrep -a` would, and exits 0 if any
 #   matched, else 1 with nothing on stderr.
+# - STUB_DOCKER_MOUNTS: a directory scripting a plain `docker inspect --format <template> <id>` whose template
+#   contains `.Mounts`. Where `<id>.inspect-status` exists, the stub prints `<id>.inspect-err` to stderr (if
+#   present) and exits with that status. Otherwise it prints `<id>.mounts` (lines `source<TAB>destination`, the
+#   output of MOUNTS_TEMPLATE in bin/ilcli.bashly/lib/common.sh; absent: no mounts) and exits 0. Every other
+#   `docker inspect` prints STUB_RUNNING_HASH as above.
 line=docker
 for a in "$@"; do line+=" [$a]"; done
 printf '%s\n' "$line" >> "$STUB_LOG"
@@ -44,6 +49,17 @@ if [[ ${1:-} == exec ]]; then
     done < "$dir/$id.procs"
   fi
   exit "$matched"
+fi
+
+if [[ ${1:-} == inspect && ${2:-} == --format && ${3:-} == *.Mounts* ]]; then
+  id=${4:-}
+  dir=${STUB_DOCKER_MOUNTS:-/nonexistent}
+  if [[ -f $dir/$id.inspect-status ]]; then
+    [[ -f $dir/$id.inspect-err ]] && cat "$dir/$id.inspect-err" >&2
+    exit "$(cat "$dir/$id.inspect-status")"
+  fi
+  [[ -f $dir/$id.mounts ]] && cat "$dir/$id.mounts"
+  exit 0
 fi
 
 case $sub in

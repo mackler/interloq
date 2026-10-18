@@ -13,7 +13,7 @@ common_setup() {
   export HOME="$T/home"
   mkdir -p "$HOME"
   export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
-  unset STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH STUB_DOCKER_PS STUB_DOCKER_EXEC STUB_MKTEMP_FAIL_AFTER
+  unset STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH STUB_DOCKER_PS STUB_DOCKER_EXEC STUB_DOCKER_MOUNTS STUB_MKTEMP_FAIL_AFTER
 }
 
 # The expected log line of a stub call: the command, then each argument in brackets.
@@ -74,6 +74,23 @@ container_fails() {
   printf '%s\n' "$2" > "$T/exec/$1.status"
   printf '%s\n' "$3" > "$T/exec/$1.err"
   export STUB_DOCKER_EXEC="$T/exec"
+}
+
+# container_mounts <id> <source> <destination>: one mount of container <id>, as `docker inspect --format
+# "$MOUNTS_TEMPLATE" <id>` prints it; called once per mount.
+container_mounts() {
+  mkdir -p "$T/mounts"
+  printf '%s\t%s\n' "$2" "$3" >> "$T/mounts/$1.mounts"
+  export STUB_DOCKER_MOUNTS="$T/mounts"
+}
+
+# container_inspect_fails <id> <status> <stderr>: reading the mounts of container <id> prints <stderr> and exits
+# with <status>.
+container_inspect_fails() {
+  mkdir -p "$T/mounts"
+  printf '%s\n' "$2" > "$T/mounts/$1.inspect-status"
+  printf '%s\n' "$3" > "$T/mounts/$1.inspect-err"
+  export STUB_DOCKER_MOUNTS="$T/mounts"
 }
 
 # path_without_docker: PATH becomes one directory of links to every executable on PATH except docker (the first
