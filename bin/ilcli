@@ -385,10 +385,9 @@ commit_line() {
   git -C "$(ilcli_root)" log -1 --format='%h %s' "$1"
 }
 
-# What upgrade's search looks for in a process's command line (issue #104): the path at which every project
-# container mounts the installed copy. It is unanchored, because the path may follow interpreter options
-# ('node --inspect /opt/interloq/...', 'env node /opt/interloq/...'); launchers are excluded by their program instead.
-INSTALLED_COPY_PATTERN='/opt/interloq/'
+# The mounts of a container (issue #172), one line 'host-source<TAB>container-destination' per mount, as
+# 'docker inspect --format "$MOUNTS_TEMPLATE" <id>' prints them.
+MOUNTS_TEMPLATE='{{range .Mounts}}{{.Source}}{{"\t"}}{{.Destination}}{{"\n"}}{{end}}'
 
 # is_launcher <pgrep line>: succeeds when the line's program, the word after the pid, is docker or
 # docker-compose, by name or by path. A host-side 'docker compose ... exec cc node /opt/interloq/src/web.ts' names
@@ -421,17 +420,80 @@ exit_text() {
   printf '(exit status %s)%s' "$run_rc" "${run_err_line:+: $run_err_line}"
 }
 
-# search_container <id>: the lines of the processes in container <id> whose command line names the installed
-# copy, launchers dropped, on stdout. Fails with the reason on stdout when the search cannot be made: pgrep exits
-# 1 with nothing on stderr for no match, while docker exec also exits 1, with a message, for a container that is
-# gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none; and a temporary file
+# ere_escape <text>: the text with every metacharacter of an extended regular expression escaped, so that pgrep -f
+# matches it literally.
+ere_escape() {
+  sed 's/[][\\.*^$+?(){}|]/\\&/g' <<< "$1"
+}
+
+# copy_root_paths <root> <source> <destination>: the path at which a mount of <source> at <destination> shows the
+# copy whose host root is <root>, or nothing. A source equal to the root shows it at the destination; a source
+# above it at a path boundary shows it below the destination; a source inside it (a directory or a single file of
+# the copy, such as the Codex binary) shows that part at the destination. Trailing slashes are stripped, so a
+# source of / is above every root.
+copy_root_paths() {
+  local root=${1%/} source=${2%/} destination=${3%/}
+  if [[ $source == "$root" || $source == "$root"/* ]]; then
+    printf '%s\n' "${destination:-/}"
+  elif [[ $root == "$source"/* ]]; then
+    printf '%s\n' "$destination${root#"$source"}"
+  fi
+}
+
+# copy_paths_in <id>: the paths at which container <id> sees the installed copy or a part of it, one per line, on
+# stdout; empty when it mounts none of it. The copy's root is compared as given and resolved, since docker may
+# record a bind mount's source as either. Fails with the reason on stdout when the mounts cannot be read, or a
+# temporary file cannot be created for reading them.
+copy_paths_in() {
+  local given resolved source destination paths=""
+  run_capturing docker inspect --format "$MOUNTS_TEMPLATE" "$1" ||
+    { echo "could not create a temporary file for reading its mounts"; return 1; }
+  if [[ $run_rc -ne 0 ]]; then
+    printf 'its mounts could not be read %s\n' "$(exit_text)"
+    return 1
+  fi
+  given=$(ilcli_root)
+  resolved=$(cd "$given" && pwd -P)
+  while IFS=$'\t' read -r source destination; do
+    [[ -n $source ]] || continue
+    paths+=$(copy_root_paths "$given" "$source" "$destination")$'\n'
+    if [[ $resolved != "$given" ]]; then
+      paths+=$(copy_root_paths "$resolved" "$source" "$destination")$'\n'
+    fi
+  done <<< "$run_out"
+  grep -v '^$' <<< "$paths" | awk '!seen[$0]++' || true
+}
+
+# copy_pattern <path>...: what upgrade's search looks for in a process's command line: any of the paths, as a whole
+# word (a mounted file executed by its path, or a directory named bare) or followed by '/' (anything below it),
+# never as the start of a longer name. A '/' alone after each path would miss a mounted file executed by its exact
+# path ('/usr/local/bin/codex exec'). It is unanchored at the start, because the path may follow interpreter
+# options ('node --inspect /opt/interloq/...', 'env node /opt/interloq/...'); launchers are excluded by their
+# program instead (is_launcher).
+copy_pattern() {
+  local path alternatives=()
+  for path in "$@"; do
+    alternatives+=("$(ere_escape "$path")(/|[[:space:]]|\$)")
+  done
+  local IFS='|'
+  printf '(%s)\n' "${alternatives[*]}"
+}
+
+# search_container <id> <pattern>: the lines of the processes in container <id> whose command line matches
+# <pattern>, launchers dropped, on stdout. Fails with the reason on stdout when the search cannot be made: pgrep
+# exits 1 with nothing on stderr for no match, while docker exec also exits 1, with a message, for a container that
+# is gone or not running, and 126 or 127 when pgrep is absent, so only a silent 1 means none; and a temporary file
 # that cannot be created makes it inconclusive too. Silence is tested on the whole of stderr, not its first line,
 # because a daemon's message may begin with an empty line, and an empty first line is not silence (W2-R1-1).
 search_container() {
   local line
-  run_capturing docker exec "$1" pgrep -a -f "$INSTALLED_COPY_PATTERN" ||
+  run_capturing docker exec "$1" pgrep -a -f "$2" ||
     { echo "could not create a temporary file for the search"; return 1; }
   if [[ $run_rc -eq 1 && -z $run_had_err ]]; then return 0; fi
+  if [[ $run_rc -eq 126 || $run_rc -eq 127 ]]; then
+    printf 'the search failed %s: pgrep could not be run in the container, so its processes cannot be searched; installing procps in it, or stopping it once it runs nothing from the copy, lets the check pass\n' "$(exit_text)"
+    return 1
+  fi
   if [[ $run_rc -ne 0 ]]; then
     printf 'the search failed %s\n' "$(exit_text)"
     return 1
@@ -442,11 +504,15 @@ search_container() {
 }
 
 # installed_copy_users: the report of the processes in running containers that use the installed copy, on stdout
-# (empty for none), each container as 'name (id):' with its lines. Fails with the reason on stdout when the check
-# cannot be made: docker missing, a temporary file that cannot be created, docker ps failing, or a container whose
-# search fails. An inconclusive container ends the check, since upgrade changes nothing until every check has passed.
+# (empty for none), each container as 'name (id), the copy at <paths>:' with its lines. Only the containers that
+# mount the copy are searched (issue #172), at the paths they mount it at, because a container that does not mount
+# it cannot run it. Fails with the reason on stdout when the check cannot be made: docker missing, a temporary file
+# that cannot be created, docker ps failing, a container whose mounts cannot be read (it might mount the copy), or a
+# container that mounts the copy whose search fails. An inconclusive container ends the check, since upgrade changes
+# nothing until every check has passed.
 installed_copy_users() {
-  local containers id name found report=""
+  local containers id name paths shown found report=""
+  local -a path_list
   if ! command -v docker > /dev/null 2>&1; then
     echo "docker is not available"
     return 1
@@ -460,12 +526,19 @@ installed_copy_users() {
   containers=$run_out
   while read -r id name; do
     [[ -n $id ]] || continue
-    if ! found=$(search_container "$id"); then
-      printf 'in container %s (%s), %s\n' "$name" "$id" "$found"
+    if ! paths=$(copy_paths_in "$id"); then
+      printf 'in container %s (%s), %s\n' "$name" "$id" "$paths"
+      return 1
+    fi
+    [[ -n $paths ]] || continue
+    mapfile -t path_list <<< "$paths"
+    shown=$(IFS=,; printf '%s' "${path_list[*]}" | sed 's/,/, /g')
+    if ! found=$(search_container "$id" "$(copy_pattern "${path_list[@]}")"); then
+      printf 'in container %s (%s), which mounts the installed copy at %s, %s\n' "$name" "$id" "$shown" "$found"
       return 1
     fi
     if [[ -n $found ]]; then
-      report+="$name ($id):"$'\n'"$(sed 's/^/  /' <<< "$found")"$'\n'
+      report+="$name ($id), the copy at $shown:"$'\n'"$(sed 's/^/  /' <<< "$found")"$'\n'
     fi
   done <<< "$containers"
   printf '%s' "$report"
@@ -581,7 +654,7 @@ ilcli_upgrade_command() {
   elif ! users="$(installed_copy_users)"; then
     refuse upgrade "could not check whether the installed copy is in use: $users. Nothing was changed. $force_hint"
   elif [[ -n $users ]]; then
-    refuse upgrade "processes in running containers run files under /opt/interloq, the installed copy ($root). Replacing those files can kill a running agent at any later point until its run ends, not only during the update. Nothing was changed. $force_hint" "$users"
+    refuse upgrade "processes in running containers run files of the installed copy ($root), which those containers mount. Replacing those files can kill a running agent at any later point until its run ends, not only during the update. Nothing was changed. $force_hint" "$users"
   fi
 
   url="$(g remote get-url origin)"

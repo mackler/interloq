@@ -26,7 +26,7 @@ if [[ -n ${args[--force]:-} ]]; then
 elif ! users="$(installed_copy_users)"; then
   refuse upgrade "could not check whether the installed copy is in use: $users. Nothing was changed. $force_hint"
 elif [[ -n $users ]]; then
-  refuse upgrade "processes in running containers run files under /opt/interloq, the installed copy ($root). Replacing those files can kill a running agent at any later point until its run ends, not only during the update. Nothing was changed. $force_hint" "$users"
+  refuse upgrade "processes in running containers run files of the installed copy ($root), which those containers mount. Replacing those files can kill a running agent at any later point until its run ends, not only during the update. Nothing was changed. $force_hint" "$users"
 fi
 
 url="$(g remote get-url origin)"
