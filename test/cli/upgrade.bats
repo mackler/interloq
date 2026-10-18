@@ -177,6 +177,11 @@ upgraded() {
   [ "$(head_of "$T/installed")" = "$(head_of "$T/origin.git" release)" ]
   expect_npm "$(npm_line ci)" "$(npm_line run build)"
 }
+# mounts_copy <id>...: each container mounts the installed copy at /opt/interloq, as every project container does.
+mounts_copy() {
+  local id
+  for id in "$@"; do container_mounts "$id" "$T/installed" /opt/interloq; done
+}
 refused_naming() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"refused"* ]] || { echo "$output"; return 1; }
@@ -191,6 +196,7 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS=$'c1 proj-a\nc2 proj-b'
+  mounts_copy c1 c2
   container_procs c1 "$WEB_LINE" "$CLAUDE_LINE"
   upgrade
   refused_naming proj-a c1 "${WEB_LINE#* }" "${CLAUDE_LINE#* }" "until its run ends"
@@ -201,6 +207,7 @@ refused_naming() {
 @test "containers running nothing of the installed copy proceed, each searched once" {
   advance release "Tested change"
   export STUB_DOCKER_PS=$'c1 proj-a\nc2 proj-b'
+  mounts_copy c1 c2
   container_procs c1 "1 bash"
   container_procs c2 "2 sleep infinity"
   upgrade
@@ -229,9 +236,10 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_fails c1 127 'exec: "pgrep": executable file not found'
   upgrade
-  refused_naming "could not check" proj-a c1
+  refused_naming "could not check" proj-a c1 pgrep /opt/interloq procps
   untouched
 }
 
@@ -239,6 +247,7 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_fails c1 1 'Error response from daemon: container c1 is not running'
   upgrade
   refused_naming "could not check" proj-a c1
@@ -249,6 +258,7 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_fails c1 1 $'\nError response from daemon: container c1 is not running'
   upgrade
   refused_naming "could not check" proj-a c1 "Error response from daemon"
@@ -267,6 +277,7 @@ refused_naming() {
 @test "--force skips the check, says so, and upgrades" {
   advance release "Tested change"
   export STUB_DOCKER_PS=$'c1 proj-a\nc2 proj-b'
+  mounts_copy c1 c2
   container_procs c1 "$WEB_LINE" "$CLAUDE_LINE"
   run "$T/installed/bin/ilcli" upgrade --force
   upgraded
@@ -284,6 +295,7 @@ refused_naming() {
 @test "a host-side docker launcher naming the copy does not count as a user" {
   advance release "Tested change"
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   local line
   for line in "$LAUNCHER_LINE" "$LAUNCHER_PATH_LINE"; do
     : > "$STUB_LOG"
@@ -297,6 +309,7 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_procs c1 "$CODEX_LINE"
   upgrade
   refused_naming "${CODEX_LINE#* }"
@@ -306,6 +319,7 @@ refused_naming() {
 @test "the copy's path after interpreter options counts as a user" {
   advance release "Tested change"
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   local line
   for line in '404 node --inspect /opt/interloq/src/web.ts' '405 /usr/bin/env node /opt/interloq/src/web.ts'; do
     : > "$STUB_LOG"
@@ -321,6 +335,7 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_procs c1 "$LAUNCHER_LINE" "$WEB_LINE"
   upgrade
   refused_naming "${WEB_LINE#* }"
@@ -333,8 +348,9 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_procs c1 '1 bash'
-  export STUB_MKTEMP_FAIL_AFTER=1
+  export STUB_MKTEMP_FAIL_AFTER=2
   upgrade
   refused_naming "could not check" proj-a c1 "temporary file"
   untouched
@@ -344,10 +360,149 @@ refused_naming() {
   advance release "Tested change"
   remember
   export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
   container_procs c1 '1 bash'
   export STUB_MKTEMP_FAIL_AFTER=0
   upgrade
   refused_naming "could not check" "temporary file"
   untouched
   ! grep -q '^docker \[exec\]' "$STUB_LOG"
+}
+
+# Issue #172: only the containers that mount the installed copy are searched, at the path they mount it at.
+
+@test "a container that does not mount the copy is not searched, so one without pgrep does not stop the upgrade" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS=$'c1 proj-a\nc2 database'
+  mounts_copy c1
+  container_procs c1 '1 bash'
+  container_mounts c2 /var/lib/docker/volumes/db/_data /var/lib/postgresql/data
+  container_fails c2 127 'exec: "pgrep": executable file not found'
+  upgrade
+  upgraded
+  grep -q '^docker \[inspect\] \[--format\] \[.*\] \[c2\]$' "$STUB_LOG"
+  ! grep -q '^docker \[exec\] \[c2\]' "$STUB_LOG"
+}
+
+@test "a container whose mounts cannot be read refuses as inconclusive, unsearched, nothing touched" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_procs c1 '1 bash'
+  container_inspect_fails c1 1 'Error: No such object: c1'
+  upgrade
+  refused_naming "could not check" proj-a c1 mounts "No such object"
+  ! grep -q '^docker \[exec\] \[c1\]' "$STUB_LOG"
+  untouched
+}
+
+@test "the copy mounted at another path is searched at that path" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed" /srv/il
+  container_procs c1 '7 node /srv/il/src/web.ts'
+  upgrade
+  refused_naming 'node /srv/il/src/web.ts' /srv/il
+  untouched
+}
+
+@test "a container mounting the copy at another path does not count a process of /opt/interloq" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed" /srv/il
+  container_procs c1 '8 node /opt/interloq/src/web.ts'
+  upgrade
+  upgraded
+}
+
+@test "a mount of a directory above the copy counts the copy's path below it" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T" /w
+  container_procs c1 '9 node /w/installed/src/web.ts'
+  upgrade
+  refused_naming 'node /w/installed/src/web.ts'
+  untouched
+}
+
+@test "a mount whose source only begins with the copy's path is not the copy, and is not searched" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed-old" /opt/interloq
+  container_procs c1 "$WEB_LINE"
+  upgrade
+  upgraded
+  ! grep -q '^docker \[exec\] \[c1\]' "$STUB_LOG"
+}
+
+@test "the copy reached through a symbolic link matches a mount of its resolved path" {
+  advance release "Tested change"
+  remember
+  ln -s "$T/installed" "$T/link"
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$(cd "$T/installed" && pwd -P)" /opt/interloq
+  container_procs c1 "$WEB_LINE"
+  run "$T/link/bin/ilcli" upgrade
+  refused_naming "${WEB_LINE#* }"
+  untouched
+}
+
+@test "the characters of a mount path are matched literally" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed" /srv/inter.loq
+  container_procs c1 '10 node /srv/interXloq/src/web.ts'
+  upgrade
+  upgraded
+}
+
+@test "a temporary file that cannot be created for reading a container's mounts refuses as inconclusive" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
+  container_procs c1 '1 bash'
+  export STUB_MKTEMP_FAIL_AFTER=1
+  upgrade
+  refused_naming "could not check" proj-a c1 "temporary file"
+  untouched
+}
+
+@test "the stub and the script agree on the call that reads a container's mounts" {
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/bin/ilcli.bashly/lib/common.sh"
+  advance release "Tested change"
+  export STUB_DOCKER_PS='c1 proj-a'
+  mounts_copy c1
+  container_procs c1 '1 bash'
+  upgrade
+  upgraded
+  grep -qxF "$(argv docker inspect --format "$MOUNTS_TEMPLATE" c1)" "$STUB_LOG" || { cat "$STUB_LOG"; return 1; }
+  grep -q '^docker \[exec\] \[c1\] \[pgrep\]' "$STUB_LOG"
+}
+
+@test "a single file of the copy mounted counts when it is executed" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed/node_modules/codex/bin/codex" /usr/local/bin/codex
+  local line
+  for line in '303 /usr/local/bin/codex exec' '304 /usr/local/bin/codex'; do
+    : > "$STUB_LOG"
+    remember
+    container_procs c1 "$line"
+    upgrade
+    refused_naming "${line#* }"
+    untouched
+  done
+}
+
+@test "a longer name beginning with a mounted file's path does not count" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed/node_modules/codex/bin/codex" /usr/local/bin/codex
+  container_procs c1 '305 /usr/local/bin/codex-other run'
+  upgrade
+  upgraded
 }
