@@ -80,14 +80,14 @@ test("the end-to-end worker count is 50% of the cores, set in playwright.config.
   const config = (await import("../playwright.config.ts")).default;
   assert.equal(config.workers, "50%", "playwright.config.ts does not set workers to 50%");
   assert.equal(config.fullyParallel, true, "playwright.config.ts does not run the tests in parallel");
-  noWorkerOverride("test:e2e", /--workers|(^|\s)-j\s*\d|PLAYWRIGHT_WORKERS/m);
+  noOverride("test:e2e", /--workers|(^|\s)-j\s*\d|PLAYWRIGHT_WORKERS/m);
 });
 
-/** Asserts that neither the workflow, the image nor the npm script `script` sets a worker count matching `override`. */
-const noWorkerOverride = (script: string, override: RegExp): void => {
+/** Asserts that neither the workflow, the image nor the npm script `script` sets the setting `what` matching `override`. */
+const noOverride = (script: string, override: RegExp, what = "the worker count"): void => {
   const scripts = (JSON.parse(readText("package.json") ?? "{}") as { scripts?: Record<string, string> }).scripts ?? {};
   for (const [where, text] of [[".github/workflows/ci.yml", workflow()], ["container/Dockerfile", dockerfile()], [`package.json's ${script}`, scripts[script] ?? ""]] as const) {
-    assert.doesNotMatch(text, override, `${where} overrides the worker count`);
+    assert.doesNotMatch(text, override, `${where} overrides ${what}`);
   }
 };
 
@@ -97,5 +97,13 @@ const noWorkerOverride = (script: string, override: RegExp): void => {
 test("the component tests' worker count is 50% of the cores, set in web/vite.config.ts alone", async () => {
   const config = (await import("../web/vite.config.ts")).default as { test?: { maxWorkers?: number | string } };
   assert.equal(config.test?.maxWorkers, "50%", "web/vite.config.ts does not set maxWorkers to 50%");
-  noWorkerOverride("test:web", /--maxWorkers|--max-workers|VITEST_MAX_WORKERS/);
+  noOverride("test:web", /--maxWorkers|--max-workers|VITEST_MAX_WORKERS/);
+});
+
+// Issue #172 (the suite run of 18 Oct 2026): under npm test's load two property tests of the page took 41 s and 51 s,
+// past the 30 s per-test timeout. The one source of that timeout is web/vite.config.ts.
+test("the component tests' per-test timeout is 120 s, set in web/vite.config.ts alone", async () => {
+  const config = (await import("../web/vite.config.ts")).default as { test?: { testTimeout?: number } };
+  assert.equal(config.test?.testTimeout, 120_000, "web/vite.config.ts does not set testTimeout to 120 s");
+  noOverride("test:web", /--testTimeout|--test-timeout|VITEST_TEST_TIMEOUT/, "the per-test timeout");
 });
