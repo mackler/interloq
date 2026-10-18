@@ -163,7 +163,7 @@ copy_paths_in() {
     [[ -n $source ]] || continue
     for root in "${roots[@]}"; do
       path=$(copy_root_paths "$root" "$source" "$destination")
-      if [[ -n $path && $'\n'$paths != *$'\n'$path$'\n'* ]]; then paths+=$path$'\n'; fi
+      if [[ -n $path && $'\n'$paths != *$'\n'"$path"$'\n'* ]]; then paths+=$path$'\n'; fi
     done
   done <<< "$run_out"
   printf '%s' "$paths"

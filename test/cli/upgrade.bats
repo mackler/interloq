@@ -458,6 +458,18 @@ refused_naming() {
   upgraded
 }
 
+@test "a mount path with glob characters is kept beside a path it matches as a pattern" {
+  advance release "Tested change"
+  remember
+  export STUB_DOCKER_PS='c1 proj-a'
+  container_mounts c1 "$T/installed" /srv/abc
+  container_mounts c1 "$T/installed" '/srv/a*c'
+  container_procs c1 '7 node /srv/a*c/src/web.ts'
+  upgrade
+  refused_naming '7 node /srv/a*c/src/web.ts'
+  untouched
+}
+
 @test "a temporary file that cannot be created for reading a container's mounts refuses as inconclusive" {
   advance release "Tested change"
   remember
