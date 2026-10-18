@@ -23,5 +23,8 @@ export default defineConfig({
   // Under Vitest, Svelte's browser build, so that components can be mounted in jsdom.
   resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
   // testTimeout sized for a loaded machine (a shared CI runner): a passing test is no slower, only a hang reports later.
-  test: { environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 30_000 },
+  // maxWorkers is half the cores because npm test runs this stage beside the others, and Vitest waits only a fixed 60 s
+  // for a forked worker to start, which a fork per core missed under that load (the suite run of 18 Oct 2026 in issue
+  // #172's implementation run); testTimeout does not govern that wait. test/ci.test.ts checks it is set here alone.
+  test: { environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 30_000, maxWorkers: "50%" },
 });

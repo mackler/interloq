@@ -80,8 +80,22 @@ test("the end-to-end worker count is 50% of the cores, set in playwright.config.
   const config = (await import("../playwright.config.ts")).default;
   assert.equal(config.workers, "50%", "playwright.config.ts does not set workers to 50%");
   assert.equal(config.fullyParallel, true, "playwright.config.ts does not run the tests in parallel");
+  noWorkerOverride("test:e2e", /--workers|(^|\s)-j\s*\d|PLAYWRIGHT_WORKERS/m);
+});
+
+/** Asserts that neither the workflow, the image nor the npm script `script` sets a worker count matching `override`. */
+const noWorkerOverride = (script: string, override: RegExp): void => {
   const scripts = (JSON.parse(readText("package.json") ?? "{}") as { scripts?: Record<string, string> }).scripts ?? {};
-  for (const [where, text] of [[".github/workflows/ci.yml", workflow()], ["container/Dockerfile", dockerfile()], ["package.json's test:e2e", scripts["test:e2e"] ?? ""]] as const) {
-    assert.doesNotMatch(text, /--workers|(^|\s)-j\s*\d|PLAYWRIGHT_WORKERS/m, `${where} overrides the worker count`);
+  for (const [where, text] of [[".github/workflows/ci.yml", workflow()], ["container/Dockerfile", dockerfile()], [`package.json's ${script}`, scripts[script] ?? ""]] as const) {
+    assert.doesNotMatch(text, override, `${where} overrides the worker count`);
   }
+};
+
+// Issue #172 (the suite run of 18 Oct 2026): npm test runs the component tests beside the other stages, and Vitest
+// waits a fixed 60 s for each forked worker to start, which a fork per core missed under that load. The one source of
+// their worker count is web/vite.config.ts.
+test("the component tests' worker count is 50% of the cores, set in web/vite.config.ts alone", async () => {
+  const config = (await import("../web/vite.config.ts")).default as { test?: { maxWorkers?: number | string } };
+  assert.equal(config.test?.maxWorkers, "50%", "web/vite.config.ts does not set maxWorkers to 50%");
+  noWorkerOverride("test:web", /--maxWorkers|--max-workers|VITEST_MAX_WORKERS/);
 });
