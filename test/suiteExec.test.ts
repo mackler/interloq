@@ -66,9 +66,11 @@ test("a command that exits 3 fails with its exit code, and both streams are kept
 
 test("a command past the ceiling is killed with its process group and fails as timed out", async () => {
   const pidFile = path.join(DIR, "timed.pid");
-  const result = await run(`sleep 30 & echo $! > ${pidFile}; wait`, 300);
+  // The ceiling is 2 s so that the shell has written its pid file on a loaded machine; the suite run of 18 Oct 2026 missed it at 300 ms.
+  const ceilingMs = 2000;
+  const result = await run(`sleep 30 & echo $! > ${pidFile}; wait`, ceilingMs);
   assert.equal(result._tag, "Failed");
-  assert.deepEqual(result._tag === "Failed" ? result.reason : null, { kind: "timedOut", ms: 300 });
+  assert.deepEqual(result._tag === "Failed" ? result.reason : null, { kind: "timedOut", ms: ceilingMs });
   const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
   assert.ok(await waitGone(pid), "the background sleep of the suite was left running");
 });
