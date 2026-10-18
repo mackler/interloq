@@ -1,5 +1,8 @@
 {
-    "ignorePaths": [".devcontainer/claude.json"],
+    "ignorePaths": [
+        ".devcontainer/claude.json"
+    ],
+    "maxRounds": 8,
     "claudeModel": "claude-opus-5-5",
     "codexModel": "gpt-6-astra"
 }
