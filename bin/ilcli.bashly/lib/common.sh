@@ -148,7 +148,8 @@ copy_root_paths() {
 # record a bind mount's source as either. Fails with the reason on stdout when the mounts cannot be read, or a
 # temporary file cannot be created for reading them.
 copy_paths_in() {
-  local given resolved source destination paths=""
+  local given resolved root source destination path paths=""
+  local -a roots
   run_capturing docker inspect --format "$MOUNTS_TEMPLATE" "$1" ||
     { echo "could not create a temporary file for reading its mounts"; return 1; }
   if [[ $run_rc -ne 0 ]]; then
@@ -156,15 +157,16 @@ copy_paths_in() {
     return 1
   fi
   given=$(ilcli_root)
-  resolved=$(cd "$given" && pwd -P)
+  roots=("$given")
+  if resolved=$(cd "$given" && pwd -P) && [[ $resolved != "$given" ]]; then roots+=("$resolved"); fi
   while IFS=$'\t' read -r source destination; do
     [[ -n $source ]] || continue
-    paths+=$(copy_root_paths "$given" "$source" "$destination")$'\n'
-    if [[ $resolved != "$given" ]]; then
-      paths+=$(copy_root_paths "$resolved" "$source" "$destination")$'\n'
-    fi
+    for root in "${roots[@]}"; do
+      path=$(copy_root_paths "$root" "$source" "$destination")
+      if [[ -n $path && $'\n'$paths != *$'\n'$path$'\n'* ]]; then paths+=$path$'\n'; fi
+    done
   done <<< "$run_out"
-  grep -v '^$' <<< "$paths" | awk '!seen[$0]++' || true
+  printf '%s' "$paths"
 }
 
 # copy_pattern <path>...: what upgrade's search looks for in a process's command line: any of the paths, as a whole
@@ -234,8 +236,9 @@ installed_copy_users() {
       return 1
     fi
     [[ -n $paths ]] || continue
-    mapfile -t path_list <<< "$paths"
-    shown=$(IFS=,; printf '%s' "${path_list[*]}" | sed 's/,/, /g')
+    mapfile -t path_list <<< "${paths%$'\n'}"
+    shown=${paths%$'\n'}
+    shown=${shown//$'\n'/, }
     if ! found=$(search_container "$id" "$(copy_pattern "${path_list[@]}")"); then
       printf 'in container %s (%s), which mounts the installed copy at %s, %s\n' "$name" "$id" "$shown" "$found"
       return 1
