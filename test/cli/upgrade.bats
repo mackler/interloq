@@ -384,6 +384,18 @@ refused_naming() {
   ! grep -q '^docker \[exec\] \[c2\]' "$STUB_LOG"
 }
 
+@test "a mount with no host source (tmpfs) is not the copy, so a container without pgrep holding one does not stop the upgrade" {
+  advance release "Tested change"
+  export STUB_DOCKER_PS=$'c1 proj-a\nc2 cache'
+  mounts_copy c1
+  container_procs c1 '1 bash'
+  container_mounts c2 "" "$T"
+  container_fails c2 127 'exec: "pgrep": executable file not found'
+  upgrade
+  upgraded
+  ! grep -q '^docker \[exec\] \[c2\]' "$STUB_LOG"
+}
+
 @test "a container whose mounts cannot be read refuses as inconclusive, unsearched, nothing touched" {
   advance release "Tested change"
   remember

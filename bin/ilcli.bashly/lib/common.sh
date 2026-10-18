@@ -146,9 +146,11 @@ copy_root_paths() {
 # copy_paths_in <id>: the paths at which container <id> sees the installed copy or a part of it, one per line, on
 # stdout; empty when it mounts none of it. The copy's root is compared as given and resolved, since docker may
 # record a bind mount's source as either. Fails with the reason on stdout when the mounts cannot be read, or a
-# temporary file cannot be created for reading them.
+# temporary file cannot be created for reading them. Each line is split at its first tab, not by read's IFS, which
+# would strip a leading tab: a mount with no host source (tmpfs) prints an empty source and is skipped, because it
+# cannot show the copy.
 copy_paths_in() {
-  local given resolved root source destination path paths=""
+  local given resolved root line source destination path paths=""
   local -a roots
   run_capturing docker inspect --format "$MOUNTS_TEMPLATE" "$1" ||
     { echo "could not create a temporary file for reading its mounts"; return 1; }
@@ -159,7 +161,9 @@ copy_paths_in() {
   given=$(ilcli_root)
   roots=("$given")
   if resolved=$(cd "$given" && pwd -P) && [[ $resolved != "$given" ]]; then roots+=("$resolved"); fi
-  while IFS=$'\t' read -r source destination; do
+  while IFS= read -r line; do
+    source=${line%%$'\t'*}
+    destination=${line#*$'\t'}
     [[ -n $source ]] || continue
     for root in "${roots[@]}"; do
       path=$(copy_root_paths "$root" "$source" "$destination")
