@@ -9,7 +9,7 @@ import { describe, type RunError, SuiteStopped, TrackerStepFailed, trackerFailur
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
+import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces, type ShownBlock } from "./pieces.ts";
@@ -349,7 +349,9 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         }
         // Issue #117: the work response, in a session of its own (issue #122), is given the execution's report and the plan as its end left it.
         const ended = Option.getOrNull(yield* store.loadPlan());
-        return { stopped, work: { outcome, plan: ended === null ? "(no plan recorded)" : renderPlanMarkdown(ended) } satisfies WorkExecution };
+        // Issue #181: every stop is answered here (the user's input is asked for when the call relayed no question).
+        const stop: ExecStop | null = stopped ? { _tag: "Answered" } : null;
+        return { stopped, stop, work: { outcome, plan: ended === null ? "(no plan recorded)" : renderPlanMarkdown(ended) } satisfies WorkExecution };
       }).pipe(inPhase({ kind: "execution", n: k }));
       const { stopped } = execution;
 
@@ -381,6 +383,6 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         continue;
       }
       yield* foresee(k + 1);
-      previous = { _tag: "ExecutionEnded", stopped, workReview: work.result === "converged" ? "converged" : { revisedInRound: work.round } };
+      previous = { _tag: "ExecutionEnded", stop: execution.stop, workReview: work.result === "converged" ? "converged" : { revisedInRound: work.round } };
     }
   });

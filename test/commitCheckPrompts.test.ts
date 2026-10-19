@@ -20,10 +20,9 @@ const paths: readonly [string, ...string[]] = ["b.txt", "lib/c.ts"];
 test("every prompt that asks for the whole plan carries the commit step rule", () => {
   const plans = {
     initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, checks),
-    revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT, checks),
     planApplyDecisionsPrompt: prompts.planApplyDecisionsPrompt(TEST_ROOT, checks),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, checks),
-    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", true, 1, { _tag: "ExecutionEnded", stopped: false, workReview: "converged" }, checks),
+    revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", true, 1, { _tag: "ExecutionEnded", stop: null, workReview: "converged" }, checks),
     earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, checks),
   };
   for (const [name, text] of Object.entries(plans)) assert.ok(text.includes(prompts.PLAN_COMMIT_STEP_RULE), name);

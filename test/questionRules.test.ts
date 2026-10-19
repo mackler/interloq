@@ -21,8 +21,7 @@ test("every prompt that may return questions_for_user carries the writer's rende
     prompts.decisionRespondPrompt(TEST_ROOT, 1, 1),
     prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
     prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
-    prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
-    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stopped: false, workReview: "converged" }, NO_STEP_CHECKS),
+    prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stop: null, workReview: "converged" }, NO_STEP_CHECKS),
     prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS),
   ];
   for (const text of texts) assert.ok(text.includes(prompts.questionWritingRules()), text.slice(0, 80));

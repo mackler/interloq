@@ -834,18 +834,6 @@ ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
 }
 
-export const revisePlanPrompt = (root: RunRoot, checks: StepChecks): string => `Execution has stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.
-Revise the plan in ${runDir(root)}/plan.json for the remaining work: keep the steps with status 'done', and change, add, or remove the other steps as the user's input and the current state of the codebase require.
-${planStatuses(root)}
-${planFormat(root)}
-${planStepCheckRule(checks)}
-${planStepSelfContainedRule(root)}
-${PLAN_COMMIT_STEP_RULE}
-${planIdRule(root)}
-If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
-Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
-${QUESTION_OPTIONS_RULE}`;
-
 export const planApplyDecisionsPrompt = (root: RunRoot, checks: StepChecks): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend the plan in ${runDir(root)}/plan.json where a decision requires it.
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
@@ -1495,13 +1483,22 @@ ${execution.plan}`;
  * user-decisions.md, which the run's one session used to carry.
  */
 /**
+ * How an execution phase stopped (issue #181, requirements Q6, Q7): with the user's answer to a question Claude Code
+ * relayed during the call, recorded in user-decisions.md, or without one, Claude Code's own account of the stop then
+ * carried in the revision prompt, since the revision runs in a session that has not seen the execution.
+ */
+export type ExecStop =
+  | Readonly<{ _tag: "Answered" }>
+  | Readonly<{ _tag: "Unanswered"; status: "needs_input" | "blocked" | "aborted"; summary: string; question: string; remainingWork: string }>;
+
+/**
  * Why the plan is revised after execution phase k (issue #162): the execution and its work review ended with a stop or
  * a correction due, or the work review found nothing to correct and the whole suite Interloq then ran failed, or (issue
  * #176) the work review found nothing to correct, the suite passed where one is named, and Interloq's commit check found
  * files the run changed and left uncommitted. The run is finished only when the check finds nothing.
  */
 export type RevisionCause =
-  | Readonly<{ _tag: "ExecutionEnded"; stopped: boolean; workReview: WorkReviewEnd }>
+  | Readonly<{ _tag: "ExecutionEnded"; stop: ExecStop | null; workReview: WorkReviewEnd }>
   | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: WorkFailure; tail: string; log: string }>
   | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: CommandLine | null }>;
 
@@ -1520,10 +1517,29 @@ export function suiteFailureText(reason: SuiteFailure): string {
 }
 
 /** What the revision prompt says of its cause. */
+/** A stop of execution in a revision prompt (issue #181): the user's input where he answered, else Claude Code's account. */
+const execStopText = (root: RunRoot, stop: ExecStop): string => {
+  switch (stop._tag) {
+    case "Answered":
+      return `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.`;
+    case "Unanswered": {
+      const stated = (text: string): string => (text.trim() === "" ? "none stated" : text);
+      return `\nExecution stopped with the status ${stop.status}, and the user was not asked: Interloq revises the plan from Claude Code's own account of the stop, which follows.
+Summary: ${stated(stop.summary)}
+What it needed: ${stated(stop.question)}
+Remaining work: ${stated(stop.remainingWork)}
+Settle what it needed from the task, the requirements, the codebase and ${runDir(root)}/user-decisions.md, and state each assumption you settle in the text of the step it concerns.`;
+    }
+  }
+};
+/** Issue #181: the line said and written when an execution stop is revised from Claude Code's account, without a question. */
+export function execStopRevisionLine(label: string, status: string): string {
+  return `${label} stopped with the status ${status}. After the review of the work, Claude Code revises the plan from its own account of the stop, without a question to you.`;
+}
 const revisionCauseText = (root: RunRoot, phase: number, cause: RevisionCause): string => {
   switch (cause._tag) {
     case "ExecutionEnded": {
-      const stop = cause.stopped ? `\nExecution stopped. The last entry of ${runDir(root)}/user-decisions.md contains the user's input for this stop.` : "";
+      const stop = cause.stop === null ? "" : execStopText(root, cause.stop);
       const review =
         cause.workReview === "converged"
           ? `\nWork review ${phase} found no issue in the work so far.`
