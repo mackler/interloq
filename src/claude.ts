@@ -118,6 +118,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
   const config = yield* RunConfig;
   /** The model Claude Code last announced for the session; the announcement is repeated only when it changes. */
   const announcedModel = yield* Ref.make<string | null>(null);
+  const callCount = yield* Ref.make(0);
 
   /**
    * The real location of a path that may not exist yet: its nearest existing ancestor resolved through
@@ -308,8 +309,9 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
    * they arrive; the outcome is the pure reduction of the list at the end.
    */
   const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | "execution", show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback, ended: AbortSignal) => Options = () => ({}), observe: (message: SDKMessage) => Effect.Effect<void> = () => Effect.void): Effect.Effect<CallOutcome, CallbackError> =>
-    Effect.gen(function* () {
-      yield* ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose });
+    // Issue #184 (S13): the call's id, numbered by the planner's counter shared by its fresh sessions, on its start and end.
+    Ref.updateAndGet(callCount, (n) => n + 1).pipe(Effect.map((n) => `claude-${n}`), Effect.flatMap((callId) => Effect.gen(function* () {
+      yield* ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose, callId });
       const controller = new AbortController();
       const callbackFailure = yield* Deferred.make<never, CallbackError>();
       const inCallback: InCallback = (effect, fallback) =>
@@ -408,8 +410,8 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
       return reduceMessages(seen, streamError, streamCode, processEnd);
     }).pipe(
       // Every exit ends the activity: a call error, a typed failure and an interruption are ok: false.
-      Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit) && exit.value.error === null })),
-    );
+      Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit) && exit.value.error === null, callId })),
+    )));
 
   /**
    * The wait of an execution call for its background commands (issue #154, decision Q1): nothing while a stop is

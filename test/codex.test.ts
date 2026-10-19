@@ -143,7 +143,17 @@ test("interrupting a review aborts the Codex turn and returns the event generato
   await run(Fiber.interrupt(fiber));
   assert.equal(sawAbort, true, "the Codex turn was not aborted");
   assert.equal(returned, true, "the event generator was not closed");
-  assert.deepEqual(fake.ui.notified.at(-1), { _tag: "AgentCallEnded", agent: "codex", ok: false });
+  assert.deepEqual(fake.ui.notified.at(-1), { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" });
+});
+
+// Issue #184 (S13): each turn's start and end carry one id, and two turns carry different ids.
+test("each turn's start and end carry one id, different for each turn", async () => {
+  const fake = await reviewer([turn(JSON.stringify({ issues: [] })), turn(JSON.stringify({ issues: [] }))]);
+  const session = await run(fake.reviewer.startPhase);
+  await run(session.review("one"));
+  await run(session.review("two"));
+  const ids = fake.ui.notified.flatMap((e) => (e._tag === "AgentCallStarted" || e._tag === "AgentCallEnded" ? [`${e._tag}:${e.callId}`] : []));
+  assert.deepEqual(ids, ["AgentCallStarted:codex-1", "AgentCallEnded:codex-1", "AgentCallStarted:codex-2", "AgentCallEnded:codex-2"]);
 });
 
 // Plan step 1.8: the turn is streamed, so the activity line can show Codex's tool use.
@@ -153,11 +163,11 @@ test("a streamed turn notifies its start, one tool use per item, and its end, in
   const session = await run(fake.reviewer.startPhase);
   await run(session.review("review"));
   assert.deepEqual(fake.ui.notified, [
-    { _tag: "AgentCallStarted", agent: "codex", purpose: "review" },
+    { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" },
     { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff" },
     { _tag: "ToolUsed", agent: "codex", tool: "edit", target: "a.ts, b.ts" },
     { _tag: "ToolUsed", agent: "codex", tool: "search", target: "effect v4" },
-    { _tag: "AgentCallEnded", agent: "codex", ok: true },
+    { _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" },
   ]);
 });
 
@@ -177,7 +187,7 @@ test("turn.failed, a stream error event, and a turn without an agent message fai
     const error = await typedFailure(session.review("review"));
     assert.equal(error._tag, "CodexCallFailed");
     assert.match(describe(error as RunError), text);
-    assert.deepEqual(fake.ui.notified.at(-1), { _tag: "AgentCallEnded", agent: "codex", ok: false });
+    assert.deepEqual(fake.ui.notified.at(-1), { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" });
   }
 });
 

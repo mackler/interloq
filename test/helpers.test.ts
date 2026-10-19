@@ -30,6 +30,6 @@ test("a waiting answer is a typed script step, not a magic string", async () => 
 
 test("ScriptedUi records the notified events in order", async () => {
   const ui = new ScriptedUi([]);
-  await Effect.runPromise(Effect.andThen(ui.notify({ _tag: "PhaseBegan", phase: { kind: "questions" } }), ui.notify({ _tag: "AgentCallEnded", agent: "codex", ok: true })));
+  await Effect.runPromise(Effect.andThen(ui.notify({ _tag: "PhaseBegan", phase: { kind: "questions" } }), ui.notify({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" })));
   assert.deepEqual(ui.notified.map((e) => e._tag), ["PhaseBegan", "AgentCallEnded"]);
 });

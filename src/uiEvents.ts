@@ -30,9 +30,9 @@ export type UiEvent =
   /** A plan was written; its questions for the user are presented one by one after it (S19), not listed here. */
   | Readonly<{ _tag: "PlanWritten"; phase: number; resultText: string }>
   | Readonly<{ _tag: "ExecutionEnded"; phase: number; outcome: ExecOutcome }>
-  | Readonly<{ _tag: "AgentCallStarted"; agent: Agent; purpose: string }>
+  | Readonly<{ _tag: "AgentCallStarted"; agent: Agent; purpose: string; callId: string }>
   | Readonly<{ _tag: "ToolUsed"; agent: Agent; tool: string; target: string }>
-  | Readonly<{ _tag: "AgentCallEnded"; agent: Agent; ok: boolean }>
+  | Readonly<{ _tag: "AgentCallEnded"; agent: Agent; ok: boolean; callId: string }>
   /**
    * The SDK's own reconnection during a call (issue #26): Codex's error event (no attempt, count or delay), or the Agent
    * SDK's api_retry message (its attempt, its maximum and its delay).

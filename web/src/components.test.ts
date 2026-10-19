@@ -1782,8 +1782,8 @@ describe("TimelineRail: the busy indicator", () => {
 // Issue #26 (S21): the activity line shows a retry as its count of attempts, not as progress.
 test("the activity line shows retry 2 of 3", () => {
   const events: UiEvent[] = [
-    { _tag: "AgentCallStarted", agent: "codex", purpose: "review" },
-    { _tag: "AgentCallEnded", agent: "codex", ok: false },
+    { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" },
+    { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" },
     { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 },
   ];
   const time = "2026-09-29T00:00:00Z";
@@ -2034,7 +2034,7 @@ describe("TimelineRail: where the indicator is", () => {
     const report = (id: string, status: (typeof prompts.REPORT_STEP_STATUSES)[number], p: ReturnType<typeof plan>): UiEvent => ({ _tag: "PlanChanged", phase: 1, plan: p, step: { id, status } });
     const events: UiEvent[] = [
       { _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } },
-      { _tag: "AgentCallStarted", agent: "claude", purpose: "execution" },
+      { _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-1" },
       report("S1", "started", plan("started", "pending")),
       report("S2", "started", plan("started", "started")),
     ];

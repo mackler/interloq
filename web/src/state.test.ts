@@ -130,7 +130,7 @@ describe("who speaks in the left panel", () => {
   });
 
   test("the activity line and the page's prompts say Claude", () => {
-    const s = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning" })]));
+    const s = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" })]));
     expect(s.modes.implementation.run?.activity).toBe("Claude — planning");
     const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x" })]));
     expect(tool.modes.implementation.run?.activity).toBe("Claude — Read: x");
@@ -194,7 +194,7 @@ test("every prompt is shown in the page's words, without the hint's key conventi
 
 describe("activity and timeline", () => {
   test("the activity line shows the last agent event and is cleared at the end of a phase", () => {
-    const s1 = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review" }), notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff" })]));
+    const s1 = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" }), notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff" })]));
     expect(s1.modes.implementation.run?.activity).toBe("Codex — review — command: git diff");
     expect(s1.modes.implementation.run?.busy).toBe(true);
     const s2 = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" }) }], s1);
@@ -202,7 +202,7 @@ describe("activity and timeline", () => {
   });
 
   test("the activity line names a call's purpose in the user's words: clarification and implementation (issues #14, #21)", () => {
-    const of = (purpose: string) => fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose })])).modes.implementation.run?.activity;
+    const of = (purpose: string) => fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId: "claude-1" })])).modes.implementation.run?.activity;
     expect(of("interview")).toBe("Claude — clarification");
     expect(of("execution")).toBe("Claude — implementation");
     expect(of("planning")).toBe("Claude — planning");
@@ -381,7 +381,7 @@ describe("the steps of Gather Requirements", () => {
   });
 
   test("a pending prompt survives a call that starts and ends after it (the interview's request beside a question)", () => {
-    const s = fold(live([...through, asked(1, prompts.interviewMessagePrompt), notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview" }), notified({ _tag: "AgentCallEnded", agent: "claude", ok: true })]));
+    const s = fold(live([...through, asked(1, prompts.interviewMessagePrompt), notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-1" }), notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" })]));
     expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(1);
   });
 
@@ -590,14 +590,14 @@ describe("runs, replay and gaps", () => {
       { _tag: "LoopFinished", subject: { plan: 1 }, result: "converged" },
       { _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" },
       { _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 },
-      { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" },
+      { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" },
       { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "a" },
       // Issue #6: the phases ahead, the plan, and nested calls.
       { _tag: "PhasesForeseen", phases: phasesOf(true, 1) },
       { _tag: "PhasesForeseen", phases: phasesOf(true, 2) },
       { _tag: "PlanChanged", phase: 1, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x", status: "started" }] }] }, step: null },
       { _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } },
-      { _tag: "AgentCallEnded", agent: "claude", ok: true },
+      { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" },
     ).map(notified),
     fc.constant(said("\nHi\n")),
   );
@@ -1143,8 +1143,8 @@ describe("the whole run in the timeline", () => {
   });
 
   test("a decision nested in an execution call: the step stays current, busy stays, and the activity returns to the execution", () => {
-    const call = (agent: "claude" | "codex", purpose: string) => notified({ _tag: "AgentCallStarted", agent, purpose });
-    const end = (agent: "claude" | "codex") => notified({ _tag: "AgentCallEnded", agent, ok: true });
+    const call = (agent: "claude" | "codex", purpose: string) => notified({ _tag: "AgentCallStarted", agent, purpose, callId: `${agent}-1` });
+    const end = (agent: "claude" | "codex") => notified({ _tag: "AgentCallEnded", agent, ok: true, callId: `${agent}-1` });
     const prefix = [started, foreseen(false, 1), began({ kind: "execution", n: 1 }), call("claude", "execution"), notified({ _tag: "PlanChanged", phase: 1, plan: recorded("S1", "started"), step: null })];
     const executing = fold(live(prefix));
     const nested = fold(live([...prefix, call("claude", "planning"), call("codex", "review")]));
@@ -1183,18 +1183,18 @@ describe("the whole run in the timeline", () => {
 
 // Issue #42 (Q7, P1-R2-1): the start time the elapsed time is measured from is the innermost call's, then the outer's again.
 test("the elapsed time's start: the nested call's while it runs, the outer call's after it", () => {
-  const events: RunEvent[] = [started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution" }), notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review" })];
+  const events: RunEvent[] = [started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-1" }), notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" })];
   const nested = fold(live(events, 1, [0, 10, 70]));
   expect(callStartedAt(nested.modes.implementation.run!)).toBe(at(70));
-  const after = fold(live([...events, notified({ _tag: "AgentCallEnded", agent: "codex", ok: true })], 1, [0, 10, 70, 80]));
+  const after = fold(live([...events, notified({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" })], 1, [0, 10, 70, 80]));
   expect(callStartedAt(after.modes.implementation.run!)).toBe(at(10));
   expect(callStartedAt(fold(live([started])).modes.implementation.run!)).toBe(null);
 });
 
 // Issue #26 (S21): the retry of a transport fault on the activity line, live and replayed alike.
 describe("transport retries on the activity line", () => {
-  const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
-  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
+  const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
+  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" };
   const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
@@ -1205,12 +1205,12 @@ describe("transport retries on the activity line", () => {
 
   test("the retry clears when the call recovers or a call ends well", () => {
     for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(s.modes.implementation.run?.activity).toBe("Codex — review");
-    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "AgentCallEnded", agent: "codex", ok: true }), notified(call)])) expect(s.modes.implementation.run?.activity).toBe("Codex — review");
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" }), notified(call)])) expect(s.modes.implementation.run?.activity).toBe("Codex — review");
   });
 
   test("the SDK's own reconnection during a call is shown on the activity line", () => {
     const reconnecting: UiEvent = { _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503, server_error" };
-    for (const s of both([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning" }), notified(reconnecting)])) {
+    for (const s of both([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" }), notified(reconnecting)])) {
       expect(s.modes.implementation.run?.activity).toBe("Claude — planning — reconnecting 2 of 10 (status 503, server_error)");
     }
   });
@@ -1218,10 +1218,10 @@ describe("transport retries on the activity line", () => {
 
 // W1-R1-3: the retry belongs to its agent and ends with every call's end.
 describe("the retry state after the retries are exhausted", () => {
-  const codexCall: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
-  const codexFailed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
+  const codexCall: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
+  const codexFailed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" };
   const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 1, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 };
-  const claudeCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" };
+  const claudeCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a Claude call of Help me decide after the exhausted Codex retries shows no retry text", () => {
@@ -1270,8 +1270,8 @@ describe("phase times", () => {
 describe("the current step of the plan", () => {
   const foreseen = notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterationsOf(1)) });
   const began = notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } });
-  const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose });
-  const callEnded = (ok = true) => notified({ _tag: "AgentCallEnded", agent: "claude", ok });
+  const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId: "claude-1" });
+  const callEnded = (ok = true) => notified({ _tag: "AgentCallEnded", agent: "claude", ok, callId: "claude-1" });
   type Status = "pending" | "started" | "done" | "unfinished";
   const ids = ["S1", "S2", "S3"];
   /** The events of the reports in order, each PlanChanged carrying the plan as recorded after it. */
@@ -1364,8 +1364,8 @@ describe("the steps an Implementation acted on", () => {
   const phase = (kind: "planning" | "execution" | "work", n: number) => ({ kind, n });
   const begin = (kind: "planning" | "execution" | "work", n: number) => notified({ _tag: "PhaseBegan", phase: phase(kind, n) });
   const end = (kind: "planning" | "execution" | "work", n: number, result = "converged") => notified({ _tag: "PhaseEnded", phase: phase(kind, n), result });
-  const call = notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution" });
-  const callEnded = notified({ _tag: "AgentCallEnded", agent: "claude", ok: true });
+  const call = notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-1" });
+  const callEnded = notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" });
 
   // The plan of Planning 1: stage A with S1 and S3, stage B with S4 and S2 (S2 never touched).
   const v1 = (s: Record<string, Status> = {}) => planOf([["A", [{ id: "S1", label: "one", status: s.S1 ?? "pending" }, { id: "S3", label: "three", status: s.S3 ?? "pending" }]], ["B", [{ id: "S4", label: "four", status: s.S4 ?? "pending" }, { id: "S2", label: "two", status: s.S2 ?? "pending" }]]]);
@@ -1552,8 +1552,8 @@ describe("the shared state of a run's page", () => {
 describe("a wait for a usage limit", () => {
   const FROM = Date.UTC(2026, 8, 30, 5, 32);
   const UNTIL = FROM + 9_060_000;
-  const call: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" };
-  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false };
+  const call: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" };
+  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" };
   const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
   const lifted: UiEvent = { _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_060_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
@@ -1612,8 +1612,8 @@ describe("the rail as a tree that collapses", () => {
   const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: phasesOf(questions, iterations) });
   const began = (phase: Phase) => notified({ _tag: "PhaseBegan", phase });
   const ended = (phase: Phase, result = "converged") => notified({ _tag: "PhaseEnded", phase, result } as UiEvent);
-  const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose });
-  const callEnded = notified({ _tag: "AgentCallEnded", agent: "claude", ok: true });
+  const call = (purpose = "execution") => notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId: "claude-1" });
+  const callEnded = notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" });
   type Status = "pending" | "started" | "done" | "unfinished";
   const layout = [["S1", "S2", "S3"], ["S4"]] as const;
   const planWith = (statuses: Record<string, Status>) => ({
@@ -1846,8 +1846,8 @@ describe("the rail as a tree that collapses", () => {
 
 // Issue #63: the wait before a retry is known exactly, so the page counts it down; the retried call's start ends it.
 describe("the countdown of a retry's wait", () => {
-  const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review" };
-  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false };
+  const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
+  const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" };
   const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 1000, untilMs: 6000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
   test("a TransportRetrying sets the wait; the retried call's start and the recovery clear it", () => {
@@ -2099,5 +2099,32 @@ describe("the Full test suite phase (issue #162)", () => {
     expect([suite.label, suite.state, suite.result]).toEqual(["Full test suite", "active", null]);
     const ahead = fold(live(events.slice(0, 2)));
     expect(ahead.modes.implementation.run!.timeline.find((e) => e.phase.kind === "suite")?.state).toBe("ahead");
+  });
+});
+
+// Issue #184 (S13): the interview's request runs beside a terms request, a decision or a context call, and either may end
+// first; the page removes the call that ended, by its id.
+describe("calls that overlap", () => {
+  const start = (callId: string, purpose: string) => notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId });
+  const end = (callId: string) => notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId });
+  const runOf = (events: readonly RunEvent[]) => fold(live([started, ...events])).modes.implementation.run;
+  test("two overlapping calls ending in either order each leave the other running and named", () => {
+    const first = runOf([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-1")]);
+    expect(first?.calls.map((c) => c.purpose)).toEqual(["planning"]);
+    expect(first?.activity).toBe(`Claude — ${prompts.purposeLabel("planning")}`);
+    const second = runOf([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-2")]);
+    expect(second?.calls.map((c) => c.purpose)).toEqual(["interview"]);
+    expect(second?.activity).toBe(`Claude — ${prompts.purposeLabel("interview")}`);
+  });
+  test("a nested call's end restores the outer one, and an end of no running call changes nothing", () => {
+    expect(runOf([start("claude-1", "execution"), start("claude-2", "decision"), end("claude-2")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
+    expect(runOf([start("claude-1", "execution"), end("claude-9")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
+  });
+  test("only the execution call's end clears the current step", () => {
+    const plan = notified({ _tag: "PlanChanged", plan: { stages: [{ number: 1, title: "S", steps: [{ id: "S1", number: 1, label: "one", text: "t", status: "started" }] }] }, phase: 1, step: { id: "S1", status: "started" } });
+    const base = [notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } }), start("claude-1", "execution"), plan, start("claude-2", "interview")];
+    const step = (events: readonly RunEvent[]) => runOf(events)?.timeline.find((e) => e.phase.kind === "execution")?.currentStep ?? null;
+    expect(step([...base, end("claude-2")])).not.toBe(null);
+    expect(step([...base, end("claude-1")])).toBe(null);
   });
 });

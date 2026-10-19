@@ -476,9 +476,9 @@ export class ScriptedPlanner implements PlannerShape {
       return outcome;
     });
     if (ui === null) return body;
-    return ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution" }).pipe(
+    return ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-exec" }).pipe(
       Effect.andThen(body),
-      Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit) })),
+      Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit), callId: "claude-exec" })),
     );
   }
 }

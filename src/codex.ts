@@ -1,7 +1,7 @@
 // Codex through the Codex SDK, as the Reviewer service. One thread per review loop.
 
 import type { ThreadEvent } from "@openai/codex-sdk";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Ref } from "effect";
 import { CodexCallFailed, TransportFault } from "./errors.ts";
 import { classifyCodex, errorCode } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
@@ -28,10 +28,10 @@ const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault => {
  * A turn is streamed and its events consumed inside the Effect, as the Claude Code messages are: the tool uses
  * go to the activity line as they arrive, and on every early exit the turn is aborted and the stream closed.
  */
-const session = (store: StoreShape, ui: UiShape, thread: SdkThread): ReviewSession => ({
+const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: Effect.Effect<string>): ReviewSession => ({
   review: (prompt) =>
-    Effect.gen(function* () {
-      yield* ui.notify({ _tag: "AgentCallStarted", agent: "codex", purpose: "review" });
+    nextCallId.pipe(Effect.flatMap((callId) => Effect.gen(function* () {
+      yield* ui.notify({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId });
       const controller = new AbortController();
       const streamed = yield* Effect.tryPromise({
         try: () => thread.runStreamed(prompt, { outputSchema: agentJsonSchema(S.Review), signal: controller.signal }),
@@ -64,7 +64,7 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread): ReviewSessi
       if (outcome.kind === "failed") return yield* Effect.fail(turnFailure(outcome.message));
       if (outcome.usage !== null) yield* store.recordUsage({ agent: "codex", thread: thread.id, inputTokens: outcome.usage.input_tokens, outputTokens: outcome.usage.output_tokens });
       return { text: outcome.finalResponse, inputTokens: outcome.usage?.input_tokens ?? null };
-    }).pipe(Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "codex", ok: Exit.isSuccess(exit) }))),
+    }).pipe(Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "codex", ok: Exit.isSuccess(exit), callId }))))),
 });
 
 /** The Reviewer service over the SDK, Store and RunConfig services. */
@@ -73,6 +73,9 @@ export const makeCodexReviewer: Effect.Effect<ReviewerShape, never, Sdk | Store 
   const ui = yield* Ui;
   const store = yield* Store;
   const config = yield* RunConfig;
+  // Issue #184 (S13): every turn of every thread of this reviewer numbered by one counter, its id on its start and end.
+  const callCount = yield* Ref.make(0);
+  const nextCallId = Ref.updateAndGet(callCount, (n) => n + 1).pipe(Effect.map((n) => `codex-${n}`));
 
   return {
     // Bubblewrap cannot start in the container, so Codex's own sandbox is off. The container and its
@@ -88,7 +91,7 @@ export const makeCodexReviewer: Effect.Effect<ReviewerShape, never, Sdk | Store 
           ...(config.codexModel !== null ? { model: config.codexModel } : {}),
         }),
       catch: (e: unknown) => new CodexCallFailed({ message: e instanceof Error ? e.message : String(e) }),
-    }).pipe(Effect.map((thread) => session(store, ui, thread))),
+    }).pipe(Effect.map((thread) => session(store, ui, thread, nextCallId))),
   };
 });
 

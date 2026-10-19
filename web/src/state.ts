@@ -102,7 +102,7 @@ export type TimelineEntry = Readonly<{
   result: SuiteOutcome | null;
 }>;
 /** An agent call that runs; calls nest when a decision is taken inside an execution call (P1-R2-1). */
-export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; label: string; startedAt: string }>;
+export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; label: string; startedAt: string; callId: string }>;
 /** The prompt the run waits on, with every choice it offers (the catalog's and those of the preceding event). */
 /** A pending prompt: the agent's options (an interview turn's numbered answers or a relayed question's options,
  * rendered as cards) apart from the catalog's fixed choices (buttons), issue #12. */
@@ -608,7 +608,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
       // Issue #63: the retried call's start ends the wait before it; the retry's text stays with the call.
-      return { ...run, limitWait: null, retry: run.retry === null ? null : { ...run.retry, wait: null }, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
+      return { ...run, limitWait: null, retry: run.retry === null ? null : { ...run.retry, wait: null }, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time, callId: event.callId }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
     }
     case "ToolUsed":
       return { ...run, activity: `${run.calls.at(-1)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, "") };
@@ -634,9 +634,13 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     case "UsageLimitLifted":
       return { ...run, limitWait: null, activity: run.calls.at(-1)?.label ?? "" };
     case "AgentCallEnded": {
-      // P1-R2-1: a nested call ends and the one it ran in is shown again.
-      const ended = run.calls.at(-1);
-      const calls = run.calls.slice(0, -1);
+      // P1-R2-1: a nested call ends and the one it ran in is shown again. Issue #184: calls may overlap and end in any
+      // order (the interview's request beside a terms request or a decision), so the call removed is the one whose id
+      // ended, and an end of no running call changes nothing.
+      const at = run.calls.map((c) => c.callId).lastIndexOf(event.callId);
+      if (at < 0) return run;
+      const ended = run.calls[at];
+      const calls = [...run.calls.slice(0, at), ...run.calls.slice(at + 1)];
       const outer = calls.at(-1);
       const activity = outer !== undefined ? outer.label : `${ended?.label ?? AGENT[event.agent]} — ${event.ok ? "done" : "failed"}`;
       // Issue #53 (P1-R1-1): the end of the execution call itself, a retried attempt's included, leaves no step current;

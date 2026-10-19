@@ -471,25 +471,36 @@ test("a planning call notifies its start, every tool use other than StructuredOu
   const fake = await planner([messages(init(), assistantTool("Read", { file_path: "/x" }), assistantTool("Grep", { pattern: "foo" }), assistantTool("StructuredOutput", {}), success({ questions_for_user: [] }))]);
   await run(fake.planner.planning("write the plan", schema, "planning"));
   assert.deepEqual(activity(fake.ui), [
-    { _tag: "AgentCallStarted", agent: "claude", purpose: "planning" },
+    { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" },
     { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "/x" },
     { _tag: "ToolUsed", agent: "claude", tool: "Grep", target: "foo" },
-    { _tag: "AgentCallEnded", agent: "claude", ok: true },
+    { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" },
   ]);
   assert.ok(!fake.ui.said.some((l) => l.includes("[claude: Read")), "a planning call printed its tool use");
+});
+
+// Issue #184 (S13): calls may overlap, so each carries an id on its start and its end, unique across the planner's
+// sessions, numbered by the planner's own counter.
+test("each call's start and end carry one id, and two calls, one of them on a fresh session, carry different ids", async () => {
+  const fake = await planner([messages(init(), success({ questions_for_user: [] })), messages(init(), success({ questions_for_user: [] }))]);
+  await run(fake.planner.planning("one", schema, "planning"));
+  const fresh = await run(fake.planner.fresh);
+  await run(fresh.planning("two", schema, "planning"));
+  const ids = activity(fake.ui).flatMap((e) => (e._tag === "AgentCallStarted" || e._tag === "AgentCallEnded" ? [`${e._tag}:${e.callId}`] : []));
+  assert.deepEqual(ids, ["AgentCallStarted:claude-1", "AgentCallEnded:claude-1", "AgentCallStarted:claude-2", "AgentCallEnded:claude-2"]);
 });
 
 test("an interview call says its lines for the tool use", async () => {
   const fake = await planner([messages(init(), assistantTool("Read", { file_path: "/x" }), success({}))]);
   await run(fake.planner.planning("interview", schema, "interview"));
   assert.ok(fake.ui.said.includes("  [claude: Read /x]"));
-  assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "interview" });
+  assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-1" });
 });
 
 test("a call that fails ends with AgentCallEnded ok false", async () => {
   const fake = await planner([messages(init(), failure("error_during_execution"))]);
   await run(Effect.result(fake.planner.planning("write the plan", schema, "planning")));
-  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: false });
+  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" });
 });
 
 test("a stream failure ends the call with AgentCallEnded ok false", async () => {
@@ -499,7 +510,7 @@ test("a stream failure ends the call with AgentCallEnded ok false", async () => 
   })();
   const fake = await planner([script]);
   await run(Effect.result(fake.planner.planning("write the plan", schema, "planning")));
-  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: false });
+  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" });
 });
 
 test("an interrupted call ends with AgentCallEnded ok false", async () => {
@@ -514,7 +525,7 @@ test("an interrupted call ends with AgentCallEnded ok false", async () => {
   await reached;
   await sleep(10);
   await run(Fiber.interrupt(fiber));
-  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: false });
+  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" });
 });
 
 test("a relayed question is notified with its options before the user is asked", async () => {
@@ -550,8 +561,8 @@ test("a relayed question says no line of its own: it is presented as an event", 
 test("an execution call notifies its start with the purpose execution", async () => {
   const fake = await planner([messages(init(), success({ status: "finished", summary: "s", question: "", remaining_work: "", checks: [] }))]);
   await run(fake.planner.executing("go", noReporter));
-  assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "execution" });
-  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: true });
+  assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-1" });
+  assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" });
 });
 
 // Stage A (finding 1 of docs/gui-review.md): a work response is read-only by capability, not by a list of tool names.
