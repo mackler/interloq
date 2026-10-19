@@ -1,5 +1,6 @@
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
@@ -118,7 +119,11 @@ test("(b3) changes.diff is rewritten for every round: an outside change after an
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }],
     execs: [finished],
-    store: changeAfterResponse(repo, () => fs.appendFileSync(path.join(repo, "a.txt"), "outside change\n")),
+    // Committed, so that the commit check of issue #176 does not send the plan back; changes.diff is against the baseline tree.
+    store: changeAfterResponse(repo, () => {
+      fs.appendFileSync(path.join(repo, "a.txt"), "outside change\n");
+      execFileSync("git", ["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "outside", "--", "a.txt"]);
+    }),
   });
   assert.equal(await runTask(layer), 1);
   assert.match(presentedSubjects(probe.ui)[0], /unexplained change to changes\.diff/);
