@@ -9,6 +9,7 @@ import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import type { Config } from "./schema.ts";
+import type { LimitWaitBegan } from "./usage.ts";
 import { type Decider, RunConfig, Store, Ui } from "./services.ts";
 
 /** The waits before repeat 1, 2, …, count in seconds: the first wait, doubled on each further repeat (issues #26, #171). */
@@ -67,8 +68,10 @@ export const withTransportRetry = <A, E, R>(
       const error = result.failure;
       if (isLimited(error)) {
         // Issues #68 and #170: a usage limit is waited out on the Clock, never asked, for as long as planLimitWait
-        // decides from its reset; the wait is recorded as actually spent when it ends, an interrupted one included
-        // (P1-R1-1), before the program prints the summary. Only a stated reset's end is said to lift the limit.
+        // decides from its reset; the wait is recorded when it begins (issue #179: its start, scheduled end and basis,
+        // so that a process killed during it leaves the record) and as actually spent when it ends, an interrupted one
+        // included (P1-R1-1), before the program prints the summary. Only a stated reset's end is said to lift the
+        // limit; nothing written when the wait begins claims it.
         faulted = false;
         const fromMs = yield* Clock.currentTimeMillis;
         const { basis, untilMs, next } = planLimitWait(error.reset, fromMs, limitState);
@@ -76,9 +79,13 @@ export const withTransportRetry = <A, E, R>(
         yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, limitType: error.limitType, basis, fromMs, untilMs });
         yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
         const ranOut = basis.kind === "reset" ? "lifted" : "elapsed";
-        const record = (outcome: "lifted" | "elapsed" | "interrupted") =>
-          Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs, endedMs, outcome })));
-        yield* Effect.sleep(Duration.millis(untilMs - fromMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? ranOut : "interrupted")));
+        const began: LimitWaitBegan = { agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs };
+        const record = (outcome: "lifted" | "elapsed" | "interrupted") => Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ ...began, endedMs, outcome })));
+        // One uninterruptible step from the begin record to the finalizer's attachment, so that an interruption between
+        // them takes effect only in the sleep, and the finalizer always clears the checkpoint's note.
+        yield* Effect.uninterruptibleMask((restore) =>
+          store.recordLimitWaitBegan(began).pipe(Effect.andThen(restore(Effect.sleep(Duration.millis(untilMs - fromMs))).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? ranOut : "interrupted"))))),
+        );
         if (basis.kind === "reset") {
           const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
           yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });

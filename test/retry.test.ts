@@ -48,7 +48,13 @@ const setup = async (answers: string[], decider: DeciderShape = noDecider) => {
   const layer = Layer.mergeAll(Layer.succeed(Store, { ...store, saveChoice: () => Effect.void }), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(Decider, decider));
   const conversation = () => fs.readFileSync(path.join(store.dir, "conversation.md"), "utf8");
   const usage = () => (fs.existsSync(path.join(store.dir, "usage.jsonl")) ? fs.readFileSync(path.join(store.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>) : []);
-  return { layer, ui, conversation, usage, repo };
+  const checkpoint = () => JSON.parse(fs.readFileSync(path.join(store.dir, "checkpoint.json"), "utf8")) as Record<string, unknown>;
+  return { layer, ui, conversation, usage, checkpoint, repo };
+};
+/** Issue #179: the wait's began line precedes its end line, and the checkpoint's waiting note is cleared. */
+const beganThenEnded = (usage: () => Record<string, unknown>[], checkpoint: () => Record<string, unknown>, outcome: string) => {
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait_began" || l.kind === "usage_limit_wait").map((l) => [l.kind, l.outcome]), [["usage_limit_wait_began", undefined], ["usage_limit_wait", outcome]]);
+  assert.equal(checkpoint().waiting, null);
 };
 const exitOf = <A, E>(effect: Effect.Effect<A, E, Store | Ui | RunConfig | Decider>, layer: Layer.Layer<Store | Ui | RunConfig | Decider>) =>
   Effect.runPromiseExit(effect.pipe(Effect.provide(layer)));
@@ -301,7 +307,7 @@ test("a project changed during the wait halts with the guard's ProjectChanged; n
 });
 
 test("an interruption one minute into a weekly wait: no further attempt, no lift, and the wait recorded as one minute", async () => {
-  const { layer, ui, usage } = await setup([]);
+  const { layer, ui, usage, checkpoint } = await setup([]);
   const WEEK = 7 * 24 * 3_600_000;
   let reached: () => void = () => undefined;
   const waiting = new Promise<void>((r) => (reached = r));
@@ -326,7 +332,7 @@ test("an interruption one minute into a weekly wait: no further attempt, no lift
   assert.equal(waits[0]?.outcome, "interrupted");
   assert.equal(waits[0]?.from, new Date(START).toISOString());
   assert.equal(waits[0]?.ended, new Date(START + 60_000).toISOString());
-  assert.equal(waits[0]?.until, new Date(START + WEEK + MARGIN_MS).toISOString());
+  assert.equal(waits[0]?.until, new Date(START + WEEK + MARGIN_MS).toISOString());  beganThenEnded(usage, checkpoint, "interrupted");
 });
 
 // Issue #170: a time of day read from the error text, the reset already past (Q4), and no known end (Q2).
@@ -392,7 +398,7 @@ test("Q2: a transport fault between two limits with no known end restarts their 
 });
 
 test("Q2: an interruption during a wait with no known end records it interrupted, with no further try", async () => {
-  const { layer, usage } = await setup([]);
+  const { layer, usage, checkpoint } = await setup([]);
   let reached: () => void = () => undefined;
   const waiting = new Promise<void>((r) => (reached = r));
   let time = START;
@@ -408,7 +414,7 @@ test("Q2: an interruption during a wait with no known end records it interrupted
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
   assert.deepEqual(calls, [1]);
-  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["noKnownEnd", "interrupted"]]);
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["noKnownEnd", "interrupted"]]);  beganThenEnded(usage, checkpoint, "interrupted");
 });
 
 // The records guard of a read-only call (Claude Code's response to a work review) holds across the wait as across a

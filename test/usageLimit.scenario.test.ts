@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Clock, Effect } from "effect";
+import { Clock, Effect, Exit, Fiber, Schema } from "effect";
+import { Checkpoint } from "../src/records.ts";
 import { program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
@@ -36,6 +37,56 @@ test("a plan write that hits a five-hour limit waits until it lifts, resumes, an
   const waits = fs.readFileSync(path.join(probe.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.kind === "usage_limit_wait");
   assert.deepEqual(waits.map((w) => w.outcome), ["lifted"]);
   assert.match(probe.ui.said.join("\n"), /Usage: .*Waited for Claude Code's usage limits: 1 time, 2:31:00 in all\./);
+});
+
+// Issue #179: the wait is recorded when it begins, so a run whose process is killed during it leaves the record. Reading
+// the records inside the sleep, before the sleep's finalizer runs, sees what such a process leaves on disk; failing the
+// sleep would run the finalizer (G-R1-1 of the requirements).
+const weekly = { steps: [{ limit: { reset: { kind: "instant" as const, atMs: RESET }, limitType: "seven_day" } }, { output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
+const linesOf = (text: string) => text.trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+const note = { agent: "claude", limit_type: "seven_day", basis: "reset", from: new Date(START).toISOString(), until: new Date(UNTIL).toISOString() };
+
+test("issue #179: during the wait, usage.jsonl holds the began line and checkpoint.json the waiting note, as a killed process leaves them", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), weekly);
+  let usage = "";
+  let checkpoint = "";
+  const { clock } = steppingClock(START, () =>
+    Effect.sync(() => {
+      usage = fs.readFileSync(path.join(probe.dir, "usage.jsonl"), "utf8");
+      checkpoint = fs.readFileSync(path.join(probe.dir, "checkpoint.json"), "utf8");
+    }),
+  );
+  await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  const waitLines = linesOf(usage).filter((l) => l.kind === "usage_limit_wait_began" || l.kind === "usage_limit_wait");
+  assert.deepEqual(waitLines.map(({ time: _t, ...l }) => l), [{ version: 2, kind: "usage_limit_wait_began", ...note }]);
+  const decoded = Schema.decodeUnknownSync(Checkpoint)(JSON.parse(checkpoint));
+  assert.deepEqual(decoded.waiting, note);
+  assert.ok(decoded.subject !== "" && decoded.stage !== undefined);
+});
+
+test("issue #179: a wait that runs out clears the note, ends with the end line, and leaves the summary unchanged", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), weekly);
+  const { clock } = steppingClock(START);
+  const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  assert.equal(code, 0);
+  assert.equal((JSON.parse(fs.readFileSync(path.join(probe.dir, "checkpoint.json"), "utf8")) as Record<string, unknown>).waiting, null);
+  const waitLines = linesOf(fs.readFileSync(path.join(probe.dir, "usage.jsonl"), "utf8")).filter((l) => l.kind === "usage_limit_wait_began" || l.kind === "usage_limit_wait");
+  assert.deepEqual(waitLines.map((l) => [l.kind, l.outcome]), [["usage_limit_wait_began", undefined], ["usage_limit_wait", "lifted"]]);
+  assert.match(probe.ui.said.join("\n"), /Usage: .*Waited for Claude Code's usage limits: 1 time, 2:31:00 in all\./);
+});
+
+test("issue #179: Stop task during the wait clears the note and ends with an interrupted end line", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), weekly);
+  let reached: () => void = () => undefined;
+  const waiting = new Promise<void>((r) => (reached = r));
+  const { clock } = steppingClock(START, () => Effect.suspend(() => (reached(), Effect.never)));
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, clock)));
+  const ended = Effect.runPromise(Fiber.await(fiber)).then(() => assert.fail("the run ended before the wait began"));
+  await Promise.race([waiting, ended]);
+  await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.equal((JSON.parse(fs.readFileSync(path.join(probe.dir, "checkpoint.json"), "utf8")) as Record<string, unknown>).waiting, null);
+  const waitLines = linesOf(fs.readFileSync(path.join(probe.dir, "usage.jsonl"), "utf8")).filter((l) => l.kind === "usage_limit_wait_began" || l.kind === "usage_limit_wait");
+  assert.deepEqual(waitLines.map((l) => [l.kind, l.outcome]), [["usage_limit_wait_began", undefined], ["usage_limit_wait", "interrupted"]]);
 });
 
 test("a genuine permanent failure of the call still halts, with no wait", async () => {
