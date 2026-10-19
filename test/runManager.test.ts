@@ -21,7 +21,7 @@ import { type Broadcast, type EventBroadcast, type HaltBounds, type Listener, ty
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
 import { startOf } from "./helpers.ts";
-import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
+import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -152,8 +152,7 @@ test("a start for an item whose state changed since the list was shown is refuse
 test("answering and stopping one run leaves the run of the other mode running, each with its own records directory", async () => {
   const repo = tempRepo();
   const question = (q: string): TestOptions => ({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
-  const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete, summary });
-  const refining: TestOptions = { steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }, { output: turn("Which cache?", false, "") }, { output: turn("Done.", true, "# Requirements\n\nRedis.") }], reviews: [{ issues: [] }, { issues: [] }], answers: [] };
+  const refining: TestOptions = { steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }], reviews: [{ issues: [] }, { issues: [] }], answers: [] };
   const h = await harness(repo, [question("Which database?"), refining]);
   const implementation = await started(h, "implementation");
   const asked = await pendingAsk(h, implementation);
@@ -232,19 +231,24 @@ test("the replay during a run holds the last run and the current one", async () 
 // Issue #120: the interview belongs to a refinement run, started from an unrefined item.
 test("an interview's numbered answer sent through the manager reaches Claude Code as the scripted Ui's text", async () => {
   const repo = tempRepo();
-  const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete, summary });
   const database = currentOf({ id: "F1", context: "The service keeps its data in a database, which Interloq, the orchestrator, starts with the service.", text: "Which database should the service use?", terms: [], options: [{ label: "PostgreSQL", description: "already in the container" }, { label: "SQLite", description: "no server needed" }] });
   const h = await harness(repo, [
     {
-      steps: [{ output: { questions: [questionEntry("Q1", "Which cache should the service use?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }, { output: { ...turn("One question.", false, ""), current_question: database, asked_ids: ["F1"] } }, { output: turn("Done.", true, "# Requirements\n\nPostgreSQL.") }],
+      steps: [{ output: { questions: [questionEntry("Q1", "Which cache should the service use?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }],
+      // Issue #184: the follow-up comes in the closing reply after the agreed question, and the next closing proposes the summary.
+      closings: [{ output: ack("One question.", { follow_ups: [database] }) }, { output: summaryReply("# Requirements\n\nPostgreSQL.", "Done.") }],
       reviews: [{ issues: [] }, { issues: [] }],
     },
   ]);
   const id = await started(h, "refinement");
+  const agreed = await pendingAsk(h, id);
+  assert.equal(agreed.kind, "interviewMessage");
+  await run(h.manager.answer(h.manager.incarnation, id, agreed.prompt, "1"));
   const you = await pendingAsk(h, id);
   assert.equal(you.kind, "interviewMessage");
-  // S5: the turn's question is presented before the prompt, its options with the answers that choose them.
+  // S5: the follow-up is presented before the prompt, its options with the answers that choose them.
   const presented = eventsOf(h, id).flatMap((e) => (e._tag === "Notified" && e.event._tag === "QuestionPresented" ? [e.event.question] : [])).at(-1);
+  assert.deepEqual(presented?.origin, { kind: "followUp", id: "F1" });
   const choice = presented?.options[1];
   assert.deepEqual(choice, { label: plain("SQLite"), description: plain("no server needed"), answer: { token: "2" } });
   await run(h.manager.answer(h.manager.incarnation, id, you.prompt, "token" in choice.answer ? choice.answer.token : ""));
@@ -549,7 +553,7 @@ test("the Refinement listing carries the configured choice of terms; an unknown 
 const SHORT: HaltBounds = { graceMs: 400, interruptMs: 1_000 };
 const asking = (q: string): TestOptions => ({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] });
 const refiningAsk: TestOptions = {
-  steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }, { output: { message_to_user: "Which cache?", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: false, summary: "" } }],
+  steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }],
   reviews: [{ issues: [] }],
 };
 

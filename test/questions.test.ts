@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import type * as S from "../src/schema.ts";
-import { finished, issue, opt, para, plain, questionEntry, respond, runFails, runTask, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
+import { ack, finished, followUpOf, issue, opt, para, plain, questionEntry, respond, runFails, runTask, type ScriptedUi, summaryReply, tempRepo, term, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
 import { blocksText, piecesText, plainBlocks } from "../src/pieces.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
@@ -22,6 +22,12 @@ const turn = (message: string, answered: string[], summary = ""): InterviewTurn 
   summary,
 });
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
+/** Issue #184: the first interview's closing reply that proposes this summary. */
+const closing = (summary: string, message = "Complete.") => [{ output: summaryReply(summary, message) }];
+/** Resolves once the interview has presented agreed question `id`, read from a Ui bound after the layer is built. */
+const presentedAgreed = (ui: () => ScriptedUi, id: string) => async (): Promise<void> => {
+  while (!presentedQuestions(ui()).some((p) => p.origin.kind === "clarification" && p.origin.id === id)) await new Promise((r) => setTimeout(r, 5));
+};
 
 test("question list is amended in review, the interview runs, the summary is confirmed, and the refinement ends (issue #120)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
@@ -29,13 +35,9 @@ test("question list is amended in review, the interview runs, the summary is con
     steps: [
       { output: { questions: [q("Q1")] } },                                              // question list
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), q("Q2")] } }, // Codex: Q2 is missing
-      { output: turn("Q1: A or B?", []) },                                                // interview
-      { output: turn("Q2: A or B?", ["Q1"]) },
-      { output: turn("Complete.", ["Q1", "Q2"], "# Requirements\n\nQ1: A\nQ2: B because of X") },
-      { output: noQuestions, plan: "v1" },                                                // initial plan
     ],
+    closings: closing("# Requirements\n\nQ1: A\nQ2: B because of X"),
     reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
   });
   await runRefinement(layer);
 
@@ -46,7 +48,7 @@ test("question list is amended in review, the interview runs, the summary is con
   assert.match(read(probe.dir, "requirements.md"), /Q2: B because of X/);
   assert.equal((await probe.loadLog("questions"))[0].action, "accepted");
   assert.equal(probe.reviewer.phases, 3); // question review, terms review (S17), requirements review: a refinement plans nothing
-  assert.ok(probe.planner.prompts.some((p) => p.includes("User: B, because of X")));
+  assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes("The user answers agreed question Q2 in writing:\nB, because of X")), probe.planner.clarificationPrompts.join("\n---\n"));
   assert.ok(!probe.planner.prompts.some((p) => /Produce an implementation plan/.test(p)), "a plan was asked for");
   const conversation = read(probe.dir, "conversation.md");
   assert.match(conversation, /## Agreed question list/);
@@ -79,28 +81,21 @@ test("an empty agreed list asks nothing: requirements.md is written, the phase e
 test("an unconfirmed summary continues the conversation", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "Q1 is B, not A", ""],
-    steps: [
-      { output: { questions: [q("Q1")] } },
-      { output: turn("Q1?", []) },
-      { output: turn("Complete.", ["Q1"], "Q1: A") },
-      { output: turn("Corrected.", ["Q1"], "Q1: B") },
-      { output: noQuestions, plan: "v1" },
-    ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    steps: [{ output: { questions: [q("Q1")] } }],
+    closings: [...closing("Q1: A"), ...closing("Q1: B", "Corrected.")],
+    reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
   assert.equal(read(probe.dir, "requirements.md"), "Q1: B\n");
-  assert.ok(probe.planner.prompts.some((p) => p.startsWith("The user does not confirm the summary")));
+  assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes("The user does not confirm the summary") && p.includes("Q1 is B, not A")));
 });
 
 test("a gap that Claude Code accepts produces a second interview and a revised requirements file", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "", "retries: 3", ""],
+    closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
-      { output: turn("Q1?", []) },
-      { output: turn("Complete.", ["Q1"], "Q1: A") },
       { output: respond([["G-R1-1", "accepted"]]) },                      // requirements review response
       { output: turn("How many retries?", []) },                          // second interview
       { output: turn("Complete.", ["G-R1-1"], "Q1: A\nRetries: 3") },
@@ -120,19 +115,19 @@ test("a gap that Claude Code accepts produces a second interview and a revised r
   const headings = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" || e._tag === "InterviewTurn" ? [e.heading] : []));
   assert.deepEqual([...new Set(headings)], [prompts.clarificationHeading("clarification"), prompts.clarificationHeading("followUp")]);
   // Issue #21 (Q6, Q7): each clarification opens with its total, the agreed questions or the accepted gaps, and each
-  // turn carries the count of answered questions against the total so far.
-  const counted = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" ? [`opened ${e.stage} ${e.total}`] : e._tag === "InterviewTurn" ? [`${e.answered} of ${e.total}`] : []));
-  assert.deepEqual(counted, ["opened clarification 1", "0 of 1", "1 of 1", "opened followUp 1", "0 of 1", "1 of 1"]);
+  // turn carries the count of answered questions against the total so far. Issue #184: the first interview notifies
+  // a turn only for a reply with a message, here the summary's, and counts each answer (InterviewCounted).
+  const counted = probe.ui.notified.flatMap((e) => (e._tag === "InterviewOpened" ? [`opened ${e.stage} ${e.total}`] : e._tag === "InterviewTurn" || e._tag === "InterviewCounted" ? [`${e.answered} of ${e.total}`] : []));
+  assert.deepEqual(counted, ["opened clarification 1", "1 of 1", "1 of 1", "opened followUp 1", "0 of 1", "1 of 1"]);
 });
 
 // Issue #30 (G-R1-1): the requirements go straight to the pause, without a corrective turn; its Retry is another interview.
 test("a gap accepted but the confirmed summary unchanged: the pause, and Retry holds another interview", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["A", "", "no change", "", "r", "retries: 3", ""],
+    closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
-      { output: turn("Q1?", []) },
-      { output: turn("Complete.", ["Q1"], "Q1: A") },
       { output: respond([["G-R1-1", "accepted"]]) },
       { output: turn("How many retries?", []) },
       { output: turn("Complete.", ["G-R1-1"], "Q1: A") }, // the summary confirmed unchanged
@@ -152,33 +147,27 @@ test("a gap accepted but the confirmed summary unchanged: the pause, and Retry h
 test("/done ends the interview early", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["/done", ""],
-    steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1?", []) }, { output: turn("Ended.", [], "Open points: Q1 -> default A") }, { output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    steps: [{ output: { questions: [q("Q1")] } }],
+    closings: closing("Open points: Q1 -> default A", "Ended."),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  assert.ok(probe.planner.prompts.some((p) => p.startsWith("The user ends the interview now")));
+  assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes(prompts.interviewDonePrompt)));
   assert.match(read(probe.dir, "requirements.md"), /default A/);
 });
 
-// Issue #21 (Q6): a follow-up question raises the total; Claude reports it in asked_ids with an id of its own.
+// Issue #21 (Q6): a follow-up question raises the total; issue #184: a reply carries it with an id of its own, here the
+// closing reply after both agreed questions were answered.
 test("a follow-up asked during the clarification raises its total", async () => {
-  const withFollowUp = (message: string, asked: string[], answered: string[], summary = ""): InterviewTurn => ({ message_to_user: message, current_question: none, asked_ids: asked, answered_ids: answered, complete: summary !== "", summary });
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "3", ""],
-    steps: [
-      { output: { questions: [q("Q1"), q("Q2")] } },
-      { output: withFollowUp("Q1?", ["Q1"], []) },
-      { output: withFollowUp("How many retries? (a follow-up)", ["Q1", "F1"], ["Q1"]) },
-      { output: withFollowUp("Complete.", ["Q1", "F1", "Q2"], ["Q1", "F1"], "Q1: A\nRetries: 3\nQ2: default") },
-      { output: noQuestions, plan: "v1" },
-    ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    answers: ["A", "A", "3", ""],
+    steps: [{ output: { questions: [q("Q1"), q("Q2")] } }],
+    closings: [{ output: ack("", { follow_ups: [followUpOf("F1", "How many retries?", [])] }) }, ...closing("Q1: A\nRetries: 3\nQ2: A")],
+    reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  const counts = probe.ui.notified.flatMap((e) => (e._tag === "InterviewTurn" ? [`${e.answered} of ${e.total}`] : []));
-  assert.deepEqual(counts, ["0 of 2", "1 of 3", "2 of 3"]);
+  const counts = probe.ui.notified.flatMap((e) => (e._tag === "InterviewCounted" ? [`${e.answered} of ${e.total}`] : []));
+  assert.deepEqual(counts, ["1 of 2", "2 of 2", "2 of 3", "3 of 3"]);
 });
 
 // S15 (issues #34, #58, #59): the question list is held to the rules inside behaviour 10's validation budget, at the
@@ -190,12 +179,9 @@ test("a question list whose entry breaks a rule gets the validation repair turn 
     steps: [
       { output: { questions: [blank("Q1")] } },
       { output: { questions: [q("Q1")] } },
-      { output: { ...turn("Q1?", []), current_question: { ...none, id: "Q1", text: plain("question Q1?") } } },
-      { output: turn("Done.", ["Q1"], "# Requirements\n\nQ1: A") },
-      { output: noQuestions, plan: "v1" },
     ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    closings: closing("# Requirements\n\nQ1: A", "Done."),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(repaired.layer);
   assert.equal(repaired.probe.planner.prompts[1], prompts.questionRepairPrompt([{ where: "Q1", problems: [{ kind: "blankContext", subject: "" }] }]));
@@ -205,16 +191,14 @@ test("a question list whose entry breaks a rule gets the validation repair turn 
 
 test("a response to the question review whose list breaks a rule gets the validation repair turn", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: [""],
+    answers: ["1", "1", ""],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), { ...q("Q2"), question: plain("Which one? It matters.") }] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), q("Q2")] } },
-      { output: turn("Done.", ["Q1", "Q2"], "# Requirements\n\nA") },
-      { output: noQuestions, plan: "v1" },
     ],
-    reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    closings: closing("# Requirements\n\nA", "Done."),
+    reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")] }, { issues: [] }, { issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
   assert.equal(probe.planner.prompts[2], prompts.questionRepairPrompt([{ where: "Q2", problems: [{ kind: "notLast", subject: "" }] }]));
@@ -238,24 +222,22 @@ test("a plan writer's question that breaks a rule gets the validation repair tur
   await runFails(halted.layer, "QuestionInvalid", /questions_for_user 1/);
 });
 
-test("an interview question outside questions.json is validated, an agreed one and a turn that asks nothing are not", async () => {
-  const followUp = (context: string) => ({ ...turn("A follow-up.", ["Q1"]), current_question: { ...none, id: "F1", context: para(context), history: [], text: plain("Which port?") }, asked_ids: ["Q1", "F1"] });
+// Issue #184: the follow-up arrives in the reply to the opening request, once Q1 is shown, and its repair turn is the
+// next reply; an agreed question is presented from the records and never validated.
+test("an interview question outside questions.json is validated, an agreed one is not", async () => {
+  const followUp = (context: string) => ack("A follow-up.", { follow_ups: [{ id: "F1", context: para(context), history: [], text: plain("Which port?"), explanations: [], options: [] }] });
+  let ui: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "8080", ""],
-    steps: [
-      { output: { questions: [q("Q1")] } },
-      { output: { ...turn("", []), current_question: { ...none, id: "Q1" }, asked_ids: ["Q1"] } },
-      { output: followUp(" ") },
-      { output: followUp("The service listens on a port.") },
-      { output: turn("Done.", ["Q1", "F1"], "# Requirements\n\nQ1: A; F1: 8080") },
-      { output: noQuestions, plan: "v1" },
-    ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    steps: [{ output: { questions: [q("Q1")] } }],
+    replies: [{ output: followUp(" "), gate: presentedAgreed(() => ui(), "Q1") }, { output: followUp("The service listens on a port.") }],
+    closings: closing("# Requirements\n\nQ1: A; F1: 8080", "Done."),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
+  ui = () => probe.ui;
   await runRefinement(layer);
   const repair = prompts.questionRepairPrompt([{ where: "F1", problems: [{ kind: "blankContext", subject: "" }] }]);
-  assert.equal(probe.planner.prompts.filter((p) => p === repair).length, 1, "the follow-up got one repair turn, the agreed question none");
+  assert.equal(probe.planner.clarificationPrompts.filter((p) => p === repair).length, 1, "the follow-up got one repair turn, the agreed question none");
 });
 
 // S35 (W1-R1-3): only a turn that asks nothing skips the validation of its question.
@@ -277,30 +259,28 @@ test("turnValidation: a turn with a blank id that asks a question is validated; 
   }
 });
 
-test("a turn with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
-  const bad = { ...turn("m", []), current_question: { ...none, text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }] } };
-  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }, { output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [] });
-  await refinementFails(halted.layer, "QuestionInvalid", /the current question/);
+// Issue #184: in the first interview such a question is a follow-up of a reply with a blank id.
+test("a follow-up with a blank id asking an invalid question gets the repair turn; a second one halts with QuestionInvalid", async () => {
+  const bad = ack("m", { follow_ups: [{ id: "", context: [], history: [], text: [term("Choose one", "o"), ...plain(".")], explanations: [{ id: "o", term: "one", senses: [""] }], options: [] }] });
+  const halted = testLayer(tempRepo(), { steps: [{ output: { questions: [q("Q1")] } }], replies: [{ output: bad }, { output: bad }], reviews: [{ issues: [] }], answers: [{ wait: true }] });
+  await refinementFails(halted.layer, "QuestionInvalid", /a follow-up question/);
 });
 
 // S7 of the task of issue #36: a follow-up question is pieces; a piece that refers to no explanation gets the repair turn.
 test("S7: a follow-up with a dangling ref gets the validation repair turn, and the repaired one is presented with its pieces", async () => {
-  const dangling = { ...none, id: "F1", context: para("The service, a web server, listens on a port."), history: [], text: [...plain("Which "), term("port", "p"), ...plain("?")] };
+  const dangling = { id: "F1", context: para("The service, a web server, listens on a port."), history: [], text: [...plain("Which "), term("port", "p"), ...plain("?")], explanations: [], options: [] };
   const repaired = { ...dangling, explanations: [{ id: "p", term: "port", senses: ["The number a program listens on for connections."] }] };
+  let ui: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["8080", ""],
-    steps: [
-      { output: { questions: [q("Q1")] } },
-      { output: { ...turn("A follow-up.", []), current_question: dangling, asked_ids: ["F1"] } },
-      { output: { ...turn("A follow-up.", []), current_question: repaired, asked_ids: ["F1"] } },
-      { output: turn("Done.", ["F1"], "# Requirements\n\nF1: 8080") },
-      { output: noQuestions, plan: "v1" },
-    ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    answers: ["1", "8080", ""],
+    steps: [{ output: { questions: [q("Q1")] } }],
+    replies: [{ output: ack("A follow-up.", { follow_ups: [dangling] }), gate: presentedAgreed(() => ui(), "Q1") }, { output: ack("A follow-up.", { follow_ups: [repaired] }) }],
+    closings: closing("# Requirements\n\nF1: 8080", "Done."),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
+  ui = () => probe.ui;
   await runRefinement(layer);
-  assert.ok(probe.planner.prompts.includes(prompts.questionRepairPrompt([{ where: "F1", problems: [{ kind: "unknownRef", subject: "p" }] }])));
+  assert.ok(probe.planner.clarificationPrompts.includes(prompts.questionRepairPrompt([{ where: "F1", problems: [{ kind: "unknownRef", subject: "p" }] }])));
   const followUp = presentedQuestions(probe.ui).find((q) => q.origin.kind === "followUp");
   assert.deepEqual(followUp?.question, repaired.text);
   assert.deepEqual(followUp?.explanations, repaired.explanations);
@@ -311,9 +291,9 @@ test("S7: a follow-up with a dangling ref gets the validation repair turn, and t
 test("the seven rules of 5 Oct 2026 reach the writers of the question list and the plan, and their criteria the review", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1: A or B?", []) }, { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") }, { output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    steps: [{ output: { questions: [q("Q1")] } }],
+    closings: closing("# Requirements\n\nQ1: A"),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
   // Issue #120: the plan is written by an implementation run of its own.
@@ -342,13 +322,9 @@ const skipConditionRun = (first: readonly QuestionEntry[], second: readonly Ques
     steps: [
       { output: { questions: first } },
       { output: { questions: second } },
-      { output: { ...turn("Q1?", []), current_question: { ...none, id: "Q1" } } },
-      { output: { ...turn("Q2?", ["Q1"]), current_question: { ...none, id: "Q2" } } },
-      { output: turn("Done.", ["Q1", "Q2"], "# Requirements\n\nQ1: A") },
-      { output: noQuestions, plan: "v1" },
     ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    closings: closing("# Requirements\n\nQ1: A", "Done."),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
 
 test("a skip condition naming an unknown question, an unknown answer or forming a cycle gets the validation repair turn", async () => {
@@ -385,16 +361,14 @@ test("a dependent question listed before its premise is recorded after it, and c
     answers: ["1", "1", ""],
     steps: [
       { output: { questions: [dependent("Q2", "Q1", "B"), q("Q1")] } },
-      { output: { ...turn("Q1?", []), current_question: { ...none, id: "Q1" } } },
-      { output: { ...turn("Q2?", ["Q1"]), current_question: { ...none, id: "Q2" } } },
-      { output: turn("Done.", ["Q1", "Q2"], "# Requirements\n\nQ1: A") },
-      { output: noQuestions, plan: "v1" },
     ],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [finished],
+    closings: closing("# Requirements\n\nQ1: A", "Done."),
+    reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
   assert.deepEqual(JSON.parse(read(probe.dir, "questions.json")).questions.map((x: QuestionEntry) => x.id), ["Q1", "Q2"]);
+  // Issue #184: Interloq presents the premise first.
+  assert.deepEqual(presentedQuestions(probe.ui).flatMap((p) => (p.origin.kind === "clarification" ? [p.origin.id] : [])), ["Q1", "Q2"]);
   assert.ok(read(probe.dir, "conversation.md").includes(prompts.skipIfLine({ question: "Q1", answer: "B" })));
 });
 
@@ -427,10 +401,8 @@ test("issue #112: an issue of the question list raised again after a partial acc
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "partially_accepted"]]), questions: [amended] } },
       { output: { ...respond([["Q-R1-1", "rejected"]]), questions: [amended] } },
-      { output: turn("Q1: A or B?", []) },
-      { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
-      { output: noQuestions, plan: "v1" },
     ],
+    closings: closing("# Requirements\n\nQ1: A"),
     reviews: [{ issues: [issue("Q-R1-1", "a word needs explaining")] }, { issues: [issue("Q-R1-1", "a word still needs explaining")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
@@ -487,9 +459,8 @@ test("issue #156: a marked rejection that Codex does not raise again asks nothin
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
-      { output: turn("Q1: A or B?", []) },
-      { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
     ],
+    closings: closing("# Requirements\n\nQ1: A"),
     reviews: [{ issues: [issue("Q-R1-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
@@ -514,9 +485,8 @@ test("issue #156: a reversal settled unmarked is put to the developer when the c
       { output: reversal("partially_accepted", false) },
       { output: reversal("rejected", true) },
       { output: { questions: [amended] } },
-      { output: turn("Q1: A or B?", []) },
-      { output: turn("Complete.", ["Q1"], "# Requirements\n\nQ1: A") },
     ],
+    closings: closing("# Requirements\n\nQ1: A"),
     reviews: [{ issues: [issue("Q-R1-1", "Q1 is unclear.")] }, { issues: [issue("Q-R2-1", DROP_Q1)] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     contexts: failedContext,
     execs: [finished],

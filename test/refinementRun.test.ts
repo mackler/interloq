@@ -11,7 +11,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scriptedItem, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 // Issue #120, S6 (the developer's decision of 8 Oct 2026): a refinement run is the question phase and nothing after it;
 // it writes requirements.md back to its item as the section Refined using Interloq and sets the item to refined. It sets
@@ -19,13 +19,13 @@ import { fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scrip
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
-const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
 const REQUIREMENTS = "# Requirements\n\nQ1: A";
 const item: FakeItem = { ...scriptedItem, id: Result.getOrThrow(itemIdOf("120")), title: "Two modes", body: "Make the page two tabs.", state: "unrefined" };
 /** One question, answered, and a summary confirmed: the question review, the interview and the requirements review. */
 const oneQuestion: TestOptions = {
   answers: ["A", ""],
-  steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1?", false, "") }, { output: turn("Done.", true, REQUIREMENTS) }],
+  steps: [{ output: { questions: [q("Q1")] } }],
+  closings: [{ output: summaryReply(REQUIREMENTS, "Done.") }],
   reviews: [{ issues: [] }, { issues: [] }],
 };
 
@@ -95,7 +95,7 @@ test("a refinement run that halts or is stopped leaves the item unrefined and it
     config: { maxRounds: 1 },
   });
   assert.equal(failureOf(await halted.exit)._tag, "RoundLimitStop");
-  const stopped = refine({ answers: ["/quit"], steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1?", false, "") }], reviews: [{ issues: [] }] });
+  const stopped = refine({ answers: ["/quit"], steps: [{ output: { questions: [q("Q1")] } }], reviews: [{ issues: [] }] });
   assert.equal(failureOf(await stopped.exit)._tag, "UserStopped");
   for (const run of [halted, stopped]) assert.deepEqual(await held(run.tracker), item);
 });
@@ -131,7 +131,7 @@ test("a refinement run survives a project change during a Claude Code planning c
   const { exit, probe } = refine({
     ...oneQuestion,
     mode: "refinement",
-    steps: [{ output: { questions: [q("Q1")] }, touchProject: true }, ...oneQuestion.steps!.slice(1)],
+    steps: [{ output: { questions: [q("Q1")] }, touchProject: true }],
     reviews: [{ issues: [], touchProject: true }, { issues: [] }],
   });
   const ended = await exit;

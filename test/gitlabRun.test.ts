@@ -15,18 +15,18 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { fakeGitlabTracker, type FakeGitlab, serverIssue } from "./fakeGitlab.ts";
-import { finished, questionEntry, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { finished, questionEntry, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
-const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
 const REQUIREMENTS = "# Requirements\n\nQ1: A";
 const DEVELOPER = "Make the page two tabs.";
 const ID = Result.getOrThrow(itemIdOf("120"));
 /** One question, answered, and a summary confirmed; `onSummary` runs when the summary's turn is called. */
 const oneQuestion = (onSummary: () => void = () => {}): TestOptions => ({
   answers: ["A", ""],
-  steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1?", false, "") }, { output: turn("Done.", true, REQUIREMENTS), onCall: onSummary }],
+  steps: [{ output: { questions: [q("Q1")] } }],
+  closings: [{ output: summaryReply(REQUIREMENTS, "Done."), onCall: onSummary }],
   reviews: [{ issues: [] }, { issues: [] }],
 });
 const noQuestions = { questions_for_user: [] };

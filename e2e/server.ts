@@ -26,15 +26,11 @@ import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { E2E_ITEMS } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
 import type { RunMode } from "../src/runMode.ts";
-import { fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, currentOf, entryOf, para } from "../test/helpers.ts";
+import { fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, entryOf, para, ack, summaryReply } from "../test/helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 // S39 (W2-R1-2): a context long enough to overflow its region beside the analysis.
 const LONG_DECISION_CONTEXT = Array.from({ length: 8 }, (_, i) => `Paragraph ${i + 1} of the context: the service keeps its data in a database, and the choice decides what runs beside it.`).join("\n\n");
-/** A scripted interview turn; `asked` and `answered` are the ids Claude reports (issue #21). */
-const turn = (message: string, complete: boolean, summary: string, asked: string[] = [], answered: string[] = []) => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: asked, answered_ids: answered, complete, summary });
-/** A turn that asks the agreed question Q1 by its id: the page shows it from questions.json (S18). */
-const asksQ1 = (message: string) => ({ ...turn(message, false, "", ["Q1"]), current_question: currentOf({ id: "Q1", context: "", text: "", terms: [], options: [] }) });
 /** Issue #133: the history of the decideLong scenario's question, shown under its own heading on the decision page. */
 const DECISION_HISTORY = "You decided on 9 Oct 2026 to keep the service on one machine, and the first prototype ran on SQLite.";
 const LONG = 60;
@@ -86,10 +82,10 @@ export const SCENARIOS: Record<string, TestOptions> = {
   interview: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
-      { output: asksQ1("The first question.") },
-      { output: turn("Anything else?", false, "", ["Q1"], ["Q1"]) },
-      { output: turn("That is all I need.", true, "# Requirements\n\nThe service uses PostgreSQL.", ["Q1"], ["Q1"]) },
     ],
+    // Issue #184: the first interview presents Q1 itself; Claude Code's reply to the answer and its closing reply.
+    replies: [{ output: ack("Anything else?") }],
+    closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
     // Issue #120: a refinement run, the question phase alone: the question review and the requirements review.
     reviews: [{ issues: [] }, { issues: [] }],
   },
@@ -97,10 +93,9 @@ export const SCENARIOS: Record<string, TestOptions> = {
   decideBlank: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
-      { output: asksQ1("The first question.") },
       { output: { ...DECIDE_ANALYSIS, columns: [{ ...DECIDE_ANALYSIS.columns[1], option: "PostgreSQL" }, { ...DECIDE_ANALYSIS.columns[0], option: "SQLite" }] } },
-      { output: turn("That is all I need.", true, "# Requirements\n\nThe service uses PostgreSQL.", ["Q1"], ["Q1"]) },
     ],
+    closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
     // The question review, the analysis's review, the requirements review.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
   },
@@ -113,10 +108,9 @@ export const SCENARIOS: Record<string, TestOptions> = {
   longChoices: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "How should a message show its time?", reason: "r", proposed_answers: LONG_ANSWERS.map((a) => { const [label, ...rest] = a.replace(/^\d+\. /, "").split(": "); return { label, description: rest.join(": ") }; }), default_answer: "Absolute clock time" })] } },
-      { output: asksQ1("The first question.") },
-      { output: turn("Anything else?", false, "") },
-      { output: turn("That is all I need.", true, "# Requirements\n\nRelative time.") },
     ],
+    replies: [{ output: ack("Anything else?") }],
+    closings: [{ output: summaryReply("# Requirements\n\nRelative time.", "That is all I need.") }],
     reviews: [{ issues: [] }, { issues: [] }],
   },
   // Defect A of docs/page-question-phase-defects.md: the question list, its review with one issue, Claude Code's
@@ -134,9 +128,8 @@ export const SCENARIOS: Record<string, TestOptions> = {
           ],
         },
       },
-      { output: asksQ1("The first question.") },
-      { output: turn("That is all I need.", true, "# Requirements\n\nThe service uses PostgreSQL on port 8080.") },
     ],
+    closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL on port 8080.", "That is all I need.") }],
     reviews: [{ issues: [issue("Q-R1-1", "The list does not ask for the port.")] }, { issues: [] }, { issues: [] }],
   },
   // A work correction: work review 1 raises an issue that Claude Code accepts, so planning, execution and the work

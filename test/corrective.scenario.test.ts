@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { correctivePrompt } from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf , TEST_ROOT , runRefinement, refinementFails } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, entryOf , TEST_ROOT , summaryReply, runRefinement, refinementFails } from "./helpers.ts";
 
 // Issue #30 (plan step S11): scenario tests of the corrective turn over the test layers, which issue #30 names as
 // missing: a corrective turn that succeeds, one that changes its dispositions, and the guards around it.
@@ -92,17 +92,14 @@ test("a corrective reply that changes a disposition it may not gets a validation
 
 test("(f) the question list: an accepted issue with questions.json unchanged gets a corrective turn", async () => {
   const q = (id: string): typeof S.QuestionEntry.Type => entryOf({ id, context: "c", question: `question ${id}?`, reason: "r", proposed_answers: [{ label: "A", description: "a" }, { label: "B", description: "b" }], default_answer: "A" });
-  const turn = (message: string, answered: string[], summary = "") => ({ message_to_user: message, current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: answered, answered_ids: answered, complete: summary !== "", summary });
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", ""],
+    answers: ["A", "A", ""],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1")] } }, // accepted, list unchanged
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), q("Q2")] } }, // the corrective turn
-      { output: turn("Q1?", []) },
-      { output: turn("Complete.", ["Q1", "Q2"], "Q1: A") },
-      { output: noQuestions, plan: "v1" },
     ],
+    closings: [{ output: summaryReply("Q1: A") }],
     reviews: [{ issues: [issue("Q-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });

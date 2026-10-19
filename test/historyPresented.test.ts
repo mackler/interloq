@@ -13,7 +13,7 @@ import { renderQuestionRecord } from "../src/render.ts";
 import { normalizeTurn } from "../src/schemaNormalize.ts";
 import type * as S from "../src/schema.ts";
 import { Decider, Store, Ui } from "../src/services.ts";
-import { currentOf, entryOf, finished, noDecider, para, plain, presentedQuestions, questionOf, runRefinement, runTask, scriptedContextReply, tempRepo, testLayer } from "./helpers.ts";
+import { currentOf, entryOf, finished, noDecider, para, plain, presentedQuestions, questionOf, runRefinement, runTask, scriptedContextReply, summaryReply, tempRepo, testLayer } from "./helpers.ts";
 import { permissionDraft } from "../src/offer.ts";
 
 const HISTORY = "You decided on 9 Oct 2026 to keep the service on one machine.";
@@ -21,13 +21,13 @@ const noQuestions = { questions_for_user: [] };
 const agreed: S.QuestionEntry = { ...entryOf({ id: "Q1", context: "The service, a web server, keeps its data in a database.", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }], default_answer: "SQLite" }), history: para(HISTORY) };
 const divided: S.TermsEntry = { id: "Q1", explanations: [], context: agreed.context, history: agreed.history, question: agreed.question, reason: agreed.reason, proposed_answers: agreed.proposed_answers };
 const askQ1 = { message_to_user: "", current_question: currentOf({ id: "Q1", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" };
-const done = { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1"], answered_ids: ["Q1"], complete: true, summary: "# Requirements\n\nSQLite." };
 const conversation = (dir: string) => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
 
 test("an agreed question presents the history of its terms.json entry, and conversation.md records it under History after the context", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [agreed] } }, { output: askQ1 }, { output: done }],
+    steps: [{ output: { questions: [agreed] } }],
+    closings: [{ output: summaryReply("# Requirements\n\nSQLite.", "Done.") }],
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
   });

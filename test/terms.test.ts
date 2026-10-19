@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import type * as S from "../src/schema.ts";
-import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, currentOf, entryOf, presentedQuestions , TEST_ROOT , runRefinement, refinementFails, refinementFailsWith } from "./helpers.ts";
+import { finished, issue, respond, runFails, runTask, tempRepo, testLayer, entryOf, summaryReply, presentedQuestions , TEST_ROOT , runRefinement, refinementFails, refinementFailsWith } from "./helpers.ts";
 import { Result } from "effect";
 import fc from "fast-check";
 import { blocksText, piecesText, plainBlocks } from "../src/pieces.ts";
@@ -38,16 +38,15 @@ const dividedEntry = (explanation = zod.senses[0]): S.TermsEntry => ({
   proposed_answers: entry.proposed_answers.map((a) => ({ label: a.label, description: divide(a.description) })),
 });
 const terms = (explanation = zod.senses[0]) => ({ entries: [dividedEntry(explanation)] });
-const interviewTurns = [
-  { output: { message_to_user: "", current_question: currentOf({ id: "Q1", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1"], answered_ids: [], complete: false, summary: "" } },
-  { output: { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1"], answered_ids: ["Q1"], complete: true, summary: "# Requirements\n\nQ1: declare it" } },
-];
+/** The first interview's closing reply, which proposes the summary (issue #184). */
+const interviewClosings = () => [{ output: summaryReply("# Requirements\n\nQ1: declare it", "Done.") }];
 const read = (dir: string, name: string) => fs.readFileSync(path.join(dir, name), "utf8");
 
 test("the terms are written in a fresh session after the question review converges, reviewed, and recorded in terms.json", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms() }],
     // The question review, the requirements review, the plan review, the work review; the terms review converges.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
@@ -73,7 +72,8 @@ test("an accepted issue about an explanation: the response returns the amended e
   const amended = terms("A library that checks data against a declared shape and reports what does not fit.");
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms("A library.") }, { output: { ...respond([["T-R1-1", "accepted"]]), ...amended } }],
     termsReviews: [{ issues: [issue("T-R1-1", "The explanation of zod does not say what it does.")] }, { issues: [] }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
@@ -91,7 +91,8 @@ test("the explanations are validated: a changed wording, an unused explanation, 
   const wrong = { entries: [{ ...dividedEntry(), id: "Q9" }, changed] };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: wrong }, { output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -110,7 +111,8 @@ test("the terms review at its cycle limit: p proceeds to the clarification with 
   const limited = (answer: string) =>
     testLayer(tempRepo(), {
       answers: [answer, "1", ""],
-      steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+      steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
       terms: [{ output: terms("A library.") }, { output: { ...respond([["T-R1-1", "rejected"]]), ...terms("A library.") } }],
       termsReviews: [{ issues: [issue("T-R1-1", "The explanation says too little.")] }],
       reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
@@ -140,7 +142,8 @@ test("an empty agreed list writes no terms and has no terms review", async () =>
 test("the interview presents the agreed question divided into pieces, every form of the word referring to its explanation", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -209,7 +212,8 @@ test("issue #112: a disputed self-correction of the terms is not put to the user
   const amended = terms("A library that checks data against a declared shape and reports what does not fit.");
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [
       { output: terms("A library.") },
       { output: { ...respond([["T-R1-1", "accepted"]]), ...amended } },
@@ -244,7 +248,8 @@ test("issue #112: an explanation with no sense gets the validation repair turn",
   const none = { entries: [{ ...dividedEntry(), explanations: [{ ...zod, senses: [] }] }] };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: none }, { output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -258,7 +263,8 @@ test("issue #112: an explanation with no sense gets the validation repair turn",
 test("unchecked: one terms call, no terms review, the explanations written and presented", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms() }],
     // The question review and the requirements review; no terms review.
     reviews: [{ issues: [] }, { issues: [] }],
@@ -276,7 +282,8 @@ test("unchecked: one terms call, no terms review, the explanations written and p
 test("onRequest: no terms call before the interview, and the agreed question is presented without explanations", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }],
   });
@@ -357,7 +364,8 @@ import { blocksText as textOfBlocks } from "../src/pieces.ts";
 test("onRequest: /terms writes the question's explanations in a fresh session and presents the same question again with them", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["/terms", "1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }],
   });
@@ -382,14 +390,15 @@ test("onRequest: /terms writes the question's explanations in a fresh session an
   assert.match(conversation, /## Explanations of terms requested for Question 1/);
   assert.match(conversation, /zod/);
   assert.ok(probe.ui.said.includes(prompts.termsRequestedLine(1)));
-  assert.ok(probe.planner.prompts.includes(prompts.interviewUserMessage("1")));
-  assert.ok(!probe.planner.prompts.some((p) => p.includes("/terms")));
+  const sent = probe.planner.clarificationPrompts.join("\n");
+  assert.ok(sent.includes(`The user answers agreed question Q1 with the option ${JSON.stringify("Declare it")}.`), sent);
+  assert.ok(!sent.includes("/terms"));
 });
 
 test("onRequest: a requested reply that fails its validation twice halts with QuestionInvalid", async () => {
   const { layer } = testLayer(tempRepo(), {
     answers: ["/terms"],
-    steps: [{ output: { questions: [entry] } }, interviewTurns[0]],
+    steps: [{ output: { questions: [entry] } }],
     terms: [{ output: { entries: [] } }, { output: { entries: [] } }],
     reviews: [{ issues: [] }],
   });
@@ -400,7 +409,8 @@ test("checked and unchecked: no prompt of the interview offers the terms", async
   for (const choice of ["checked", "unchecked"] as const) {
     const { layer, probe } = testLayer(tempRepo(), {
       answers: ["1", ""],
-      steps: [{ output: { questions: [entry] } }, ...interviewTurns],
+      steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
       terms: [{ output: terms() }],
       reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     });
@@ -410,20 +420,20 @@ test("checked and unchecked: no prompt of the interview offers the terms", async
 });
 
 test("onRequest: an agreed question that has its explanations offers no request", async () => {
-  // A question asked again after its terms were written keeps them and offers nothing further.
-  const twice = [interviewTurns[0], interviewTurns[0], interviewTurns[1]];
+  // The question presented again after its terms were written keeps them and offers nothing further.
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["/terms", "1", "2", ""],
-    steps: [{ output: { questions: [entry] } }, ...twice],
+    answers: ["/terms", "1", ""],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms() }],
     reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer, "task", "onRequest");
   const presented = presentedQuestions(probe.ui).filter((q) => q.origin.kind === "clarification");
-  assert.equal(presented.length, 3);
-  assert.deepEqual(presented[2].explanations, [zod]);
+  assert.equal(presented.length, 2);
+  assert.deepEqual(presented[1].explanations, [zod]);
   assert.equal(probe.planner.termsPrompts.length, 1);
-  assert.deepEqual(probe.ui.asked.map((a) => prompts.offersOf(a).terms).slice(0, 3), [true, false, false]);
+  assert.deepEqual(probe.ui.asked.map((a) => prompts.offersOf(a).terms).slice(0, 2), [true, false]);
 });
 
 // Issue #156: in the terms, a disagreement Claude Code marks as about what the task requires and Codex raises again is
@@ -434,7 +444,8 @@ test("issue #156: a marked rejection of the terms raised again is put to the dev
   const markedResponse = { ...respond([]), dispositions: respond([["T-R1-1", "rejected", true]]).dispositions.map((d) => ({ ...d, rationale: reading })), ...terms("A library.") };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "1", ""],
-    steps: [{ output: { questions: [entry] } }, ...interviewTurns, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entry] } }],
+    closings: interviewClosings(),
     terms: [{ output: terms("A library.") }, { output: markedResponse }, { output: { ...respond([["T-R1-1", "accepted"]]), ...terms() } }],
     termsReviews: [{ issues: [issue("T-R1-1", objection)] }, { issues: [issue("T-R1-1", objection)] }, { issues: [] }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],

@@ -10,7 +10,7 @@ import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
-import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, currentOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
+import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import { checkCommandInvalidText, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
@@ -156,9 +156,8 @@ test("q at a question, confirmed, ends the run as an interruption with exit code
 });
 
 test("/quit in the clarification, confirmed, ends the run with exit code 130", async () => {
-  const turn = { message_to_user: "Tell me more.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: [], answered_ids: [], complete: false, summary: "" };
   const { wiring, probe } = testWiring(tempRepo(), {
-    steps: [{ output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } }, { output: turn }],
+    steps: [{ output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } }],
     reviews: [{ issues: [] }],
     answers: ["/quit", "y"],
     confirmEnds: true,

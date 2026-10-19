@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { renderQuestionRecord } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead , runRefinement, refinementFails } from "./helpers.ts";
+import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead, runRefinement, refinementFails, ack, summaryReply } from "./helpers.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import fc from "fast-check";
 import { Result } from "effect";
@@ -27,7 +27,9 @@ const asking = (id: string, answered: string[]) => ({
   complete: false,
   summary: "",
 });
-const done = { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1", "Q2"], answered_ids: ["Q1", "Q2"], complete: true, summary: "# Requirements\n\nA and B." };
+const SUMMARY = "# Requirements\n\nA and B.";
+/** The second interview's closing turn (it is still turn by turn, issue #184). */
+const done = { message_to_user: "Done.", current_question: currentOf({ id: "", context: "", text: "", terms: [], options: [] }), asked_ids: ["Q1", "Q2"], answered_ids: ["Q1", "Q2"], complete: true, summary: SUMMARY };
 const plannerQuestion = questionOf({ context: "Claude Code, the planning agent, writes the plan.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] });
 
 /**
@@ -38,7 +40,8 @@ const refinementScenario = () =>
   testLayer(tempRepo(), {
     // Q1, Q2, the confirmation.
     answers: ["1", "2", ""],
-    steps: [{ output: { questions: [entry("Q1"), entry("Q2")] } }, { output: asking("Q1", []) }, { output: asking("Q2", ["Q1"]) }, { output: done }],
+    steps: [{ output: { questions: [entry("Q1"), entry("Q2")] } }],
+    closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     reviews: [{ issues: [] }, { issues: [] }],
   });
 const implementationScenario = () =>
@@ -165,7 +168,7 @@ test("S12: the questions that do not need one make no context call: the clarific
 test("the summary's confirmation carries the summary as its attached material", async () => {
   const { refinement } = await scenario();
   const confirm = presentedQuestions(refinement.ui).find((q) => q.origin.kind === "confirmSummary");
-  assert.deepEqual(confirm?.attached, { kind: "summary", blocks: [{ kind: "document", markdown: done.summary }] });
+  assert.deepEqual(confirm?.attached, { kind: "summary", blocks: [{ kind: "document", markdown: SUMMARY }] });
   assert.ok(fs.readFileSync(path.join(refinement.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("summary")}**`));
 });
 
@@ -179,11 +182,11 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
     answers: ["1", ""],
     steps: [
       { output: { questions: [entryZod] } },
-      // The turn names the agreed question and writes its own wording beside the id, which is not shown.
-      { output: { ...asking("Q1", []), current_question: currentOf({ id: "Q1", context: "Other context.", text: "Other wording?", terms: [], options: [{ label: "X", description: "x" }] }) } },
-      { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } },
       { output: noQuestions, plan: "v1" },
     ],
+    // Issue #184: Interloq presents the agreed question itself, with no call before it; a reply is only an acknowledgment.
+    replies: [{ output: ack("Noted.") }],
+    closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -218,14 +221,13 @@ test("S18: an accepted requirements issue in the second interview is validated, 
     answers: ["1", "", "1", ""],
     steps: [
       { output: { questions: [entry("Q1")] } },
-      { output: asking("Q1", []) },
-      { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"], summary: "# Requirements\n\nQ1: A" } },
       { output: respond([["G-R1-1", "accepted"]]) },
       { output: gap(" ") },
       { output: gap("The service, a web server, listens on a port for requests while it runs.") },
       { output: { ...done, asked_ids: ["G-R1-1"], answered_ids: ["G-R1-1"], summary: "# Requirements\n\nQ1: A; port 8080" } },
       { output: noQuestions, plan: "v1" },
     ],
+    closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }],
     reviews: [{ issues: [] }, { issues: [issue("G-R1-1", "The port is not decided.")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
@@ -301,7 +303,8 @@ test("issue #94: a plain piece that would open a block reaches conversation.md a
   const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [opening] } }, { output: noQuestions, plan: "v1" }],
+    closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -325,7 +328,8 @@ test("W1-R1-1: a context whose link label spans two lines reaches conversation.m
   const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [opening] } }, { output: noQuestions, plan: "v1" }],
+    closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -348,7 +352,8 @@ test("work review 2: a context whose link label has a backslash before its line 
   const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [opening] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [opening] } }, { output: noQuestions, plan: "v1" }],
+    closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
@@ -371,7 +376,8 @@ test("issue #112: an agreed question whose term has two senses is presented with
   const divided: TermsEntry = { id: "Q1", explanations: [port], context: entryPort.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), history: [], question: divide(entryPort.question), reason: entryPort.reason, proposed_answers: entryPort.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", ""],
-    steps: [{ output: { questions: [entryPort] } }, { output: asking("Q1", []) }, { output: { ...done, asked_ids: ["Q1"], answered_ids: ["Q1"] } }, { output: noQuestions, plan: "v1" }],
+    steps: [{ output: { questions: [entryPort] } }, { output: noQuestions, plan: "v1" }],
+    closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],

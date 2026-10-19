@@ -12,15 +12,15 @@ import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { githubCredential } from "../src/trackerConfig.ts";
 import { LABELS } from "./githubLabels.ts";
-import { questionEntry, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { questionEntry, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 import { type Answer, json, makeStub, type SentRequest } from "./stubHttp.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
-const turn = (message: string, complete: boolean, summary: string) => ({ message_to_user: message, current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete, summary });
 const oneQuestion: TestOptions = {
   answers: ["A", ""],
-  steps: [{ output: { questions: [q("Q1")] } }, { output: turn("Q1?", false, "") }, { output: turn("Done.", true, "# Requirements\n\nQ1: A") }],
+  steps: [{ output: { questions: [q("Q1")] } }],
+  closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }],
   reviews: [{ issues: [] }, { issues: [] }],
   config: { maxTrackerRetries: 2, trackerRetryDelaySeconds: 0.01 },
 };
