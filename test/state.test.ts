@@ -17,7 +17,8 @@ import { decodeRecord, parseJson } from "../src/state.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { renderUsage, summarizeUsage } from "../src/usage.ts";
-import { faultyPlatform, tempRepo, questionOf, entryOf , TEST_ROOT } from "./helpers.ts";
+import { faultyPlatform, tempRepo, questionOf, entryOf , TEST_ROOT, steppingClock } from "./helpers.ts";
+import { readCheckpoint } from "../src/records.ts";
 
 /** The store of a repository, built on the live platform services. */
 const store = (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => Effect.runPromise(makeStore(repo, TEST_ROOT, ignorePaths).pipe(Effect.provide(platformLayer)));
@@ -128,6 +129,64 @@ test("recordLimitWait keeps each basis and outcome, and usageLines reads them ba
   ];
   for (const w of waits) await Effect.runPromise(s.recordLimitWait(w));
   assert.deepEqual((await Effect.runPromise(s.usageLines())).waits, waits);
+});
+
+// Issue #179: a usage-limit wait is recorded when it begins, in usage.jsonl and as a note in checkpoint.json.
+const BEGAN_FROM = Date.UTC(2026, 9, 16, 10, 12);
+const began = { agent: "claude" as const, limitType: "seven_day", basis: "reset" as const, fromMs: BEGAN_FROM, untilMs: Date.UTC(2026, 9, 18, 12, 1) };
+const noteOf = (w: typeof began) => ({ agent: w.agent, limit_type: w.limitType, basis: w.basis, from: new Date(w.fromMs).toISOString(), until: new Date(w.untilMs).toISOString() });
+const checkpointOf = (s: StoreShape): Record<string, unknown> => JSON.parse(fs.readFileSync(path.join(s.dir, "checkpoint.json"), "utf8")) as Record<string, unknown>;
+/** Runs an effect of the store with a Clock that advances a minute at every reading, so a rewrite that reads the time again shows. */
+const ticking = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => {
+  let time = BEGAN_FROM;
+  const clock = steppingClock(BEGAN_FROM).clock;
+  const advancing: Clock.Clock = { ...clock, currentTimeMillis: Effect.sync(() => (time += 60_000)), currentTimeMillisUnsafe: () => (time += 60_000) };
+  return Effect.runPromise(effect.pipe(Effect.provideService(Clock.Clock, advancing)));
+};
+
+test("recordLimitWaitBegan appends a usage_limit_wait_began line, and usageLines returns it under began alone", async () => {
+  const s = await initialised();
+  await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s", turns: 1, totalCostUsd: 1.5 }));
+  await Effect.runPromise(s.recordLimitWaitBegan(began));
+  const lines = fs.readFileSync(path.join(s.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  assert.equal(lines.length, 2);
+  const { time, ...line } = lines[1] ?? {};
+  assert.equal(typeof time, "string");
+  assert.deepEqual(line, { version: 2, kind: "usage_limit_wait_began", agent: "claude", limit_type: "seven_day", basis: "reset", from: new Date(began.fromMs).toISOString(), until: new Date(began.untilMs).toISOString() });
+  const read = await Effect.runPromise(s.usageLines());
+  assert.deepEqual(read.began, [began]);
+  assert.deepEqual(read.waits, []);
+  assert.deepEqual(read.calls, [{ agent: "claude", session: "s", turns: 1, totalCostUsd: 1.5 }]);
+});
+
+test("the checkpoint carries the waiting note from the wait's start to its end, its transition and time unchanged", async () => {
+  const s = await initialised();
+  await ticking(s.checkpoint({ subject: "planning-1", phase: 1, round: 12, stage: "reviewed" }));
+  const before = checkpointOf(s);
+  assert.equal(before.waiting, null);
+  const transition = { subject: "planning-1", phase: 1, round: 12, stage: "reviewed", time: before.time, version: 2 };
+  await ticking(s.recordLimitWaitBegan(began));
+  assert.deepEqual(checkpointOf(s), { ...transition, waiting: noteOf(began) });
+  await ticking(s.recordLimitWait({ ...began, endedMs: BEGAN_FROM + 60_000, outcome: "interrupted" }));
+  assert.deepEqual(checkpointOf(s), { ...transition, waiting: null });
+});
+
+test("a transition written while a wait lasts keeps the waiting note", async () => {
+  const s = await initialised();
+  await Effect.runPromise(s.recordLimitWaitBegan(began));
+  await Effect.runPromise(s.checkpoint({ subject: "planning-1", phase: 1, round: 2, stage: "responded" }));
+  const after = checkpointOf(s);
+  assert.deepEqual([after.subject, after.round, after.stage, after.waiting], ["planning-1", 2, "responded", noteOf(began)]);
+});
+
+test("readCheckpoint accepts a checkpoint with a waiting note and one with none", async () => {
+  const s = await initialised();
+  await Effect.runPromise(s.recordLimitWaitBegan(began));
+  const read = await Effect.runPromise(readCheckpoint(s.dir).pipe(Effect.provide(platformLayer)));
+  assert.deepEqual(read?.waiting, noteOf(began));
+  await Effect.runPromise(s.recordLimitWait({ ...began, endedMs: BEGAN_FROM, outcome: "interrupted" }));
+  const cleared = await Effect.runPromise(readCheckpoint(s.dir).pipe(Effect.provide(platformLayer)));
+  assert.equal(cleared?.waiting, null);
 });
 
 test("the records: decisions, feedback, usage and the invalid-reply files", async () => {

@@ -10,13 +10,13 @@ import { FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
-import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
+import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { type CommitCheck, commitCheckOf, uncommittedPaths } from "./commitCheck.ts";
 import { decodeStatusV2, excluded, type StatusRecord, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
-import type { LimitWait, RateLimitNotice, UsageLine } from "./usage.ts";
+import type { LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
 
 /**
  * The store of one run of one project (issue #120): its records are under <project>/plan-review/<root>/, a root that
@@ -107,8 +107,27 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         yield* renameInto(temporary, file);
       });
     const writeJson = (file: string, value: unknown) => serialize(file, value, 2).pipe(Effect.flatMap((text) => writeRecordText(file, text)));
-    /** plan-review/checkpoint.json: the last committed transition, replaced atomically. */
-    const checkpoint = (point: CheckpointPoint) => now.pipe(Effect.flatMap((time) => writeJson(at({ kind: "checkpoint" }), { version: VERSION, ...point, time })));
+    /** An instant of the Clock as an ISO string. */
+    const iso = (ms: number) => new Date(ms).toISOString();
+    /**
+     * The last committed transition with its time, and the usage-limit wait in progress (issue #179), held so that the
+     * note can be added and removed with the transition and its time unchanged. Null before the first checkpoint.
+     */
+    const transition = yield* Ref.make<Readonly<{ point: CheckpointPoint; time: string }> | null>(null);
+    const waiting = yield* Ref.make<WaitingNote | null>(null);
+    /** Writes checkpoint.json from the held transition and note; journaled, so a read-only call's guard replays it. */
+    const writeCheckpoint = Effect.gen(function* () {
+      const held = (yield* Ref.get(transition)) ?? { point: { subject: "run", phase: 0, round: 0, stage: "started" as const }, time: yield* now };
+      yield* writeJson(at({ kind: "checkpoint" }), { version: VERSION, ...held.point, time: held.time, waiting: yield* Ref.get(waiting) });
+    });
+    /** plan-review/checkpoint.json: the last committed transition, replaced atomically, with any waiting note kept. */
+    const checkpoint = (point: CheckpointPoint) =>
+      now.pipe(
+        Effect.flatMap((time) => Ref.set(transition, { point, time })),
+        Effect.andThen(writeCheckpoint),
+      );
+    /** Sets or clears the waiting note and rewrites the checkpoint with its transition unchanged (issue #179). */
+    const noteWaiting = (note: WaitingNote | null) => Ref.set(waiting, note).pipe(Effect.andThen(writeCheckpoint));
     /** The file of a reply of a round: the raw save before validation and the accepted value after it are one file (issue #151). */
     const replyArtifact = (subject: SubjectId, round: number, kind: RawReplyKind): Artifact =>
       kind === "review" ? { kind: "review", subject, round } : kind === "response" ? { kind: "response", subject, round } : { kind: "correction", subject, round, attempt: kind.corrective };
@@ -322,16 +341,29 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
                 ? [{ agent: "claude", session: r.session, turns: r.num_turns, totalCostUsd: r.total_cost_usd }]
                 : [{ agent: "codex", thread: r.thread, inputTokens: r.input_tokens, outputTokens: r.output_tokens }],
           );
-          return { calls, waits, notices, began: [] };
+          const began = records.flatMap((r): LimitWaitBegan[] =>
+            "kind" in r && r.kind === "usage_limit_wait_began" ? [{ agent: r.agent, limitType: r.limit_type, basis: r.basis, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until) }] : [],
+          );
+          return { calls, waits, notices, began };
         }),
-      /** A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one. */
+      /**
+       * A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one; then the
+       * checkpoint's waiting note is cleared (issue #179).
+       */
       recordLimitWait: (wait) =>
         Effect.gen(function* () {
-          const iso = (ms: number) => new Date(ms).toISOString();
           const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait", agent: wait.agent, time: yield* now, limit_type: wait.limitType, basis: wait.basis, from: iso(wait.fromMs), until: iso(wait.untilMs), ended: iso(wait.endedMs), outcome: wait.outcome };
           yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
+          yield* noteWaiting(null);
         }),
-      recordLimitWaitBegan: () => Effect.void,
+      /** The start of a wait for a usage limit (issue #179): its line in usage.jsonl, then the checkpoint's waiting note. */
+      recordLimitWaitBegan: (wait) =>
+        Effect.gen(function* () {
+          const note: WaitingNote = { agent: wait.agent, limit_type: wait.limitType, basis: wait.basis, from: iso(wait.fromMs), until: iso(wait.untilMs) };
+          const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait_began", time: yield* now, ...note };
+          yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
+          yield* noteWaiting(note);
+        }),
       /** A rate-limit notice of a Claude Code request, its info whole (issue #170). */
       recordRateLimit: (notice) =>
         Effect.gen(function* () {
