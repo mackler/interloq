@@ -56,6 +56,19 @@ test("the release job pushes to release with the deploy key, and the test job ha
   assert.match(workflow(), /timeout-minutes: \d+/, "the test job has no timeout-minutes");
 });
 
+// The developer's decision of 19 Oct 2026 (the run of issue #179): npm test leaves out the end-to-end tests, and the
+// workflow runs them as a step of their own after it, so a release still waits for them.
+test("the test job runs npm test and then the end-to-end tests, which are playwright test", () => {
+  const text = workflow();
+  const suite = text.indexOf("run: npm test\n");
+  const e2e = text.indexOf("run: npm run test:e2e\n");
+  assert.ok(suite >= 0, "the workflow has no step running npm test");
+  assert.ok(e2e >= 0, "the workflow has no step running npm run test:e2e");
+  assert.ok(suite < e2e, "the end-to-end step does not come after npm test");
+  const scripts = (JSON.parse(readText("package.json") ?? "{}") as { scripts?: Record<string, string> }).scripts ?? {};
+  assert.equal(scripts["test:e2e"], "playwright test", "package.json's test:e2e is not playwright test");
+});
+
 // The image is now part of the repository (container/Dockerfile), so the same drift check covers it: its pins are
 // what this machine runs, and its Node is the one .node-version gives CI. A rebuild cannot move them apart silently.
 test("the image builds on the Node of .node-version", () => {

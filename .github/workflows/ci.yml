@@ -1,5 +1,5 @@
-# The gate of the release route (README, "Deploying an update"): every push to main runs the whole npm test, and
-# only a main whose suite passed advances the release branch, which the installed copy follows. There is no
+# The gate of the release route (README, "Deploying an update"): every push to main runs npm test and then the
+# end-to-end tests, and only a main whose two steps passed advances the release branch, which the installed copy follows. There is no
 # pull_request trigger: the developer does not use pull requests here, and having both ran the suite twice for one
 # commit (28 Sep 2026). Restore it if pull requests are ever used.
 # The versions below are those of the development container's image; test/ci.test.ts fails when they drift apart.
@@ -40,6 +40,8 @@ jobs:
           gem install bashly -v 2.0.0
           bashly --version
       - run: npm test
+      - name: The end-to-end tests, apart from npm test
+        run: npm run test:e2e
 
   release:
     needs: test

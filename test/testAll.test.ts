@@ -4,10 +4,10 @@ import fc from "fast-check";
 import { controlled, tick } from "./stagesFake.ts";
 import { runStages, spawnStage, type Stage, type StageResult, type Stages, testStages, verdict } from "../scripts/test-all.ts";
 
-// Issue #75: npm test runs the stages that share nothing at once, and the end-to-end tests only after all of them passed.
+// Issue #75: npm test runs the stages that share nothing at once. Since the developer's decision of 19 Oct 2026 (the
+// run of issue #179) it runs no end-to-end stage after them: those are `npm run test:e2e`, a step of their own in CI.
 
 const names = testStages.parallel.map((s) => s.name);
-const finalStage: Stage = testStages.kind === "thenFinal" ? testStages.final : assert.fail("npm test has no final stage");
 
 test("property: verdict fails if and only if some stage failed, and names exactly the failed ones", () => {
   fc.assert(
@@ -20,32 +20,20 @@ test("property: verdict fails if and only if some stage failed, and names exactl
   );
 });
 
-test("the five stages that share nothing all start before any of them ends", async () => {
+test("the five stages all start before any of them ends, nothing starts after them, and all passing gives code 0", async () => {
   const c = controlled();
   const outcome = runStages(testStages, c.start);
   await tick();
   assert.deepEqual([...c.started].sort(), [...names].sort());
   for (const n of names) await c.end(n, 0);
-  await c.end(finalStage.name, 0);
-  assert.equal((await outcome).code, 0);
-});
-
-test("the end-to-end tests do not start while the build or any other stage runs, and start when all passed", async () => {
-  const c = controlled();
-  const outcome = runStages(testStages, c.start);
-  await tick();
-  for (const n of names.filter((n) => n !== "build")) await c.end(n, 0);
-  assert.ok(!c.started.includes(finalStage.name), "the end-to-end tests started before the build ended");
-  await c.end("build", 0);
-  assert.ok(c.started.includes(finalStage.name), "the end-to-end tests did not start after every stage passed");
-  await c.end(finalStage.name, 0);
+  assert.deepEqual([...c.started].sort(), [...names].sort(), "a stage started after the five");
   const done = await outcome;
   assert.equal(done.code, 0);
-  assert.deepEqual(done.results.map((r) => r.stage.name).sort(), [...names, finalStage.name].sort());
+  assert.deepEqual(done.results.map((r) => r.stage.name).sort(), [...names].sort());
 });
 
 for (const failing of names) {
-  test(`a failure of ${failing} lets the others run to their end, keeps the end-to-end tests from starting, and gives code 1`, async () => {
+  test(`a failure of ${failing} lets the others run to their end, starts nothing after them, and gives code 1`, async () => {
     const c = controlled();
     const ended: string[] = [];
     const outcome = runStages(testStages, c.start, (r) => ended.push(r.stage.name));
@@ -54,24 +42,15 @@ for (const failing of names) {
     for (const n of names.filter((n) => n !== failing)) await c.end(n, 0);
     const done = await outcome;
     assert.equal(done.code, 1);
-    assert.ok(!c.started.includes(finalStage.name), "the end-to-end tests started after a failure");
+    assert.deepEqual([...c.started].sort(), [...names].sort(), "a stage started after the five");
     assert.deepEqual([...ended].sort(), [...names].sort(), "a stage was not reported when it ended");
   });
 }
 
-test("every parallel stage passing and the end-to-end tests failing gives code 1", async () => {
-  const c = controlled();
-  const outcome = runStages(testStages, c.start);
-  await tick();
-  for (const n of names) await c.end(n, 0);
-  await c.end(finalStage.name, 2);
-  assert.equal((await outcome).code, 1);
-});
-
-test("npm test passes exactly the stages it passed before issue #105: five at once, then the end-to-end tests", () => {
-  assert.equal(testStages.kind, "thenFinal");
+test("npm test runs five stages at once and no end-to-end stage", () => {
+  assert.equal(testStages.kind, "parallel");
   assert.deepEqual(testStages.parallel.map((s) => s.script), ["check", "test:unit", "test:cli", "test:web", "build"]);
-  assert.equal(finalStage.script, "test:e2e");
+  assert.ok(!testStages.parallel.some((s) => s.script === "test:e2e"), "npm test runs the end-to-end tests");
 });
 
 const two: Stages = { kind: "parallel", parallel: [{ name: "a", script: "a" }, { name: "b", script: "b" }] };

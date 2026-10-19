@@ -1,5 +1,7 @@
-// `npm test` (issue #75): the type check and the suites that share nothing run together, then the end-to-end tests,
-// which need the build. Each stage's output is printed whole when the stage ends, under its name and exit code.
+// `npm test` (issue #75): the type check, the unit, CLI and component tests and the build run at once. Each stage's
+// output is printed whole when the stage ends, under its name and exit code. The end-to-end tests are not part of it:
+// they are `npm run test:e2e`, run as a separate step of .github/workflows/ci.yml (the developer's decision of
+// 19 Oct 2026, in the run of issue #179, after a final suite run stopped at the 20-minute ceiling).
 
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -20,13 +22,13 @@ export type Stages =
 
 const stage = (script: string): Stage => ({ name: script, script });
 /**
- * `npm test`'s stages: those that share nothing, run at once, then the end-to-end tests, which need the build and run
- * only when every parallel stage passed.
+ * `npm test`'s stages: the type check, the unit, CLI and component tests and the build, run at once, with no final
+ * stage. The end-to-end tests are `npm run test:e2e`, a step of their own in .github/workflows/ci.yml (the developer's
+ * decision of 19 Oct 2026, in the run of issue #179).
  */
 export const testStages: Stages = {
-  kind: "thenFinal",
+  kind: "parallel",
   parallel: [stage("check"), stage("test:unit"), stage("test:cli"), stage("test:web"), stage("build")],
-  final: stage("test:e2e"),
 };
 
 /** The pure part of the decision: whether every stage passed. */
@@ -84,8 +86,7 @@ export const summary = (label: string, outcome: Outcome): string => {
 const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  const streamed = (s: Stage): boolean => testStages.kind === "thenFinal" && s === testStages.final;
-  void runStages(testStages, spawnStage(npm, (s) => ["run", "--silent", s.script], streamed), report).then((outcome) => {
+  void runStages(testStages, spawnStage(npm, (s) => ["run", "--silent", s.script]), report).then((outcome) => {
     process.stdout.write(`\n${summary("npm test", outcome)}\n`);
     process.exitCode = outcome.code;
   });
