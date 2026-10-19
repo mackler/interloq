@@ -105,7 +105,7 @@ credentials, and publishes port 8090 for the web page.
    git config core.hooksPath .githooks
    ```
 
-   If you intend to run `npm test`, install Chromium as described in "What you need".
+   If you intend to run `npm run test:e2e`, install Chromium as described in "What you need".
 4. Export your Claude Code token, then build the image:
 
    ```sh
@@ -146,15 +146,17 @@ If the server reports that "the page has not been built", run `npm run build` on
 
 **The installed copy can only ever install a commit whose tests passed.** It follows the branch
 `release` on GitHub, and only the checks on GitHub move that branch: after every push to `main` they
-run the whole `npm test`, and only if it passes do they fast-forward `release` to that commit. So a
+run `npm test` and then the end-to-end tests (`npm run test:e2e`), and only if both pass do they
+fast-forward `release` to that commit. So a
 change reaches real runs by this route, and by no other:
 
-1. **Commit in the development copy.** Running `npm test` locally first is still worthwhile; it is
-   the same suite that GitHub runs.
+1. **Commit in the development copy.** GitHub runs `npm test` and then `npm run test:e2e`; to run
+   locally what GitHub runs, run both.
 
    ```sh
    cd ~/work/interloq-dev   # or /workspace inside the development container
    npm test
+   npm run test:e2e
    git commit ...
    ```
 
@@ -168,8 +170,8 @@ change reaches real runs by this route, and by no other:
    It pushes `main` to GitHub. It refuses, and pushes nothing, if the working tree has uncommitted
    changes, if you are not on `main`, or if `main` is behind `origin/main`.
 3. **The checks run on GitHub.** Follow them in the repository's Actions tab (workflow `ci`). If
-   `npm test` passes, the `release` job moves `release` to your commit; if it fails, `release` stays
-   where it was, and the installed copy cannot pick up the change.
+   `npm test` and the end-to-end tests pass, the `release` job moves `release` to your commit; if
+   either fails, `release` stays where it was, and the installed copy cannot pick up the change.
 4. **Upgrade the installed copy, on the host.**
 
    ```sh

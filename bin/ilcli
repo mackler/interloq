@@ -15,7 +15,7 @@ version_command() {
 ilcli_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli\n\n"
-    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  run, shell and web create the container only when none exists and never\n  recreate a running one, so none of them stops a program another started. The\n  container keeps the configuration it was created with, the credential\n  variables of the shell that created it included; when compose.cc.yaml, or the\n  variables of the shell in use, resolve differently, these commands say so on\n  stderr and start in the container as it is. bin/ilcli down, then a start,\n  applies the new configuration, and down stops Claude Code and the web server\n  running in the container.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test on GitHub and advances the release branch only if it passes,\n  then bin/ilcli upgrade in the installed copy. The installed copy follows\n  release, so it can only ever install a commit whose tests passed.\n\n"
+    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  run, shell and web create the container only when none exists and never\n  recreate a running one, so none of them stops a program another started. The\n  container keeps the configuration it was created with, the credential\n  variables of the shell that created it included; when compose.cc.yaml, or the\n  variables of the shell in use, resolve differently, these commands say so on\n  stderr and start in the container as it is. bin/ilcli down, then a start,\n  applies the new configuration, and down stops Claude Code and the web server\n  running in the container.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test and the end-to-end tests on GitHub and advances the release\n  branch only if both pass, then bin/ilcli upgrade in the installed copy. The\n  installed copy follows release, so it can only ever install a commit whose\n  tests passed.\n\n"
   else
     printf "ilcli - Interloq's development container, and the route of a change to the installed copy.\n\n"
   fi
@@ -32,7 +32,7 @@ ilcli_usage() {
   printf "  %s   Start the container if needed, then start Interloq's web server in it, in the foreground; Ctrl+C ends it\n" "web    "
   printf "  %s   Build the image from ../claude-code-image\n" "build  "
   printf "  %s   Stop and remove the container (the volumes are kept)\n" "down   "
-  printf "  %s   Push main to GitHub, where CI runs npm test and advances release only if it passes\n" "release"
+  printf "  %s   Push main to GitHub, where CI runs npm test and the end-to-end tests and advances release only if both pass\n" "release"
   printf "  %s   Bring the installed copy to origin/release, then npm ci and npm run build\n" "upgrade"
   printf "  %s   Show this text, or the usage of one command\n" "help   "
   echo
@@ -213,9 +213,9 @@ ilcli_down_usage() {
 ilcli_release_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli release\n\n"
-    printf "  Push main to GitHub, where CI runs npm test and advances release only if it\n  passes\n  \n  Run on the host in the development clone, on main, with a clean working tree\n  that is not behind origin/main. Nothing is pushed if a check fails.\n\n"
+    printf "  Push main to GitHub, where CI runs npm test and the end-to-end tests and\n  advances release only if both pass\n  \n  Run on the host in the development clone, on main, with a clean working tree\n  that is not behind origin/main. Nothing is pushed if a check fails.\n\n"
   else
-    printf "ilcli release - Push main to GitHub, where CI runs npm test and advances release only if it passes\n\n"
+    printf "ilcli release - Push main to GitHub, where CI runs npm test and the end-to-end tests and advances release only if both pass\n\n"
   fi
 
   printf "%s\n" "Usage:"
@@ -630,7 +630,7 @@ ilcli_release_command() {
   short="$(g rev-parse --short "$new")"
   say release "pushed main to origin ($(g remote get-url origin)):"
   g log --format='  %h %s' "$old..$new"
-  say release "CI now runs npm test on $short. The release branch advances to $short only if it passes;"
+  say release "CI now runs npm test and the end-to-end tests on $short. The release branch advances to $short only if both pass;"
   say release "then run bin/ilcli upgrade in the installed copy on the host to install it."
 
 }

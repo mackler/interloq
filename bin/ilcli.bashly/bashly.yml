@@ -8,7 +8,7 @@ help: |-
 
   Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
 
-  The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test on GitHub and advances the release branch only if it passes, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
+  The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test and the end-to-end tests on GitHub and advances the release branch only if both pass, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
 version: "1"
 
 commands:
@@ -71,7 +71,7 @@ commands:
 
 - name: release
   help: |-
-    Push main to GitHub, where CI runs npm test and advances release only if it passes
+    Push main to GitHub, where CI runs npm test and the end-to-end tests and advances release only if both pass
 
     Run on the host in the development clone, on main, with a clean working tree that is not behind origin/main. Nothing is pushed if a check fails.
 

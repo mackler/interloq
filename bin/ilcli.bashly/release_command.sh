@@ -1,4 +1,4 @@
-## Publish main: push it to origin (GitHub), where CI runs npm test and advances release only if it passes.
+## Publish main: push it to origin (GitHub), where CI runs npm test and the end-to-end tests and advances release only if both pass.
 ## Nothing is pushed unless every check passes.
 root="$(ilcli_root)"
 g() { git -C "$root" "$@"; }
@@ -42,5 +42,5 @@ fi
 short="$(g rev-parse --short "$new")"
 say release "pushed main to origin ($(g remote get-url origin)):"
 g log --format='  %h %s' "$old..$new"
-say release "CI now runs npm test on $short. The release branch advances to $short only if it passes;"
+say release "CI now runs npm test and the end-to-end tests on $short. The release branch advances to $short only if both pass;"
 say release "then run bin/ilcli upgrade in the installed copy on the host to install it."
