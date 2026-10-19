@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { sessionTooLongText } from "../src/prompts.ts";
-import { CheckCommandInvalid, ClaudeSessionTooLong, ConfigInvalid, DecisionFormatUnreadable, decodeRunError, GitError, haltMessage, ProjectChanged, RecordsChanged, RoundInvalid, RoundLimitStop } from "../src/errors.ts";
+import { sessionTooLongText, suiteStoppedText } from "../src/prompts.ts";
+import { CheckCommandInvalid, ClaudeSessionTooLong, ConfigInvalid, DecisionFormatUnreadable, decodeRunError, GitError, haltMessage, ProjectChanged, RecordsChanged, RoundInvalid, RoundLimitStop, SuiteStopped } from "../src/errors.ts";
 
 test("haltMessage reports a typed error with its description", () => {
   const error = new ProjectChanged({ during: "planning", fileLabel: null, changes: [{ kind: "content_changed", path: "a.txt" }] });
@@ -65,6 +65,13 @@ test("ClaudeSessionTooLong names the cause, round-trips through decodeRunError a
   assert.equal(haltMessage(error), `HALTED: ${sessionTooLongText("Prompt is too long")}`);
   assert.match(sessionTooLongText("Prompt is too long"), /session/);
   assert.equal(decodeRunError({ _tag: "ClaudeSessionTooLong", message: "Prompt is too long" })?._tag, "ClaudeSessionTooLong");
+});
+
+// Issue #181: the developer stops the run after the final suite was stopped outside the work.
+test("SuiteStopped names the command and the reason, round-trips through decodeRunError and is rendered by haltMessage", () => {
+  const fields = { command: "npm test", suite: 2, stops: 2, reason: "it ran longer than 40 minutes and was stopped" };
+  assert.equal(haltMessage(new SuiteStopped(fields)), `HALTED: ${suiteStoppedText(fields.command, fields.suite, fields.stops, fields.reason)}`);
+  assert.deepEqual(decodeRunError({ _tag: "SuiteStopped", ...fields }), { _tag: "SuiteStopped", ...fields });
 });
 
 test("issue #162: CheckCommandInvalid names each command and script, and round-trips through decodeRunError", () => {

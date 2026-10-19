@@ -11,7 +11,7 @@ import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
-import { SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
+import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
 import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
@@ -1681,6 +1681,41 @@ export function suitePassedLine(label: string, command: string): string {
 export function suiteFailedLine(label: string, command: string, reason: SuiteFailure, log: string): string {
   return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
 }
+/**
+ * Issue #181 (requirements Q1): a suite run stopped outside the work, by its limit or unable to start, said on the page
+ * and written to conversation.md: not a fault of the work, so the plan is not revised from it.
+ */
+export function suiteStoppedLine(label: string, command: string, reason: OutsideStop, log: string): string {
+  return `${label} was stopped: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. This is not a fault of the work, so the plan is not revised from it.`;
+}
+/** Issue #181: the one automatic repeat of a suite run stopped outside the work. */
+export function suiteRepeatLine(label: string, command: string): string {
+  return `Interloq runs the whole suite, ${command}, again once, without revising the plan, because ${label} was stopped before it could finish.`;
+}
+/** Issue #181: the question when the final suite was stopped outside the work after the one automatic repeat. */
+export function suiteStoppedQuestion(label: string, command: string): string {
+  return `${label}, the whole suite ${command} that Interloq runs before the run can finish, was stopped again before it finished; the reason and its output are shown under "${attachedHeading("fault")}". Do you want Interloq to run the suite again, or to stop the run?`;
+}
+export const SUITE_RUN_AGAIN = "Run the suite again";
+export const SUITE_STOP = "Stop the run";
+export function suiteStoppedOptionDescriptions(): Readonly<{ retry: string; stop: string }> {
+  return {
+    retry: "Interloq runs the whole suite once more, without revising the plan; if that run is stopped again before it finishes, you are asked this question again.",
+    stop: "the run ends here with exit code 1, its records are kept, and its item stays in the implementing state.",
+  };
+}
+/** The facts of the suite's question a context call is given (issue #181). */
+export function suiteStoppedFacts(command: string, suite: number, stops: number, reason: string, log: string): string {
+  return `At the end of an implementation run, after the review of the work found nothing left to correct, Interloq ran the project's whole suite, ${command}, itself. Suite run ${suite} was stopped before it finished: ${reason}; its output is in ${log}. That is the stop number ${stops} in a row. A stop by the time limit or a shell that could not start is not a fault of the work, so the plan is not revised from it; Interloq repeats the suite once in the whole run without asking, and that repeat has been used.`;
+}
+/** The attached material of the suite's question (issue #181): the reason and where the output is. */
+export function suiteStoppedDetails(reason: OutsideStop, log: string): readonly Block[] {
+  return [{ kind: "paragraph", pieces: [plainPiece(`The suite run ended because ${suiteFailureText(reason)}. Its whole output is in `), codePiece(log), plainPiece(".")] }];
+}
+/** Issue #181: the halt when the developer stops the run at the suite's question. */
+export function suiteStoppedText(command: string, suite: number, stops: number, reason: string): string {
+  return `the run was stopped at the user's answer after suite run ${suite} of ${command} was stopped before it finished (${reason}), ${stops} times in a row. The records are preserved.`;
+}
 /** Issue #176: the line of a commit check that found files the run left uncommitted, said on the page and written to conversation.md. */
 export function uncommittedLine(label: string, paths: NonEmptyPaths, suite: string | null): string {
   const after = suite === null ? `${label} found nothing left to correct` : `${label} found nothing left to correct and the whole suite, ${suite}, passed`;
@@ -2801,6 +2836,8 @@ const originText = (origin: QuestionOrigin): string => {
       return `Asked because ${origin.agent === "claude" ? "Claude Code" : "Codex"} could not be reached`;
     case "tracker":
       return `Asked because the ${origin.tracker} issue tracker could not be reached`;
+    case "suiteStopped":
+      return "Asked because the whole suite was stopped before it finished";
   }
 };
 
@@ -3002,6 +3039,8 @@ export function fallbackContext(origin: QuestionOrigin): string {
       return `${interloq} Every call to an agent goes over the network. ${agentWords(origin.agent)} could not be reached for ${origin.what} after ${origin.attempts} attempts; the last error is shown below. Interloq waited and tried again automatically. It now asks you whether to try again or stop the run; the run's records are kept either way.`;
     case "tracker":
       return `Interloq reads and updates this run's item in the project's issue tracker, ${origin.tracker}, at the start and at the end of a run. The request failed while ${origin.what} after ${origin.attempts} attempts, with waits between them; the last error is shown below. Interloq now asks you whether to try again or stop the run; the run's records are kept either way. A repeated request reaches the same result as one that succeeded, because every request sets the full intended state of the item.`;
+    case "suiteStopped":
+      return `${INTERLOQ_SENTENCE} Before an implementation run can finish, Interloq runs the project's whole suite, ${origin.command}, itself. Suite run ${origin.suite} was stopped before it finished: ${origin.reason}. A stop by the suite's time limit, or a shell that could not start, is not a fault of the work, so the plan is not revised from it. Interloq runs the suite again once in a run without asking, and that repeat has been used, so it now asks you whether to run the suite again or stop the run; the run's records are kept either way.`;
   }
 }
 

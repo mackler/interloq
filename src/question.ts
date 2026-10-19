@@ -299,7 +299,9 @@ export type QuestionOrigin =
   | Readonly<{ kind: "unchanged"; heading: string; fileLabel: string; accepted: readonly string[] }>
   | Readonly<{ kind: "transport"; agent: "claude" | "codex"; what: string; attempts: number; fault: string }>
   /** Issue #171: a request to the project's issue tracker whose repeats are used up. */
-  | Readonly<{ kind: "tracker"; tracker: string; what: string; attempts: number; fault: string }>;
+  | Readonly<{ kind: "tracker"; tracker: string; what: string; attempts: number; fault: string }>
+  /** Issue #181: the final suite was stopped outside the work (its limit, or a failed start) after the one automatic repeat. */
+  | Readonly<{ kind: "suiteStopped"; command: string; suite: number; stops: number; reason: string }>;
 
 /** The exact text that chooses an option, or any whole number the user types (the more cycles at the cycle limit, S8). */
 export type OptionAnswer = Readonly<{ token: string }> | Readonly<{ numeric: true }>;

@@ -127,6 +127,14 @@ export const trackerOptions = (): readonly OfferedOption[] => {
     own(prompts.TRANSPORT_STOP, d.stop, { token: prompts.TRANSPORT_ANSWERS.stop }, (answer: string) => parseTransportAnswer(answer) === "stop"),
   ];
 };
+/** Issue #181: the question after the final suite was stopped outside the work again, with the transport pause's answers. */
+export const suiteStoppedOptions = (): readonly OfferedOption[] => {
+  const d = prompts.suiteStoppedOptionDescriptions();
+  return [
+    own(prompts.SUITE_RUN_AGAIN, d.retry, { token: prompts.TRANSPORT_ANSWERS.retry }, (answer: string) => parseTransportAnswer(answer) === "retry"),
+    own(prompts.SUITE_STOP, d.stop, { token: prompts.TRANSPORT_ANSWERS.stop }, (answer: string) => parseTransportAnswer(answer) === "stop"),
+  ];
+};
 /**
  * The cycle limit (decision Q6): p proceeds where offered, a number adds cycles, and every other answer stops the run
  * (the review loop halts on it), so "2" is never read as the second option.

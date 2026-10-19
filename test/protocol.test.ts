@@ -79,6 +79,8 @@ const origin = fc.oneof(
   fc.record({ kind: fc.constant("transport" as const), agent, what: text, attempts: nat, fault: text }),
   // Issue #171: the tracker's exhaustion question.
   fc.record({ kind: fc.constant("tracker" as const), tracker: text, what: text, attempts: nat, fault: text }),
+  // Issue #181: the question after the final suite was stopped outside the work again.
+  fc.record({ kind: fc.constant("suiteStopped" as const), command: text, suite: nat, stops: nat, reason: text }),
 );
 const presentedQuestion = fc.record({
   number: nat,
