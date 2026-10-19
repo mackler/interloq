@@ -509,12 +509,22 @@ const turnSkipProblemText = (problem: TurnSkipProblem): string => {
       return `the turn asks question ${problem.id} before question ${problem.premise}, whose answer can make it unnecessary, has been answered`;
     case "summaryOmits":
       return `the summary does not name the skipped question${problem.ids.length > 1 ? "s" : ""} ${problem.ids.join(", ")}`;
+    case "followUpIdBlank":
+      return "a follow-up question has a blank id";
+    case "followUpIdReused":
+      return `the follow-up question id ${problem.id} was used before in this interview, or twice in this reply`;
   }
 };
 /** The halt after the repair turn of an interview turn could not correct what it did against the skipped questions. */
 export const interviewTurnInvalidText = (problems: readonly TurnSkipProblem[]): string => `an interview turn is invalid: ${problems.map(turnSkipProblemText).join("; ")}`;
 /** The validation repair turn of an interview turn that asked a skipped question or one before its premise, or omitted one. */
 export const interviewTurnRepairPrompt = (problems: readonly TurnSkipProblem[]): string => validationRepairPrompt(problems.map(turnSkipProblemText), [SKIPPED_RULE]);
+/** Issue #184: the validation repair turn of a reply of the first interview. */
+export const clarificationReplyRepairPrompt = (problems: readonly TurnSkipProblem[]): string => validationRepairPrompt(problems.map(turnSkipProblemText), [followUpIdRule(), SUMMARY_SKIPPED_RULE]);
+/** Issue #184: how a follow-up question of the first interview is identified. */
+const followUpIdRule = (): string => `Give each follow-up question a new id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, and use each id once.`;
+/** Issue #184: the summary's account of the questions the program skipped. */
+const SUMMARY_SKIPPED_RULE = `When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
 /** What the interview does with the questions the program skips (issue #99): in the interview's rules and its repair turn. */
 export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
 
@@ -711,6 +721,72 @@ export function interviewUserMessage(text: string): string {
 export function interviewNotConfirmed(text: string): string {
   return `The user does not confirm the summary and writes:\n${text}\nContinue the conversation. Return complete = true with the revised summary when the point is resolved.`;
 }
+
+/**
+ * Issue #184: the rules of the first interview (the clarification), in which Interloq presents the agreed questions itself
+ * and sends each answer to Claude Code as it is given; Claude Code's reply chooses no agreed question.
+ */
+const clarificationRules = (root: RunRoot): string => `Rules for the interview.
+The program presents the agreed questions of ${runDir(root)}/questions.json to the user itself, in the order of the list, with their context, their terms and their proposed answers, and does not present a question whose skip condition the user's answer met. It sends you each answer as soon as the user gives it, several answers together when the user answered more than one while you were replying, each with the id of its question and, for an agreed question, the label of the option chosen. The program does not wait for your reply before it presents the next agreed question. Never ask an agreed question yourself.
+Each of your replies produces these output fields.
+message_to_user: what you say to the user, in plain text without Markdown tables: a short acknowledgment, a remark, or the answer to a question the user asked in a written answer. It may be an empty string; the program shows nothing for an empty message.
+follow_ups: the follow-up questions the answers make necessary, or an empty list. The program asks each one after the question the user is answering when your reply arrives, or after the last agreed question if none remains. Give each an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+${QUESTION_TEXT_FORMAT}
+unnecessary: the questions already presented or answered that you judge, from the answers, were unnecessary, each with its id and the reason; an empty list otherwise. The program tells the user and changes nothing else.
+complete: false until the program reports that every agreed question has been presented or that the user ended the interview, and false in a reply that asks a follow-up question. Then true, when you need nothing further from the user.
+summary: an empty string while complete is false. When complete is true, the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
+${SUMMARY_SKIPPED_RULE}
+${questionWritingRules()}
+You may ask any follow-up question that the answers make necessary. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
+Do not use the AskUserQuestion tool; the program relays the conversation. Do not modify any file. Do not write a plan.`;
+
+/** Issue #184: the first request of the first interview, sent when it opens. */
+export const clarificationOpenPrompt = (root: RunRoot): string => `Take part in an interview with the user. ${runDir(root)}/questions.json contains the task and the agreed questions.
+${clarificationRules(root)}
+The program is presenting the first agreed question now. Reply with an empty message unless you have something to tell the user before the answers arrive.`;
+
+/** One item of a request of the first interview: an answer to an agreed question or a follow-up, or a reply to Claude Code's message. */
+export type ClarificationEntry =
+  | Readonly<{ kind: "agreed"; id: string; text: string; option: string | null }>
+  | Readonly<{ kind: "followUp"; id: string; text: string }>
+  | Readonly<{ kind: "message"; text: string }>;
+/** What closes a request: the list is done, the developer ended the interview, or he did not confirm the summary. */
+export type ClarificationTrailer = Readonly<{ kind: "listDone" }> | Readonly<{ kind: "done" }> | Readonly<{ kind: "notConfirmed"; text: string; ended: boolean }>;
+
+/** Issue #184: the sentence every closing request of the first interview carries; the scripted planner recognizes it. */
+export const LIST_DONE_SENTENCE = "The program has no further agreed question to present.";
+
+const entryLine = (entry: ClarificationEntry): string => {
+  switch (entry.kind) {
+    case "agreed":
+      return entry.option === null ? `The user answers agreed question ${entry.id} in writing:\n${entry.text}` : `The user answers agreed question ${entry.id} with the option ${JSON.stringify(entry.option)}.`;
+    case "followUp":
+      return `The user answers follow-up question ${entry.id}:\n${entry.text}`;
+    case "message":
+      return `The user replies to your message:\n${entry.text}`;
+  }
+};
+
+const trailerText = (trailer: ClarificationTrailer): string => {
+  switch (trailer.kind) {
+    case "listDone":
+      return `${LIST_DONE_SENTENCE} Every agreed question has been presented and answered or skipped, and every follow-up question has been answered. Ask any follow-up question you still need; otherwise return complete = true with the summary.`;
+    case "done":
+      return `${LIST_DONE_SENTENCE} ${interviewDonePrompt}`;
+    case "notConfirmed":
+      return `${LIST_DONE_SENTENCE} ${trailer.ended ? "The user ended the interview earlier. " : ""}The user does not confirm the summary and writes:\n${trailer.text}\nAsk any follow-up question the point needs; otherwise return complete = true with the revised summary.${trailer.ended ? " List every agreed question that was not answered under 'Open points', with the default that will be assumed." : ""}`;
+  }
+};
+
+/**
+ * Issue #184: a request of the first interview: every answer given since the previous request, in the order given, the
+ * program's notes (the questions it skipped), and, in a closing request, what closes it.
+ */
+export const clarificationRequestPrompt = (entries: readonly ClarificationEntry[], notes: readonly string[], trailer: ClarificationTrailer | null): string =>
+  [...entries.map(entryLine), ...notes, ...(trailer === null ? [] : [trailerText(trailer)])].join("\n\n");
+
+/** Issue #184: Claude Code's judgment that a question was unnecessary, said to the user and written to conversation.md. */
+export const unnecessaryLine = (id: string, reason: string): string => `Claude Code judges question ${id} unnecessary: ${reason}`;
 
 // ---- requirements -------------------------------------------------------------------------------
 

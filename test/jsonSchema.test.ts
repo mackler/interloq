@@ -216,7 +216,7 @@ test("a decision column is an anyOf of an argued column and an unclear column, e
 // another shape.
 test("the prototype's schemas generate what the program sends", async () => {
   const { protoSchemas, protoRaw } = await import("../prototypes/protoSchemas.ts");
-  for (const [name, schema] of [["interviewTurn", S.InterviewTurn], ["decisionAnalysis", S.DecisionAnalysis], ["decisionResponse", S.DecisionResponse], ["decisionApplied", S.DecisionApplied], ["review", S.Review], ["plannerResponse", S.PlannerResponse], ["planWrite", S.PlanWriteResult], ["execReport", S.ExecReport], ["questionList", S.QuestionList], ["questionListResponse", S.QuestionListResponse], ["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse]] as const) {
+  for (const [name, schema] of [["interviewTurn", S.InterviewTurn], ["interviewReply", S.InterviewReply], ["decisionAnalysis", S.DecisionAnalysis], ["decisionResponse", S.DecisionResponse], ["decisionApplied", S.DecisionApplied], ["review", S.Review], ["plannerResponse", S.PlannerResponse], ["planWrite", S.PlanWriteResult], ["execReport", S.ExecReport], ["questionList", S.QuestionList], ["questionListResponse", S.QuestionListResponse], ["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse]] as const) {
     assert.ok(protoSchemas[name] !== undefined, `the prototype does not send ${name}`);
     assert.deepEqual(protoRaw(protoSchemas[name]), rawJsonSchema(schema), name);
   }

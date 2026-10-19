@@ -267,6 +267,20 @@ export const InterviewTurn = Schema.Struct({
 });
 
 /**
+ * Issue #184: Claude Code's reply in the first interview (the clarification). Interloq presents the agreed questions
+ * itself and sends each answer as it is given, so a reply chooses no agreed question: it acknowledges the answers, may
+ * ask follow-up questions (each with an id F<n> Claude Code assigns, unique across the interview), may name questions
+ * already presented or answered that it judges unnecessary, and proposes the summary once Interloq reports the list done.
+ */
+export const InterviewReply = Schema.Struct({
+  message_to_user: Schema.String,
+  follow_ups: Schema.Array(Schema.Struct({ id: Schema.String, context: Schema.Array(Block), history: Schema.Array(Block), text: Schema.Array(Piece), explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) })),
+  unnecessary: Schema.Array(Schema.Struct({ id: Schema.String, reason: Schema.String })),
+  complete: Schema.Boolean,
+  summary: Schema.String,
+});
+
+/**
  * Issue #162 (requirements Q4): one check command Claude Code ran in an execution call, with the step it checked and how
  * long it took in seconds, as Claude Code reports it; Interloq does not measure it. Plain fields, so that acceptance by
  * an agent never depends on a keyword such as minLength.
@@ -592,6 +606,7 @@ export type SkipCondition = typeof SkipCondition.Type;
 export type QuestionList = typeof QuestionList.Type;
 export type QuestionListResponse = typeof QuestionListResponse.Type;
 export type InterviewTurn = typeof InterviewTurn.Type;
+export type InterviewReply = typeof InterviewReply.Type;
 export type Element = typeof Element.Type;
 export type Entry = typeof Entry.Type;
 export type Column = typeof Column.Type;

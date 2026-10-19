@@ -5,7 +5,7 @@ import { Result } from "effect";
 import { QuestionListInvalid } from "./errors.ts";
 import { piecesText } from "./pieces.ts";
 import { orderBySkipCondition } from "./premises.ts";
-import type { ExecReport, InterviewTurn, QuestionList, QuestionsFile } from "./schema.ts";
+import type { ExecReport, InterviewReply, InterviewTurn, QuestionList, QuestionsFile } from "./schema.ts";
 
 /** The questions asked and answered so far, as Claude Code reports them in each turn (issue #21), and the question asked now (S3: with its context, terms and options). */
 type TurnIds = Readonly<{ asked: readonly string[]; answered: readonly string[]; current: InterviewTurn["current_question"] }>;
@@ -18,6 +18,20 @@ export const normalizeTurn = (turn: InterviewTurn): TurnVariant => {
   const ids = { asked: turn.asked_ids, answered: turn.answered_ids, current: turn.current_question };
   return turn.complete && turn.summary.trim() !== "" ? { kind: "summary_proposed", message: turn.message_to_user, summary: turn.summary, ...ids } : { kind: "continuing", message: turn.message_to_user, ...ids };
 };
+
+/** Issue #184: a reply of the first interview: an acknowledgment, which may ask follow-ups, or the proposed summary. */
+export type ReplyVariant =
+  | Readonly<{ kind: "acknowledged"; message: string; followUps: InterviewReply["follow_ups"]; unnecessary: InterviewReply["unnecessary"] }>
+  | Readonly<{ kind: "summary_proposed"; message: string; summary: string; unnecessary: InterviewReply["unnecessary"] }>;
+/**
+ * `complete` with a summary that is not blank proposes the summary only in reply to a closing request (one that reported
+ * the list done or the interview ended) and only where the reply asks no follow-up: the summary comes after every
+ * follow-up is answered, so a closing reply that asks one is an acknowledgment, and the list is closed again after it.
+ */
+export const normalizeReply = (reply: InterviewReply, closing: boolean): ReplyVariant =>
+  closing && reply.complete && reply.summary.trim() !== "" && reply.follow_ups.length === 0
+    ? { kind: "summary_proposed", message: reply.message_to_user, summary: reply.summary, unnecessary: reply.unnecessary }
+    : { kind: "acknowledged", message: reply.message_to_user, followUps: reply.follow_ups, unnecessary: reply.unnecessary };
 
 /** The status report of an execution call, by outcome: the `question` field is a question only when input is awaited, a description when blocked. */
 /** What every report carries: its summary, its remaining work and the check commands it ran (issue #162). */

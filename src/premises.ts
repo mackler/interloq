@@ -131,6 +131,10 @@ export const TurnSkipProblemSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("askedBeforePremise"), id: Schema.String, premise: Schema.String }),
   /** The proposed summary does not name these skipped questions. */
   Schema.Struct({ kind: Schema.Literal("summaryOmits"), ids: Schema.Array(Schema.String) }),
+  /** Issue #184: a follow-up question of a reply has a blank id. */
+  Schema.Struct({ kind: Schema.Literal("followUpIdBlank") }),
+  /** Issue #184: a follow-up question of a reply has an id asked before in the interview, or twice in the reply. */
+  Schema.Struct({ kind: Schema.Literal("followUpIdReused"), id: Schema.String }),
 ]);
 export type TurnSkipProblem = typeof TurnSkipProblemSchema.Type;
 

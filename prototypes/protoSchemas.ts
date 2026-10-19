@@ -85,6 +85,13 @@ export const protoSchemas: Record<string, Schema.Top> = {
   questionList: Schema.Struct({ questions: Schema.Array(QuestionEntry) }),
   questionListResponse: Schema.Struct({ ...markedFields, questions: Schema.Array(QuestionEntry) }),
   interviewTurn: Schema.Struct({ message_to_user: Str, current_question: Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) }), asked_ids: Strings, answered_ids: Strings, complete: Schema.Boolean, summary: Str }),
+  interviewReply: Schema.Struct({
+    message_to_user: Str,
+    follow_ups: Schema.Array(Schema.Struct({ id: Str, context: Blocks, history: Blocks, text: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) })),
+    unnecessary: Schema.Array(Schema.Struct({ id: Str, reason: Str })),
+    complete: Schema.Boolean,
+    summary: Str,
+  }),
   decisionAnalysis: DecisionAnalysis,
   decisionResponse: Schema.Struct({ ...plannerFields, analysis: DecisionAnalysis }),
   decisionApplied: Schema.Struct({ analysis: DecisionAnalysis }),

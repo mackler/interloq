@@ -4,10 +4,10 @@
 
 import { type AgreedAnswer, type AgreedAnswers, type PremiseEntry, skippedQuestions, waitingFor } from "./premises.ts";
 import { clarificationCount } from "./schemaNormalize.ts";
-import type { InterviewTurn } from "./schema.ts";
+import type { InterviewReply } from "./schema.ts";
 
 /** A follow-up question Claude Code asked in a reply. */
-export type FollowUp = InterviewTurn["current_question"];
+export type FollowUp = InterviewReply["follow_ups"][number];
 
 /** What the first interview has done so far. */
 export type ClarificationState = Readonly<{
