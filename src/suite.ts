@@ -27,3 +27,27 @@ export const tailLines = (output: string, n: number): string => {
   const lines = (ended ? output.slice(0, -1) : output).split("\n");
   return lines.length <= n ? output : `${lines.slice(-n).join("\n")}${ended ? "\n" : ""}`;
 };
+
+/** Issue #181 (requirements Q2): a failure that is the work's fault, a nonzero exit or a signal; the plan is revised from it. */
+export type WorkFailure = Extract<SuiteFailure, { kind: "exit" | "signal" }>;
+/** Issue #181 (requirements Q1): a stop that is not the work's fault, the limit or a shell that could not start; never revised from. */
+export type OutsideStop = Extract<SuiteFailure, { kind: "timedOut" | "notStarted" }>;
+
+/** A suite run's result as the run acts on it (issue #181): passed, failed by the work, or stopped outside it. */
+export type SuiteVerdict =
+  | Readonly<{ _tag: "Passed" }>
+  | Readonly<{ _tag: "WorkFailed"; reason: WorkFailure }>
+  | Readonly<{ _tag: "Stopped"; reason: OutsideStop }>;
+
+export const suiteVerdictOf = (result: SuiteResult): SuiteVerdict => {
+  if (result._tag === "Passed") return { _tag: "Passed" };
+  const reason = result.reason;
+  switch (reason.kind) {
+    case "exit":
+    case "signal":
+      return { _tag: "WorkFailed", reason };
+    case "timedOut":
+    case "notStarted":
+      return { _tag: "Stopped", reason };
+  }
+};
