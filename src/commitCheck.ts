@@ -16,20 +16,22 @@ export type NonEmptyPaths = readonly [string, ...string[]];
 /** The outcome of the commit check: nothing of the run uncommitted, or the files it left uncommitted. */
 export type CommitCheck = Readonly<{ _tag: "Committed" }> | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths }>;
 
+/** Every path a record names: a rename names its destination and its source. */
+const pathsOf = (record: StatusRecord): readonly string[] => (record.kind === "renamed" ? [record.path, record.origPath] : [record.path]);
+
+const sortedSet = (paths: readonly string[]): string[] => [...new Set(paths)].sort();
+
 /**
  * The paths git lists as not committed, from the unfiltered porcelain v2 records: every record's path and a
  * rename's original path, each dropped on its own where `isExcluded` holds (a record dropped by its
  * destination would lose a source that is not excluded). Sorted and without duplicates.
  */
-export const uncommittedPaths = (records: readonly StatusRecord[], isExcluded: (path: string) => boolean): readonly string[] => {
-  void records;
-  void isExcluded;
-  return [];
-};
+export const uncommittedPaths = (records: readonly StatusRecord[], isExcluded: (path: string) => boolean): readonly string[] =>
+  sortedSet(records.flatMap(pathsOf).filter((p) => !isExcluded(p)));
 
 /** The paths of `now` not in `atStart`, sorted: `Committed` where there are none. */
 export const commitCheckOf = (atStart: readonly string[], now: readonly string[]): CommitCheck => {
-  void atStart;
-  void now;
-  return { _tag: "Committed" };
+  const before = new Set(atStart);
+  const [first, ...rest] = sortedSet(now.filter((p) => !before.has(p)));
+  return first === undefined ? { _tag: "Committed" } : { _tag: "Uncommitted", paths: [first, ...rest] };
 };
