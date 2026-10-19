@@ -53,7 +53,7 @@ test("(b) an execution that commits its file finishes after one iteration", asyn
 test("(c) a file uncommitted before the run began and changed again is not counted", async () => {
   const repo = tempRepo();
   writeIn(repo, "a.txt", "dirty before the run\n");
-  const { wiring, probe } = testWiring(repo, { ...one, execScripts: [{ after: () => writeIn(repo, "a.txt", "changed again by the run\n") }] });
+  const { wiring, probe } = testWiring(repo, { ...one, execScripts: [{ uncommitted: true, after: () => writeIn(repo, "a.txt", "changed again by the run\n") }] });
   assert.equal(await runOf(wiring, probe.project), 0);
   assert.equal(probe.planner.execPrompts.length, 1);
 });

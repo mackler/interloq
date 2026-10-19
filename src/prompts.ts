@@ -1496,7 +1496,9 @@ ${execution.plan}`;
  */
 /**
  * Why the plan is revised after execution phase k (issue #162): the execution and its work review ended with a stop or
- * a correction due, or the work review found nothing to correct and the whole suite Interloq then ran failed.
+ * a correction due, or the work review found nothing to correct and the whole suite Interloq then ran failed, or (issue
+ * #176) the work review found nothing to correct, the suite passed where one is named, and Interloq's commit check found
+ * files the run changed and left uncommitted. The run is finished only when the check finds nothing.
  */
 export type RevisionCause =
   | Readonly<{ _tag: "ExecutionEnded"; stopped: boolean; workReview: WorkReviewEnd }>
@@ -1658,7 +1660,8 @@ export function suiteBeganLine(label: string, command: string): string {
   return `\n${label}: Interloq runs the whole suite, ${command}, because the review of the work found nothing left to correct.`;
 }
 export function suitePassedLine(label: string, command: string): string {
-  return `${label} passed: ${command}. The run is finished.`;
+  // Issue #176: the commit check follows a passed suite, so the pass alone no longer finishes the run.
+  return `${label} passed: ${command}.`;
 }
 export function suiteFailedLine(label: string, command: string, reason: SuiteFailure, log: string): string {
   return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;

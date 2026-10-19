@@ -82,6 +82,12 @@ after(() => {
   for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
+/** The scripted execution's commit of its change to a.txt (issue #176): a.txt alone, so a test's other files stay as it left them. */
+const commitScriptedWork = (project: string): void => {
+  execFileSync("git", ["-C", project, "add", "--", "a.txt"]);
+  execFileSync("git", ["-C", project, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "scripted work", "--", "a.txt"]);
+};
+
 export function tempRepo(): string {
   const dir = tempDir("pr-test-");
   const git = (...args: string[]): void => void execFileSync("git", ["-C", dir, ...args]);
@@ -283,7 +289,8 @@ export type PlanningStep = { /** Issue #170: fails the call by the adapter's own
 /** `permission`: a permission request the call makes before its reports, asked as the adapter asks it (S49); the answer is recorded in `permissionAnswers`. */
 /** `usage` appends a Claude Code line to usage.jsonl with the session the execution ran on, as the adapter does (issue #117). */
 /** `sessionTooLong` fails the call with ClaudeSessionTooLong after its reports, as the adapter does (issue #122). */
-export type ExecScript = { usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
+/** `uncommitted` leaves the execution's change to a.txt uncommitted; by default it commits it, as the plan's last step does (issue #176). */
+export type ExecScript = { uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
 
 /** The paragraph of a context call's reply that a test does not script (S9): it keeps the rules. */
 export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks this question on behalf of the run." };
@@ -461,6 +468,8 @@ export class ScriptedPlanner implements PlannerShape {
       const outcome = self.execs.shift();
       if (!outcome) return yield* Effect.die(new Error("no scripted execution outcome"));
       fs.appendFileSync(path.join(self.state.project, "a.txt"), "implemented\n");
+      // Issue #176: the run is finished only when its changes are committed, so the scripted work commits its own.
+      if (!script.uncommitted) commitScriptedWork(self.state.project);
       return outcome;
     });
     if (ui === null) return body;

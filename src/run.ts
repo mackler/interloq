@@ -9,7 +9,7 @@ import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suitePassedLine, type WorkExecution } from "./prompts.ts";
+import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suitePassedLine, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath } from "./artifacts.ts";
 import { plainPieces, type ShownBlock } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
@@ -186,6 +186,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     /** A phase's label as the phases known now number it. */
     const label = (kind: NumberedPhaseKind, n: number): string => phaseName({ kind, n }, countOfKind(foreseen("implementation", shape()), kind));
 
+    /** A line said on the page and written to conversation.md (issues #162, #176). */
+    const sayAndWrite = (line: string) => Effect.andThen(ui.say(line), store.converse(`${line.trim()}\n\n`));
     /**
      * Suite run n (issue #162): the whole suite, run by Interloq in the project with no guard, its output written to
      * suite-<n>.log, its result said and written to conversation.md; the revision's cause where it failed, else null.
@@ -196,16 +198,12 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const phase: Phase = { kind: "suite", n };
         const name = label("suite", n);
         yield* ui.notify({ _tag: "PhaseBegan", phase });
-        const began = suiteBeganLine(name, command);
-        yield* ui.say(began);
-        yield* store.converse(`${began.trim()}\n\n`);
+        yield* sayAndWrite(suiteBeganLine(name, command));
         const result = yield* runner.run(command, store.project);
         yield* store.saveSuiteLog(n, result.output);
         const log = recordPath(store.root, { kind: "suiteLog", n });
         yield* ui.notify({ _tag: "PhaseEnded", phase, result: suiteOutcomeOf(result) });
-        const line = result._tag === "Passed" ? suitePassedLine(name, command) : suiteFailedLine(name, command, result.reason, log);
-        yield* ui.say(line);
-        yield* store.converse(`${line}\n\n`);
+        yield* sayAndWrite(result._tag === "Passed" ? suitePassedLine(name, command) : suiteFailedLine(name, command, result.reason, log));
         return result._tag === "Passed" ? null : ({ _tag: "SuiteFailed", suite: n, command, reason: result.reason, tail: tailLines(result.output, SUITE_TAIL_LINES), log } satisfies RevisionCause);
       });
 
@@ -285,16 +283,26 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         return yield* reviewLoop(workSubject(task, k, withRequirements, execution.work, checks));
       }).pipe(ownSession, inPhase({ kind: "work", n: k }));
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: work.result });
-      // The run is finished only when Claude Code reported finished and the work review converged, and then, where the
-      // project names a suite command, only when the whole suite passes (issue #162, G-R1-1, F1).
+      // The run is finished only when Claude Code reported finished and the work review converged, then, where the
+      // project names a suite command, only when the whole suite passes (issue #162, G-R1-1, F1), and then only when no
+      // file the run changed is uncommitted (issue #176, Q1): otherwise the plan is revised, without limit.
       if (!stopped && work.result === "converged") {
-        if (checks.suite === null) return k;
-        const n = suitedIterations.length + 1;
-        const failed = yield* suitePhase(checks.suite, n);
-        suitedIterations = [...suitedIterations, k];
-        if (failed === null) return k;
+        if (checks.suite !== null) {
+          const n = suitedIterations.length + 1;
+          const failed = yield* suitePhase(checks.suite, n);
+          suitedIterations = [...suitedIterations, k];
+          if (failed !== null) {
+            yield* foresee(k + 1);
+            previous = failed;
+            continue;
+          }
+        }
+        const committed = yield* store.uncommittedSinceStart();
+        if (committed._tag === "Committed") return k;
+        // The next iteration is known first, so that the line names this work review as the run now numbers it.
         yield* foresee(k + 1);
-        previous = failed;
+        yield* sayAndWrite(uncommittedLine(label("work", k), committed.paths, checks.suite));
+        previous = { _tag: "Uncommitted", paths: committed.paths, suite: checks.suite };
         continue;
       }
       yield* foresee(k + 1);
