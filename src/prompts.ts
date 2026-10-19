@@ -13,6 +13,7 @@ import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
 import { SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
 import type { ReviewThread } from "./reviewThread.ts";
+import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
 import type { TrackerOperation } from "./trackerRetry.ts";
 import { type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
@@ -779,6 +780,18 @@ const projectCommandLines = (checks: StepChecks): string =>
  * quotes beside it so that Codex holds each remaining step to the rule the writer was given.
  */
 export const STEP_CHECK_REVIEW_CRITERION = `Raise an issue for a remaining step whose text names no check command, whose named checks run tests the step's change does not touch or are expected to take more than ${stepCheckMinutes} minutes together, or that runs the whole test suite.`;
+/**
+ * Issue #176 (requirements Q2): the plan's last step commits the run's changes, as the project's own instructions direct.
+ * It states no commit policy; it names what Interloq's commit check counts (`uncommittedSinceStart` of the Store), so the
+ * writer and the check agree on which files the run must leave committed.
+ */
+export const PLAN_COMMIT_STEP_RULE =
+  "The plan's last step commits the run's changes as the project's own instructions direct. Interloq does not count the run finished while a file the run changed is uncommitted, except files git ignores and does not track and the paths Interloq is configured to ignore; files that were already uncommitted when the run began are not counted.";
+/** Issue #176: the plan review's criterion, the counterpart of PLAN_COMMIT_STEP_RULE. */
+export const COMMIT_STEP_REVIEW_CRITERION = "Raise an issue for a plan whose remaining steps do not end with a step that commits the run's changes as the project's own instructions direct.";
+/** Issue #176: the execution prompt's sentence on committing, which states no commit policy either. */
+export const EXECUTION_COMMIT_SENTENCE =
+  "The work is not finished while the run's changes are uncommitted: commit them as the project's own instructions direct before you return status 'finished'. Files that were already uncommitted when the run began are not counted.";
 export const planStepCheckRule = (checks: StepChecks): string =>
   `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. ${STEP_CHECK_NAMED} ${STEP_CHECK_TOUCHED_ONLY} ${STEP_CHECK_NO_SUITE}${suiteSentence(checks.suite)}${projectCommandLines(checks)}`;
 /** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
@@ -813,6 +826,7 @@ ${requirements}${userDecisionsSentence(root)}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
+${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
@@ -826,6 +840,7 @@ ${planStatuses(root)}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
+${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
@@ -835,6 +850,7 @@ export const planApplyDecisionsPrompt = (root: RunRoot, checks: StepChecks): str
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
+${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 Do not modify any file.
 Return an empty questions_for_user array.`;
@@ -853,6 +869,9 @@ ${requirements}${planStatuses(root)} Steps with status 'done' are already implem
 The plan writer was given this rule on how a step checks its change:
 ${planStepCheckRule(checks)}
 ${STEP_CHECK_REVIEW_CRITERION}
+The plan writer was given this rule on committing the run's changes:
+${PLAN_COMMIT_STEP_RULE}
+${COMMIT_STEP_REVIEW_CRITERION}
 Put the step's id in the location field.
 ${logRules(root, log, prefix, round)}`;
 }
@@ -863,6 +882,7 @@ ${respondRules(root, "you amend the plan for it")}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
+${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 Do not modify any file.`;
 }
@@ -963,6 +983,7 @@ ${RELAYED_SHAPE}
 ${questionWritingRules()}
 ${planStepCheckRule(checks)}
 ${REPORT_CHECKS_SENTENCE}
+${EXECUTION_COMMIT_SENTENCE}
 ${BACKGROUND_SUITE_SENTENCE}
 ${CONTINUING_STATUS_SENTENCE}
 ${BLOCKED_STATUS_SENTENCE}
@@ -1479,7 +1500,8 @@ ${execution.plan}`;
  */
 export type RevisionCause =
   | Readonly<{ _tag: "ExecutionEnded"; stopped: boolean; workReview: WorkReviewEnd }>
-  | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: SuiteFailure; tail: string; log: string }>;
+  | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: SuiteFailure; tail: string; log: string }>
+  | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: CommandLine | null }>;
 
 /** A suite run's failure in words (issue #162): its exit code, the signal that ended it, the bound, or why it did not start. */
 export function suiteFailureText(reason: SuiteFailure): string {
@@ -1511,6 +1533,13 @@ const revisionCauseText = (root: RunRoot, phase: number, cause: RevisionCause): 
 ${codeFence(cause.tail)}
 ${cause.tail}${cause.tail.endsWith("\n") ? "" : "\n"}${codeFence(cause.tail)}
 Revise the plan with steps that correct this failure; each step still checks its change under the rule below, and Interloq runs the whole suite again after the next review of the work finds nothing left to correct.`;
+    case "Uncommitted": {
+      const passed = cause.suite === null ? "" : ` Interloq then ran the whole suite, ${codeSpan(cause.suite)}, and it passed.`;
+      const suiteAgain = cause.suite === null ? "" : " and the whole suite passes";
+      return `\nWork review ${phase} found nothing left to correct.${passed} Interloq then found these files changed by the run and not committed:
+${cause.paths.map((p) => `- ${codeSpan(p)}`).join("\n")}
+The run is not finished while they are uncommitted. Revise the plan with steps that commit them as the project's own instructions direct; Interloq checks again after the next review of the work finds nothing left to correct${suiteAgain}.`;
+    }
   }
 };
 
@@ -1524,6 +1553,7 @@ ${planStatuses(root)} An unfinished step counts as remaining.
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
+${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
@@ -1632,6 +1662,12 @@ export function suitePassedLine(label: string, command: string): string {
 }
 export function suiteFailedLine(label: string, command: string, reason: SuiteFailure, log: string): string {
   return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
+}
+/** Issue #176: the line of a commit check that found files the run left uncommitted, said on the page and written to conversation.md. */
+export function uncommittedLine(label: string, paths: NonEmptyPaths, suite: string | null): string {
+  const after = suite === null ? `${label} found nothing left to correct` : `${label} found nothing left to correct and the whole suite, ${suite}, passed`;
+  const again = suite === null ? "" : " and the suite passes";
+  return `${after}, but the run left ${paths.length === 1 ? "this file" : "these files"} uncommitted: ${paths.join(", ")}. Claude Code revises the plan to commit ${paths.length === 1 ? "it" : "them"}, and Interloq checks again after the next review of the work finds nothing left to correct${again}.`;
 }
 /** Issue #162: a Full test suite's result as the progress rail shows it. */
 export function suiteResultText(outcome: SuiteOutcome): string {
