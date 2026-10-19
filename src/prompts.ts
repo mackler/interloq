@@ -1723,7 +1723,7 @@ export function suiteRepeatLine(label: string, command: string): string {
 }
 /** Issue #181: the question when the final suite was stopped outside the work after the one automatic repeat. */
 export function suiteStoppedQuestion(label: string, command: string): string {
-  return `${label}, the whole suite ${command} that Interloq runs before the run can finish, was stopped again before it finished; the reason and its output are shown under "${attachedHeading("fault")}". Do you want Interloq to run the suite again, or to stop the run?`;
+  return `${label}, the whole suite ${command} that Interloq runs before the run can finish, was stopped again before it finished; the reason and its output are shown under "${attachedHeading("suiteStop")}". Do you want Interloq to run the suite again, or to stop the run?`;
 }
 export const SUITE_RUN_AGAIN = "Run the suite again";
 export const SUITE_STOP = "Stop the run";
@@ -2944,6 +2944,8 @@ export function attachedHeading(kind: AttachedKind): string {
       return "What Happened in the Review";
     case "fault":
       return "Why the Agent Could Not Be Reached";
+    case "suiteStop":
+      return "Why the Suite Was Stopped";
   }
 }
 /** An agreed question's default, as its option's description marks it (S18). */

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseTransportAnswer } from "../src/input.ts";
 import { suiteStoppedOptions } from "../src/offer.ts";
-import { originLine, fallbackContext, SUITE_RUN_AGAIN, SUITE_STOP, suiteFailureText, suiteRepeatLine, suiteStoppedLine, suiteStoppedQuestion, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { attachedHeading, originLine, fallbackContext, SUITE_RUN_AGAIN, SUITE_STOP, suiteFailureText, suiteRepeatLine, suiteStoppedLine, suiteStoppedQuestion, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
 import type { QuestionOrigin } from "../src/question.ts";
 import type { OutsideStop } from "../src/suite.ts";
 
@@ -38,4 +38,10 @@ test("the question, the origin's line, the program's context and the halt name t
   assert.match(originLine(origin, null), /suite/u);
   assert.ok(fallbackContext(origin).includes("npm test"));
   assert.ok(suiteStoppedText("npm test", 2, 2, "it could not be started (x)").includes("it could not be started (x)"));
+});
+
+test("the question names the suite's own heading, never the heading of an agent that could not be reached (W1-R1-2)", () => {
+  const question = suiteStoppedQuestion("Full test suite 2", "npm test");
+  assert.ok(question.includes(attachedHeading("suiteStop")), question);
+  assert.ok(!question.includes(attachedHeading("fault")), question);
 });

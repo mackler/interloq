@@ -279,7 +279,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           }
           const reason = suiteFailureText(verdict.reason);
           const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops, reason };
-          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(suiteStoppedQuestion(name, command)), options: suiteStoppedOptions(), attached: attachedOf("fault", suiteStoppedDetails(verdict.reason, log)), explain: suiteStoppedFacts(command, n, stops, reason, log), decision: null };
+          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(suiteStoppedQuestion(name, command)), options: suiteStoppedOptions(), attached: attachedOf("suiteStop", suiteStoppedDetails(verdict.reason, log)), explain: suiteStoppedFacts(command, n, stops, reason, log), decision: null };
           const answer = yield* askOffering((p) => ui.ask(p), transportPrompt, draft, (a) => parseTransportAnswer(a) !== null).pipe(inPhase({ kind: "suite", n }));
           if (parseTransportAnswer(answer) === "stop") return yield* Effect.fail(new SuiteStopped({ command, suite: n, stops, reason }));
         }

@@ -8,7 +8,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
-import { FULL_SUITE_PHASE, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { attachedHeading, FULL_SUITE_PHASE, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { piecesText } from "../src/pieces.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import { fakeTrackerOf, finished, presentedQuestions, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
@@ -118,6 +119,11 @@ test("(g) a suite stopped twice asks Run the suite again or Stop; Run the suite 
   assert.equal(suiteQuestions(probe).length, 1);
   assert.equal(probe.suite.runs.length, 3);
   assert.equal(planningsBegan(probe.ui.notified), 1, "the plan was revised");
+  // W1-R1-2: the material is the suite's own kind, and the question names the heading the page shows it under.
+  const [question] = suiteQuestions(probe);
+  assert.ok(question.attached !== null);
+  assert.equal(question.attached.kind, "suiteStop");
+  assert.ok(piecesText(question.question).includes(attachedHeading(question.attached.kind)), piecesText(question.question));
 });
 
 test("(h) a suite stopped twice, answered Stop: the run halts with 1 and SuiteStopped", async () => {
