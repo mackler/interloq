@@ -521,6 +521,10 @@ const inQuestionPhase = (timeline: readonly TimelineEntry[], f: (steps: readonly
 /** The group with the cycle of `round` changed by `f`. */
 const inCycle = (g: RoundGroup, round: number, f: (c: Cycle) => Cycle): RoundGroup => ({ ...g, rounds: g.rounds.map((c) => (c.round === round ? f(c) : c)) });
 
+/** The active clarification step's count, added to what the step held before it (issue #51); issues #21 and #184. */
+const counted = (timeline: readonly TimelineEntry[], count: Readonly<{ answered: number; total: number }>): readonly TimelineEntry[] =>
+  inQuestionPhase(timeline, (steps) => steps.map((st) => (st.state === "active" && st.kind === "clarification" ? { ...st, count: plus(st.base, count) } : st)));
+
 /** A notified event of the run. */
 const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
   switch (event._tag) {
@@ -576,10 +580,12 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       const body = event.summary === null ? event.message : `${event.message}\n\n**${SUMMARY_PROPOSED_HEADING}**\n\n${event.summary}`;
       // Issue #5: the interview's turns are Claude's words, so they are Claude's messages.
       // Issue #21: the turn's count is the active clarification step's.
-      const count = { answered: event.answered, total: event.total };
-      const timeline = inQuestionPhase(run.timeline, (steps) => steps.map((st) => (st.state === "active" && st.kind === "clarification" ? { ...st, count: plus(st.base, count) } : st)));
+      const timeline = counted(run.timeline, { answered: event.answered, total: event.total });
       return { ...withLeft({ ...run, timeline }, message(run, time, "claude", body, "markdown", event.heading)), absorb: interviewSays(turn) };
     }
+    case "InterviewCounted":
+      // Issue #184: Interloq counts each answer as it is given; the count alone changes, and no message is added.
+      return { ...run, timeline: counted(run.timeline, { answered: event.answered, total: event.total }) };
     case "InterviewOpened": {
       // Issue #21: the step before ends, and the clarification opens as a step with its total.
       const fresh = { answered: 0, total: event.total };

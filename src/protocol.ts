@@ -178,6 +178,7 @@ export const UiEventSchema = Schema.Union([
   tagged("UsageLimitLifted", { agent: AgentSchema, waitedMs: Schema.Finite }),
   tagged("AgentReconnecting", { agent: AgentSchema, by: Schema.Literal("sdk"), attempt: Schema.NullOr(Int), of: Schema.NullOr(Int), delayMs: Schema.NullOr(Int), detail: Str }),
   tagged("InterviewTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),
+  tagged("InterviewCounted", { answered: Int, total: Int }),
   tagged("TermsBegan", {}),
   tagged("InterviewOpened", { heading: Str, stage: Schema.Literals(["clarification", "followUp"]), total: Int }),
   tagged("ClaudeSaid", { text: Str }),

@@ -367,6 +367,24 @@ describe("the steps of Gather Requirements", () => {
     expect(replayed(through).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
   });
 
+  // Issue #184: Interloq counts the answers as they are given, between Claude Code's replies.
+  test("InterviewCounted sets the clarification's count, adds no message and leaves the pending prompt", () => {
+    const counted = (answered: number, total: number) => notified({ _tag: "InterviewCounted", answered, total });
+    const base = [...through, asked(1, prompts.interviewMessagePrompt)];
+    const before = fold(live(base));
+    const s = fold(live([...base, counted(4, 7)]));
+    expect(steps(s)?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "4/7", ""]);
+    expect(s.modes.implementation.run?.left.length).toBe(before.modes.implementation.run?.left.length);
+    expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(1);
+    const followUp = [...through, turn(7, 7, "# R"), round("requirements", 1), opened("followUp", 2), counted(1, 2)];
+    expect(steps(fold(live(followUp)))?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "8/9", "Requirements review:1"]);
+  });
+
+  test("a pending prompt survives a call that starts and ends after it (the interview's request beside a question)", () => {
+    const s = fold(live([...through, asked(1, prompts.interviewMessagePrompt), notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview" }), notified({ _tag: "AgentCallEnded", agent: "claude", ok: true })]));
+    expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(1);
+  });
+
   // Issue #51 (Q4): the follow-up clarifications are one conversation with the clarification, so they fold into its
   // step: the counts are summed, and the requirements review is one group of cycles under it.
   test("a follow-up clarification folds into the Clarification step: counts summed, one group of the requirements review", () => {

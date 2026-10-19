@@ -54,6 +54,8 @@ export type UiEvent =
   | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; waitedMs: number }>
   /** `answered` of `total` questions so far (issue #21): the agreed ones and the follow-ups Claude reports asking. */
   | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
+  /** Issue #184: the clarification's count, which Interloq updates as each answer is given, between Claude Code's replies. */
+  | Readonly<{ _tag: "InterviewCounted"; answered: number; total: number }>
   /**
    * Claude Code begins writing the explanations of the agreed questions' terms before the first question (issue #142),
    * reviewed or not; never notified for one question's terms written on request.
@@ -166,6 +168,8 @@ export const describeEvent = (event: UiEvent): string => {
       return usageLimitLiftedLine(event.agent, event.waitedMs);
     case "InterviewTurn":
       return `${event.heading} (${event.answered} of ${event.total} answered): ${event.message}`;
+    case "InterviewCounted":
+      return `${event.answered} of ${event.total} answered`;
     case "TermsBegan":
       return "explanations of terms begun";
     case "InterviewOpened":
