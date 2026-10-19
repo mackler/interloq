@@ -122,7 +122,7 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
         const ids = response.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
         if (ids.length === 0) return;
         const { root } = yield* Store;
-        yield* interview(prompts.interviewGapsPrompt(root, recordPath(root, { kind: "review", subject: id, round }), ids), "followUp", ids, { kind: "never" });
+        yield* interview(prompts.interviewGapsPrompt(root, recordPath(root, { kind: "review", subject: id, round }), ids), ids);
       }),
     proceed: prompts.PROCEED_TO_PLANNING,
     leaveOnAcceptance: false,

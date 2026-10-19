@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { marked } from "marked";
 import { type PresentedQuestion, type ShownExplanation, shownExplanations } from "../src/question.ts";
 import { programWritten } from "../src/questionContext.ts";
-import { CONTEXT_REQUEST_HEADING, confirmEndText, permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { CONTEXT_REQUEST_HEADING, confirmEndText, LIST_DONE_SENTENCE, permissionPrompt, recordSubject } from "../src/prompts.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { type Block, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
 import { askOffering, permissionDraft } from "../src/offer.ts";
@@ -101,7 +101,7 @@ export function tempRepo(): string {
 }
 
 /** One scripted answer: the text the user types, or a step that never completes (for interruption tests). */
-export type ScriptedAnswer = string | { readonly wait: true } | { readonly text: string; readonly before: () => void };
+export type ScriptedAnswer = string | { readonly wait: true } | { readonly text: string; readonly before: () => void } | { readonly text: string; /** Issue #184: the answer is given once this promise resolves. */ readonly when: () => Promise<void> };
 
 /** A promise that resolves when `signal` is next called; for tests that wait for a double to be reached. */
 const readiness = (): { wait: () => Promise<void>; signal: () => void } => {
@@ -183,6 +183,10 @@ export class ScriptedUi implements UiShape {
       if (answer === undefined) return Effect.die(new Error(`no scripted answer for: ${prompt}`));
       if (typeof answer === "string") return Effect.succeed(answer);
       if ("wait" in answer) return Effect.never;
+      if ("when" in answer) {
+        const when = answer.when;
+        return Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(answer.text))));
+      }
       answer.before();
       return Effect.succeed(answer.text);
     });
@@ -248,6 +252,15 @@ export const currentOf = (w: Words & Readonly<{ id: string; text: string }>): S.
   const { question, ...rest } = piecesOfWords(w, w.text);
   return { id: w.id, ...rest, text: question };
 };
+/** Issue #184: a reply of the first interview that acknowledges, with a message and anything else it carries. */
+export const ack = (message = "", extra: Partial<S.InterviewReply> = {}): S.InterviewReply => ({ message_to_user: message, follow_ups: [], unnecessary: [], complete: false, summary: "", ...extra });
+/** Issue #184: a follow-up question of a reply, from words written as strings. */
+export const followUpOf = (id: string, question: string, answers: readonly string[]): S.InterviewReply["follow_ups"][number] => {
+  const { question: text, ...rest } = piecesOfWords({ context: `Context of ${id}.`, options: answers.map((a) => ({ label: a, description: "" })) }, question);
+  return { id, ...rest, text };
+};
+/** Issue #184: a closing reply that proposes the summary. */
+export const summaryReply = (summary: string, message = "Here is the summary."): S.InterviewReply => ack(message, { complete: true, summary });
 /** An agreed question-list entry from words written as strings. */
 export const entryOf = (w: Readonly<{ id: string; context: string; question: string; reason: string; proposed_answers: readonly Readonly<{ label: string; description: string }>[]; default_answer: string }>): S.QuestionEntry => ({
   id: w.id,
@@ -284,7 +297,7 @@ export const questionEntry = (id: string, question: string, answers: readonly (r
  * `callFailed` fails it with ClaudeCallFailed, as the adapter fails a usage limit without one; `sessionTooLong` fails it
  * with ClaudeSessionTooLong, as the adapter fails a request refused because its session is too long (issue #122).
  */
-export type PlanningStep = { /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean };
+export type PlanningStep = { /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
 
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
@@ -376,7 +389,33 @@ export class ScriptedPlanner implements PlannerShape {
         this.sent(prompt);
         this.termsPrompts.push(prompt);
         const step = this.terms.shift();
-        return Effect.succeed({ output: step === undefined ? { entries: [] } : step.output, resultText: "", costUsd: 0.01 });
+        step?.onCall?.();
+        const root = this.root;
+        const callId = `scripted-${++root.callCount}`;
+        const notify = (e: UiEvent) => (root.ui === null ? Effect.void : root.ui.notify(e));
+        return notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId }).pipe(
+          Effect.andThen(this.gated(step ?? {}, Effect.succeed({ output: step === undefined ? { entries: [] } : step.output, resultText: "", costUsd: 0.01 }))),
+          Effect.onExit((exit) => notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit), callId })),
+        );
+      });
+    }
+    // Issue #184: the first interview's replies have their own scripts: a closing request (one carrying
+    // LIST_DONE_SENTENCE) takes from `closings`, which a test must script, and any other from `replies`, an empty
+    // acknowledgment without one; how many requests there are depends on how answers were batched.
+    if (schema === S.InterviewReply) {
+      return Effect.suspend(() => {
+        const root = this.root;
+        this.sent(prompt);
+        root.clarificationPrompts.push(prompt);
+        const closing = prompt.includes(LIST_DONE_SENTENCE);
+        const step = closing ? root.closings.shift() : root.replies.shift();
+        if (closing && step === undefined) return Effect.die(new Error(`no scripted closing reply for: ${prompt.slice(0, 200)}`));
+        const callId = `scripted-${++root.callCount}`;
+        const notify = (e: UiEvent) => (root.ui === null ? Effect.void : root.ui.notify(e));
+        return notify({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId }).pipe(
+          Effect.andThen(this.gated(step ?? {}, Effect.suspend(() => this.outcome(step ?? { output: ack() }, schema)))),
+          Effect.onExit((exit) => notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit), callId })),
+        );
       });
     }
     if (purpose === "context") {
@@ -424,6 +463,30 @@ export class ScriptedPlanner implements PlannerShape {
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
       return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
     });
+  }
+  /** Issue #184: the scripted replies of the first interview, apart from `steps`, and the prompts they answered. */
+  replies: PlanningStep[] = [];
+  closings: PlanningStep[] = [];
+  readonly clarificationPrompts: string[] = [];
+  /** Issue #184: the Ui the interview's and the terms' calls notify their start and end to, with ids of this counter. */
+  ui: UiShape | null = null;
+  callCount = 0;
+  /** A step's gate, waited for interruptibly before the call's outcome (issue #184). */
+  private gated<A, E>(step: PlanningStep, then: Effect.Effect<A, E>): Effect.Effect<A, E> {
+    const gate = step.gate;
+    if (gate === undefined) return then;
+    return Effect.callback<void>((resume) => void gate().then(() => resume(Effect.void))).pipe(Effect.andThen(then));
+  }
+  /** The outcome of a scripted step of the interview: its failure, or its output. */
+  private outcome(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
+    step.onCall?.();
+    if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
+    if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
+    if (step.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
+    if (step.failure !== undefined) return Effect.fail(callFailure(step.failure.message, step.failure.facts));
+    if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
+    if (step.usage) this.recordUsage();
+    return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
   }
   /** The text of the last plan scripted, which a reply without `plan` returns unchanged (issue #6, F1). */
   private lastPlan: string | null = null;
@@ -580,7 +643,7 @@ export class ScriptedSuite implements SuiteRunnerShape {
 }
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked
@@ -633,6 +696,9 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   const planner = new ScriptedPlanner(paths, options.steps ?? [], options.execs ?? [], options.execScripts ?? []);
   planner.contexts = [...(options.contexts ?? [])];
   planner.terms = [...(options.terms ?? [])];
+  planner.replies = [...(options.replies ?? [])];
+  planner.closings = [...(options.closings ?? [])];
+  planner.ui = ui;
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   const wrap = options.store ?? ((s: StoreShape) => s);
@@ -734,6 +800,9 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   const planner = new ScriptedPlanner(paths, options.steps ?? [], options.execs ?? [], options.execScripts ?? []);
   planner.contexts = [...(options.contexts ?? [])];
   planner.terms = [...(options.terms ?? [])];
+  planner.replies = [...(options.replies ?? [])];
+  planner.closings = [...(options.closings ?? [])];
+  planner.ui = ui;
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   const tracker = options.tracker === undefined ? fakeTrackerOf([scriptedItem]) : options.tracker;
