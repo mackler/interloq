@@ -210,14 +210,17 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
     let known = 1;
-    // Issue #162: the iterations whose suite run has run, in order; where a suite command is set, the next suite run
-    // follows the last known iteration, and moves to a new last one when a stop or a correction adds it.
-    let suitedIterations: readonly number[] = [];
+    // Issue #162: the suite runs so far, in order, each with its iteration and whether it passed (run n is the n-th);
+    // where a suite command is set, the next suite run follows the last known iteration, unless that iteration's last
+    // run passed, and moves to a new last one when a stop or a correction adds it. Issue #181: an iteration may hold
+    // several runs, a repeat after a stop outside the work following the run it repeats.
+    let suiteRuns: ReadonlyArray<Readonly<{ iteration: number; passed: boolean }>> = [];
     const shape = (): readonly Iteration[] =>
       iterationsOf(known).map((_, i) => {
-        const ran = suitedIterations.indexOf(i + 1);
-        if (ran >= 0) return { suite: ran + 1 };
-        return { suite: checks.suite !== null && i + 1 === known ? suitedIterations.length + 1 : null };
+        const ran = suiteRuns.flatMap((r, j) => (r.iteration === i + 1 ? [j + 1] : []));
+        const last = ran.at(-1);
+        const pending = checks.suite !== null && i + 1 === known && (last === undefined || !suiteRuns[last - 1].passed);
+        return { suites: pending ? [...ran, suiteRuns.length + 1] : ran };
       });
     const foreseeShape = Effect.suspend(() => ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", shape()) }));
     const foresee = (iterations: number) => (iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), foreseeShape)));
@@ -325,9 +328,9 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       // file the run changed is uncommitted (issue #176, Q1): otherwise the plan is revised, without limit.
       if (!stopped && work.result === "converged") {
         if (checks.suite !== null) {
-          const n = suitedIterations.length + 1;
+          const n = suiteRuns.length + 1;
           const failed = yield* suitePhase(checks.suite, n);
-          suitedIterations = [...suitedIterations, k];
+          suiteRuns = [...suiteRuns, { iteration: k, passed: failed === null }];
           if (failed !== null) {
             yield* foresee(k + 1);
             previous = failed;

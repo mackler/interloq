@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { countOfKind, describeEvent, foreseenPhases, iterationsOf, phaseName, type UiEvent } from "../src/uiEvents.ts";
+import { countOfKind, describeEvent, foreseenPhases, type Iteration, iterationsOf, phaseName, type UiEvent } from "../src/uiEvents.ts";
 import { para, plain } from "./helpers.ts";
 import { Result } from "effect";
 import { shownExplanations } from "../src/question.ts";
@@ -83,13 +83,15 @@ test("foreseenPhases: a refinement run foresees Gather Requirements alone; an im
 
 // Issue #162: an iteration with a suite run is followed by its Full test suite, numbered by the run's suite runs.
 test("foreseenPhases: each iteration's suite run follows its Code review, numbered by the suite runs", () => {
-  const names = (iterations: readonly { suite: number | null }[]): string[] => {
+  const names = (iterations: readonly Iteration[]): string[] => {
     const phases = foreseenPhases("implementation", iterations);
     return phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
   };
-  assert.deepEqual(names([{ suite: 1 }]), ["Planning", "Implementation", "Code review", "Full test suite"]);
-  assert.deepEqual(names([{ suite: 1 }, { suite: 2 }]), ["Planning 1", "Implementation 1", "Code review 1", "Full test suite 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite 2"]);
-  assert.deepEqual(names([{ suite: null }, { suite: 1 }]), ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite"]);
+  assert.deepEqual(names([{ suites: [1] }]), ["Planning", "Implementation", "Code review", "Full test suite"]);
+  assert.deepEqual(names([{ suites: [1] }, { suites: [2] }]), ["Planning 1", "Implementation 1", "Code review 1", "Full test suite 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite 2"]);
+  assert.deepEqual(names([{ suites: [] }, { suites: [1] }]), ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite"]);
+  // Issue #181: a suite run repeated after a stop outside the work follows the first in the same iteration.
+  assert.deepEqual(names([{ suites: [] }, { suites: [1, 2] }]), ["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2", "Full test suite 1", "Full test suite 2"]);
 });
 
 // Issue #170: each basis of a usage limit's wait is described by the prompts' line for it.

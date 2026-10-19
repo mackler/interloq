@@ -98,14 +98,17 @@ export const phaseName = (phase: Phase, count: number): string => (phase.kind ==
 export const countOfKind = (phases: readonly Phase[], kind: Phase["kind"]): number => phases.filter((p) => p.kind === kind).length;
 /** The name of a phase in test output: always numbered. */
 const numberedName = (phase: Phase): string => phaseName(phase, 2);
-/** One iteration of an implementation run as foreseen: the number of the suite run that follows its work review, or none (issue #162). */
-export type Iteration = Readonly<{ suite: number | null }>;
+/**
+ * One iteration of an implementation run as foreseen: the numbers of the suite runs that follow its work review,
+ * numbered across the run, empty for none (issue #162; several since issue #181, a run repeated after a stop outside the work).
+ */
+export type Iteration = Readonly<{ suites: readonly number[] }>;
 /** n iterations with no suite run, the shape of a run whose project names no suite command. */
-export const iterationsOf = (n: number): readonly Iteration[] => Array.from({ length: n }, () => ({ suite: null }));
+export const iterationsOf = (n: number): readonly Iteration[] => Array.from({ length: n }, () => ({ suites: [] }));
 /**
  * The phases known of a run (issue #6): a refinement run is Gather Requirements alone, whatever the iterations (issue
  * #120); an implementation run is Planning, Implementation and Code review of each iteration known so far, each followed
- * by its Full test suite where it has one (issue #162).
+ * by its Full test suites where it has any (issue #162, issue #181).
  */
 export const foreseenPhases = (mode: RunMode, iterations: readonly Iteration[]): readonly Phase[] => {
   switch (mode) {
@@ -116,7 +119,7 @@ export const foreseenPhases = (mode: RunMode, iterations: readonly Iteration[]):
         { kind: "planning", n: i + 1 },
         { kind: "execution", n: i + 1 },
         { kind: "work", n: i + 1 },
-        ...(iteration.suite === null ? [] : [{ kind: "suite" as const, n: iteration.suite }]),
+        ...iteration.suites.map((n): Phase => ({ kind: "suite", n })),
       ]);
   }
 };

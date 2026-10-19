@@ -2058,10 +2058,10 @@ describe("the Full test suite phase (issue #162)", () => {
   ];
   const events: RunEvent[] = [
     started,
-    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", [{ suite: 1 }]) }),
+    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", [{ suites: [1] }]) }),
     ...iteration(1, 1),
     end({ kind: "suite", n: 1 }, "failed"),
-    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", [{ suite: 1 }, { suite: 2 }]) }),
+    notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", [{ suites: [1] }, { suites: [2] }]) }),
     ...iteration(2, 2),
     end({ kind: "suite", n: 2 }, "passed"),
   ];
