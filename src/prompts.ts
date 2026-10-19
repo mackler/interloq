@@ -11,7 +11,7 @@ import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
-import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type WorkFailure } from "./suite.ts";
+import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type SuiteStop, type WorkFailure } from "./suite.ts";
 import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
@@ -1733,13 +1733,45 @@ export function suiteStoppedOptionDescriptions(): Readonly<{ retry: string; stop
     stop: "the run ends here with exit code 1, its records are kept, and its item stays in the implementing state.",
   };
 }
-/** The facts of the suite's question a context call is given (issue #181). */
-export function suiteStoppedFacts(command: string, suite: number, stops: number, reason: string, log: string): string {
-  return `At the end of an implementation run, after the review of the work found nothing left to correct, Interloq ran the project's whole suite, ${command}, itself. Suite run ${suite} was stopped before it finished: ${reason}; its output is in ${log}. That is the stop number ${stops} in a row. A stop by the time limit or a shell that could not start is not a fault of the work, so the plan is not revised from it; Interloq repeats the suite once in the whole run without asking, and that repeat has been used.`;
+/** Whether the stop that used the automatic repeat is one of the stops of the question's own loop (issue #181, W1-R1-1). */
+const repeatedAmong = (stops: readonly SuiteStop[], repeated: SuiteStop): boolean => stops.some((s) => s.suite === repeated.suite);
+/**
+ * The facts of the suite's question a context call is given (issue #181, W1-R1-1): every stop of the question's loop
+ * with its reason and its log, how many in a row, and the stop after which the one automatic repeat was used.
+ */
+export function suiteStoppedFacts(command: string, stops: readonly [...SuiteStop[], SuiteStop], repeated: SuiteStop): string {
+  const each = stops.map((s) => `Suite run ${s.suite} was stopped before it finished: ${suiteFailureText(s.reason)}; its output is in ${s.log}.`).join(" ");
+  const where = repeatedAmong(stops, repeated) ? "" : ` (earlier in the run: ${suiteFailureText(repeated.reason)}; its output is in ${repeated.log})`;
+  return `At the end of an implementation run, after the review of the work found nothing left to correct, Interloq ran the project's whole suite, ${command}, itself. ${each} That is ${stops.length} ${stops.length === 1 ? "stop" : "stops"} in a row. A stop by the time limit or a shell that could not start is not a fault of the work, so the plan is not revised from it; Interloq repeats the suite once in the whole run without asking, and used that repeat after suite run ${repeated.suite}${where}.`;
 }
-/** The attached material of the suite's question (issue #181): the reason and where the output is. */
-export function suiteStoppedDetails(reason: OutsideStop, log: string): readonly Block[] {
-  return [{ kind: "paragraph", pieces: [plainPiece(`The suite run ended because ${suiteFailureText(reason)}. Its whole output is in `), codePiece(log), plainPiece(".")] }];
+/**
+ * The attached material of the suite's question (issue #181, W1-R1-1, P2-R1-1): one item per stop with its reason and
+ * its log; the stop that used the automatic repeat first where it is not among them, so every stop the question rests on
+ * is listed with its log.
+ */
+export function suiteStoppedDetails(stops: readonly [...SuiteStop[], SuiteStop], repeated: SuiteStop): readonly Block[] {
+  const item = (s: SuiteStop) => ({
+    level: 0,
+    pieces: [plainPiece(`Suite run ${s.suite} was stopped because ${suiteFailureText(s.reason)}${s.suite === repeated.suite ? ", and Interloq then used its one automatic repeat of the suite in this run" : ""}. Its whole output is in `), codePiece(s.log), plainPiece(".")],
+  });
+  const listed = repeatedAmong(stops, repeated) ? stops : [repeated, ...stops];
+  return [{ kind: "list", items: listed.map(item) }];
+}
+/**
+ * What led to the suite's question (issue #181, W1-R1-1): one paragraph per earlier event, the automatic repeat and each
+ * later stop after which the developer chose Run the suite again; the last stop, the question's subject, is not in it.
+ */
+export function suiteStoppedHistory(stops: readonly [...SuiteStop[], SuiteStop], repeated: SuiteStop): readonly Block[] {
+  const paragraph = (text: string): Block => ({ kind: "paragraph", pieces: [plainPiece(text)] });
+  const earlier = repeatedAmong(stops, repeated) ? [] : [paragraph(`Earlier in the run, suite run ${repeated.suite} was stopped because ${suiteFailureText(repeated.reason)}, and Interloq ran the suite again without asking: its one automatic repeat in the run, which is now used.`)];
+  const before = stops.slice(0, -1).map((s) =>
+    paragraph(
+      s.suite === repeated.suite
+        ? `Suite run ${s.suite} was stopped because ${suiteFailureText(s.reason)}, and Interloq ran the suite again once without asking: its one automatic repeat in the run.`
+        : `Suite run ${s.suite} was stopped because ${suiteFailureText(s.reason)}, and you chose ${SUITE_RUN_AGAIN}.`,
+    ),
+  );
+  return [...earlier, ...before];
 }
 /** Issue #181: the halt when the developer stops the run at the suite's question. */
 export function suiteStoppedText(command: string, suite: number, stops: number, reason: string): string {

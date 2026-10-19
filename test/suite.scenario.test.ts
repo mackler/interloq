@@ -9,7 +9,8 @@ import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
 import { attachedHeading, FULL_SUITE_PHASE, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
-import { piecesText } from "../src/pieces.ts";
+import { recordPath, type RunRoot } from "../src/artifacts.ts";
+import { blocksText, piecesText } from "../src/pieces.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import { fakeTrackerOf, finished, presentedQuestions, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
@@ -93,6 +94,8 @@ const lastForeseen = (notified: readonly { _tag: string }[]): string[] =>
   (notified.filter((e) => e._tag === "PhasesForeseen").at(-1) as unknown as { phases: { kind: string; n?: number }[] }).phases.map((p) => `${p.kind}${p.n ?? ""}`);
 const planningsBegan = (notified: readonly { _tag: string }[]): number =>
   notified.filter((e) => e._tag === "PhaseBegan" && (e as unknown as { phase: { kind: string } }).phase.kind === "planning").length;
+/** The run's root as the store names it: the last two components of its records directory (runs/<root>). */
+const rootOf = (dir: string): RunRoot => path.relative(path.join(dir, "..", ".."), dir) as RunRoot;
 const suiteQuestions = (probe: { ui: Parameters<typeof presentedQuestions>[0] }) => presentedQuestions(probe.ui).filter((q) => q.origin.kind === "suiteStopped");
 
 for (const [name, stop] of [["(f) a suite stopped by its limit", timedOut], ["(i) a suite that could not start", notStarted]] as const) {
@@ -124,6 +127,12 @@ test("(g) a suite stopped twice asks Run the suite again or Stop; Run the suite 
   assert.ok(question.attached !== null);
   assert.equal(question.attached.kind, "suiteStop");
   assert.ok(piecesText(question.question).includes(attachedHeading(question.attached.kind)), piecesText(question.question));
+  // W1-R1-1: both stops are named with their logs, and the history names suite run 1's automatic repeat.
+  const attached = blocksText(question.attached.blocks).join("\n");
+  for (const n of [1, 2]) assert.ok(attached.includes(recordPath(rootOf(probe.dir), { kind: "suiteLog", n })), attached);
+  const history = blocksText(question.history).join("\n");
+  assert.match(history, /[Ss]uite run 1\b/u);
+  assert.match(history, /automatic repeat/u);
 });
 
 test("(h) a suite stopped twice, answered Stop: the run halts with 1 and SuiteStopped", async () => {
@@ -162,5 +171,12 @@ test("(k) the automatic repeat is once per run: a later stop in another iteratio
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
   assert.equal(probe.suite.runs.length, 4, "a repeat, a failure, a stop asked about, a pass");
   assert.equal(suiteQuestions(probe).length, 1);
+  // W1-R1-1: the question's history names suite run 1, whose stop used the repeat in iteration 1, and its material that run's log.
+  const [question] = suiteQuestions(probe);
+  assert.ok(question.attached !== null);
+  assert.ok(blocksText(question.attached.blocks).join("\n").includes(recordPath(rootOf(probe.dir), { kind: "suiteLog", n: 1 })));
+  const history = blocksText(question.history).join("\n");
+  assert.match(history, /[Ss]uite run 1\b/u);
+  assert.match(history, /automatic repeat/u);
   assert.equal(planningsBegan(probe.ui.notified), 2);
 });

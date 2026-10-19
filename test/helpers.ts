@@ -301,8 +301,9 @@ export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks thi
  * options, the details and the explanations as the prompt gives them, unchanged.
  */
 export const scriptedContextReply = (prompt: string): S.QuestionContext => {
-  const data = JSON.parse(prompt.slice(prompt.indexOf(CONTEXT_REQUEST_HEADING) + CONTEXT_REQUEST_HEADING.length)) as Omit<S.QuestionContext, "context" | "history">;
-  return { context: para(SCRIPTED_CONTEXT.context), history: [], question: data.question, options: data.options, details: data.details, explanations: data.explanations };
+  // Issue #181 (P2-R1-1): the request carries the draft's history, which a reply that does what its prompt says keeps.
+  const data = JSON.parse(prompt.slice(prompt.indexOf(CONTEXT_REQUEST_HEADING) + CONTEXT_REQUEST_HEADING.length)) as Omit<S.QuestionContext, "context" | "history"> & { history?: S.QuestionContext["history"] };
+  return { context: para(SCRIPTED_CONTEXT.context), history: data.history ?? [], question: data.question, options: data.options, details: data.details, explanations: data.explanations };
 };
 
 export class ScriptedPlanner implements PlannerShape {

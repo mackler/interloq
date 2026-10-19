@@ -9,7 +9,8 @@ import { describe, type RunError, SuiteStopped, TrackerStepFailed, trackerFailur
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
+import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+  suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
@@ -21,7 +22,7 @@ import * as S from "./schema.ts";
 import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, type StoreError, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
-import { SUITE_TAIL_LINES, suiteOutcomeOf, suiteVerdictOf, tailLines } from "./suite.ts";
+import { SUITE_TAIL_LINES, type SuiteStop, suiteOutcomeOf, suiteVerdictOf, tailLines } from "./suite.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
 
 /**
@@ -252,17 +253,23 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         return { verdict, log, tail: tailLines(result.output, SUITE_TAIL_LINES) };
       });
 
-    /** Issue #181 (requirements Q1): whether the one automatic repeat of a suite stopped outside the work was used in this run. */
-    let repeatUsed = false;
+    /**
+     * Issue #181 (requirements Q1, W1-R1-1): the stop after which the run's one automatic repeat of a suite stopped
+     * outside the work was used, or null while it is unused, so the flag and the stop it records cannot disagree.
+     */
+    let repeated: SuiteStop | null = null;
     /**
      * The final suite after iteration k's work review found nothing left to correct (issue #162; issue #181, Q1 and Q2):
      * null where it passed; the revision's cause where the work failed it (an exit code or a signal). A stop outside the
      * work (the limit, or a shell that could not start) is never a cause: the first in the run is repeated at once
-     * without a question, and every later one asks Run the suite again or Stop, Stop halting with SuiteStopped.
+     * without a question, and every later one asks Run the suite again or Stop, Stop halting with SuiteStopped. The
+     * question names every stop of this call's loop and the stop that used the repeat (W1-R1-1).
      */
     const finalSuite = (command: S.CommandLine, k: number) =>
       Effect.gen(function* () {
-        for (let stops = 1; ; stops++) {
+        // The stops outside the work of this call's loop, in order.
+        let here: readonly SuiteStop[] = [];
+        for (;;) {
           const n = suiteRuns.length + 1;
           const { verdict, log, tail } = yield* suitePhase(command, n);
           suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed" }];
@@ -272,16 +279,29 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           yield* foreseeShape;
           const name = label("suite", n);
           yield* sayAndWrite(suiteStoppedLine(name, command, verdict.reason, log));
-          if (!repeatUsed) {
-            repeatUsed = true;
+          const latest: SuiteStop = { suite: n, reason: verdict.reason, log };
+          const stops: readonly [...SuiteStop[], SuiteStop] = [...here, latest];
+          here = stops;
+          if (repeated === null) {
+            repeated = latest;
             yield* sayAndWrite(suiteRepeatLine(name, command));
             continue;
           }
           const reason = suiteFailureText(verdict.reason);
-          const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops, reason };
-          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(suiteStoppedQuestion(name, command)), options: suiteStoppedOptions(), attached: attachedOf("suiteStop", suiteStoppedDetails(verdict.reason, log)), explain: suiteStoppedFacts(command, n, stops, reason, log), decision: null };
+          const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops: stops.length, reason };
+          const draft: QuestionDraft = {
+            origin,
+            context: programContext(origin),
+            history: suiteStoppedHistory(stops, repeated),
+            explanations: [],
+            question: plainPieces(suiteStoppedQuestion(name, command)),
+            options: suiteStoppedOptions(),
+            attached: attachedOf("suiteStop", suiteStoppedDetails(stops, repeated)),
+            explain: suiteStoppedFacts(command, stops, repeated),
+            decision: null,
+          };
           const answer = yield* askOffering((p) => ui.ask(p), transportPrompt, draft, (a) => parseTransportAnswer(a) !== null).pipe(inPhase({ kind: "suite", n }));
-          if (parseTransportAnswer(answer) === "stop") return yield* Effect.fail(new SuiteStopped({ command, suite: n, stops, reason }));
+          if (parseTransportAnswer(answer) === "stop") return yield* Effect.fail(new SuiteStopped({ command, suite: n, stops: stops.length, reason }));
         }
       });
 

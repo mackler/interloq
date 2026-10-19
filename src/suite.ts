@@ -33,6 +33,12 @@ export type WorkFailure = Extract<SuiteFailure, { kind: "exit" | "signal" }>;
 /** Issue #181 (requirements Q1): a stop that is not the work's fault, the limit or a shell that could not start; never revised from. */
 export type OutsideStop = Extract<SuiteFailure, { kind: "timedOut" | "notStarted" }>;
 
+/**
+ * One stop outside the work (issue #181, W1-R1-1): its suite run's number, its reason and the path of its
+ * `suite-<n>.log`, so that the suite's question names every stop it rests on.
+ */
+export type SuiteStop = Readonly<{ suite: number; reason: OutsideStop; log: string }>;
+
 /** A suite run's result as the run acts on it (issue #181): passed, failed by the work, or stopped outside it. */
 export type SuiteVerdict =
   | Readonly<{ _tag: "Passed" }>
