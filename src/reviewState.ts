@@ -326,7 +326,7 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
     status(`Issues: ${review.issues.length} total, ${counted} counted toward convergence.`),
   ];
   if (counted === 0) {
-    return done(state, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: `## ${heading}, round ${n}\n\n### Codex\n\nNo counted issue. The review of ${fileLabel} has converged.\n\n` }, checkpoint(state, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
+    return done(state, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: prompts.reviewConvergedMarkdown(heading, n, fileLabel) }, checkpoint(state, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
   }
   const reraised: Ask[] = log.reraisedIds(s.log, review).map((id) => {
     const taskDispute = markedEntry(s.log, id);

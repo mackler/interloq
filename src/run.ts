@@ -9,14 +9,15 @@ import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suitePassedLine, uncommittedLine, type WorkExecution } from "./prompts.ts";
-import { recordPath } from "./artifacts.ts";
+import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suitePassedLine, uncommittedLine, type WorkExecution } from "./prompts.ts";
+import { recordPath, type RunRoot } from "./artifacts.ts";
+import type { Baseline } from "./records.ts";
 import { plainPieces, type ShownBlock } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
-import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
+import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, type StoreError, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
 import { SUITE_TAIL_LINES, suiteOutcomeOf, tailLines } from "./suite.ts";
@@ -93,10 +94,15 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
     yield* converseHeld(held);
     yield* store.converse(`${itemStartedLine("implementation", item, firstLine(task))}\n\n`);
     const env = yield* runTrackerEnv;
-    const start = stateAtStart("implementation");
-    if (start !== null) yield* writeStep(tracker, { kind: "setState", item, state: start }, env, "setImplementing", null);
+    const atStart = stateAtStart("implementation");
+    if (atStart !== null) yield* writeStep(tracker, { kind: "setState", item, state: atStart }, env, "setImplementing", null);
     if (requirements !== null) yield* store.writeRequirements(requirements);
-    const phases = yield* implementationPhases(task, requirements !== null, checks);
+    // Issue #180 (Q1): the plan of the newest earlier run of the item whose plan review ended in agreement, without
+    // asking; after the requirements, so that the revision is written for the item's section as it stands now (Q5).
+    const earlier = yield* store.earlierPlan(item);
+    if (earlier._tag !== "NoEarlierPlan") yield* sayAndWrite(earlier._tag === "EarlierPlanTaken" ? earlierPlanTakenLine(earlier.root) : earlierPlanSetAsideLine(earlier.root));
+    const start: PlanStart = earlier._tag === "EarlierPlanTaken" ? { _tag: "Earlier", root: earlier.root, plan: earlier.plan, baseline: earlier.baseline } : { _tag: "Fresh" };
+    const phases = yield* implementationPhases(task, requirements !== null, checks, start);
     yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("implementation") }, env, "setImplemented", null);
     return phases;
   });
@@ -105,8 +111,36 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
 export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effect.Effect<number, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
     yield* (yield* Store).init(task);
-    return yield* implementationPhases(task, false, checks);
+    return yield* implementationPhases(task, false, checks, { _tag: "Fresh" });
   });
+
+/** A line said on the page and written to conversation.md (issues #162, #176, #180). */
+const sayAndWrite = (line: string): Effect.Effect<void, StoreError, Ui | Store> =>
+  Effect.gen(function* () {
+    yield* (yield* Ui).say(line);
+    yield* (yield* Store).converse(`${line.trim()}\n\n`);
+  });
+
+/**
+ * Where planning phase 1 starts (issue #180): from nothing, or from an earlier run's plan, its statuses carried, with
+ * that run's baseline, which this run adopts (Q4).
+ */
+export type PlanStart = Readonly<{ _tag: "Fresh" }> | Readonly<{ _tag: "Earlier"; root: RunRoot; plan: S.RecordedPlan; baseline: Baseline }>;
+/** Why a planning phase writes or revises the plan: the first plan, a plan taken from an earlier run (issue #180), or a revision. */
+export type PlanningCause = Readonly<{ _tag: "FirstPlan" }> | Readonly<{ _tag: "EarlierPlan"; root: RunRoot }> | RevisionCause;
+/** The prompt of planning phase k for its cause. */
+const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, k: number, cause: PlanningCause, checks: S.StepChecks): string => {
+  switch (cause._tag) {
+    case "FirstPlan":
+      return initialPlanPrompt(root, task, withRequirements, checks);
+    case "EarlierPlan":
+      return earlierPlanPrompt(root, task, withRequirements, cause.root, checks);
+    case "ExecutionEnded":
+    case "SuiteFailed":
+    case "Uncommitted":
+      return revisePlanAfterExecutionPrompt(root, task, withRequirements, k - 1, cause, checks);
+  }
+};
 
 /**
  * Planning phase K, execution phase K and work review K, until Claude Code reports 'finished' and the work review
@@ -148,7 +182,7 @@ const processEndedStop = (ended: PhaseProcessEnded, records: StepRecords): Reado
   };
 };
 
-const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks): Effect.Effect<number, RunError, Services | SuiteRunner> =>
+const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks, start: PlanStart): Effect.Effect<number, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -165,8 +199,13 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
      */
     const ownSession = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, Exclude<R, Planner>> =>
       Effect.flatMap(planner.fresh, (session) => Effect.provideService(body, Planner, session));
-    // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120).
-    yield* store.writeBaseline();
+    // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120). A run that takes
+    // an earlier run's plan adopts that run's baseline (issue #180, Q4) and starts from that plan (Q3).
+    if (start._tag === "Fresh") yield* store.writeBaseline();
+    else {
+      yield* store.adoptBaseline(start.baseline);
+      yield* store.savePlan(start.plan);
+    }
     // The SDK does not report which model answered a Codex turn; the configured one is all that can be said.
     yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
@@ -186,8 +225,6 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     /** A phase's label as the phases known now number it. */
     const label = (kind: NumberedPhaseKind, n: number): string => phaseName({ kind, n }, countOfKind(foreseen("implementation", shape()), kind));
 
-    /** A line said on the page and written to conversation.md (issues #162, #176). */
-    const sayAndWrite = (line: string) => Effect.andThen(ui.say(line), store.converse(`${line.trim()}\n\n`));
     /**
      * Suite run n (issue #162): the whole suite, run by Interloq in the project with no guard, its output written to
      * suite-<n>.log, its result said and written to conversation.md; the revision's cause where it failed, else null.
@@ -208,7 +245,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       });
 
     /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
-    let previous: RevisionCause | null = null;
+    let previous: PlanningCause = start._tag === "Fresh" ? { _tag: "FirstPlan" } : { _tag: "EarlierPlan", root: start.root };
     for (let k = 1; ; k++) {
       // The plan as this planning phase begins (issue #6, G-R1-1): its done steps and statuses do not change within the phase.
       const before = Option.getOrNull(yield* store.loadPlan());
@@ -216,9 +253,9 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       const reviewed = yield* Effect.gen(function* () {
         // Planning phase K: write or revise the plan, then review it.
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });
-        yield* ui.say(planningBeganLine(label("planning", k), previous === null));
+        yield* ui.say(planningBeganLine(label("planning", k), previous._tag === "FirstPlan"));
         // The reply is the plan (F1): validated, then written by the program as plan.json and plan.md.
-        const written = yield* planningCall(previous === null ? initialPlanPrompt(store.root, task, withRequirements, checks) : revisePlanAfterExecutionPrompt(store.root, task, withRequirements, k - 1, previous, checks), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
+        const written = yield* planningCall(planningPrompt(store.root, task, withRequirements, k, previous, checks), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
         yield* store.savePlanWrite(k, written.output);
         yield* savePlan(k, written.output.plan, before);
         yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: written.resultText });

@@ -11,7 +11,7 @@ import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { tempRepo, TEST_ROOT } from "./helpers.ts";
+import { EARLIER_ROOT, tempRepo, TEST_ROOT } from "./helpers.ts";
 
 const checks: S.StepChecks = Result.getOrThrow(S.stepChecksOf({ checkCommands: [], suiteCommand: "npm test" }));
 const suite = checks.suite;
@@ -24,6 +24,7 @@ test("every prompt that asks for the whole plan carries the commit step rule", (
     planApplyDecisionsPrompt: prompts.planApplyDecisionsPrompt(TEST_ROOT, checks),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, checks),
     revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", true, 1, { _tag: "ExecutionEnded", stopped: false, workReview: "converged" }, checks),
+    earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, checks),
   };
   for (const [name, text] of Object.entries(plans)) assert.ok(text.includes(prompts.PLAN_COMMIT_STEP_RULE), name);
 });

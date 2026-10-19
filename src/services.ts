@@ -6,7 +6,8 @@ import type { Brand, Option, Schema } from "effect";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { RunMode } from "./runMode.ts";
-import type { CheckpointPoint, RoundRecord } from "./records.ts";
+import type { Baseline, CheckpointPoint, RoundRecord } from "./records.ts";
+import type { EarlierPlan } from "./earlierPlan.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
 import type { CommitCheck } from "./commitCheck.ts";
@@ -146,6 +147,15 @@ export interface StoreShape {
    * a work review (issue #120). Built through a temporary index in the git directory; see workingTree in src/store.ts.
    */
   writeBaseline(): Effect.Effect<void, StoreError>;
+  /**
+   * The plan this run starts from (issue #180): of the item's earlier implementation runs under plan-review/runs/, newest
+   * first, the first whose plan review ended in agreement as its own records show (`latestQualifying`), its plan.json with its
+   * statuses carried and its baseline.json; set aside where that baseline or the git tree it names is gone (F1). It reads
+   * the earlier run's directory and writes nothing, there or here. No configuration decides it.
+   */
+  earlierPlan(item: ItemId): Effect.Effect<EarlierPlan, StoreError>;
+  /** Writes this run's baseline.json as an earlier run's (issue #180, Q4), in place of writeBaseline. */
+  adoptBaseline(baseline: Baseline): Effect.Effect<void, StoreError>;
   /**
    * The commit check (issue #176): the paths git lists now as not committed, less those it listed when writeBaseline ran,
    * less `plan-review/` and `ignorePaths` (a rename's two paths judged each on its own); a file git ignores and does not

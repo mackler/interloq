@@ -79,3 +79,13 @@ test("every prompt that names a record names it in the run's own records directo
 test("the planning hook's denials name the run's own records directory", () => {
   for (const text of [prompts.planningEditDenied(store.root), prompts.planningToolDenied(store.root)]) assert.ok(text.includes(`${runDir}/`));
 });
+
+// Issue #180: the prompt that revises a plan taken from an earlier run names this run's records and the earlier run's
+// directory, and no other directory under plan-review/.
+test("the earlier plan's prompt names the run's own records and the earlier run's directory alone", () => {
+  const earlier = runRootOf("implementation", "120", "2026-10-08T10:15:00.000Z");
+  const text = prompts.earlierPlanPrompt(store.root, "t", true, earlier, NO_STEP_CHECKS);
+  for (const artifact of [{ kind: "requirements" }, { kind: "decisions" }, { kind: "planFile" }] as const) assert.ok(text.includes(recordPath(store.root, artifact)), artifact.kind);
+  assert.ok(text.includes(`plan-review/${earlier}/`));
+  for (const m of text.matchAll(/plan-review\/[^\s'"`),;:]*/g)) assert.ok(m[0].startsWith(`${runDir}/`) || m[0].startsWith(`plan-review/${earlier}/`), m[0]);
+});

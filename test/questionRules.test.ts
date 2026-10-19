@@ -4,7 +4,7 @@ import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
-import { workExecution , TEST_ROOT } from "./helpers.ts";
+import { EARLIER_ROOT, workExecution , TEST_ROOT } from "./helpers.ts";
 
 test("the context rule names the five points, in the words the reviewer checks", () => {
   const context = prompts.QUESTION_RULES.find((r) => r.id === "context")!;
@@ -23,6 +23,7 @@ test("every prompt that may return questions_for_user carries the writer's rende
     prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
     prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
     prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stopped: false, workReview: "converged" }, NO_STEP_CHECKS),
+    prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS),
   ];
   for (const text of texts) assert.ok(text.includes(prompts.questionWritingRules()), text.slice(0, 80));
 });

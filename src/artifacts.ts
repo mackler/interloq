@@ -42,9 +42,26 @@ export type RunRoot = Brand.Branded<string, "RunRoot">;
 export const RUNS_DIR = "runs";
 /** The longest item id a root carries; an item id is the adapter's own and may be long. */
 const ITEM_IN_ROOT = 40;
-/** A run's root: the time with `:` and `.` replaced by `-`, as the archive names had; an item id's characters outside [A-Za-z0-9] become `_`. Total. */
+/** An item id as a root carries it: its characters outside [A-Za-z0-9] become `_`, cut to ITEM_IN_ROOT; never contains `-`. */
+export const itemInRoot = (item: string): string => item.replace(/[^A-Za-z0-9]/g, "_").slice(0, ITEM_IN_ROOT);
+/** A run's root: the time with `:` and `.` replaced by `-`, as the archive names had; the item as itemInRoot gives it. Total. */
 export const runRootOf = (mode: RunMode, item: string, startedAtIso: string): RunRoot =>
-  `${RUNS_DIR}/${startedAtIso.replace(/[:.]/g, "-")}-${mode}-${item.replace(/[^A-Za-z0-9]/g, "_").slice(0, ITEM_IN_ROOT)}` as RunRoot;
+  `${RUNS_DIR}/${startedAtIso.replace(/[:.]/g, "-")}-${mode}-${itemInRoot(item)}` as RunRoot;
+/**
+ * The roots of the item's implementation runs among the entry names of plan-review/runs/ (issue #180), without the
+ * run's own root, newest first: by the time part descending (its fixed-width form sorts as text), then by the clash
+ * suffix descending (none counting as 1). Since the item part never contains `-`, a trailing `-<k>` is the suffix.
+ */
+export const implementationRootsOf = (names: readonly string[], item: string, own: RunRoot): readonly RunRoot[] => {
+  // The item part is [A-Za-z0-9_] only, so it needs no escaping in the pattern.
+  const pattern = new RegExp(`^(\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z)-implementation-${itemInRoot(item)}(?:-([2-9]|[1-9]\\d+))?$`);
+  const runs = names.flatMap((name) => {
+    const m = pattern.exec(name);
+    const root = `${RUNS_DIR}/${name}` as RunRoot;
+    return m === null || root === own ? [] : [{ root, time: m[1], k: m[2] === undefined ? 1 : Number(m[2]) }];
+  });
+  return [...runs].sort((a, b) => (a.time === b.time ? b.k - a.k : a.time < b.time ? 1 : -1)).map((r) => r.root);
+};
 /** A root with the suffix that the store adds when the name exists: `-2` for k = 2. */
 export const suffixedRoot = (root: RunRoot, k: number): RunRoot => (k <= 1 ? root : (`${root}-${k}` as RunRoot));
 /** The path of an artifact of a run as messages and prompts name it, relative to the project: `plan-review/<root>/<path>`. */

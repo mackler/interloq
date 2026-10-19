@@ -7,7 +7,7 @@ import { planReviewPrompt, questionReviewPrompt } from "../src/prompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { blocksMarkdown } from "../src/pieces.ts";
 import { attachedOf } from "../src/question.ts";
-import { para, plain, workExecution , TEST_ROOT } from "./helpers.ts";
+import { EARLIER_ROOT, para, plain, workExecution , TEST_ROOT } from "./helpers.ts";
 /** A tool's input as conversation.md records it (S34): its blocks as Markdown, without the heading. */
 const inputLines = (input: unknown): string => blocksMarkdown(prompts.toolInputBlocks(input));
 import { appendRound } from "../src/issueLog.ts";
@@ -242,6 +242,7 @@ test("every prompt that may return questions_for_user says how to fill a questio
     prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
     prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
     prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stopped: false, workReview: "converged" }, NO_STEP_CHECKS),
+    prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS),
   ];
   for (const text of texts) {
     assert.ok(text.includes(prompts.QUESTION_OPTIONS_RULE), text.slice(0, 80));
@@ -339,6 +340,7 @@ const planProducing = () => [
   prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
   prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stopped: true, workReview: "converged" }, NO_STEP_CHECKS),
   prompts.planApplyDecisionsPrompt(TEST_ROOT, NO_STEP_CHECKS),
+  prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS),
   prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
 ];
 // Issue #78, rewritten by issue #162: no step of a plan may end with a command expected to outlast one shell command,
@@ -351,6 +353,7 @@ const planProducingWith = (checks: S.StepChecks) => [
   prompts.revisePlanPrompt(TEST_ROOT, checks),
   prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stopped: true, workReview: "converged" }, checks),
   prompts.planApplyDecisionsPrompt(TEST_ROOT, checks),
+  prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, checks),
   prompts.planRespondPrompt(TEST_ROOT, 1, 1, checks),
 ];
 test("every prompt that asks for the whole plan states the step check rule, in minutes of COMMAND_CEILING_MS and STEP_CHECK_LIMIT_MS", async () => {
@@ -821,6 +824,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
     revisePlanPrompt: prompts.revisePlanPrompt(TEST_ROOT, NO_STEP_CHECKS),
     revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stopped: true, workReview: "converged" }, NO_STEP_CHECKS),
+    earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, NO_STEP_CHECKS),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
     interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
@@ -1080,3 +1084,24 @@ test("issue #156: the corrective prompt names the mark, and correctiveValidation
     for (const part of ["Plan review", "826,111", "500,000", "codexTurnInputLimit", "round 4"]) assert.ok(line.includes(part), `the line lacks ${part}`);
   });
 }
+
+// Issue #180 (Q2, Q5): a plan taken from an earlier run is revised before its review, in a session of its own, for the
+// project and the requirements as they stand now; the prompt names the earlier run's directory and ends with the task.
+test("issue #180: the earlier plan's prompt names the earlier run's directory, the requirements only with requirements, and ends with the task", () => {
+  const withReq = prompts.earlierPlanPrompt(TEST_ROOT, "The task text of item 1", true, EARLIER_ROOT, NO_STEP_CHECKS);
+  assert.ok(withReq.includes(`plan-review/${EARLIER_ROOT}/`));
+  assert.ok(withReq.includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.ok(withReq.includes(prompts.userDecisionsSentence(TEST_ROOT)));
+  assert.match(withReq, /session of its own/);
+  assert.match(withReq, /Task: The task text of item 1$/);
+  assert.doesNotMatch(withReq, /Execution phase \d+ has ended/);
+  const without = prompts.earlierPlanPrompt(TEST_ROOT, "The task text of item 1", false, EARLIER_ROOT, NO_STEP_CHECKS);
+  assert.ok(!without.includes(prompts.requirementsSentence(TEST_ROOT)));
+  assert.match(without, /Task: The task text of item 1$/);
+});
+
+test("issue #180: the lines of a taken plan and of one set aside name the earlier run's directory", () => {
+  for (const line of [prompts.earlierPlanTakenLine(EARLIER_ROOT), prompts.earlierPlanSetAsideLine(EARLIER_ROOT)]) assert.ok(line.includes(`plan-review/${EARLIER_ROOT}`), line);
+  assert.notEqual(prompts.earlierPlanTakenLine(EARLIER_ROOT), prompts.earlierPlanSetAsideLine(EARLIER_ROOT));
+  assert.match(prompts.earlierPlanSetAsideLine(EARLIER_ROOT), /from nothing/);
+});

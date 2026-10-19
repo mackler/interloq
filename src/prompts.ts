@@ -1546,11 +1546,26 @@ The run is not finished while they are uncommitted. Revise the plan with steps t
 };
 
 export function revisePlanAfterExecutionPrompt(root: RunRoot, task: string, withRequirements: boolean, phase: number, cause: RevisionCause, checks: StepChecks): string {
+  return planRevisionPrompt(
+    root,
+    task,
+    withRequirements,
+    `Execution phase ${phase} has ended.${revisionCauseText(root, phase, cause)}
+This request runs in a Claude Code session of its own, which has not seen the earlier phases: read the files named here.`,
+    `Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.`,
+    checks,
+  );
+}
+
+/**
+ * The rules every revision of the whole plan in a session of its own carries, around its opening and its instruction
+ * (issue #180): revisePlanAfterExecutionPrompt and earlierPlanPrompt share them, so the two cannot diverge.
+ */
+const planRevisionPrompt = (root: RunRoot, task: string, withRequirements: boolean, opening: string, revise: string, checks: StepChecks): string => {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
-  return `Execution phase ${phase} has ended.${revisionCauseText(root, phase, cause)}
-This request runs in a Claude Code session of its own, which has not seen the earlier phases: read the files named here.
+  return `${opening}
 ${requirements}${userDecisionsSentence(root)}
-Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', add steps that correct the accepted issues and follow the decisions, and change, add, or remove the other steps as the current state of the codebase requires.
+${revise}
 ${planStatuses(root)} An unfinished step counts as remaining.
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
@@ -1561,7 +1576,7 @@ If no change to the plan is required, return it as it is. Do not modify any file
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
-}
+};
 
 /**
  * A prompt to the user in the web page's words: the same question without the key conventions of its hint, which
@@ -3137,3 +3152,37 @@ export function transportFacts(agent: "claude" | "codex", what: string, attempts
 export function relayedFacts(root: RunRoot, plan: string | null): string {
   return `Claude Code asked this question while it carried out the plan, and waits for the answer; the plan is revised and reviewed with the answer before the work continues.\n${plan === null ? `${runDir(root)}/plan.md does not exist.` : `The plan being carried out (${runDir(root)}/plan.md):\n${plan}`}`;
 }
+
+/**
+ * The block a review loop writes to conversation.md when Codex's review has no counted issue, and only then: the one
+ * record that a loop ended with the agents' agreement, which src/earlierPlan.ts reads in an earlier run's records (issue #180).
+ */
+export const reviewConvergedMarkdown = (heading: string, round: number, fileLabel: string): string =>
+  `## ${heading}, round ${round}\n\n### Codex\n\nNo counted issue. The review of ${fileLabel} has converged.\n\n`;
+/** The plan subject's reviewed file as its loop names it (`fileLabel`), shared with src/earlierPlan.ts (issue #180). */
+export const PLAN_FILE_LABEL = "plan.json";
+
+/**
+ * The revision of a plan taken from an earlier implementation run of the item (issue #180, Q2 and Q5): before Codex
+ * reviews it, Claude Code revises the steps not done for the project and the requirements as they stand at this run's
+ * start, in a session of its own.
+ */
+export function earlierPlanPrompt(root: RunRoot, task: string, withRequirements: boolean, earlier: RunRoot, checks: StepChecks): string {
+  const requirements = withRequirements ? ` This run's requirements are the item's as they stand now, and may differ from those the plan was written for.` : "";
+  return planRevisionPrompt(
+    root,
+    task,
+    withRequirements,
+    `Interloq took this run's plan from an earlier implementation run of the same item, whose records are in ${RECORDS_DIR}/${earlier}/, and wrote it to ${runDir(root)}/plan.json. The steps that run recorded as done are kept done, and those it left running are marked unfinished.
+The project may have changed since the plan was written: that run's own changes may be in the working tree, committed or not, and other commits may have followed.${requirements}
+This request runs in a Claude Code session of its own, which has not seen the earlier run: read the files named here.`,
+    `Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', and change, add, or remove the other steps as the current state of the codebase and the requirements require.`,
+    checks,
+  );
+}
+/** Said and written where the run took an earlier run's plan (issue #180). */
+export const earlierPlanTakenLine = (earlier: RunRoot): string =>
+  `This run starts from the plan of the earlier implementation run in ${RECORDS_DIR}/${earlier}, whose plan review ended with Codex raising no further issue. Claude Code revises it for the project and the requirements as they are now, and Codex reviews the revision.`;
+/** Said and written where the earlier run's record of the project at its start is gone (issue #180, F1). */
+export const earlierPlanSetAsideLine = (earlier: RunRoot): string =>
+  `The plan of the earlier implementation run in ${RECORDS_DIR}/${earlier} is set aside: that run's record of the project at its start is gone, so this run plans the item from nothing, and the earlier run's changes count as already there when this run began.`;

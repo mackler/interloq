@@ -51,6 +51,8 @@ const { defaultConfig } = S;
 
 /** The records root of every run of testLayer, and of a store a test makes itself (issue #120). */
 export const TEST_ROOT: RunRoot = runRootOf("implementation", "1", "2026-01-01T00:00:00.000Z");
+/** An earlier implementation run of the scripted item 1, whose plan a run may take (issue #180). */
+export const EARLIER_ROOT: RunRoot = runRootOf("implementation", "1", "2025-12-31T00:00:00.000Z");
 /** The records directories of the runs of the program in a project, oldest first (issue #120: one per run, under plan-review/runs/). */
 export const runDirsOf = (repo: string): readonly string[] => {
   const runs = path.join(path.resolve(repo), "plan-review", "runs");

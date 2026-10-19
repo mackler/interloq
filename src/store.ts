@@ -2,20 +2,22 @@
 // comparison of the project state (decoded and compared by src/snapshot.ts).
 // API names: docs/effect-v4-api.md.
 
-import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Ref, Stream } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Ref, Result, type Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
-import { type Artifact, guardedRecord, LOG_SUBJECTS, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
+import { type Artifact, guardedRecord, implementationRootsOf, LOG_SUBJECTS, subjectOf, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
 import { FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
-import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
+import { AnalysisFile, Baseline, RoundFile, type RoundRecord, TermsFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { type CommitCheck, commitCheckOf, uncommittedPaths } from "./commitCheck.ts";
 import { decodeStatusV2, excluded, type StatusRecord, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
+import { carriedPlan, type EarlierPlan, type EarlierRunRecords, latestQualifying } from "./earlierPlan.ts";
+import type { ItemId } from "./tracker.ts";
 import type { LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
 
 /**
@@ -247,6 +249,48 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         return yield* git(["diff", "--no-color", "--no-ext-diff", baseline.tree, yield* workingTree()]);
       });
 
+    /** A file of an earlier run decoded, or null where it is missing or does not decode; another read failure is a StoreError. */
+    const decodedOrNull = <Out extends Schema.ConstraintDecoder<unknown>>(file: string, schema: Out): Effect.Effect<Out["Type"] | null, StoreError> =>
+      Effect.gen(function* () {
+        if (!(yield* exists(file))) return null;
+        const decoded = decodeText(file, schema, yield* readText(file));
+        return Result.isSuccess(decoded) ? decoded.success : null;
+      });
+    /** What an earlier run's records say of its plan reviews, its plan and its baseline (issue #180). */
+    const earlierRecords = (earlier: RunRoot): Effect.Effect<EarlierRunRecords, StoreError> =>
+      Effect.gen(function* () {
+        const runDir = path.join(project, RECORDS_DIR, earlier);
+        const conversation = path.join(runDir, pathOf({ kind: "conversation" }));
+        const rounds: { phase: number; record: RoundRecord }[] = [];
+        for (const name of yield* list(runDir)) {
+          const subject = subjectOf(name);
+          if (subject === null || typeof subject !== "object" || !("plan" in subject)) continue;
+          const subjectPath = path.join(runDir, name);
+          if ((yield* io("read", subjectPath, fs.stat(subjectPath))).type !== "Directory") continue;
+          for (const file of yield* list(subjectPath)) {
+            if (!/^round-\d+\.json$/.test(file)) continue;
+            const decoded = yield* decodedOrNull(path.join(subjectPath, file), RoundFile);
+            if (decoded === null) continue;
+            const { version: _, ...record } = decoded;
+            rounds.push({ phase: subject.plan, record });
+          }
+        }
+        const planFile = yield* decodedOrNull(path.join(runDir, pathOf({ kind: "planFile" })), PlanFile);
+        return {
+          root: earlier,
+          conversation: (yield* exists(conversation)) ? yield* readText(conversation) : "",
+          rounds,
+          plan: planFile === null ? null : planFile.plan,
+          baseline: yield* decodedOrNull(path.join(runDir, pathOf({ kind: "baseline" })), Baseline),
+        };
+      });
+    /** Whether git still has the tree (F1: git may prune an unreferenced tree); any failure of the command counts as gone. */
+    const treeExists = (tree: string): Effect.Effect<boolean> =>
+      git(["cat-file", "-e", `${tree}^{tree}`]).pipe(
+        Effect.as(true),
+        Effect.catchTag("GitError", () => Effect.succeed(false)),
+      );
+
     return {
       project,
       root,
@@ -273,6 +317,20 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const uncommitted = yield* uncommittedNow();
           yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), uncommitted, time: yield* now });
         }),
+      earlierPlan: (item: ItemId): Effect.Effect<EarlierPlan, StoreError> =>
+        Effect.gen(function* () {
+          const runsDir = path.join(project, RECORDS_DIR, RUNS_DIR);
+          if (!(yield* exists(runsDir))) return { _tag: "NoEarlierPlan" } as const;
+          // Read newest first and stop at the first that qualifies: the requirement names the most recent one (Q1).
+          for (const earlier of implementationRootsOf(yield* list(runsDir), item, root)) {
+            const found = latestQualifying([yield* earlierRecords(earlier)]);
+            if (found === null) continue;
+            const kept = found.baseline !== null && (yield* treeExists(found.baseline.tree)) ? found.baseline : null;
+            return kept === null ? ({ _tag: "EarlierPlanSetAside", root: earlier } as const) : ({ _tag: "EarlierPlanTaken", root: earlier, plan: carriedPlan(found.plan), baseline: kept } as const);
+          }
+          return { _tag: "NoEarlierPlan" } as const;
+        }),
+      adoptBaseline: (baseline: Baseline) => writeJson(baselineFile, baseline),
       uncommittedSinceStart: (): Effect.Effect<CommitCheck, StoreError> =>
         Effect.gen(function* () {
           const baseline = yield* readBaseline();
