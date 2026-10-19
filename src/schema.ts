@@ -519,6 +519,21 @@ export const LimitWaitUsage = Schema.Struct({
   outcome: Schema.Literals(LIMIT_WAIT_OUTCOMES),
 });
 /**
+ * The start of a wait for a Claude Code usage limit (issue #179): written when the wait begins, so that a run whose
+ * process is killed during the wait still shows that it was waiting and until when; the end line (LimitWaitUsage) is
+ * written by the sleep's finalizer, which a killed process never runs.
+ */
+export const LimitWaitBeganUsage = Schema.Struct({
+  version: Schema.Literal(2),
+  kind: Schema.Literal("usage_limit_wait_began"),
+  agent: Schema.Literal("claude"),
+  time: Schema.String,
+  limit_type: Schema.NullOr(Schema.String),
+  basis: Schema.Literals(LIMIT_WAIT_BASES),
+  from: Schema.String,
+  until: Schema.String,
+});
+/**
  * One rate-limit notice of a Claude Code request (issue #170, requirement Q3): the SDK's rate_limit_info kept whole as
  * the SDK gave it (SDKRateLimitInfo: status, resetsAt, rateLimitType, utilization, the overage fields and the rest).
  */
@@ -530,7 +545,7 @@ export const RateLimitNoticeUsage = Schema.Struct({
   session: Schema.NullOr(Schema.String),
   rate_limit_info: Schema.Record(Schema.String, Schema.Unknown),
 });
-export const UsageRecord = Schema.Union([LimitWaitUsage, RateLimitNoticeUsage, ClaudeUsage, CodexUsage]);
+export const UsageRecord = Schema.Union([LimitWaitUsage, LimitWaitBeganUsage, RateLimitNoticeUsage, ClaudeUsage, CodexUsage]);
 
 // The types, under the names the program used before the schemas existed.
 export type Severity = typeof Severity.Type;

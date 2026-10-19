@@ -10,19 +10,23 @@ export type UsageLine =
   | Readonly<{ agent: "codex"; thread: string | null; inputTokens: number; outputTokens: number }>;
 
 /**
- * One wait for a Claude Code usage limit (issue #68): when it began, the end scheduled (the reset plus the margin), when
- * it actually ended and how. Only the actual span counts as waited.
+ * The start of a wait for a Claude Code usage limit (issue #179): when it began and the end scheduled (the reset plus
+ * the margin), recorded when the wait begins.
  */
-export type LimitWait = Readonly<{
+export type LimitWaitBegan = Readonly<{
   agent: "claude";
   limitType: string | null;
   /** What the wait rested on (issue #170). */
   basis: LimitWaitBasis["kind"];
   fromMs: number;
   untilMs: number;
-  endedMs: number;
-  outcome: "lifted" | "elapsed" | "interrupted";
 }>;
+
+/**
+ * One wait for a Claude Code usage limit (issue #68): its start, when it actually ended and how. Only the actual span
+ * counts as waited.
+ */
+export type LimitWait = LimitWaitBegan & Readonly<{ endedMs: number; outcome: "lifted" | "elapsed" | "interrupted" }>;
 
 /**
  * One rate-limit notice of a Claude Code request (issue #170, requirement Q3): the session it arrived in, and the SDK's
@@ -30,8 +34,16 @@ export type LimitWait = Readonly<{
  */
 export type RateLimitNotice = Readonly<{ session: string | null; info: Readonly<Record<string, unknown>> }>;
 
-/** The lines of usage.jsonl: the calls' usage, the waits, and the rate-limit notices (issue #170). */
-export type UsageLines = Readonly<{ calls: readonly UsageLine[]; waits: readonly LimitWait[]; notices: readonly RateLimitNotice[] }>;
+/**
+ * The lines of usage.jsonl: the calls' usage, the waits, the rate-limit notices (issue #170) and the waits' starts
+ * (issue #179); the summary uses neither of the last two.
+ */
+export type UsageLines = Readonly<{
+  calls: readonly UsageLine[];
+  waits: readonly LimitWait[];
+  notices: readonly RateLimitNotice[];
+  began: readonly LimitWaitBegan[];
+}>;
 
 export type UsageSummary = Readonly<{
   claudeCalls: number;

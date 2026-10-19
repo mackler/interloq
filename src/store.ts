@@ -306,7 +306,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       /** The usage lines of either version in their per-agent shape (src/usage.ts folds them); no file gives none. */
       usageLines: () =>
         Effect.gen(function* () {
-          if (!(yield* exists(usageFile))) return { calls: [], waits: [], notices: [] };
+          if (!(yield* exists(usageFile))) return { calls: [], waits: [], notices: [], began: [] };
           const records = yield* Effect.fromResult(readUsage(usageFile, yield* readText(usageFile)));
           // Each record in its place by its kind; a call's line has none (issue #170).
           const waits = records.flatMap((r): LimitWait[] =>
@@ -322,7 +322,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
                 ? [{ agent: "claude", session: r.session, turns: r.num_turns, totalCostUsd: r.total_cost_usd }]
                 : [{ agent: "codex", thread: r.thread, inputTokens: r.input_tokens, outputTokens: r.output_tokens }],
           );
-          return { calls, waits, notices };
+          return { calls, waits, notices, began: [] };
         }),
       /** A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one. */
       recordLimitWait: (wait) =>
@@ -331,6 +331,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const record: UsageRecord = { version: VERSION, kind: "usage_limit_wait", agent: wait.agent, time: yield* now, limit_type: wait.limitType, basis: wait.basis, from: iso(wait.fromMs), until: iso(wait.untilMs), ended: iso(wait.endedMs), outcome: wait.outcome };
           yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
         }),
+      recordLimitWaitBegan: () => Effect.void,
       /** A rate-limit notice of a Claude Code request, its info whole (issue #170). */
       recordRateLimit: (notice) =>
         Effect.gen(function* () {

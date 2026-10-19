@@ -14,7 +14,7 @@ import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcom
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
-import type { LimitWait, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
+import type { LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
@@ -188,8 +188,16 @@ export interface StoreShape {
   converse(markdown: string): Effect.Effect<void, StoreError>;
   recordUsage(line: UsageLine): Effect.Effect<void, StoreError>;
   usageLines(): Effect.Effect<UsageLines, StoreError>;
-  /** One wait for a usage limit, as actually spent (issue #68), appended to usage.jsonl when the wait ends. */
+  /**
+   * One wait for a usage limit, as actually spent (issue #68), appended to usage.jsonl when the wait ends; then
+   * checkpoint.json is replaced with its transition unchanged and `waiting` null (issue #179).
+   */
   recordLimitWait(wait: LimitWait): Effect.Effect<void, StoreError>;
+  /**
+   * The start of a wait for a usage limit (issue #179): appends the usage_limit_wait_began line to usage.jsonl, then
+   * replaces checkpoint.json with the last committed transition unchanged and `waiting` set to the wait.
+   */
+  recordLimitWaitBegan(wait: LimitWaitBegan): Effect.Effect<void, StoreError>;
   /** One rate-limit notice of a Claude Code request, appended to usage.jsonl as it arrives (issue #170). */
   recordRateLimit(notice: RateLimitNotice): Effect.Effect<void, StoreError>;
   /**

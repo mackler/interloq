@@ -123,7 +123,28 @@ type Fs = FileSystem.FileSystem | Path.Path;
 
 /** The stage of the last committed transition; `started` is written by `init`. */
 export const CheckpointStage = Schema.Literals(["started", "reviewed", "responded", "logged", "decided", "executed"]);
-export const Checkpoint = Schema.Struct({ version: V2, subject: Schema.String, phase: S.NonNegativeInt, round: S.NonNegativeInt, stage: CheckpointStage, time: Schema.String });
+/**
+ * A usage-limit wait in progress (issue #179): set when the wait begins and cleared when it ends, beside the last
+ * committed transition, which it leaves unchanged. It says nothing about whether the limit has since lifted.
+ */
+export const WaitingNote = Schema.Struct({
+  agent: Schema.Literal("claude"),
+  limit_type: Schema.NullOr(Schema.String),
+  basis: Schema.Literals(S.LIMIT_WAIT_BASES),
+  from: Schema.String,
+  until: Schema.String,
+});
+export type WaitingNote = typeof WaitingNote.Type;
+/** `waiting` is optional on reading, an absent key read as no wait; the store always writes it. */
+export const Checkpoint = Schema.Struct({
+  version: V2,
+  subject: Schema.String,
+  phase: S.NonNegativeInt,
+  round: S.NonNegativeInt,
+  stage: CheckpointStage,
+  time: Schema.String,
+  waiting: Schema.optionalKey(Schema.NullOr(WaitingNote)),
+});
 export type Checkpoint = typeof Checkpoint.Type;
 /** What the procedure reports as committed; the store adds the version and the time. */
 export type CheckpointPoint = Readonly<{ subject: string; phase: number; round: number; stage: Checkpoint["stage"] }>;
