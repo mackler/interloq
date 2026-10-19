@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Clock, Effect, Exit, Fiber, Schema } from "effect";
+import { Clock, Effect, Fiber, Schema } from "effect";
 import { Checkpoint } from "../src/records.ts";
 import { program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";

@@ -332,7 +332,8 @@ test("an interruption one minute into a weekly wait: no further attempt, no lift
   assert.equal(waits[0]?.outcome, "interrupted");
   assert.equal(waits[0]?.from, new Date(START).toISOString());
   assert.equal(waits[0]?.ended, new Date(START + 60_000).toISOString());
-  assert.equal(waits[0]?.until, new Date(START + WEEK + MARGIN_MS).toISOString());  beganThenEnded(usage, checkpoint, "interrupted");
+  assert.equal(waits[0]?.until, new Date(START + WEEK + MARGIN_MS).toISOString());
+  beganThenEnded(usage, checkpoint, "interrupted");
 });
 
 // Issue #170: a time of day read from the error text, the reset already past (Q4), and no known end (Q2).
@@ -414,7 +415,8 @@ test("Q2: an interruption during a wait with no known end records it interrupted
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
   assert.deepEqual(calls, [1]);
-  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["noKnownEnd", "interrupted"]]);  beganThenEnded(usage, checkpoint, "interrupted");
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["noKnownEnd", "interrupted"]]);
+  beganThenEnded(usage, checkpoint, "interrupted");
 });
 
 // The records guard of a read-only call (Claude Code's response to a work review) holds across the wait as across a
