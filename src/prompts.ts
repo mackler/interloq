@@ -789,6 +789,17 @@ export const PLAN_COMMIT_STEP_RULE =
   "The plan's last step commits the run's changes as the project's own instructions direct. Interloq does not count the run finished while a file the run changed is uncommitted, except files git ignores and does not track and the paths Interloq is configured to ignore; files that were already uncommitted when the run began are not counted.";
 /** Issue #176: the plan review's criterion, the counterpart of PLAN_COMMIT_STEP_RULE. */
 export const COMMIT_STEP_REVIEW_CRITERION = "Raise an issue for a plan whose remaining steps do not end with a step that commits the run's changes as the project's own instructions direct.";
+/**
+ * Issue #181 (requirements Q5): in an implementation run the plan writer settles every question about how to build the
+ * work and states its assumption in the plan, where Codex reviews it; only what the work should achieve, where the task,
+ * the requirements and the user's decisions leave it open, goes to the user. Claude Code's judgment decides which kind
+ * a question is.
+ */
+export const PLAN_QUESTIONS_RULE =
+  "Settle yourself every question about how to build the work (a design, a module, a data type, a test, the order of the steps) and state the assumption you settled in the text of the step it concerns, where the plan review checks it. Put in questions_for_user only a question about what the work should achieve, where the task, the requirements and the user's decisions leave it open, and only as the rule on whether to ask allows.";
+/** Issue #181: the plan review's criterion, the counterpart of PLAN_QUESTIONS_RULE. */
+export const PLAN_QUESTIONS_REVIEW_CRITERION =
+  "Raise an issue for a remaining step whose text rests on a choice of how to build the work that it does not state, and for a question the plan writer put to the user about how to build the work rather than what it should achieve.";
 /** Issue #176: the execution prompt's sentence on committing, which states no commit policy either. */
 export const EXECUTION_COMMIT_SENTENCE =
   "The work is not finished while the run's changes are uncommitted: commit them as the project's own instructions direct before you return status 'finished'. Files that were already uncommitted when the run began are not counted.";
@@ -829,6 +840,7 @@ ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 Do not modify any file. Do not implement anything.
+${PLAN_QUESTIONS_RULE}
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
@@ -860,6 +872,9 @@ ${STEP_CHECK_REVIEW_CRITERION}
 The plan writer was given this rule on committing the run's changes:
 ${PLAN_COMMIT_STEP_RULE}
 ${COMMIT_STEP_REVIEW_CRITERION}
+The plan writer was given this rule on its questions to the user:
+${PLAN_QUESTIONS_RULE}
+${PLAN_QUESTIONS_REVIEW_CRITERION}
 Put the step's id in the location field.
 ${logRules(root, log, prefix, round)}`;
 }
@@ -867,6 +882,7 @@ ${logRules(root, log, prefix, round)}`;
 export function planRespondPrompt(root: RunRoot, phase: number, round: number, checks: StepChecks): string {
   return `${runDir(root)}/planning-${phase}/review-${round}.json contains a review of the plan in ${runDir(root)}/plan.json.
 ${respondRules(root, "you amend the plan for it")}
+${PLAN_QUESTIONS_RULE}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
@@ -1587,6 +1603,7 @@ ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
+${PLAN_QUESTIONS_RULE}
 Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
 ${QUESTION_OPTIONS_RULE}
 Task: ${task}`;
