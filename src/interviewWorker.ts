@@ -3,7 +3,9 @@
 // time, the answers given while a request is outstanding together in the next. Each reply is applied when it arrives:
 // its message said and recorded, its follow-up questions added to the interview's state, its judgments of unnecessary
 // questions said and recorded. The main fiber of src/conversation.ts never waits for a reply before an agreed question;
-// it waits only in `drain`, when nothing is left to present.
+// it waits only in `drain`, when nothing is left to present. The opening is a request of its own, sent before the worker
+// takes its queue, so an answer given before or during it waits in the queue and goes in the next request (work review 1
+// of issue #184, W1-R1-1); the queue's items admit no opening that a batch could swallow.
 
 import { Deferred, Effect, Latch, Queue, Ref } from "effect";
 import { type ClarificationState, progressOf, withFollowUps } from "./clarificationState.ts";
@@ -38,7 +40,7 @@ export type InterviewWorker = Readonly<{
   untilWaiting: Effect.Effect<void>;
 }>;
 
-type Item = Readonly<{ kind: "open" }> | Readonly<{ kind: "entry"; entry: ClarificationEntry; notes: readonly string[] }> | Readonly<{ kind: "trailer"; trailer: ClarificationTrailer }>;
+type Item = Readonly<{ kind: "entry"; entry: ClarificationEntry; notes: readonly string[] }> | Readonly<{ kind: "trailer"; trailer: ClarificationTrailer }>;
 
 export type WorkerSetup = Readonly<{
   questions: QuestionsFile["questions"];
@@ -52,14 +54,13 @@ export const makeInterviewWorker = (setup: WorkerSetup): Effect.Effect<Interview
   Effect.gen(function* () {
     const store = yield* Store;
     const queue = yield* Queue.unbounded<Item>();
-    /** The items queued and not yet replied to and applied; the worker is idle when it is 0. */
+    /** The opening and the items queued, not yet replied to and applied; the worker is idle when it is 0. */
     const outstanding = yield* Ref.make(1);
     const idle = yield* Latch.make(false);
     const waitingRef = yield* Ref.make(false);
     const waitingLatch = yield* Latch.make(false);
     /** Where the reply to a closing request goes. */
     const closingReply = yield* Ref.make<Deferred.Deferred<ReplyVariant> | null>(null);
-    yield* Queue.offer(queue, { kind: "open" });
     const agreedIds = setup.questions.map((q) => q.id);
     const waiting = Ref.get(waitingRef);
     const untilWaiting = waitingLatch.await;
@@ -68,7 +69,6 @@ export const makeInterviewWorker = (setup: WorkerSetup): Effect.Effect<Interview
     const enqueue = (item: Item) => Ref.update(outstanding, (n) => n + 1).pipe(Effect.andThen(idle.close), Effect.andThen(Queue.offer(queue, item)), Effect.asVoid);
 
     const promptOf = (items: readonly Item[]): string => {
-      if (items.some((i) => i.kind === "open")) return prompts.clarificationOpenPrompt(store.root);
       const entries = items.flatMap((i) => (i.kind === "entry" ? [i.entry] : []));
       const notes = items.flatMap((i) => (i.kind === "entry" ? i.notes : []));
       const trailer = items.flatMap((i) => (i.kind === "trailer" ? [i.trailer] : []))[0] ?? null;
@@ -97,22 +97,25 @@ export const makeInterviewWorker = (setup: WorkerSetup): Effect.Effect<Interview
         }
       });
 
-    const step = Effect.gen(function* () {
-      const items = yield* Queue.takeAll(queue);
-      const closing = items.some((i) => i.kind === "trailer");
-      const state = yield* Ref.get(setup.state);
-      const validate = replyValidation(agreedIds, state.askedFollowUps, { questions: setup.questions, answers: state.answers }, closing);
-      const reply = normalizeReply((yield* planningCall(promptOf(items), S.InterviewReply, "interview", "records", validate, null, exhaustion)).output, closing);
-      yield* apply(reply);
-      if (closing) {
-        const deferred = yield* Ref.get(closingReply);
-        if (deferred !== null) yield* Deferred.succeed(deferred, reply);
-      }
-      const left = yield* Ref.updateAndGet(outstanding, (n) => n - items.length);
-      if (left === 0) yield* idle.open;
-    });
+    /** Sends one request, applies its reply and counts `count` items done, opening `idle` at 0. */
+    const request = (prompt: string, closing: boolean, count: number) =>
+      Effect.gen(function* () {
+        const state = yield* Ref.get(setup.state);
+        const validate = replyValidation(agreedIds, state.askedFollowUps, { questions: setup.questions, answers: state.answers }, closing);
+        const reply = normalizeReply((yield* planningCall(prompt, S.InterviewReply, "interview", "records", validate, null, exhaustion)).output, closing);
+        yield* apply(reply);
+        if (closing) {
+          const deferred = yield* Ref.get(closingReply);
+          if (deferred !== null) yield* Deferred.succeed(deferred, reply);
+        }
+        const left = yield* Ref.updateAndGet(outstanding, (n) => n - count);
+        if (left === 0) yield* idle.open;
+      });
 
-    const run: Effect.Effect<never, RunError, Services> = Effect.forever(step);
+    /** One request over every item queued since the previous one. */
+    const batch = Queue.takeAll(queue).pipe(Effect.flatMap((items) => request(promptOf(items), items.some((i) => i.kind === "trailer"), items.length)));
+
+    const run: Effect.Effect<never, RunError, Services> = request(prompts.clarificationOpenPrompt(store.root), false, 1).pipe(Effect.andThen(Effect.forever(batch)));
 
     const drain = (trailer: ClarificationTrailer): Effect.Effect<DrainResult> =>
       Effect.gen(function* () {
