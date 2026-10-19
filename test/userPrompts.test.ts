@@ -16,7 +16,6 @@ const catalog: [string, Partial<UserPrompt> & { kind: UserPrompt["kind"] }, stri
   [prompts.limitNoProceedPrompt, { kind: "limitNoProceed", mode: "ask", free: "line" }, ["End the run=q"]],
   [prompts.unchangedPrompt, { kind: "unchanged", mode: "ask", free: "none" }, ["End the run=q"]],
   [prompts.transportPrompt, { kind: "transport", mode: "ask", free: "none" }, ["End the run=q"]],
-  [prompts.execInputPrompt, { kind: "execInput", mode: "ask", free: "line" }, ["End the run=q"]],
   [prompts.optionOrTextPrompt, { kind: "optionOrText", mode: "ask", free: "line" }, ["End the run=q"]],
   [prompts.permissionPrompt, { kind: "permission", mode: "ask", free: "none" }, ["End the run=q"]],
   [prompts.interviewMessagePrompt, { kind: "interviewMessage", mode: "message", free: "message" }, ["Finish clarification and start planning=/done", "End the run=/quit"]],

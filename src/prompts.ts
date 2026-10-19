@@ -1090,8 +1090,6 @@ export const decisionPrompt = "Answer with the number or label of an option, or 
 export const limitPrompt = "p = proceed without convergence; a number = that many more cycles; 0 = stop the run; q = end the run > ";
 /** The round limit of a subject without a proceed choice (the work review, Q13). */
 export const limitNoProceedPrompt = "A number = that many more cycles; 0 = stop the run; q = end the run > ";
-/** The user's input at a stop of an execution phase whose report carried none. */
-export const execInputPrompt = "Your answer for Claude Code (q = end the run) > ";
 /** The answer to a question that Claude Code asked with AskUserQuestion. */
 export const optionOrTextPrompt = "Answer with the number of an option, or in your own words (q = end the run) > ";
 /** A permission request of Claude Code. */
@@ -1607,8 +1605,6 @@ export function pagePromptText(kind: string, offeredText: string): string {
       return "Proceed without convergence, add cycles, or stop the run.";
     case "limitNoProceed":
       return "Add cycles, or stop the run.";
-    case "execInput":
-      return "Your input for Claude";
     case "optionOrText":
       return "Choose one of the options, or type your own answer.";
     case "permission":
@@ -2836,8 +2832,6 @@ const originText = (origin: QuestionOrigin): string => {
       return `Asked by Claude Code, the planning agent, during ${origin.heading}`;
     case "relayed":
       return "Asked by Claude Code, the coding agent, while it carries out the plan";
-    case "execStop":
-      return "Claude Code, the coding agent, has stopped carrying out the plan";
     case "permission":
       return "Claude Code, the coding agent, asks for permission while it carries out the plan";
     case "pause":
@@ -2931,8 +2925,6 @@ export function attachedHeading(kind: AttachedKind): string {
       return "What Claude Code Would Do";
     case "reviewFacts":
       return "What Happened in the Review";
-    case "stopReport":
-      return "Why Claude Code Stopped";
     case "fault":
       return "Why the Agent Could Not Be Reached";
   }
@@ -2945,19 +2937,6 @@ export function defaultMarked(description: string): string {
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
 /** The question of the summary's confirmation. */
 export const CONFIRM_SUMMARY_QUESTION = "Claude Code has written this summary of the requirements from the clarification. Do you confirm that it states the requirements correctly?";
-/**
- * The question at a stop of an execution phase whose report carried no question the user was asked (S52, W5-R1-1):
- * fixed; Claude Code's description is in its details (`execStopDetails`).
- */
-export function execStopQuestion(): string {
-  return `Claude Code stopped before the plan was finished, for the reason shown under "${attachedHeading("stopReport")}". What do you want Claude Code to know or do when the plan is revised?`;
-}
-/** What an execution stop's attached material says when Claude Code gave no description (S52). */
-export const EXEC_STOP_NO_DESCRIPTION = "Claude Code gave no description of why it stopped.";
-/** An execution stop's details (S52): Claude Code's description, its own prose, rendered as Markdown like all of it (issue #7). */
-export function execStopDetails(description: string): readonly ShownBlock[] {
-  return [description.trim() === "" ? { kind: "paragraph", pieces: [{ text: EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] } : { kind: "document", markdown: description.trim() }];
-}
 
 // ---- an execution call whose Claude Code process ended, its retries used up (issue #157) ----------------------------
 
@@ -2989,20 +2968,6 @@ export function processEndedSummary(done: readonly NamedStep[]): string {
 /** The outcome's remaining work: the steps left unfinished. */
 export function processEndedRemaining(unfinished: readonly NamedStep[]): string {
   return unfinished.length === 0 ? NO_STEP_UNFINISHED : `${STEPS_UNFINISHED} ${unfinished.map(stepOnOneLine).join(", ")}.`;
-}
-/**
- * The stop's attached material: the question, then one list whose two items at the top level head the steps recorded as
- * done and those left unfinished, each step an item under its heading (its id a code piece, its label plain words), or
- * a sentence saying there is none. One list, since a paragraph between two lists would be shown inside the first.
- */
-export function processEndedDetails(question: string, done: readonly NamedStep[], unfinished: readonly NamedStep[]): readonly ShownBlock[] {
-  const plainPiece = (text: string): Piece => ({ text, ref: "", code: false });
-  const under = (steps: readonly NamedStep[], none: string) =>
-    steps.length === 0 ? [{ level: 1, pieces: [plainPiece(none)] }] : steps.map((st) => ({ level: 1, pieces: [{ text: st.id, ref: "", code: true }, plainPiece(` ${st.label.replace(/\s+/g, " ").trim()}`)] }));
-  return [
-    { kind: "paragraph", pieces: [plainPiece(question)] },
-    { kind: "list", items: [{ level: 0, pieces: [plainPiece(STEPS_DONE)] }, ...under(done, NO_STEP_DONE), { level: 0, pieces: [plainPiece(STEPS_UNFINISHED)] }, ...under(unfinished, NO_STEP_UNFINISHED)] },
-  ];
 }
 
 /** The opening sentence of the program's own context paragraphs: what Interloq and the two agents are. */
@@ -3039,8 +3004,6 @@ export function fallbackContext(origin: QuestionOrigin): string {
       return `${interloq} While Claude Code writes or revises a document during ${origin.heading}, it may find a decision that only you can make. It asks you here rather than deciding on an assumption, so that the plan follows your choice.`;
     case "relayed":
       return `${interloq} While Claude Code carries out the plan, changing the project's files, it may need a decision it cannot take on its own. It stops and asks you, and the plan is revised and reviewed with your answer before the work continues.`;
-    case "execStop":
-      return `${interloq} Claude Code stopped carrying out the plan before it was finished (status: ${origin.status}). What you write here is recorded and given to Claude Code, which revises the plan with it; Codex reviews the revision before the work continues.`;
     case "permission":
       return `${interloq} While Claude Code carries out the plan, it asks before it uses a tool that Interloq's permission settings do not allow on their own: here ${origin.tool}, with the input shown below. If you allow it, the tool runs in this project; if not, Claude Code is told so and continues without it. The question protects the project from an action you did not intend.`;
     case "pause":

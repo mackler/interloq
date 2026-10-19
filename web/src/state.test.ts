@@ -134,7 +134,6 @@ describe("who speaks in the left panel", () => {
     expect(s.modes.implementation.run?.activity).toBe("Claude — planning");
     const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x" })]));
     expect(tool.modes.implementation.run?.activity).toBe("Claude — Read: x");
-    expect(prompts.pagePromptText("execInput", prompts.execInputPrompt)).toBe("Your input for Claude");
   });
 });
 
@@ -184,7 +183,7 @@ describe("Markdown in the left panel", () => {
 // Plan step 4.7 (the review against the heuristics): the page states a prompt without the hint's key
 // conventions, which the buttons replace [match between the system and the real world].
 test("every prompt is shown in the page's words, without the hint's key conventions", () => {
-  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.execInputPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt];
+  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt];
   for (const text of texts) {
     const body = fold(live([started, asked(1, text)])).modes.implementation.run?.pending?.hint ?? "";
     expect(body, text).not.toMatch(/>\s*$|\bq = quit|Enter =|= stop|p = /);

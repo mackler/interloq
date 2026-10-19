@@ -580,10 +580,9 @@ test("permissionQuestion names neither the command, nor the file, nor the addres
 test("the questions the program composes embed no agent-written or SDK-written text", () => {
   const short = "x";
   const long = "y".repeat(3000);
-  // The fault and the stop description are no longer arguments of the question at all.
+  // The fault is no longer an argument of the question at all.
   assert.equal(prompts.transportExhaustedQuestion.length, 2);
-  assert.equal(prompts.execStopQuestion.length, 0);
-  for (const q of [prompts.transportExhaustedQuestion("claude", prompts.transportWhat("planning")), prompts.execStopQuestion()]) assert.ok(!q.includes(long) && !q.includes(short + short));
+  for (const q of [prompts.transportExhaustedQuestion("claude", prompts.transportWhat("planning"))]) assert.ok(!q.includes(long) && !q.includes(short + short));
   // The program-chosen names, bounded by the program's own vocabulary.
   const headings = ["Question review", "Terms review", "Requirements review", "Planning phase 12", "Work review 3", "Decision 7"];
   const files = ["questions.json", "terms.json", "requirements.md", "plan.json", "analysis.json", "changes.diff"];
@@ -602,14 +601,6 @@ test("the transport pause's details hold the attempts and the whole fault; the f
   assert.ok(!context.includes(fault), "the fallback paragraph embeds the fault");
   assert.ok(context.length < 1000);
 });
-test("an execution stop's details hold Claude Code's description", () => {
-  const description = "The build needs a decision about **the cache**.";
-  const shown = (d: string) => blocksMarkdown(prompts.execStopDetails(d));
-  assert.ok(shown(description).includes(description));
-  assert.deepEqual(prompts.execStopDetails(description)[0], { kind: "document", markdown: description }, "Claude Code's prose is shown whole");
-  assert.ok(shown("  ").includes(prompts.EXEC_STOP_NO_DESCRIPTION));
-});
-
 // S54: conversation.md carries the edge line breaks as escapes, as the page does.
 test("a multi-line value's edge line breaks are escaped in the record", async () => {
   const { renderQuestionRecord } = await import("../src/render.ts");
@@ -741,7 +732,6 @@ test("S17: every question Interloq composes names the user as the one who decide
     prompts.permissionQuestion("Bash", { command: "ls" }),
     prompts.permissionQuestion("Edit", { file_path: "/a" }),
     prompts.CONFIRM_SUMMARY_QUESTION,
-    prompts.execStopQuestion(),
     prompts.REPLY_QUESTION,
   ];
   for (const q of questions) {
@@ -944,7 +934,6 @@ test("the questions and facts that point at attached material name it by its hea
     [prompts.permissionQuestion("WebFetch", { url: "https://x" }), prompts.attachedHeading("request")],
     [prompts.permissionQuestion("Other", { a: 1 }), prompts.attachedHeading("request")],
     [prompts.permissionFacts("Bash", { command: "ls" }), prompts.attachedHeading("request")],
-    [prompts.execStopQuestion(), prompts.attachedHeading("stopReport")],
     [prompts.transportExhaustedQuestion("codex", "the review"), prompts.attachedHeading("fault")],
   ];
   for (const [text, heading] of texts) {
@@ -961,9 +950,7 @@ test("decisionRegionName is YOUR_CHOICE and the question; equivalenceLinkName na
 });
 
 // Issue #157: the texts of a stop after a process ending name the ending and the steps recorded.
-test("the texts of a process ending name the ending, the attempts and the steps, or say that there are none", async () => {
-  const { questionProblems } = await import("../src/question.ts");
-  const { blocksText } = await import("../src/pieces.ts");
+test("the texts of a process ending name the ending, the attempts and the steps, or say that there are none", () => {
   const bus = { kind: "signal" as const, signal: "SIGBUS" };
   assert.equal(prompts.processEndText(bus), "killed by signal SIGBUS");
   assert.equal(prompts.processEndText({ kind: "exit", code: 1 }), "exited with code 1");
@@ -975,16 +962,6 @@ test("the texts of a process ending name the ending, the attempts and the steps,
   assert.ok(prompts.processEndedRemaining(unfinished).includes("S2 (Test the parser)"), "a label is written on one line");
   assert.notEqual(prompts.processEndedSummary([]), "");
   assert.notEqual(prompts.processEndedRemaining([]), "");
-  for (const [d, u] of [[done, unfinished], [[], []]] as const) {
-    const details = prompts.processEndedDetails(question, d, u);
-    const text = blocksText(details).join("\n");
-    assert.ok(text.includes(question));
-    for (const s of [...d, ...u]) assert.ok(text.includes(s.id), s.id);
-    assert.ok(!text.includes(prompts.EXEC_STOP_NO_DESCRIPTION));
-    const asQuestion = { context: para("c"), history: [], question: plain("What now?"), explanations: [], options: [], details };
-    assert.deepEqual(questionProblems(asQuestion), []);
-    assert.ok(attachedOf("stopReport", details) !== null);
-  }
 });
 
 // Issue #156: the rule that tells Claude Code when to mark a disagreement and the validation that reads the mark agree:

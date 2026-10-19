@@ -116,7 +116,6 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("confirmSummary") }),
   Schema.Struct({ kind: Schema.Literal("planner"), ...withHeading }),
   Schema.Struct({ kind: Schema.Literal("relayed") }),
-  Schema.Struct({ kind: Schema.Literal("execStop"), phase: Int, status: Str }),
   Schema.Struct({ kind: Schema.Literal("permission"), tool: Str, input: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literals(["reraised", "secondClarification", "disputedSelfCorrection"]), id: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("reversal"), id: Str, reverses: Str }),
@@ -199,7 +198,7 @@ export const RunEventSchema = Schema.Union([
   tagged("Asked", {
     prompt: Int,
     text: Str,
-    kind: Schema.Literals(["decision", "limit", "limitNoProceed", "unchanged", "transport", "execInput", "optionOrText", "permission", "interviewMessage", "confirmSummary", "unknown"]),
+    kind: Schema.Literals(["decision", "limit", "limitNoProceed", "unchanged", "transport", "optionOrText", "permission", "interviewMessage", "confirmSummary", "unknown"]),
     mode: Schema.Literals(["ask", "message"]),
     choices: Schema.Array(ChoiceSchema),
     free: Schema.Literals(["none", "line", "message"]),

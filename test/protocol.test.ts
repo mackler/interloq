@@ -66,7 +66,6 @@ const origin = fc.oneof(
   fc.record({ kind: fc.constantFrom("clarification" as const, "followUp" as const), id: text }),
   fc.record({ kind: fc.constantFrom("reply" as const, "confirmSummary" as const, "relayed" as const) }),
   fc.record({ kind: fc.constant("planner" as const), heading: text }),
-  fc.record({ kind: fc.constant("execStop" as const), phase: nat, status: text }),
   fc.record({ kind: fc.constant("permission" as const), tool: text, input: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constantFrom("reraised" as const, "secondClarification" as const, "disputedSelfCorrection" as const), id: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("reversal" as const), id: text, reverses: text }),

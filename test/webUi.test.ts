@@ -45,7 +45,7 @@ test("say, notify, and a prompt with its answer become events in order", async (
 
 test("the first answer wins; a later one is ignored", async () => {
   const { ui, events } = await withUi();
-  const fiber = Effect.runFork(ui.ask(prompts.execInputPrompt));
+  const fiber = Effect.runFork(ui.ask(prompts.optionOrTextPrompt));
   const prompt = await pendingPrompt(ui);
   assert.equal(await run(ui.answer(prompt, "first")), true);
   assert.equal(await run(ui.answer(prompt, "second")), false);
@@ -61,7 +61,7 @@ test("q at an ask prompt and /quit at a message prompt stop the run, as src/inpu
     const exit = await run(Effect.exit(Fiber.join(fiber)));
     assert.ok(Exit.isFailure(exit) && String(exit.cause).includes("UserStopped"), `${answer} did not stop`);
   };
-  await stopped(ui.ask(prompts.execInputPrompt), "q");
+  await stopped(ui.ask(prompts.optionOrTextPrompt), "q");
   await stopped(ui.askMessage(prompts.interviewMessagePrompt), "/quit");
   const fiber = Effect.runFork(ui.askMessage(prompts.interviewMessagePrompt));
   await run(ui.answer(await pendingPrompt(ui), "q"));
@@ -85,7 +85,7 @@ test("two concurrent asks are asked one after the other and answered in order", 
 
 test("interrupting a waiting ask clears the pending prompt, and a late answer is refused", async () => {
   const { ui } = await withUi();
-  const fiber = Effect.runFork(ui.ask(prompts.execInputPrompt));
+  const fiber = Effect.runFork(ui.ask(prompts.optionOrTextPrompt));
   const prompt = await pendingPrompt(ui);
   await run(Fiber.interrupt(fiber));
   assert.equal(await run(ui.pending), null);

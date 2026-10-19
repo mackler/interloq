@@ -290,8 +290,6 @@ export type QuestionOrigin =
   | Readonly<{ kind: "planner"; heading: string }>
   /** A question Claude Code asks while implementing the plan. */
   | Readonly<{ kind: "relayed" }>
-  /** An implementation that stopped without a question the user was asked. */
-  | Readonly<{ kind: "execStop"; phase: number; status: string }>
   /** A permission request of Claude Code while implementing the plan. */
   | Readonly<{ kind: "permission"; tool: string; input: string }>
   | (Readonly<{ kind: "pause"; heading: string }> & PauseOrigin)
@@ -325,12 +323,12 @@ export type ContextWritten = Readonly<{
 }>;
 
 /** The kinds of material a question carries beside its context (issue #137, Q1 of its requirements). */
-export const ATTACHED_KINDS = ["reason", "summary", "request", "reviewFacts", "stopReport", "fault"] as const;
+export const ATTACHED_KINDS = ["reason", "summary", "request", "reviewFacts", "fault"] as const;
 export type AttachedKind = (typeof ATTACHED_KINDS)[number];
 /**
  * What a question carries beside its context, named by what it holds (issue #137, Q1); never empty. Its kind is its own
  * field and not a function of the question's origin, although today they correspond one to one (clarification, reason;
- * confirmSummary, summary; permission, request; pause, reviewFacts; execStop, stopReport; transport, fault): the origin
+ * confirmSummary, summary; permission, request; pause, reviewFacts; transport, tracker and suiteStopped, fault): the origin
  * says where a question came from, the kind says what the material is, and the page's heading names the material.
  */
 export type Attached = Readonly<{ kind: AttachedKind; blocks: readonly [ShownBlock, ...ShownBlock[]] }>;
