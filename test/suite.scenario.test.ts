@@ -8,9 +8,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
-import { FULL_SUITE_PHASE, suitePassedLine } from "../src/prompts.ts";
+import { FULL_SUITE_PHASE, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
 import type { SuiteResult } from "../src/suite.ts";
-import { fakeTrackerOf, finished, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
+import { fakeTrackerOf, finished, presentedQuestions, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const SUITE = "script/test --all";
@@ -82,4 +82,79 @@ test("(e) the suite's limit is the configured suiteTimeoutMinutes, in millisecon
   const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE, suiteTimeoutMinutes: 5 } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
   assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 300_000 }]);
+});
+
+// Issue #181 (requirements Q1, Q2): a suite stopped by its limit or unable to start is not the work's fault: it is run
+// again once in the whole run without a question, then each further such stop asks Run the suite again or Stop.
+const timedOut: SuiteResult = { _tag: "Failed", reason: { kind: "timedOut", ms: 2_400_000 }, output: "ok 1\n", ms: 2_400_000 };
+const notStarted: SuiteResult = { _tag: "Failed", reason: { kind: "notStarted", message: "spawn /bin/sh ENOENT" }, output: "", ms: 1 };
+const lastForeseen = (notified: readonly { _tag: string }[]): string[] =>
+  (notified.filter((e) => e._tag === "PhasesForeseen").at(-1) as unknown as { phases: { kind: string; n?: number }[] }).phases.map((p) => `${p.kind}${p.n ?? ""}`);
+const planningsBegan = (notified: readonly { _tag: string }[]): number =>
+  notified.filter((e) => e._tag === "PhaseBegan" && (e as unknown as { phase: { kind: string } }).phase.kind === "planning").length;
+const suiteQuestions = (probe: { ui: Parameters<typeof presentedQuestions>[0] }) => presentedQuestions(probe.ui).filter((q) => q.origin.kind === "suiteStopped");
+
+for (const [name, stop] of [["(f) a suite stopped by its limit", timedOut], ["(i) a suite that could not start", notStarted]] as const) {
+  test(`${name}, then passed: run again once with no question and no revision, and the run finishes`, async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    const { wiring, probe } = testWiring(tempRepo(), { ...one, tracker, suite: [stop], config: { suiteCommand: SUITE } });
+    assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+    assert.equal(probe.suite.runs.length, 2);
+    assert.ok(fs.existsSync(path.join(probe.dir, "suite-1.log")));
+    assert.equal(fs.readFileSync(path.join(probe.dir, "suite-2.log"), "utf8"), "all passed\n");
+    assert.deepEqual(suitesBegan(probe.ui.notified), [1, 2]);
+    assert.deepEqual(probe.ui.asked, []);
+    assert.equal(planningsBegan(probe.ui.notified), 1, "the plan was revised");
+    assert.ok(probe.ui.said.some((line) => line.includes(suiteRepeatLine(FULL_SUITE_PHASE + " 1", SUITE))), probe.ui.said.join("\n"));
+    assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(suiteRepeatLine(FULL_SUITE_PHASE + " 1", SUITE)));
+    assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
+    assert.deepEqual(lastForeseen(probe.ui.notified), ["planning1", "execution1", "work1", "suite1", "suite2"]);
+  });
+}
+
+test("(g) a suite stopped twice asks Run the suite again or Stop; Run the suite again, then passed, finishes", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [TRANSPORT_ANSWERS.retry], suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.equal(suiteQuestions(probe).length, 1);
+  assert.equal(probe.suite.runs.length, 3);
+  assert.equal(planningsBegan(probe.ui.notified), 1, "the plan was revised");
+});
+
+test("(h) a suite stopped twice, answered Stop: the run halts with 1 and SuiteStopped", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, answers: [TRANSPORT_ANSWERS.stop], suite: [timedOut, timedOut], config: { suiteCommand: SUITE } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 1);
+  assert.equal(suiteQuestions(probe).length, 1);
+  assert.equal(probe.suite.runs.length, 2);
+  const halt = suiteStoppedText(SUITE, 2, 2, "it ran longer than 40 minutes and was stopped");
+  assert.ok(probe.ui.said.some((line) => line.includes(halt)), probe.ui.said.join("\n"));
+});
+
+test("(j) a suite ended by a signal is a fault of the work: the plan is revised from it", async () => {
+  const signalled: SuiteResult = { _tag: "Failed", reason: { kind: "signal", signal: "SIGKILL" }, output: "killed\n", ms: 10 };
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    suite: [signalled],
+    config: { suiteCommand: SUITE },
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(probe.ui.asked, []);
+  const revision = probe.planner.prompts.find((p) => p.includes("Interloq then ran the whole suite"));
+  assert.ok(revision !== undefined && revision.includes("SIGKILL"));
+});
+
+test("(k) the automatic repeat is once per run: a later stop in another iteration asks at once", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    answers: [TRANSPORT_ANSWERS.retry],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    suite: [timedOut, failing, timedOut],
+    config: { suiteCommand: SUITE },
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.equal(probe.suite.runs.length, 4, "a repeat, a failure, a stop asked about, a pass");
+  assert.equal(suiteQuestions(probe).length, 1);
+  assert.equal(planningsBegan(probe.ui.notified), 2);
 });

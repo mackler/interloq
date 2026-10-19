@@ -11,7 +11,7 @@ import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
-import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome } from "./suite.ts";
+import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type WorkFailure } from "./suite.ts";
 import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
@@ -1502,7 +1502,7 @@ ${execution.plan}`;
  */
 export type RevisionCause =
   | Readonly<{ _tag: "ExecutionEnded"; stopped: boolean; workReview: WorkReviewEnd }>
-  | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: SuiteFailure; tail: string; log: string }>
+  | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: WorkFailure; tail: string; log: string }>
   | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: CommandLine | null }>;
 
 /** A suite run's failure in words (issue #162): its exit code, the signal that ended it, the bound, or why it did not start. */
@@ -1678,7 +1678,7 @@ export function suitePassedLine(label: string, command: string): string {
   // Issue #176: the commit check follows a passed suite, so the pass alone no longer finishes the run.
   return `${label} passed: ${command}.`;
 }
-export function suiteFailedLine(label: string, command: string, reason: SuiteFailure, log: string): string {
+export function suiteFailedLine(label: string, command: string, reason: WorkFailure, log: string): string {
   return `${label} failed: ${command}; ${suiteFailureText(reason)}. Its output is in ${log}. Claude Code revises the plan to correct it, and the suite runs again after the next review of the work finds nothing left to correct.`;
 }
 /**

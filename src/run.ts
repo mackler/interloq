@@ -5,22 +5,23 @@ import { Effect, Exit, Option, Result } from "effect";
 import { type Refinement, refinementOf } from "./refinement.ts";
 import { stateAtEnd, stateAtStart } from "./runMode.ts";
 import type { ItemId } from "./tracker.ts";
-import { describe, type RunError, TrackerStepFailed, trackerFailureText } from "./errors.ts";
+import { describe, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suitePassedLine, uncommittedLine, type WorkExecution } from "./prompts.ts";
+import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces, type ShownBlock } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
-import { askOffering, programContext } from "./offer.ts";
+import { askOffering, programContext, type QuestionDraft, suiteStoppedOptions } from "./offer.ts";
+import { parseTransportAnswer } from "./input.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
 import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, type StoreError, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
-import { SUITE_TAIL_LINES, suiteOutcomeOf, tailLines } from "./suite.ts";
+import { SUITE_TAIL_LINES, suiteOutcomeOf, suiteVerdictOf, tailLines } from "./suite.ts";
 import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
 
 /**
@@ -230,7 +231,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
 
     /**
      * Suite run n (issue #162): the whole suite, run by Interloq in the project with no guard, its output written to
-     * suite-<n>.log, its result said and written to conversation.md; the revision's cause where it failed, else null.
+     * suite-<n>.log, its end notified; a pass or a failure of the work is said and written to conversation.md here, a
+     * stop outside the work by `finalSuite`, once the rail foresees what follows it (issue #181).
      */
     const suitePhase = (command: S.CommandLine, n: number) =>
       Effect.gen(function* () {
@@ -243,8 +245,43 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         yield* store.saveSuiteLog(n, result.output);
         const log = recordPath(store.root, { kind: "suiteLog", n });
         yield* ui.notify({ _tag: "PhaseEnded", phase, result: suiteOutcomeOf(result) });
-        yield* sayAndWrite(result._tag === "Passed" ? suitePassedLine(name, command) : suiteFailedLine(name, command, result.reason, log));
-        return result._tag === "Passed" ? null : ({ _tag: "SuiteFailed", suite: n, command, reason: result.reason, tail: tailLines(result.output, SUITE_TAIL_LINES), log } satisfies RevisionCause);
+        const verdict = suiteVerdictOf(result);
+        if (verdict._tag === "Passed") yield* sayAndWrite(suitePassedLine(name, command));
+        if (verdict._tag === "WorkFailed") yield* sayAndWrite(suiteFailedLine(name, command, verdict.reason, log));
+        return { verdict, log, tail: tailLines(result.output, SUITE_TAIL_LINES) };
+      });
+
+    /** Issue #181 (requirements Q1): whether the one automatic repeat of a suite stopped outside the work was used in this run. */
+    let repeatUsed = false;
+    /**
+     * The final suite after iteration k's work review found nothing left to correct (issue #162; issue #181, Q1 and Q2):
+     * null where it passed; the revision's cause where the work failed it (an exit code or a signal). A stop outside the
+     * work (the limit, or a shell that could not start) is never a cause: the first in the run is repeated at once
+     * without a question, and every later one asks Run the suite again or Stop, Stop halting with SuiteStopped.
+     */
+    const finalSuite = (command: S.CommandLine, k: number) =>
+      Effect.gen(function* () {
+        for (let stops = 1; ; stops++) {
+          const n = suiteRuns.length + 1;
+          const { verdict, log, tail } = yield* suitePhase(command, n);
+          suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed" }];
+          if (verdict._tag === "Passed") return null;
+          if (verdict._tag === "WorkFailed") return { _tag: "SuiteFailed", suite: n, command, reason: verdict.reason, tail, log } satisfies RevisionCause;
+          // The next suite run of this iteration is foreseen first, so that the lines name this one as the run now numbers it.
+          yield* foreseeShape;
+          const name = label("suite", n);
+          yield* sayAndWrite(suiteStoppedLine(name, command, verdict.reason, log));
+          if (!repeatUsed) {
+            repeatUsed = true;
+            yield* sayAndWrite(suiteRepeatLine(name, command));
+            continue;
+          }
+          const reason = suiteFailureText(verdict.reason);
+          const origin: QuestionOrigin = { kind: "suiteStopped", command, suite: n, stops, reason };
+          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(suiteStoppedQuestion(name, command)), options: suiteStoppedOptions(), attached: attachedOf("fault", suiteStoppedDetails(verdict.reason, log)), explain: suiteStoppedFacts(command, n, stops, reason, log), decision: null };
+          const answer = yield* askOffering((p) => ui.ask(p), transportPrompt, draft, (a) => parseTransportAnswer(a) !== null).pipe(inPhase({ kind: "suite", n }));
+          if (parseTransportAnswer(answer) === "stop") return yield* Effect.fail(new SuiteStopped({ command, suite: n, stops, reason }));
+        }
       });
 
     /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
@@ -328,9 +365,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       // file the run changed is uncommitted (issue #176, Q1): otherwise the plan is revised, without limit.
       if (!stopped && work.result === "converged") {
         if (checks.suite !== null) {
-          const n = suiteRuns.length + 1;
-          const failed = yield* suitePhase(checks.suite, n);
-          suiteRuns = [...suiteRuns, { iteration: k, passed: failed === null }];
+          const failed = yield* finalSuite(checks.suite, k);
           if (failed !== null) {
             yield* foresee(k + 1);
             previous = failed;
