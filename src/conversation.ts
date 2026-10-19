@@ -20,7 +20,6 @@ import type { InterviewStage } from "./uiEvents.ts";
 import { INITIAL_CLARIFICATION, nextQuestion, progressOf, takeFollowUp, withAnswer, withEnded, withShown } from "./clarificationState.ts";
 import { makeInterviewWorker } from "./interviewWorker.ts";
 import type { ClarificationTrailer } from "./prompts.ts";
-import { ASK } from "./retry.ts";
 
 /**
  * The validation of an interview turn (S16, Q12): the question it asks now, when its id is not one of questions.json
@@ -258,7 +257,9 @@ export const clarification = (agreed: readonly string[], termsOffer: TermsOffer)
     yield* store.converse(`## ${recordHeading("clarification")}\n\n`);
     const questions = (yield* store.loadQuestions()).questions;
     const state = yield* Ref.make(INITIAL_CLARIFICATION);
-    const worker = yield* makeInterviewWorker({ questions, state, heading, exhaustion: () => ASK });
+    // Decision G-R1-1: while agreed questions remain, a request whose retries are used up is tried again in the background
+    // and nothing is asked; the question is asked once the developer waits for Claude Code (the worker's drain).
+    const worker = yield* makeInterviewWorker({ questions, state, heading, exhaustion: (waiting, untilWaiting) => ({ kind: "background", waiting, untilWaiting }) });
     const counted = Ref.get(state).pipe(Effect.flatMap((s) => ui.notify({ _tag: "InterviewCounted", ...progressOf(agreed, questions, s) })));
 
     /** Presents the next question and sends its answer; false when nothing is left to present. */

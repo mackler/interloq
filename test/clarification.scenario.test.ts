@@ -5,12 +5,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Effect, Exit } from "effect";
+import { Clock, Effect, Exit } from "effect";
 import * as prompts from "../src/prompts.ts";
 import { TERMS_REQUEST } from "../src/input.ts";
+import { USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import { refinementRun } from "../src/run.ts";
 import type * as S from "../src/schema.ts";
-import { ack, followUpOf, type PlanningStep, presentedQuestions, questionEntry, type ScriptedUi, scriptedItem, summaryReply, tempRepo, testLayer, type TestOptions } from "./helpers.ts";
+import { ack, steppingClock, followUpOf, type PlanningStep, presentedQuestions, questionEntry, type ScriptedUi, scriptedItem, summaryReply, tempRepo, testLayer, type TestOptions } from "./helpers.ts";
 
 const q = (id: string, skip: S.SkipCondition | null = null): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { default_answer: "A", skip_if: skip });
 const SUMMARY = "# Requirements\n\nQ1, Q2, Q3: A.";
@@ -28,14 +29,14 @@ const replied = (ui: () => ScriptedUi, message: string) => async (): Promise<voi
   while (!ui().notified.some((e) => e._tag === "InterviewCounted") || !ui().notified.some((e) => e._tag === "InterviewTurn" && e.message === message)) await new Promise((r) => setTimeout(r, 5));
 };
 
-const scenario = (questions: readonly S.QuestionEntry[], options: TestOptions, terms: "unchecked" | "onRequest" = "unchecked") => {
+const scenario = (questions: readonly S.QuestionEntry[], options: TestOptions, terms: "unchecked" | "onRequest" = "unchecked", clock: Clock.Clock | null = null) => {
   const { layer, probe } = testLayer(tempRepo(), {
     ...options,
     steps: [{ output: { questions } }, ...(options.steps ?? [])],
     reviews: options.reviews ?? [{ issues: [] }, { issues: [] }],
   });
   const ui = () => probe.ui;
-  const run = () => Effect.runPromiseExit(refinementRun("task", scriptedItem.id, terms).pipe(Effect.provide(layer)));
+  const run = () => Effect.runPromiseExit(refinementRun("task", scriptedItem.id, terms).pipe(Effect.provide(layer), (e) => (clock === null ? e : Effect.provideService(e, Clock.Clock, clock))));
   const conversation = () => fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
   return { probe, ui, run, conversation };
 };
@@ -191,4 +192,63 @@ test("13: a terms request beside the interview's request: each call's start and 
   assert.equal(new Set(starts).size, starts.length, events.join("\n"));
   for (const id of starts) assert.equal(events.filter((e) => e === `end ${id}`).length, 1, `${id} did not end exactly once`);
   assert.ok(events.some((e) => e.startsWith("start interview")) && events.some((e) => e.startsWith("start planning")), events.join("\n"));
+});
+
+// S7 (decision G-R1-1): a request whose first attempts fail goes on being tried every five minutes while agreed questions
+// remain, with nothing asked; once none remains, the exhaustion question of today is asked.
+const BACKGROUND_MS = USAGE_LIMIT_RETRY_SECONDS * 1000;
+const FAULT: PlanningStep = { fault: "stream disconnected before completion" };
+const fewRetries = { maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 };
+const until = (cond: () => boolean) => async (): Promise<void> => {
+  while (!cond()) await new Promise((r) => setTimeout(r, 5));
+};
+const isTransportQuestion = (asked: string) => asked.includes(prompts.transportPrompt);
+
+test("S7-1: the opening request is tried in the background while the questions are answered, and the queued answers follow", timeout, async () => {
+  const l = late();
+  let backgroundSleeps = 0;
+  const { clock, sleeps } = steppingClock(Date.UTC(2026, 9, 19, 12), (ms) => (ms === BACKGROUND_MS && ++backgroundSleeps === 2 ? Effect.promise(presented(l.ui, "Q2")) : Effect.void));
+  let planner: () => string[] = () => [];
+  const replies: PlanningStep[] = [FAULT, FAULT, FAULT, { output: ack(), gate: presented(l.ui, "Q3") }];
+  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", "B", { text: "A", when: until(() => planner().length >= 4) }, ""], replies, closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", clock);
+  l.bind(s.ui);
+  planner = () => s.probe.planner.clarificationPrompts;
+  succeeded(await s.run());
+  assert.deepEqual(sleeps.filter((ms) => ms === BACKGROUND_MS), [BACKGROUND_MS, BACKGROUND_MS]);
+  for (const n of [1, 2]) {
+    const line = prompts.backgroundRetryLine("claude", prompts.transportWhat("interview"), n, USAGE_LIMIT_RETRY_SECONDS);
+    assert.ok(s.probe.ui.said.includes(line), `try ${n} not said`);
+    assert.ok(s.conversation().includes(line), `try ${n} not recorded`);
+  }
+  assert.ok(!s.probe.ui.asked.some(isTransportQuestion), "a transport question was asked");
+  const queued = s.probe.planner.clarificationPrompts[4];
+  assert.ok(queued.includes(answered("Q1", "A")) && queued.indexOf(answered("Q1", "A")) < queued.indexOf(answered("Q2", "B")), queued);
+});
+
+/** Background sleeps that never end by themselves: only the developer's reaching the end of the list wakes them. */
+/** The developer's last answer, held until the first background try was said, so that it comes while the request is in the background. */
+const afterFirstTry = (ui: () => ScriptedUi, text: string) => ({ text, when: until(() => ui().said.includes(prompts.backgroundRetryLine("claude", prompts.transportWhat("interview"), 1, USAGE_LIMIT_RETRY_SECONDS))) });
+const heldClock = () => steppingClock(Date.UTC(2026, 9, 19, 12), (ms) => (ms === BACKGROUND_MS ? Effect.never : Effect.void)).clock;
+
+test("S7-2: once the list is used up with the connection still down, the question is asked; Stop ends the run with AgentUnreachable", timeout, async () => {
+  const l = late();
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), prompts.TRANSPORT_ANSWERS.stop], replies: [FAULT, FAULT, FAULT], config: fewRetries }, "unchecked", heldClock());
+  l.bind(s.ui);
+  const exit = await s.run();
+  assert.ok(Exit.isFailure(exit));
+  assert.match(String(exit.cause), /AgentUnreachable/);
+  assert.equal(s.probe.ui.asked.filter(isTransportQuestion).length, 1);
+  assert.match(s.conversation(), /\*\*User:\*\* A[\s\S]*\*\*User:\*\* B/);
+  assert.ok(!fs.existsSync(path.join(s.probe.dir, "requirements.md")));
+});
+
+test("S7-3: Retry again at that question runs a full set of attempts, and on success the interview goes on to the summary", timeout, async () => {
+  const l = late();
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), prompts.TRANSPORT_ANSWERS.retry, ""], replies: [FAULT, FAULT, FAULT, FAULT, { output: ack() }], closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", heldClock());
+  l.bind(s.ui);
+  const exit = await s.run();
+  succeeded(exit);
+  assert.equal(s.probe.ui.asked.filter(isTransportQuestion).length, 1);
+  assert.ok(s.probe.ui.notified.some((e) => e._tag === "TransportRetrying" && e.attempt === 1));
+  assert.ok(fs.existsSync(path.join(s.probe.dir, "requirements.md")));
 });
