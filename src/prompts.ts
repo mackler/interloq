@@ -5,7 +5,7 @@ import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type CommandLine, ty
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
-import type { Skipped, SkipProblem, TurnSkipProblem } from "./premises.ts";
+import type { Skipped, SkipProblem, TurnProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
@@ -492,21 +492,16 @@ export const skipIfLine = (condition: Readonly<{ question: string; answer: strin
  * The program's note that questions were skipped, or are to be asked after all: to Claude Code after the user's message,
  * to the user, and in conversation.md.
  */
-export const skippedNote = (skipped: readonly Skipped[], restored: readonly string[]): string =>
-  [
-    ...skipped.map((k) =>
+export const skippedNote = (skipped: readonly Skipped[]): string =>
+  skipped
+    .map((k) =>
       k.cause === "answered"
         ? `The program does not put question ${k.id} to the user: the user answered question ${k.question} ${JSON.stringify(k.answer)}, which makes it unnecessary.`
         : `The program does not put question ${k.id} to the user: question ${k.question}, on whose answer it depends, is itself skipped.`,
-    ),
-    ...restored.map((id) => `Question ${id}, skipped before, is to be asked after all: the user changed the answer that made it unnecessary.`),
-  ].join(" ");
-const turnSkipProblemText = (problem: TurnSkipProblem): string => {
+    )
+    .join(" ");
+const turnProblemText = (problem: TurnProblem): string => {
   switch (problem.kind) {
-    case "skippedAsked":
-      return `the turn asks question ${problem.id}, which the program skipped because it depends on the answer ${JSON.stringify(problem.answer)} to question ${problem.question}`;
-    case "askedBeforePremise":
-      return `the turn asks question ${problem.id} before question ${problem.premise}, whose answer can make it unnecessary, has been answered`;
     case "summaryOmits":
       return `the summary does not name the skipped question${problem.ids.length > 1 ? "s" : ""} ${problem.ids.join(", ")}`;
     case "followUpIdBlank":
@@ -515,18 +510,16 @@ const turnSkipProblemText = (problem: TurnSkipProblem): string => {
       return `the follow-up question id ${problem.id} was used before in this interview, or twice in this reply`;
   }
 };
-/** The halt after the repair turn of an interview turn could not correct what it did against the skipped questions. */
-export const interviewTurnInvalidText = (problems: readonly TurnSkipProblem[]): string => `an interview turn is invalid: ${problems.map(turnSkipProblemText).join("; ")}`;
-/** The validation repair turn of an interview turn that asked a skipped question or one before its premise, or omitted one. */
-export const interviewTurnRepairPrompt = (problems: readonly TurnSkipProblem[]): string => validationRepairPrompt(problems.map(turnSkipProblemText), [SKIPPED_RULE]);
+/** The halt after the repair turn of an interview reply could not correct it. */
+export const interviewTurnInvalidText = (problems: readonly TurnProblem[]): string => `an interview turn is invalid: ${problems.map(turnProblemText).join("; ")}`;
 /** Issue #184: the validation repair turn of a reply of the first interview. */
-export const clarificationReplyRepairPrompt = (problems: readonly TurnSkipProblem[]): string => validationRepairPrompt(problems.map(turnSkipProblemText), [followUpIdRule(), SUMMARY_SKIPPED_RULE]);
+export const clarificationReplyRepairPrompt = (problems: readonly TurnProblem[]): string => validationRepairPrompt(problems.map(turnProblemText), [followUpIdRule(), SUMMARY_SKIPPED_RULE]);
 /** Issue #184: how a follow-up question of the first interview is identified. */
 const followUpIdRule = (): string => `Give each follow-up question a new id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, and use each id once.`;
 /** Issue #184: the summary's account of the questions the program skipped. */
 const SUMMARY_SKIPPED_RULE = `When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
-/** What the interview does with the questions the program skips (issue #99): in the interview's rules and its repair turn. */
-export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. When complete is true, the summary lists every skipped question by its id, with the answer that made it unnecessary, under the heading 'Skipped questions'.`;
+/** What the second interview does with the questions the program skipped (issue #99), in its rules. */
+export const SKIPPED_RULE = `A question the program reports skipped is not asked: its premise was denied by the user's answer. Ask no question before the question its skip condition names has been answered. ${SUMMARY_SKIPPED_RULE}`;
 
 /** How a question for the user is filled (decision Q1 of the decision-support task), with the rules of every question (S1). */
 export const QUESTION_OPTIONS_RULE = `Each entry of questions_for_user has a context, a history, a question, explanations and options. When the question is a choice, give two or more mutually exclusive options, each with a short label and a description; otherwise return an empty options array.

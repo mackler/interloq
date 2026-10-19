@@ -1,9 +1,11 @@
-// The interview: a conversation between the user and Claude Code in the page. Separate from
-// src/interview.ts (the question phase) so that src/subjects.ts can use it without an import cycle (finding 28).
+// The interviews in the page. The first, `clarification` (issue #184), presents the agreed questions itself and sends each
+// answer to Claude Code through the interview's worker (src/interviewWorker.ts); the second, `interview`, on the accepted
+// gaps of the requirements review, goes turn by turn. Separate from src/interview.ts (the question phase) so that
+// src/subjects.ts can use it without an import cycle (finding 28).
 
 import { Effect, Ref, Result } from "effect";
 import { InterviewTurnInvalid, type RunError } from "./errors.ts";
-import { type AgreedAnswer, type AgreedAnswers, mentionsId, skippedQuestions, type TurnSkipProblem, waitingFor } from "./premises.ts";
+import { type AgreedAnswer, type AgreedAnswers, mentionsId, skippedQuestions, type TurnProblem } from "./premises.ts";
 import { parseInterviewMessage } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { interviewSays, recordHeading, renderTerms } from "./render.ts";
@@ -22,13 +24,11 @@ import { makeInterviewWorker } from "./interviewWorker.ts";
 import type { ClarificationTrailer } from "./prompts.ts";
 
 /**
- * The validation of an interview turn (S16, Q12): the question it asks now, when its id is not one of questions.json
- * (a follow-up, an accepted requirements issue), under the rules; an agreed question, whose presentation comes from the
- * records (S18), and a turn that asks nothing are not checked.
+ * The validation of a turn of the second interview (S16, Q12): the question it asks now, when its id is not one of
+ * questions.json (an accepted requirements issue), under the rules; an agreed question, whose presentation comes from
+ * the records (S18), and a turn that asks nothing are not checked.
  */
-export const turnValidation =
-  (recorded: readonly string[], premises: Premises | null): Validation<S.InterviewTurn> =>
-    bothValidations(questionRules(recorded), premises === null ? null : premiseValidation(premises));
+export const turnValidation = (recorded: readonly string[]): Validation<S.InterviewTurn> => questionRules(recorded);
 
 /** Issue #184: the validation of a reply of the first interview. */
 export const replyValidation = (recorded: readonly string[], askedFollowUps: readonly string[], premises: Premises, closing: boolean): Validation<S.InterviewReply> =>
@@ -55,7 +55,7 @@ const replyIds =
     const reused = [...new Set(ids.filter((id, i) => id.trim() !== "" && (askedFollowUps.includes(id) || ids.indexOf(id) !== i)))];
     const summary = normalizeReply(reply, closing);
     const omitted = summary.kind === "summary_proposed" ? skippedQuestions(premises.questions, premises.answers).filter((k) => !mentionsId(summary.summary, k.id)).map((k) => k.id) : [];
-    const problems: readonly TurnSkipProblem[] = [
+    const problems: readonly TurnProblem[] = [
       ...(ids.some((id) => id.trim() === "") ? [{ kind: "followUpIdBlank" as const }] : []),
       ...reused.map((id) => ({ kind: "followUpIdReused" as const, id })),
       ...(omitted.length > 0 ? [{ kind: "summaryOmits" as const, ids: omitted }] : []),
@@ -63,30 +63,8 @@ const replyIds =
     return problems.length === 0 ? Result.succeed({ value: reply, notes: [] }) : Result.fail({ error: new InterviewTurnInvalid({ problems }), repair: prompts.clarificationReplyRepairPrompt(problems) });
   };
 
-/**
- * What an interview knows of the premises of its agreed questions (issue #99): the list with its skip conditions and the
- * user's choices so far. Only the first interview has it; the second asks accepted requirements issues, which name none.
- */
+/** What the first interview's reply validation knows of the premises (issue #99): the list and the user's choices so far. */
 export type Premises = Readonly<{ questions: QuestionsFile["questions"]; answers: AgreedAnswers }>;
-
-/**
- * A turn may not ask a skipped question, nor a question before its premise is answered, and its summary names every
- * skipped question; each a failure with the validation repair turn of behaviour 10.
- */
-export const premiseValidation =
-  (premises: Premises): Validation<S.InterviewTurn> =>
-  (turn) => {
-    const skipped = skippedQuestions(premises.questions, premises.answers);
-    const id = turn.current_question.id;
-    const asked = skipped.find((k) => k.id === id);
-    const premise = id === "" ? null : waitingFor(premises.questions, premises.answers, id);
-    const omitted = turn.complete && turn.summary.trim() !== "" ? skipped.filter((k) => !mentionsId(turn.summary, k.id)).map((k) => k.id) : [];
-    const problems: readonly TurnSkipProblem[] = [
-      ...(asked !== undefined ? [{ kind: "skippedAsked" as const, id, question: asked.question, answer: asked.answer }] : premise !== null ? [{ kind: "askedBeforePremise" as const, id, premise }] : []),
-      ...(omitted.length > 0 ? [{ kind: "summaryOmits" as const, ids: omitted }] : []),
-    ];
-    return problems.length === 0 ? Result.succeed({ value: turn, notes: [] }) : Result.fail({ error: new InterviewTurnInvalid({ problems }), repair: prompts.interviewTurnRepairPrompt(problems) });
-  };
 
 /** The rules of every question, for a question the turn asks outside questions.json. */
 const questionRules =
@@ -193,7 +171,7 @@ export const interview = (opening: string, agreed: readonly string[]): Effect.Ef
     const recorded = questions.map((q) => q.id);
     let prompt = opening;
     for (;;) {
-      const turn = normalizeTurn((yield* planningCall(prompt, S.InterviewTurn, "interview", "records", turnValidation(recorded, null))).output);
+      const turn = normalizeTurn((yield* planningCall(prompt, S.InterviewTurn, "interview", "records", turnValidation(recorded))).output);
       const [messageLine] = interviewSays(turn);
       yield* ui.notify({ _tag: "InterviewTurn", heading, message: turn.message, summary: turn.kind === "summary_proposed" ? turn.summary : null, ...clarificationCount(agreed, turn.asked, turn.answered, []) });
       yield* ui.say(messageLine);
@@ -296,7 +274,7 @@ export const clarification = (agreed: readonly string[], termsOffer: TermsOffer)
       const before = skippedQuestions(questions, (yield* Ref.get(state)).answers).map((k) => k.id);
       yield* Ref.update(state, (s) => withAnswer(withShown(s, question.id), question.id, answer));
       const added = skippedQuestions(questions, (yield* Ref.get(state)).answers).filter((k) => !before.includes(k.id));
-      const note = added.length === 0 ? null : prompts.skippedNote(added, []);
+      const note = added.length === 0 ? null : prompts.skippedNote(added);
       if (note !== null) {
         yield* ui.say(note);
         yield* store.converse(`**Note:** ${note}\n\n`);

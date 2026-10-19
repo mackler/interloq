@@ -123,12 +123,11 @@ export const waitingFor = (questions: readonly PremiseEntry[], answers: AgreedAn
   return premise !== null && !answers.has(premise) ? premise : null;
 };
 
-/** What an interview turn did against the skipped questions and the order of the premises (issue #99), as data. */
-export const TurnSkipProblemSchema = Schema.Union([
-  /** The turn asks a question the user's answers removed. */
-  Schema.Struct({ kind: Schema.Literal("skippedAsked"), id: Schema.String, question: Schema.String, answer: Schema.String }),
-  /** The turn asks a question before the question its condition names has been answered. */
-  Schema.Struct({ kind: Schema.Literal("askedBeforePremise"), id: Schema.String, premise: Schema.String }),
+/**
+ * What a reply of the first interview did wrong, as data (issues #99 and #184): Interloq presents the agreed questions
+ * itself, so a reply cannot ask a skipped question or one before its premise.
+ */
+export const TurnProblemSchema = Schema.Union([
   /** The proposed summary does not name these skipped questions. */
   Schema.Struct({ kind: Schema.Literal("summaryOmits"), ids: Schema.Array(Schema.String) }),
   /** Issue #184: a follow-up question of a reply has a blank id. */
@@ -136,7 +135,7 @@ export const TurnSkipProblemSchema = Schema.Union([
   /** Issue #184: a follow-up question of a reply has an id asked before in the interview, or twice in the reply. */
   Schema.Struct({ kind: Schema.Literal("followUpIdReused"), id: Schema.String }),
 ]);
-export type TurnSkipProblem = typeof TurnSkipProblemSchema.Type;
+export type TurnProblem = typeof TurnProblemSchema.Type;
 
 /**
  * Whether `text` names `id` as a whole token (W1-R1-1): the character before it and the one after it are each absent or

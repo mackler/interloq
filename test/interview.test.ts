@@ -210,7 +210,7 @@ test("a question whose premise the user denied is skipped, recorded and not coun
   const { layer, probe } = premisedScenario("1", summaryReply(SUMMARY, "Complete."), []);
   await runRefinement(layer);
   assert.deepEqual(presentedIds(probe), ["Q1"]);
-  const note = prompts.skippedNote(skipped, []);
+  const note = prompts.skippedNote(skipped);
   assert.ok(note.includes("Q2") && note.includes("Q1") && note.includes('"A"'), note);
   assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes(answered("Q1", "A")) && p.includes(note)), probe.planner.clarificationPrompts.join("\n---\n"));
   assert.ok(read(probe.dir, "conversation.md").includes(`**Note:** ${note}`));

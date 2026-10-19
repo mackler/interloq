@@ -115,7 +115,7 @@ test("6: a chosen answer that meets Q2's skip condition: Q2 is never presented, 
   const s = scenario([q("Q1"), q("Q2", { question: "Q1", answer: "B" }), q("Q3")], { answers: ["B", "A", ""], closings: [{ output: summaryReply(`${SUMMARY} Skipped questions: Q2.`) }] });
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "Q3"]);
-  const note = prompts.skippedNote([{ id: "Q2", question: "Q1", answer: "B", cause: "answered" }], []);
+  const note = prompts.skippedNote([{ id: "Q2", question: "Q1", answer: "B", cause: "answered" }]);
   assert.ok(s.probe.ui.said.includes(note));
   assert.ok(s.conversation().includes(note));
   assert.ok(s.probe.planner.clarificationPrompts.some((p) => p.includes(answered("Q1", "B")) && p.includes(note)));

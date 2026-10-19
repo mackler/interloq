@@ -112,11 +112,11 @@ const current = (history: readonly S.Block[], context = para("The service, a web
 const turnOf = (c: S.InterviewTurn["current_question"]): S.InterviewTurn => ({ message_to_user: "m", current_question: c, asked_ids: ["F1"], answered_ids: [], complete: false, summary: "" });
 
 test("turnValidation rejects a current question whose only defect is in its history, and counts an explanation the history alone uses", () => {
-  assert.ok(Result.isSuccess(turnValidation([], null)(turnOf(current([])))));
-  const failed = turnValidation([], null)(turnOf(current(para("See #53."))));
+  assert.ok(Result.isSuccess(turnValidation([])(turnOf(current([])))));
+  const failed = turnValidation([])(turnOf(current(para("See #53."))));
   assert.ok(Result.isFailure(failed));
   const used = { ...current([{ kind: "paragraph", pieces: [...plain("You chose "), term("port 80", "p"), ...plain(" before.")] }]), explanations: [{ id: "p", term: "port 80", senses: ["The usual port of a web server."] }] };
-  assert.ok(Result.isSuccess(turnValidation([], null)(turnOf(used))));
+  assert.ok(Result.isSuccess(turnValidation([])(turnOf(used))));
 });
 
 // ---- S3: the prompts ask for the history apart, and Codex's criteria check the split ----------------------------------

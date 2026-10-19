@@ -236,7 +236,7 @@ test("the plan's agent schemas are total and closed", () => {
 // Issue #6 (Q1): the files of the plan's schemas in prototypes/proto-schema-output/ are what the program sends; they
 // are unproven until the developer's run of prototypes/proto-schema.ts (CLAUDE.md, "Not yet known").
 test("the plan's schema files in prototypes/proto-schema-output/ are what the program sends", () => {
-  for (const [name, schema] of [["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse], ["questionListResponse", S.QuestionListResponse]] as const) {
+  for (const [name, schema] of [["planReply", S.PlanWrite], ["planResponse", S.PlanResponse], ["questionContext", S.QuestionContext], ["termsWrite", S.TermsWrite], ["termsResponse", S.TermsResponse], ["questionListResponse", S.QuestionListResponse], ["interviewReply", S.InterviewReply]] as const) {
     assert.deepEqual(rawJsonSchema(schema), proven(name, "raw"), `${name} raw`);
     assert.deepEqual(strict(rawJsonSchema(schema)), proven(name, "strict"), `${name} strict`);
   }

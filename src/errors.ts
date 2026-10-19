@@ -6,7 +6,7 @@ import type { ProcessEnd } from "./transport.ts";
 import type { LimitReset } from "./limitReset.ts";
 import { ItemState } from "./tracker.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
-import { type SkipProblem, SkipProblemSchema, type TurnSkipProblem, TurnSkipProblemSchema } from "./premises.ts";
+import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
@@ -136,7 +136,7 @@ export class QuestionInvalid extends Data.TaggedError("QuestionInvalid")<{ reado
  */
 export class SkipConditionInvalid extends Data.TaggedError("SkipConditionInvalid")<{ readonly problems: readonly SkipProblem[] }> {}
 /** An interview turn that asks a skipped question or one before its premise, or omits a skipped one from its summary (issue #99). */
-export class InterviewTurnInvalid extends Data.TaggedError("InterviewTurnInvalid")<{ readonly problems: readonly TurnSkipProblem[] }> {}
+export class InterviewTurnInvalid extends Data.TaggedError("InterviewTurnInvalid")<{ readonly problems: readonly TurnProblem[] }> {}
 /** A report of report_step that names no step of the plan (Q3): an error for Claude Code, not a halt. */
 export class UnknownStep extends Data.TaggedError("UnknownStep")<{ readonly id: string }> {}
 /** docs/decision-making.md of the program could not be read before the run (decision support, D7). */
@@ -361,7 +361,7 @@ const RunErrorData = Schema.Union([
     questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(QUESTION_PROBLEM_KINDS), subject: Schema.String })) })),
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
-  Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnSkipProblemSchema) }),
+  Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),
   Schema.Struct({ _tag: Schema.Literal("ServerFault"), message: Schema.String }),
