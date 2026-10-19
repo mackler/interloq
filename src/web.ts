@@ -22,7 +22,7 @@ import { liveTracker } from "./trackerLive.ts";
 import { makeRunManager, SERVER_FAULT_GRACE_MS, SERVER_FAULT_INTERRUPT_MS } from "./runManager.ts";
 import { ServerFault } from "./errors.ts";
 import { firstProcessFault } from "./processFault.ts";
-import { COMMAND_CEILING_MS, unrecordedHaltLine } from "./prompts.ts";
+import { unrecordedHaltLine } from "./prompts.ts";
 import { suiteRunner } from "./suiteExec.ts";
 import { liveSdk } from "./sdkLive.ts";
 import { distMissingMessage, parsePort, WEB_USAGE } from "./webArgs.ts";
@@ -50,7 +50,7 @@ const wiringOf = (ui: WebUi): Wiring => ({
   agents: Layer.mergeAll(claudePlannerLayer, codexReviewerLayer),
   sharedConfig: fileURLToPath(new URL("../config.json", import.meta.url)),
   tracker: liveTracker,
-  suite: suiteRunner(process.env, COMMAND_CEILING_MS),
+  suite: suiteRunner(process.env),
 });
 
 /** This start of the server (finding 12 of docs/gui-review.md): run and prompt numbers restart, the incarnation does not. */

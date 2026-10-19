@@ -236,7 +236,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const name = label("suite", n);
         yield* ui.notify({ _tag: "PhaseBegan", phase });
         yield* sayAndWrite(suiteBeganLine(name, command));
-        const result = yield* runner.run(command, store.project);
+        const result = yield* runner.run(command, store.project, config.suiteTimeoutMinutes * 60_000);
         yield* store.saveSuiteLog(n, result.output);
         const log = recordPath(store.root, { kind: "suiteLog", n });
         yield* ui.notify({ _tag: "PhaseEnded", phase, result: suiteOutcomeOf(result) });

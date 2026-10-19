@@ -387,6 +387,12 @@ export type TrackerConfig = typeof TrackerConfig.Type;
 
 /** Issue #142: the three ways a refinement run may explain the agreed questions' terms. */
 export const TERMS_MODES = ["checked", "unchecked", "onRequest"] as const;
+/**
+ * Issue #181 (requirements Q3, Q4): the largest final-suite limit in whole minutes. The runner passes the limit in
+ * milliseconds to Node's setTimeout, which replaces a delay above 2^31-1 ms with 1 ms, so a larger setting would stop
+ * the suite at once.
+ */
+export const SUITE_TIMEOUT_MAX_MINUTES = 35_791;
 export const TermsMode = Schema.Literals(TERMS_MODES);
 export type TermsMode = typeof TermsMode.Type;
 
@@ -417,6 +423,11 @@ export const Config = Schema.Struct({
    * Codex thread.
    */
   codexTurnInputLimit: PositiveInt,
+  /**
+   * Issue #181 (requirements Q3, Q4): the time limit of the whole suite Interloq runs at the end of an implementation run,
+   * in minutes, apart from COMMAND_CEILING_MS, which bounds one shell command a step runs.
+   */
+  suiteTimeoutMinutes: PositiveInt.check(Schema.isLessThanOrEqualTo(SUITE_TIMEOUT_MAX_MINUTES)),
   countMinor: Schema.Boolean,
   execPermissionMode: Schema.Literals(["auto", "acceptEdits", "bypassPermissions", "default"]),
   claudeModel: Schema.NullOr(Schema.String),
@@ -631,6 +642,7 @@ export const defaultConfig: Config = {
   trackerRetryDelaySeconds: 15,
   costWarningUsd: 5,
   codexTurnInputLimit: 500_000,
+  suiteTimeoutMinutes: 40,
   countMinor: true,
   execPermissionMode: "auto",
   claudeModel: null,

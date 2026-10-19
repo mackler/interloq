@@ -60,7 +60,7 @@ type PerState = { unrefined: string; refined: string; implementing: string; impl
 type GithubTrackerShape = { kind: "github"; owner: string; repo: string; labels: PerState };
 /** The GitLab tracker: four labels, deployed being a closed issue. */
 type GitlabTrackerShape = { kind: "gitlab"; project: string; labels: { unrefined: string; refined: string; implementing: string; implemented: string } };
-const config: typeof S.Config.Type = { ignorePaths: ["a.txt"], maxRounds: 5, maxIdleRounds: 2, maxTransportRetries: 3, transportRetryDelaySeconds: 5, maxTrackerRetries: 5, trackerRetryDelaySeconds: 15, costWarningUsd: 5, codexTurnInputLimit: 500000, countMinor: true, execPermissionMode: "auto", claudeModel: null, codexModel: null, tracker: null, terms: "unchecked", checkCommands: [], suiteCommand: null };
+const config: typeof S.Config.Type = { ignorePaths: ["a.txt"], maxRounds: 5, maxIdleRounds: 2, maxTransportRetries: 3, transportRetryDelaySeconds: 5, maxTrackerRetries: 5, trackerRetryDelaySeconds: 15, costWarningUsd: 5, codexTurnInputLimit: 500000, suiteTimeoutMinutes: 40, countMinor: true, execPermissionMode: "auto", claudeModel: null, codexModel: null, tracker: null, terms: "unchecked", checkCommands: [], suiteCommand: null };
 
 test("each schema decodes a valid sample and its type matches the legacy type", () => {
   assert.deepEqual(decode(S.Issue, issue), issue);
@@ -111,7 +111,7 @@ test("each schema decodes a valid sample and its type matches the legacy type", 
   sameType<Equals<DeepMutable<typeof S.ExecReport.Type>, DeepMutable<Omit<legacy.ExecReport, "status"> & { status: legacy.ExecReport["status"] | "continuing" } & Checks>>>();
   sameType<Equals<DeepMutable<typeof S.ExecOutcome.Type>, DeepMutable<legacy.ExecOutcome & Checks>>>();
   // Issue #26, Q1: the transport retry budget.
-  sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<Omit<legacy.Config, "questionPhase"> & { maxTransportRetries: number; transportRetryDelaySeconds: number; maxTrackerRetries: number; trackerRetryDelaySeconds: number; costWarningUsd: number; codexTurnInputLimit: number; tracker: GithubTrackerShape | GitlabTrackerShape | null; terms: "checked" | "unchecked" | "onRequest"; checkCommands: unknown; suiteCommand: unknown }>>>();
+  sameType<Equals<DeepMutable<typeof S.Config.Type>, DeepMutable<Omit<legacy.Config, "questionPhase"> & { maxTransportRetries: number; transportRetryDelaySeconds: number; maxTrackerRetries: number; trackerRetryDelaySeconds: number; costWarningUsd: number; codexTurnInputLimit: number; suiteTimeoutMinutes: number; tracker: GithubTrackerShape | GitlabTrackerShape | null; terms: "checked" | "unchecked" | "onRequest"; checkCommands: unknown; suiteCommand: unknown }>>>();
 });
 
 test("each schema rejects a wrong enum value, a missing field and a wrong type", () => {

@@ -119,7 +119,8 @@ export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-revi
  * failure of the command is a Failed value; the runner itself never fails.
  */
 export interface SuiteRunnerShape {
-  run(command: CommandLine, cwd: string): Effect.Effect<SuiteResult>;
+  /** Runs `command` in `cwd`, a run past `ceilingMs` stopped and failed as timed out (issue #181: the run's own limit). */
+  run(command: CommandLine, cwd: string, ceilingMs: number): Effect.Effect<SuiteResult>;
 }
 export class SuiteRunner extends Context.Service<SuiteRunner, SuiteRunnerShape>()("plan-review/SuiteRunner") {}
 

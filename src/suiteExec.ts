@@ -38,12 +38,12 @@ const resultOf = (end: RunEnd, output: string, ms: number): SuiteResult => {
   return { _tag: "Failed", reason, output, ms };
 };
 
-/** The live runner: a command through a shell in `cwd`, with `env`, bounded by `ceilingMs`, a run past it a failure.
+/** The live runner: a command through a shell in `cwd`, with `env`, bounded by each call's `ceilingMs` (issue #181), a run past it a failure.
  * At the ceiling it stops reading at once; after the shell's exit it waits at most `SUITE_CLOSE_GRACE_MS` for the
  * output to close, so a descendant outside the group that holds the output cannot delay the result; on interruption it
  * stops reading at once too (W3-R1-2). */
-export const suiteRunner = (env: Readonly<Record<string, string | undefined>>, ceilingMs: number): SuiteRunnerShape => ({
-  run: (command: CommandLine, cwd: string): Effect.Effect<SuiteResult> =>
+export const suiteRunner = (env: Readonly<Record<string, string | undefined>>): SuiteRunnerShape => ({
+  run: (command: CommandLine, cwd: string, ceilingMs: number): Effect.Effect<SuiteResult> =>
     Effect.callback<SuiteResult>((resume) => {
       const started = Date.now();
       const chunks: string[] = [];

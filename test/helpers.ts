@@ -561,17 +561,17 @@ export const workExecution: WorkExecution = { outcome: finished, plan: "# Plan\n
 
 /**
  * Issue #162: the runner of the whole suite, scripted: each run takes the next result of its queue (Passed when it is
- * empty), and "hang" never completes, so a test can stop the run during it. Every run's command and directory is kept.
+ * empty), and "hang" never completes, so a test can stop the run during it. Every run's command, directory and ceiling is kept.
  */
 export class ScriptedSuite implements SuiteRunnerShape {
-  readonly runs: Array<Readonly<{ command: string; cwd: string }>> = [];
+  readonly runs: Array<Readonly<{ command: string; cwd: string; ceilingMs: number }>> = [];
   readonly results: Array<SuiteResult | "hang">;
   constructor(results: ReadonlyArray<SuiteResult | "hang">) {
     this.results = [...results];
   }
-  run(command: S.CommandLine, cwd: string): Effect.Effect<SuiteResult> {
+  run(command: S.CommandLine, cwd: string, ceilingMs: number): Effect.Effect<SuiteResult> {
     return Effect.suspend(() => {
-      this.runs.push({ command, cwd });
+      this.runs.push({ command, cwd, ceilingMs });
       const next = this.results.shift() ?? { _tag: "Passed", output: "all passed\n", ms: 1 };
       return next === "hang" ? Effect.never : Effect.succeed(next);
     });

@@ -23,7 +23,7 @@ test("(a) the suite passes: the run ends 0 after one suite run of the configured
   const tracker = fakeTrackerOf([scriptedItem]);
   const { wiring, probe } = testWiring(tempRepo(), { ...one, tracker, config: { suiteCommand: SUITE } });
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
-  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project }]);
+  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 2_400_000 }]);
   assert.equal(fs.readFileSync(path.join(probe.dir, "suite-1.log"), "utf8"), "all passed\n");
   assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
   assert.deepEqual(suitesBegan(probe.ui.notified), [1]);
@@ -76,4 +76,10 @@ test("(d) Stop task during the suite ends the run with 130", async () => {
   assert.equal(exitCodeOf(exit), 130);
   assert.ok(Exit.isSuccess(exit) || Exit.isFailure(exit));
   assert.match(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8"), /\*\*Interrupted by the user\.\*\*\n$/u);
+});
+
+test("(e) the suite's limit is the configured suiteTimeoutMinutes, in milliseconds (issue #181, Q3, Q4)", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE, suiteTimeoutMinutes: 5 } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 300_000 }]);
 });
