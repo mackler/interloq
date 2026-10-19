@@ -6,14 +6,14 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect } from "effect";
 import { asksNothing, turnDraft } from "../src/conversation.ts";
-import { withContext } from "../src/offer.ts";
+import { askOffering, withContext } from "../src/offer.ts";
 import * as prompts from "../src/prompts.ts";
 import { writeContext } from "../src/questionContext.ts";
 import { renderQuestionRecord } from "../src/render.ts";
 import { normalizeTurn } from "../src/schemaNormalize.ts";
 import type * as S from "../src/schema.ts";
-import { Store } from "../src/services.ts";
-import { currentOf, entryOf, finished, para, plain, presentedQuestions, questionOf, runRefinement, runTask, scriptedContextReply, tempRepo, testLayer } from "./helpers.ts";
+import { Decider, Store, Ui } from "../src/services.ts";
+import { currentOf, entryOf, finished, noDecider, para, plain, presentedQuestions, questionOf, runRefinement, runTask, scriptedContextReply, tempRepo, testLayer } from "./helpers.ts";
 import { permissionDraft } from "../src/offer.ts";
 
 const HISTORY = "You decided on 9 Oct 2026 to keep the service on one machine.";
@@ -68,7 +68,7 @@ test("a follow-up question carries its current_question's history, and a turn wh
 
 test("a question the program composes gets the context call's history; the fallback has none and is the program's", async () => {
   const draft = permissionDraft("Bash", { command: "npm install zod" });
-  const request = { origin: draft.origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: [], explanations: draft.explanations, facts: "f", fallback: [] };
+  const request = { origin: draft.origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: [], explanations: draft.explanations, facts: "f", fallback: [], history: [] };
   const reply = (prompt: string) => ({ ...scriptedContextReply(prompt), history: para(HISTORY) });
   const write = (contexts: S.QuestionContext[] | "fail") => {
     const { layer } = testLayer(tempRepo(), { contexts: contexts === "fail" ? [{ output: { context: 1 } }, { output: { context: 1 } }] : contexts.map((c) => ({ output: c })) });
@@ -98,4 +98,20 @@ test("a plan writer's question carries its history to the page", async () => {
   const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
   assert.deepEqual(q.history, para(HISTORY));
   assert.ok(conversation(probe.dir).includes(`**History**\n\n> ${HISTORY}`));
+});
+
+// Issue #181, plan review issue P2-R1-1: a question the program composes with a history keeps it where its context call
+// cannot succeed, since the request carries the draft's history and the fallback shows it unchanged.
+test("a program-composed question with a history keeps it when its context is the program's own", async () => {
+  const draft = { ...permissionDraft("Bash", { command: "npm install zod" }), history: para(HISTORY) };
+  const { layer, probe } = testLayer(tempRepo(), { answers: ["1"] });
+  const ask = Effect.gen(function* () {
+    yield* (yield* Store).init("the task");
+    const ui = yield* Ui;
+    return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+  });
+  await Effect.runPromise(ask.pipe(Effect.provideService(Decider, noDecider), Effect.provide(layer)));
+  const [q] = presentedQuestions(probe.ui);
+  assert.equal(q.context.by, "program");
+  assert.deepEqual(q.history, draft.history);
 });

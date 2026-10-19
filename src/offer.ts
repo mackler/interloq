@@ -171,7 +171,7 @@ const explain = (draft: QuestionDraft, facts: string) =>
   Effect.gen(function* () {
     const decider = yield* Decider;
     const options = draft.options.map((o) => o.shown);
-    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts, fallback: requestDetails(draft.context.blocks) });
+    return yield* decider.explain({ origin: draft.origin, decision: draft.decision, question: draft.question, options, details: requestDetails(draft.attached?.blocks ?? []), explanations: draft.explanations, facts, fallback: requestDetails(draft.context.blocks), history: requestDetails(draft.history) });
   });
 
 /**

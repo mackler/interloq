@@ -12,7 +12,7 @@ import fc from "fast-check";
 import { askOffering, numberedOptions, permissionDraft, type QuestionDraft, withContext } from "../src/offer.ts";
 import { blockPieces, literalsOf, piecesText, plainBlocks, valueTokensOf } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
-import { contextValidation, writeContext } from "../src/questionContext.ts";
+import { contextValidation, programWritten, writeContext } from "../src/questionContext.ts";
 import { attachedOf, questionProblems } from "../src/question.ts";
 import type { Block, Piece, QuestionContext } from "../src/schema.ts";
 import { Store, Ui } from "../src/services.ts";
@@ -31,6 +31,7 @@ const request: prompts.ContextRequest = {
   explanations: [],
   facts: "The command npm install zod adds the library zod to the project.",
   fallback: plainBlocks(prompts.fallbackContext(origin)),
+  history: [],
 };
 const zod = { id: "z", term: "zod", senses: ["A library that checks that data has the shape a program expects."] };
 const good: QuestionContext = {
@@ -66,7 +67,7 @@ test("the context call is a read-only call in a fresh session, with the rules, t
   assert.equal(probe.planner.contextPrompts.length, 1);
   const prompt = probe.planner.contextPrompts[0];
   for (const part of [prompts.questionWritingRules(), prompts.QUESTION_TEXT_FORMAT, prompts.KEEP_OPTIONS, prompts.KEEP_LITERALS, "the task", request.facts, prompts.originLine(origin, null), prompts.CONTEXT_REQUEST_HEADING]) assert.ok(prompt.includes(part), part);
-  assert.deepEqual(JSON.parse(prompt.slice(prompt.indexOf(prompts.CONTEXT_REQUEST_HEADING) + prompts.CONTEXT_REQUEST_HEADING.length)), { question: request.question, options: request.options, details: request.details, explanations: [] });
+  assert.deepEqual(JSON.parse(prompt.slice(prompt.indexOf(prompts.CONTEXT_REQUEST_HEADING) + prompts.CONTEXT_REQUEST_HEADING.length)), { question: request.question, options: request.options, details: request.details, history: request.history, explanations: [] });
   assert.ok(!prompt.includes(prompts.KEEP_SUPPLIED_REFS), "no reference is supplied here");
   assert.deepEqual(probe.planner.prompts, [], "the other calls' scripts are untouched");
 });
@@ -121,7 +122,7 @@ test("G-R1-1: a rephrased question, options and details' prose pass; F1: a chang
 // in the prompt alone and checked by the validation: the seam of the two, for a permission request with an unknown field.
 test("S9 seam: KEEP_SUPPLIED_REFS is in the prompt of a request that supplies a reference, and the validation holds the reply to it", () => {
   const draft = permissionDraft("Bash", { command: "ls", max_depth: 3 });
-  const supplied: prompts.ContextRequest = { origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "", fallback: plainBlocks(prompts.fallbackContext(origin)) };
+  const supplied: prompts.ContextRequest = { origin, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "", fallback: plainBlocks(prompts.fallbackContext(origin)), history: [] };
   const prompt = prompts.contextPrompt("t", supplied);
   assert.ok(prompt.includes(prompts.KEEP_SUPPLIED_REFS));
   const named = blockPieces(supplied.details).find((p) => p.code && p.ref !== "");
@@ -237,7 +238,7 @@ test("a context call that changes the project halts with ProjectChanged; the fal
 /** A permission request as the context call is given it, from the input of a tool. */
 const permissionRequest = (tool: string, input: Record<string, unknown>): prompts.ContextRequest => {
   const draft = permissionDraft(tool, input);
-  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "", fallback: [] };
+  return { origin: { kind: "permission", tool, input: "" }, decision: null, question: draft.question, options: draft.options.map((o) => o.shown), details: (draft.attached?.blocks ?? []) as readonly Block[], explanations: draft.explanations, facts: "", fallback: [], history: [] };
 };
 /** The reply a context call returns when it does exactly what its prompt says: the question as given. */
 const faithful = (request: prompts.ContextRequest): QuestionContext => scriptedContextReply(prompts.contextPrompt("t", request));
@@ -711,4 +712,14 @@ test("withContext keeps the draft's kind of attached material and takes the call
   assert.deepEqual(withContext({ ...base, attached: { kind: "request", blocks } }, written).attached, { kind: "request", blocks: rephrased });
   assert.deepEqual(withContext({ ...base, attached: { kind: "request", blocks } }, { ...written, details: undefined }).attached, { kind: "request", blocks });
   assert.equal(withContext(base, written).attached ?? null, null);
+});
+
+// Issue #181, plan review issue P2-R1-1: the request carries the draft's history to the call, and the fallback shows it.
+test("a request's history is given to the context call in its JSON and stands where the call cannot succeed", () => {
+  const history = para("Interloq ran the suite again once without asking, after it ran longer than its limit.");
+  const withHistory: prompts.ContextRequest = { ...request, history };
+  assert.deepEqual(programWritten(withHistory).history, withHistory.history);
+  const prompt = prompts.contextPrompt("t", withHistory);
+  const json = JSON.parse(prompt.slice(prompt.indexOf(prompts.CONTEXT_REQUEST_HEADING) + prompts.CONTEXT_REQUEST_HEADING.length)) as { history: unknown };
+  assert.deepEqual(json.history, withHistory.history);
 });

@@ -3145,6 +3145,11 @@ export type ContextRequest = Readonly<{
    * (issue #156, W1-R1-1); not given to the call.
    */
   fallback: readonly Block[];
+  /**
+   * The draft's own history, what led to the question, empty when none (issue #181, plan review issue P2-R1-1): given to
+   * the call in its JSON to keep, rephrased, and shown unchanged where the call cannot succeed.
+   */
+  history: readonly Block[];
 }>;
 /** Whether the request holds a code piece with a ref, which the reply must keep (S9, KEEP_SUPPLIED_REFS). */
 const suppliesRefs = (request: ContextRequest): boolean =>
@@ -3159,14 +3164,14 @@ const suppliesRefs = (request: ContextRequest): boolean =>
  * `contextValidation` in src/questionContext.ts checks the reply against the same clauses.
  */
 /** The line before the question as data in a context call's prompt; the JSON follows it on the next line, to the end. */
-export const CONTEXT_REQUEST_HEADING = "The question as Interloq wrote it, as data (question, options, details, explanations):";
+export const CONTEXT_REQUEST_HEADING = "The question as Interloq wrote it, as data (question, options, details, history, explanations):";
 export function contextPrompt(task: string, request: ContextRequest): string {
   const facts = request.facts.trim() === "" ? "" : `Facts for your understanding, not shown to the user:\n${request.facts}\n`;
-  const question = JSON.stringify({ question: request.question, options: request.options, details: request.details, explanations: request.explanations });
+  const question = JSON.stringify({ question: request.question, options: request.options, details: request.details, history: request.history, explanations: request.explanations });
   return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and return the whole question as pieces, with the explanations of the words a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer the question.
 ${questionWritingRules()}
 ${QUESTION_TEXT_FORMAT}
-Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it; the history may be empty, and is an empty list when nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
+Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
 
 The task of the run: ${task}
 

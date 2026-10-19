@@ -156,7 +156,7 @@ test("the seam: RELAYED_SHAPE names the history, and its example, with a history
 test("every prompt that asks an agent for a question asks for its history beside its context", async () => {
   const prompts = await import("../src/prompts.ts");
   const { TEST_ROOT } = await import("./helpers.ts");
-  const request = { origin: { kind: "relayed" as const }, decision: null, question: plain("Which?"), options: [], details: [], explanations: [], facts: "", fallback: [] };
+  const request = { origin: { kind: "relayed" as const }, decision: null, question: plain("Which?"), options: [], details: [], explanations: [], facts: "", fallback: [], history: [] };
   const asking: Record<string, string> = {
     questionList: prompts.questionListPrompt("task"),
     terms: prompts.termsPrompt(TEST_ROOT, "task"),
