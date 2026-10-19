@@ -116,9 +116,8 @@ const assertInterrupted = (probe: WiringProbe, exit: Exit.Exit<number, never>): 
 test("interrupt while the UI waits for input", async () => {
   const { wiring, probe } = testWiring(tempRepo(), {
     answers: [{ wait: true }],
-    steps: [{ output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [] }],
-    execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null, checks: [] }],
+    // A plan writer's question, which still reaches the user (issue #181 removed the question at an execution stop).
+    steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }],
   });
   const exit = await interruptWhen(probe, wiring, probe.ui.nextAsk());
   assertInterrupted(probe, exit);

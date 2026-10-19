@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
-import { continuingLine, executionContinuingPrompt, execStopQuestion } from "../src/prompts.ts";
+import { continuingLine, executionContinuingPrompt, execStopRevisionLine } from "../src/prompts.ts";
 import type { ExecCallOutcome } from "../src/schema.ts";
 import { finished, runTask, scriptedStart, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
@@ -61,19 +61,29 @@ test("continuing is continued without limit: three in a row ask nothing", async 
   assert.equal(began(probe.ui.notified, "planning"), 1);
 });
 
-test("a blocked report after a continuation takes the stop's path: the question, the decision, the revision and its review", async () => {
+test("a blocked report after a continuation asks nothing: the work review, then the revision from Claude Code's account and its review (issue #181, Q7)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["go on"],
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [continuing("S1"), blocked, finished],
   });
   assert.equal(await runTask(layer), 2);
-  assert.equal(probe.ui.asked.length, 1);
-  assert.ok(probe.ui.asked[0].includes(execStopQuestion()) || probe.ui.notified.some((e) => e._tag === "QuestionPresented"), "the stop's question was not asked");
-  assert.match(decisionsOf(probe.dir), /stop in execution phase 1 \(blocked\): the database is down/);
+  assert.deepEqual(probe.ui.asked, []);
+  assert.doesNotMatch(decisionsOf(probe.dir), /stop in execution phase 1/);
+  assert.ok(probe.ui.said.includes(execStopRevisionLine("Implementation 1", "blocked")), probe.ui.said.join("\n"));
   assert.equal(began(probe.ui.notified, "planning"), 2);
   assert.equal(probe.reviewer.prompts.length, 4);
+});
+
+test("two blocked executions in a row, then finished: three planning phases, no question, exit 0 (issue #181, Q7)", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }, { output: noQuestions }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [blocked, blocked, finished],
+  });
+  assert.equal(await runTask(layer), 3);
+  assert.deepEqual(probe.ui.asked, []);
+  assert.equal(began(probe.ui.notified, "planning"), 3);
 });
 
 test("Stop task during a continuation ends the run with 130", async () => {

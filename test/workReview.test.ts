@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import { platformLayer } from "../src/platform.ts";
-import { limitNoProceedPrompt, execInputPrompt, planApplyDecisionsPrompt, withOffer } from "../src/prompts.ts";
+import { limitNoProceedPrompt, execStopRevisionLine, planApplyDecisionsPrompt, withOffer } from "../src/prompts.ts";
 import { readCheckpoint } from "../src/records.ts";
 import { subjectHeading } from "../src/render.ts";
 import type { ExecOutcome } from "../src/schema.ts";
@@ -265,16 +265,23 @@ test("(i) a needs_input stop is recorded, then the work review runs and converge
   assert.match(probe.planner.prompts[1], /Work review 1 found no issue in the work so far/);
 });
 
-test("(j) an aborted execution asks the user for input, then the work review runs, then planning 2", async () => {
+test("(j) an aborted execution asks nothing: the work review runs, then planning 2 from Claude Code's account (issue #181, Q6)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["go on"],
     steps: [planWrite("v1"), planWrite("v2")],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [stop("aborted", null), finished],
   });
   assert.equal(await runTask(layer), 2);
-  assert.equal(probe.ui.asked[0], execInputPrompt);
+  assert.deepEqual(probe.ui.asked, []);
   assert.equal(probe.reviewer.prompts.length, 4);
+  assert.ok(!fs.existsSync(path.join(probe.dir, "user-decisions.md")) || !/stop in execution phase 1/.test(read(probe.dir, "user-decisions.md")));
+  const line = execStopRevisionLine("Implementation 1", "aborted");
+  assert.ok(probe.ui.said.includes(line), probe.ui.said.join("\n"));
+  assert.ok(read(probe.dir, "conversation.md").includes(line));
+  assert.match(probe.planner.prompts[1], /status aborted, and the user was not asked/);
+  assert.match(probe.planner.prompts[1], /Summary: partial/);
+  assert.match(probe.planner.prompts[1], /What it needed: Which database\?/);
+  assert.doesNotMatch(probe.planner.prompts[1], /user's input for this stop/);
 });
 
 test("(k) a stop and a work review that leaves with revise: planning 2's prompt names both", async () => {

@@ -9,10 +9,10 @@ import { describe, type RunError, SuiteStopped, TrackerStepFailed, trackerFailur
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, execInputPrompt, execStopDetails, execStopQuestion, processEndedDetails, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
+import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
-import { plainPieces, type ShownBlock } from "./pieces.ts";
+import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
 import { askOffering, programContext, type QuestionDraft, suiteStoppedOptions } from "./offer.ts";
 import { parseTransportAnswer } from "./input.ts";
@@ -173,15 +173,16 @@ const continuedExecution = (executor: PlannerShape, prompt: string, report: Step
 /**
  * An execution call whose Claude Code process ended on every attempt (issue #157, decision Q2) as the phase's outcome:
  * aborted, so that it takes the stop's path, its summary and remaining work the steps recorded as done and left
- * unfinished, and the stop's attached material the same steps beside the question.
+ * unfinished, which the revision prompt carries (issue #181).
  */
-const processEndedStop = (ended: PhaseProcessEnded, records: StepRecords): Readonly<{ outcome: S.ExecOutcome; details: readonly ShownBlock[] }> => {
-  const question = processEndedQuestion(ended.ending.end, ended.ending.attempts);
-  return {
-    outcome: { status: "aborted", summary: processEndedSummary(records.done), question, remainingWork: processEndedRemaining(records.unfinished), userInput: null, checks: ended.checks },
-    details: processEndedDetails(question, records.done, records.unfinished),
-  };
-};
+const processEndedStop = (ended: PhaseProcessEnded, records: StepRecords): S.ExecOutcome => ({
+  status: "aborted",
+  summary: processEndedSummary(records.done),
+  question: processEndedQuestion(ended.ending.end, ended.ending.attempts),
+  remainingWork: processEndedRemaining(records.unfinished),
+  userInput: null,
+  checks: ended.checks,
+});
 
 const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks, start: PlanStart): Effect.Effect<number, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
@@ -328,7 +329,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         );
         yield* steps.end;
         // Issue #157 (Q2): a process that ended on every attempt is an aborted stop, its texts the steps recorded.
-        const { outcome, details } = ending.status === "processEnded" ? processEndedStop(ending, stepRecordsOf(Option.getOrNull(yield* store.loadPlan()))) : { outcome: ending, details: null };
+        const outcome = ending.status === "processEnded" ? processEndedStop(ending, stepRecordsOf(Option.getOrNull(yield* store.loadPlan()))) : ending;
         yield* store.saveExecution(k, outcome);
         yield* store.checkpoint({ subject: "execution", phase: k, round: 0, stage: "executed" });
         yield* ui.notify({ _tag: "ExecutionEnded", phase: k, outcome });
@@ -338,19 +339,19 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const stopped = outcome.status !== "finished";
         // A stop always leads to a revision: the next iteration is known now.
         if (stopped) yield* foresee(k + 1);
-        if (stopped) {
-          // A stop is handled as before the work review existed: its input is recorded first.
-          yield* ui.say(`Remaining work: ${outcome.remainingWork || "not reported"}`);
-          const origin: QuestionOrigin = { kind: "execStop", phase: k, status: outcome.status };
-          const draft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(execStopQuestion()), options: [], attached: attachedOf("stopReport", details ?? execStopDetails(outcome.question)), decision: null };
-          const input = outcome.userInput ?? (yield* askOffering((p) => ui.ask(p), execInputPrompt, draft, (a) => a !== ""));
+        // Issue #181 (Q6, Q7): a stop is not put to the user. A question Claude Code relayed and the user answered during
+        // the call is recorded as his decision; any other stop is revised from Claude Code's own account, which the
+        // revision prompt carries, after the work review, with nothing recorded as a decision of his.
+        const stop: ExecStop | null =
+          outcome.status === "finished" ? null : outcome.userInput !== null ? { _tag: "Answered" } : { _tag: "Unanswered", status: outcome.status, summary: outcome.summary, question: outcome.question, remainingWork: outcome.remainingWork };
+        if (stop !== null) yield* ui.say(`Remaining work: ${outcome.remainingWork || "not reported"}`);
+        if (stop?._tag === "Answered" && outcome.userInput !== null) {
           const question = outcome.question.replace(/\s+/g, " ");
-          yield* store.appendDecision({ subject: `stop in execution phase ${k} (${outcome.status}): ${question}`, id: null, decision: input, phase: k, round: 0 });
+          yield* store.appendDecision({ subject: `stop in execution phase ${k} (${outcome.status}): ${question}`, id: null, decision: outcome.userInput, phase: k, round: 0 });
         }
+        if (stop?._tag === "Unanswered") yield* sayAndWrite(execStopRevisionLine(label("execution", k), stop.status));
         // Issue #117: the work response, in a session of its own (issue #122), is given the execution's report and the plan as its end left it.
         const ended = Option.getOrNull(yield* store.loadPlan());
-        // Issue #181: every stop is answered here (the user's input is asked for when the call relayed no question).
-        const stop: ExecStop | null = stopped ? { _tag: "Answered" } : null;
         return { stopped, stop, work: { outcome, plan: ended === null ? "(no plan recorded)" : renderPlanMarkdown(ended) } satisfies WorkExecution };
       }).pipe(inPhase({ kind: "execution", n: k }));
       const { stopped } = execution;

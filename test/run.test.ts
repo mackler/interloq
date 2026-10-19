@@ -110,15 +110,14 @@ test("issue #117: two execution phases run in two sessions of their own, each wi
   assert.ok(!(probe.planner.history.get("test-session") ?? []).includes(expected), "no execution prompt reached the run's main session");
 });
 
-test("a stop without a question asks the user for input", async () => {
+test("a stop without a question asks nothing and is revised from Claude Code's account (issue #181, Q6)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["retry with smaller steps"],
     steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [{ status: "aborted", summary: "", question: "no status", remainingWork: "", userInput: null, checks: [] }, finished],
   });
   assert.equal(await runTask(layer), 2);
-  assert.equal(probe.ui.asked.length, 1);
+  assert.deepEqual(probe.ui.asked, []);
 });
 
 test("a planning call that changes the project halts the run", async () => {
@@ -641,25 +640,6 @@ test("an execution that ends in AgentUnreachable halts the run, and a started st
   await runFails(layer, "AgentUnreachable", /Claude Code could not be reached after 4 attempts: read ECONNRESET\. The records are preserved\./);
   const plan = JSON.parse(fs.readFileSync(path.join(probe.dir, "plan.json"), "utf8")).plan;
   assert.equal(plan.stages[0].steps[0].status, "unfinished");
-});
-
-// S52 (W5-R1-1): at an execution stop without a question, Claude Code's description is in the question's attached
-// material, not the question.
-test("a stop without a question presents Claude Code's description in its attached material", async () => {
-  const description = `The migration failed: ${"m".repeat(2500)}`;
-  const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["retry with smaller steps"],
-    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions }],
-    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
-    execs: [{ status: "aborted", summary: "", question: description, remainingWork: "", userInput: null, checks: [] }, finished],
-  });
-  assert.equal(await runTask(layer), 2);
-  const [q] = presentedQuestions(probe.ui).filter((p) => p.origin.kind === "execStop");
-  assert.equal(piecesText(q.question), prompts.execStopQuestion());
-  assert.deepEqual(q.attached, { kind: "stopReport", blocks: [{ kind: "document", markdown: description }] });
-  // W2-R1-1: S2 requires the record to carry the heading the user reads above Claude Code's description.
-  assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("stopReport")}**`));
-  assert.deepEqual(prompts.execStopDetails("  "), [{ kind: "paragraph", pieces: [{ text: prompts.EXEC_STOP_NO_DESCRIPTION, ref: "", code: false }] }]);
 });
 
 // Issue #112: the exception is narrow. On the plan, an issue raised again after a partial acceptance is still put to
