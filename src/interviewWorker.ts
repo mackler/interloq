@@ -19,7 +19,7 @@ import * as S from "./schema.ts";
 import type { QuestionsFile } from "./schema.ts";
 import { normalizeReply, type ReplyVariant } from "./schemaNormalize.ts";
 import { type Services, Store, Ui } from "./services.ts";
-import { replyValidation } from "./conversation.ts";
+import { replyValidation } from "./clarificationReply.ts";
 
 /** What `drain` found: follow-ups to present first, or the reply to the closing request. */
 export type DrainResult = Readonly<{ kind: "followUps" }> | Readonly<{ kind: "reply"; reply: ReplyVariant }>;
