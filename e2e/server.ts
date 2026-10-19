@@ -84,8 +84,9 @@ export const SCENARIOS: Record<string, TestOptions> = {
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
     ],
     // Issue #184: the first interview presents Q1 itself; Claude Code's reply to the answer and its closing reply.
-    replies: [{ output: ack("Anything else?") }],
-    closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
+    // Issue #184: once the agreed question is answered, the closing reply asks the developer for anything further, and
+    // after /done the next closing reply proposes the summary.
+    closings: [{ output: ack("Anything else?") }, { output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
     // Issue #120: a refinement run, the question phase alone: the question review and the requirements review.
     reviews: [{ issues: [] }, { issues: [] }],
   },

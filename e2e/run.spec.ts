@@ -465,6 +465,9 @@ test.describe("the tests of the questionReview server, in order", () => {
     await expect(option(other, /1\. PostgreSQL/)).toBeVisible();
     await other.close();
     await option(page, /1\. PostgreSQL/).click();
+    // Issue #184: Interloq presents the second agreed question, the port, itself.
+    await expect(asking(page, "Which port?")).toBeVisible();
+    await option(page, /1\. 8080/).click();
     await openSection(page, attachedHeading("summary"));
     await expect(pane(page).getByText("The service uses PostgreSQL on port 8080.")).toBeVisible();
     await pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true }).click();
