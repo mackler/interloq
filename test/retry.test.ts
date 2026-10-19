@@ -3,7 +3,7 @@ import { programWritten } from "../src/questionContext.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { Cause, Clock, Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Cause, Clock, Effect, Exit, Fiber, Latch, Layer, Option } from "effect";
 import { CodexCallFailed, describe, haltMessage, ProcessEnded, ProjectChanged, TransportFault, UsageLimited } from "../src/errors.ts";
 import { DECIDE, parseTransportAnswer } from "../src/input.ts";
 import { transportOptions } from "../src/offer.ts";
@@ -540,4 +540,49 @@ test("an interruption during the wait after a process ending ends the call: no f
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
   assert.deepEqual(calls, [1]);
+});
+
+// Issue #184 (decision G-R1-1): an interview request whose retries are used up while the developer still answers agreed
+// questions is tried again every five minutes in the background, nothing asked; once he waits for Claude Code, the
+// exhaustion pause is asked as before.
+const background = (waiting: () => boolean, untilWaiting: Effect.Effect<void> = Effect.never) => ({ kind: "background" as const, waiting: Effect.sync(waiting), untilWaiting });
+const BACKGROUND_MS = USAGE_LIMIT_RETRY_SECONDS * 1000;
+
+test("background: exhausted retries go on every five minutes, each try counted and said, nothing asked, until success", async () => {
+  const { layer, ui, conversation } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const { calls, attempt } = scripted(["fault", "fault", "fault", "fault", "fault", "fault", "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "an interview turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 7"));
+  assert.deepEqual(calls, [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(sleeps, [10, 20, BACKGROUND_MS, BACKGROUND_MS, BACKGROUND_MS, BACKGROUND_MS]);
+  assert.deepEqual(ui.asked, []);
+  for (const n of [1, 2, 3, 4]) assert.ok(conversation().includes(prompts.backgroundRetryLine("claude", "an interview turn", n, USAGE_LIMIT_RETRY_SECONDS)), `try ${n} not recorded`);
+  assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => (e._tag === "TransportRetrying" ? e.attempt : 0)), [1, 2]);
+});
+
+const wokenBackground = async (answers: string[], script: Script) => {
+  const { layer, ui } = await setup(answers);
+  let waiting = false;
+  const woken = await Effect.runPromise(Latch.make(false));
+  // The background sleep never ends by itself: only the developer's reaching the end of the list (untilWaiting) wakes it.
+  const { clock } = steppingClock(START, (ms) => (ms === BACKGROUND_MS ? Effect.sync(() => void (waiting = true)).pipe(Effect.andThen(woken.open), Effect.andThen(Effect.never)) : Effect.void));
+  const { calls, attempt } = scripted(script);
+  const exit = await exitOf(withTransportRetry("claude", "an interview turn", attempt, Effect.void, background(() => waiting, woken.await)).pipe(withClock(clock)), layer);
+  return { exit, ui, calls };
+};
+
+test("background: the developer waiting ends the try's sleep, and the next exhaustion asks; Stop is AgentUnreachable", async () => {
+  const { exit, ui, calls } = await wokenBackground([prompts.TRANSPORT_ANSWERS.stop], ["fault", "fault", "fault", "fault"]);
+  assert.equal(errorOf(exit)._tag, "AgentUnreachable");
+  assert.deepEqual(calls, [1, 2, 3, 4]);
+  assert.equal(ui.asked.length, 1);
+});
+
+test("background: Retry again at the question once the developer waits starts a full set", async () => {
+  const { exit, ui, calls } = await wokenBackground([prompts.TRANSPORT_ANSWERS.retry], ["fault", "fault", "fault", "fault", "fault", "ok"]);
+  assert.deepEqual(exit, Exit.succeed("reply 6"));
+  assert.deepEqual(calls, [1, 2, 3, 4, 5, 6]);
+  assert.equal(ui.asked.length, 1);
+  assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => (e._tag === "TransportRetrying" ? e.attempt : 0)), [1, 2, 1]);
 });

@@ -2738,6 +2738,10 @@ export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string 
 export function usageLimitTryingAgainLine(agent: "claude" | "codex"): string {
   return `${agentName(agent)}: trying again after the wait for the usage limit`;
 }
+/** Issue #184: a background try of a request whose retries are used up, while the developer answers the agreed questions. */
+export function backgroundRetryLine(agent: "claude" | "codex", what: string, count: number, seconds: number): string {
+  return `${agentName(agent)} could not be reached for ${what}; trying again in the background every ${durationText(seconds * 1000)} while you answer, try ${count}`;
+}
 /** The end of a wait for a usage limit (issue #68). */
 export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
   return `${agentName(agent)}: the usage limit has lifted after ${durationText(waitedMs)}; continuing`;

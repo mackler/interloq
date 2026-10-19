@@ -20,8 +20,23 @@ export const backoffDelays = (count: number, firstSeconds: number): readonly num
 export const retryDelays = (config: Pick<Config, "maxTransportRetries" | "transportRetryDelaySeconds">): readonly number[] =>
   backoffDelays(config.maxTransportRetries, config.transportRetryDelaySeconds);
 
-import { type LimitWaitState, NO_LIMIT_WAIT, planLimitWait, USAGE_LIMIT_MARGIN_SECONDS } from "./limitReset.ts";
+import { type LimitWaitState, NO_LIMIT_WAIT, planLimitWait, USAGE_LIMIT_MARGIN_SECONDS, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 export { USAGE_LIMIT_MARGIN_SECONDS };
+
+/**
+ * What a call does when its transport retries are used up: "ask" the exhaustion pause; "fail" AgentUnreachable at once,
+ * for a call whose failure the caller handles (the context call of a question, S10: it must not ask a question of its
+ * own before the question it explains); "background" (issue #184, decision G-R1-1) try again every
+ * USAGE_LIMIT_RETRY_SECONDS with no limit and nothing asked while `waiting` is false, the developer still answering the
+ * interview's agreed questions, and ask as "ask" does once it is true; `untilWaiting` ends a try's sleep at once when the
+ * developer reaches the point where he waits for Claude Code.
+ */
+export type Exhaustion =
+  | Readonly<{ kind: "ask" }>
+  | Readonly<{ kind: "fail" }>
+  | Readonly<{ kind: "background"; waiting: Effect.Effect<boolean>; untilWaiting: Effect.Effect<void> }>;
+export const ASK: Exhaustion = { kind: "ask" };
+export const FAIL: Exhaustion = { kind: "fail" };
 
 const isFault = (e: unknown): e is TransportFault => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "TransportFault";
 const isProcessEnded = (e: unknown): e is ProcessEnded => typeof e === "object" && e !== null && (e as { _tag?: unknown })._tag === "ProcessEnded";
@@ -42,11 +57,7 @@ export const withTransportRetry = <A, E, R>(
   what: string,
   attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
   beforeRetry: Effect.Effect<void, RunError, R>,
-  /**
-   * "ask": the exhaustion pause; "fail": AgentUnreachable at once, for a call whose failure the caller handles (the
-   * context call of a question, S10: it must not ask a question of its own before the question it explains).
-   */
-  onExhausted: "ask" | "fail" = "ask",
+  onExhausted: Exhaustion = ASK,
 ): Effect.Effect<A, Exclude<E, TransportFault | UsageLimited> | AgentUnreachable | RunError, R | Ui | Decider | Store | RunConfig> =>
   Effect.gen(function* () {
     const config = yield* RunConfig;
@@ -59,6 +70,8 @@ export const withTransportRetry = <A, E, R>(
     let limitState: LimitWaitState = NO_LIMIT_WAIT;
     /** Whether the last failure was a transport fault, so that a success is a recovered connection. */
     let faulted = false;
+    /** The background tries of this call since its retries were last used up (issue #184). */
+    let tries = 0;
     for (let n = 1; ; n++) {
       const result = yield* Effect.result(attempt(n));
       if (Result.isSuccess(result)) {
@@ -109,7 +122,14 @@ export const withTransportRetry = <A, E, R>(
         yield* ui.notify({ _tag: "TransportRetrying", agent, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
         yield* say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message));
         yield* Effect.sleep(Duration.millis(Math.max(untilMs - (yield* Clock.currentTimeMillis), 0)));
-      } else if (onExhausted === "fail") {
+      } else if (onExhausted.kind === "background" && !(yield* onExhausted.waiting)) {
+        // Issue #184 (G-R1-1): while the developer answers agreed questions nothing is asked; the call is tried again
+        // every USAGE_LIMIT_RETRY_SECONDS with no limit. No TransportRetrying is sent, whose "retry n of m" would claim a
+        // bound there is not. The sleep ends at once when the developer comes to wait for Claude Code.
+        tries++;
+        yield* say(prompts.backgroundRetryLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
+        yield* Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), onExhausted.untilWaiting);
+      } else if (onExhausted.kind === "fail") {
         return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: error.message }));
       } else {
         const origin: QuestionOrigin = { kind: "transport", agent, what, attempts: n, fault: error.message };
@@ -122,6 +142,7 @@ export const withTransportRetry = <A, E, R>(
         yield* store.converse(prompts.transportDecisionLine(choice, agent, what));
         if (choice === "stop") return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: error.message }));
         retried = 0;
+        tries = 0;
       }
       yield* beforeRetry;
     }

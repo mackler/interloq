@@ -21,7 +21,7 @@ import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
 import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
-import { withTransportRetry } from "./retry.ts";
+import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
 
 /** Codex's reply text, decoded as JSON and then as a review; text that is not JSON is a decode failure. */
@@ -206,7 +206,7 @@ export type PlanningCall<Out> = Readonly<{ output: Out; reply: unknown; resultTe
  * response; "readProject", the context call of a question, which may read the project). Halts if the project changed;
  * a call that may change nothing, its repair turn included, also halts if a guarded record under plan-review/ changed (RecordsChanged; the program's own writes are not guarded, src/artifacts.ts).
  */
-export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string, schema: Out, purpose: PlanningPurpose = "planning", capability: PlanningCapability = "records", validate: Validation<Out["Type"]> | null = null, onReply: OnReply | null = null): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
+export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string, schema: Out, purpose: PlanningPurpose = "planning", capability: PlanningCapability = "records", validate: Validation<Out["Type"]> | null = null, onReply: OnReply | null = null, exhaustion: Exhaustion = purpose === "context" ? FAIL : ASK): Effect.Effect<PlanningCall<Out["Type"]>, RunError, Store | Planner | Decider | Ui | RunConfig | RunKind> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const planner = yield* Planner;
@@ -240,8 +240,9 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
             yield* check;
             return yield* Effect.fromResult(result);
           });
-        // S10: the context call of a question does not ask a question of its own when its retries are exhausted.
-        return yield* withTransportRetry("claude", transportWhat(purpose), attempt, check, purpose === "context" ? "fail" : "ask");
+        // S10: the context call of a question does not ask a question of its own when its retries are exhausted (FAIL, the
+        // default for it); issue #184: the first interview's requests try again in the background while the developer answers.
+        return yield* withTransportRetry("claude", transportWhat(purpose), attempt, check, exhaustion);
       });
     const first = yield* call(prompt);
     const repairCall = yield* Ref.make<PlanningResult | null>(null);
