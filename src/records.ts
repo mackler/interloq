@@ -63,8 +63,11 @@ export const RoundRecord = Schema.Union([Schema.Struct(validatedFields), Schema.
 export const RoundFile = Schema.Union([Schema.Struct({ version: V2, ...validatedFields }), Schema.Struct({ version: V2, ...noResponseFields }), Schema.Struct({ version: V2, ...invalidFields })]);
 export type RoundRecord = typeof RoundRecord.Type;
 
-/** The tree of the project at the start of the run (decision Q7): the work reviews diff against it. */
-export const Baseline = Schema.Struct({ version: V2, tree: Schema.NonEmptyString, time: Schema.String });
+/**
+ * The tree of the project at the start of the run (decision Q7): the work reviews diff against it. `uncommitted` (issue
+ * #176): the paths git listed as not committed when the run began, which the commit check does not count against it.
+ */
+export const Baseline = Schema.Struct({ version: V2, tree: Schema.NonEmptyString, uncommitted: Schema.Array(Schema.String), time: Schema.String });
 export type Baseline = typeof Baseline.Type;
 
 // ---- decision support ------------------------------------------------------------------------------

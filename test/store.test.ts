@@ -348,3 +348,76 @@ test("every write of the Store to a guarded record is in its journal, with the e
     for (const [p, entry] of last) assert.equal(entry, after.get(p) ?? null, `${name}: the journal's last entry of ${p} is not recordsSnapshot's`);
   }
 });
+
+// Issue #176: the commit check. baseline.json records the paths uncommitted at the start, and uncommittedSinceStart
+// names the paths uncommitted since, less plan-review/, ignorePaths and files git ignores and does not track.
+const gitAs = (dir: string, ...args: string[]): string => git(dir, "-c", "user.email=t@t", "-c", "user.name=t", ...args);
+const startedStore = async (repo: string, ignorePaths: readonly string[] = []): Promise<StoreShape> => {
+  const store = await storeOf(repo, ignorePaths);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  return store;
+};
+
+test("writeBaseline records the paths uncommitted at the start, none of plan-review/ or of ignorePaths", async () => {
+  const repo = tempRepo();
+  write(repo, "a.txt", "dirty\n");
+  write(repo, "loose.txt", "untracked\n");
+  write(repo, "ign/x.txt", "ignored by config\n");
+  const store = await startedStore(repo, ["ign"]);
+  const baseline = JSON.parse(fs.readFileSync(path.join(store.dir, "baseline.json"), "utf8"));
+  assert.deepEqual(baseline.uncommitted, ["a.txt", "loose.txt"]);
+});
+
+test("uncommittedSinceStart names new, modified and deleted files, and nothing once they are committed", async () => {
+  const repo = tempRepo();
+  write(repo, "keep.txt", "k\n");
+  gitAs(repo, "add", "keep.txt");
+  gitAs(repo, "commit", "-qm", "keep");
+  const store = await startedStore(repo);
+  assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Committed" });
+  write(repo, "new.txt", "n\n");
+  write(repo, "a.txt", "modified\n");
+  fs.rmSync(path.join(repo, "keep.txt"));
+  assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["a.txt", "keep.txt", "new.txt"] });
+  gitAs(repo, "add", "-A", "--", "a.txt", "keep.txt", "new.txt");
+  gitAs(repo, "commit", "-qm", "all");
+  assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Committed" });
+});
+
+test("uncommittedSinceStart leaves out a file dirty at the start, ignored untracked files, ignorePaths and plan-review/", async () => {
+  const repo = tempRepo();
+  write(repo, ".gitignore", "*.log\n");
+  write(repo, "tracked.log", "t\n");
+  gitAs(repo, "add", ".gitignore");
+  gitAs(repo, "add", "-f", "tracked.log");
+  write(repo, "ign/tracked.txt", "t\n");
+  gitAs(repo, "add", "ign/tracked.txt");
+  gitAs(repo, "commit", "-qm", "setup");
+  write(repo, "a.txt", "dirty at the start\n");
+  const store = await startedStore(repo, ["ign"]);
+  write(repo, "a.txt", "changed again\n");
+  write(repo, "untracked.log", "ignored\n");
+  write(repo, "ign/new.txt", "n\n");
+  write(repo, "ign/tracked.txt", "changed\n");
+  write(repo, "plan-review/other.md", "records\n");
+  assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Committed" });
+  write(repo, "tracked.log", "a tracked file matching .gitignore, modified\n");
+  assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["tracked.log"] });
+});
+
+test("a rename across the ignorePaths boundary is judged by each of its paths on its own", async () => {
+  const into = tempRepo();
+  fs.mkdirSync(path.join(into, "ign"));
+  const intoStore = await startedStore(into, ["ign"]);
+  gitAs(into, "mv", "a.txt", "ign/a.txt");
+  assert.deepEqual(await run(intoStore.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["a.txt"] });
+
+  const out = tempRepo();
+  write(out, "ign/b.txt", "b\n");
+  gitAs(out, "add", "ign/b.txt");
+  gitAs(out, "commit", "-qm", "b");
+  const outStore = await startedStore(out, ["ign"]);
+  gitAs(out, "mv", "ign/b.txt", "b.txt");
+  assert.deepEqual(await run(outStore.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["b.txt"] });
+});

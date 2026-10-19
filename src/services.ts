@@ -9,6 +9,7 @@ import type { RunMode } from "./runMode.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
+import type { CommitCheck } from "./commitCheck.ts";
 import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
@@ -145,6 +146,12 @@ export interface StoreShape {
    * a work review (issue #120). Built through a temporary index in the git directory; see workingTree in src/store.ts.
    */
   writeBaseline(): Effect.Effect<void, StoreError>;
+  /**
+   * The commit check (issue #176): the paths git lists now as not committed, less those it listed when writeBaseline ran,
+   * less `plan-review/` and `ignorePaths` (a rename's two paths judged each on its own); a file git ignores and does not
+   * track is never listed. A missing baseline.json is a StoreError: only an implementation run, which writes one, checks.
+   */
+  uncommittedSinceStart(): Effect.Effect<CommitCheck, StoreError>;
   /** Codex's raw reply of a round (`review-<n>.json`). */
   saveReview(subject: SubjectId, round: number, review: Review): Effect.Effect<void, StoreError>;
   /** Claude Code's raw response of a round (`cc-<n>.json`). */

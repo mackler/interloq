@@ -13,7 +13,8 @@ import type { Platform } from "./platform.ts";
 import { AnalysisFile, Baseline, TermsFile, type CheckpointPoint, questionsFile, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
-import { decodeStatusV2, excluded, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
+import { type CommitCheck, commitCheckOf, uncommittedPaths } from "./commitCheck.ts";
+import { decodeStatusV2, excluded, type StatusRecord, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
 import type { LimitWait, RateLimitNotice, UsageLine } from "./usage.ts";
 
@@ -206,12 +207,24 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         });
         return yield* build.pipe(Effect.ensuring(cleanup));
       });
+    /**
+     * git's porcelain v2 records of the project, unfiltered: the project snapshot drops excluded records by their path, and
+     * the commit check judges each path of a record on its own (issue #176). --no-optional-locks (issue #120): a plain status
+     * may refresh .git/index under index.lock, and while it holds the lock a commit by Claude Code in the other run fails; a
+     * listing never writes to the git directory.
+     */
+    const statusRecords = (): Effect.Effect<readonly StatusRecord[], StoreError> =>
+      git(["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=all"]).pipe(Effect.map(decodeStatusV2));
+    /** The paths not committed now, less plan-review/ and ignorePaths (issue #176). */
+    const uncommittedNow = (): Effect.Effect<readonly string[], StoreError> =>
+      statusRecords().pipe(Effect.map((records) => uncommittedPaths(records, (p) => excluded(p, ignorePaths))));
     const baselineFile = at({ kind: "baseline" });
+    const readBaseline = () => readText(baselineFile).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(baselineFile, Baseline, text))));
     /** The text of the diff from the baseline tree to the current one; null before init wrote the baseline. */
     const diffText = (): Effect.Effect<string | null, StoreError> =>
       Effect.gen(function* () {
         if (!(yield* exists(baselineFile))) return null;
-        const baseline = yield* Effect.fromResult(decodeText(baselineFile, Baseline, yield* readText(baselineFile)));
+        const baseline = yield* readBaseline();
         return yield* git(["diff", "--no-color", "--no-ext-diff", baseline.tree, yield* workingTree()]);
       });
 
@@ -238,7 +251,13 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         }),
       writeBaseline: () =>
         Effect.gen(function* () {
-          yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), time: yield* now });
+          const uncommitted = yield* uncommittedNow();
+          yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), uncommitted, time: yield* now });
+        }),
+      uncommittedSinceStart: (): Effect.Effect<CommitCheck, StoreError> =>
+        Effect.gen(function* () {
+          const baseline = yield* readBaseline();
+          return commitCheckOf(baseline.uncommitted, yield* uncommittedNow());
         }),
       saveReview: (subject, round, review) => saveRecord(replyArtifact(subject, round, "review"), review),
       saveResponse: (subject, round, response) => saveRecord(replyArtifact(subject, round, "response"), response),
@@ -430,9 +449,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         }),
       projectSnapshot: (): Effect.Effect<Snapshot, StoreError> =>
         Effect.gen(function* () {
-          // --no-optional-locks (issue #120): a plain status may refresh .git/index under index.lock, and while it holds the lock
-          // a commit by Claude Code in the other run fails; a snapshot never writes to the git directory.
-          const records = decodeStatusV2(yield* git(["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=all"])).filter((r) => !excluded(r.path, ignorePaths));
+          const records = (yield* statusRecords()).filter((r) => !excluded(r.path, ignorePaths));
           const entries = new Map<string, { record: (typeof records)[number]; content: WorkingTreeEntry }>();
           for (const record of records) entries.set(record.path, { record, content: yield* inspect(record.path) });
           return { entries };
