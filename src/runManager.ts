@@ -11,13 +11,13 @@ import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
 import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, runInProgressText, serverEndingText } from "./prompts.ts";
-import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
+import { type StoreShape, Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import { type ItemId, itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
 import {
-  begun, blocksImplementationStart, type ChainCommand, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  begun, blocksImplementationStart, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
 import { makeStore } from "./store.ts";
@@ -173,6 +173,7 @@ export const makeRunManager = (
   chainDefaults: ChainSettings,
   bounds: HaltBounds = LIVE_BOUNDS,
   persistence?: ChainPersistence,
+  park: (store: StoreShape, item: ItemId) => Effect.Effect<ParkNote> = parkHalted,
 ): Effect.Effect<RunManager, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -295,6 +296,7 @@ export const makeRunManager = (
     // The git-index hazard recorded in CLAUDE.md stays out of reach: the chain is sequential, only an implementation run
     // builds the baseline and the work review's diff through a temporary index, and the parking runs after the run ended
     // while no implementation run can be reserved (blocksImplementationStart).
+    // Each command is revalidated against the State after its persist (continueFrom), so a stale one is never executed.
 
     const writes = yield* Semaphore.make(1);
     const continuations = yield* Semaphore.make(1);
@@ -326,7 +328,7 @@ export const makeRunManager = (
             const store = Result.isFailure(config)
               ? Result.fail(describe(config.failure))
               : yield* Effect.result(makeStore(cwd, command.root, config.success.ignorePaths).pipe(Effect.provide(platform)));
-            const note: ParkNote = Result.isFailure(store) ? { _tag: "ParkFailed", message: typeof store.failure === "string" ? store.failure : describe(store.failure) } : yield* parkHalted(store.success, command.item).pipe(Effect.provide(platform));
+            const note: ParkNote = Result.isFailure(store) ? { _tag: "ParkFailed", message: typeof store.failure === "string" ? store.failure : describe(store.failure) } : yield* park(store.success, command.item);
             return yield* chainStep((s) => parked(s.chain, generation, note));
           });
         case "Due":
@@ -349,11 +351,24 @@ export const makeRunManager = (
           );
       }
     };
-    /** Persists the chain, then runs its commands one after another; nothing once the server is ending. */
+    /**
+     * Persists the chain, then runs its commands one after another; nothing once the server is ending. The State is read
+     * again after the persist, which may have waited on the write permit: a server that began ending meanwhile executes
+     * nothing, a parking whose save failed is abandoned, and a command the chain has since left behind is dropped
+     * (commandApplies), so only a command of the chain as it now is reaches its effect (W1-R1-5).
+     */
     const continueFrom = (command: ChainCommand | null): Effect.Effect<void> =>
       Effect.gen(function* () {
         if ((yield* Ref.get(state)).closing) return;
-        if ((yield* persist) !== "saved" || command === null) return;
+        const saved = yield* persist;
+        if (command === null) return;
+        const now = yield* Ref.get(state);
+        if (now.closing) return;
+        if (saved !== "saved") {
+          if (command.command._tag === "Park") yield* chainStep((s) => [parkingAbandoned(s.chain, command.generation), null]);
+          return;
+        }
+        if (!commandApplies(now.chain, command)) return;
         yield* continueFrom(yield* execute(command));
       });
     /** After a change of the chain: its persistence and its commands, in a detached fiber under one permit (P1-R3-1). */

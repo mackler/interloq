@@ -11,8 +11,10 @@ import { makeStore } from "../src/store.ts";
 import { runRootOf } from "../src/artifacts.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { type Broadcast, type ChainPersistence, type EventBroadcast, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
-import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SETTINGS, runLimitOf } from "../src/chain.ts";
-import { loadChain, saveChain } from "../src/chainFile.ts";
+import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SETTINGS, type ParkNote, runLimitOf } from "../src/chain.ts";
+import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
+import { parkHalted } from "../src/parking.ts";
+import type { StoreShape } from "../src/services.ts";
 import { chainParkingText } from "../src/prompts.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
@@ -36,7 +38,7 @@ const committedWork = (repo: string) => {
 
 type Harness = { manager: RunManager; events: EventBroadcast[]; chains: ChainState[]; repo: string; tracker: FakeTracker };
 type Script = TestOptions | ((repo: string) => TestOptions);
-type Options = { settings?: ChainSettings; tracker?: FakeTracker; trackerOf?: (fake: FakeTracker) => TrackerShape; persistence?: ChainPersistence; repo?: string; defaults?: ChainSettings };
+type Options = { park?: (store: StoreShape, item: ItemId) => Effect.Effect<ParkNote>; settings?: ChainSettings; tracker?: FakeTracker; trackerOf?: (fake: FakeTracker) => TrackerShape; persistence?: ChainPersistence; repo?: string; defaults?: ChainSettings };
 
 const identified = (): string => {
   const repo = tempRepo();
@@ -56,7 +58,7 @@ const harness = async (scripts: Script[], options: Options = {}): Promise<Harnes
     const next = queue.shift() ?? {};
     return testWiring(repo, { tracker, ...(typeof next === "function" ? next(repo) : next) }).wiring;
   };
-  const manager = await run(makeRunManager((ui) => ({ ...wiringOf(), ui: Effect.succeed(ui) }), repo, [], "test", access, options.defaults ?? DEFAULT_SETTINGS, undefined, options.persistence).pipe(Effect.provide(platformLayer)));
+  const manager = await run(makeRunManager((ui) => ({ ...wiringOf(), ui: Effect.succeed(ui) }), repo, [], "test", access, options.defaults ?? DEFAULT_SETTINGS, undefined, options.persistence, options.park).pipe(Effect.provide(platformLayer)));
   const events: EventBroadcast[] = [];
   const chains: ChainState[] = [];
   const scope = await run(Scope.make());
@@ -384,4 +386,83 @@ test("a cutoff that passes while the next item's read is held refuses that start
   await idle(h);
   assert.equal(startedRuns(h).length, 1);
   assert.equal(await endedReason(h), "CutoffPassed");
+});
+
+// ---- work review 1 of issue #147, W1-R1-5: the continuation revalidated after its persist (S18) ----
+
+/** A file left uncommitted by a halting run, and nothing committed. */
+const leftOnly = (repo: string) => fs.writeFileSync(path.join(repo, "left.txt"), "left uncommitted\n");
+/** A persistence over chain.json whose save fails while `failing()` is true; its removal removes the file. */
+const flagged = (repo: string, failing: () => boolean): ChainPersistence => ({
+  save: (state) => Effect.suspend(() => (failing() ? Effect.fail("disk full") : saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
+  remove: removeChain(repo).pipe(Effect.provide(platformLayer), Effect.mapError(String)),
+});
+const haltedBranches = (repo: string) => git(repo, "branch", "--list", "interloq/halted/*", "--format=%(refname:short)").split("\n").filter((b) => b !== "");
+
+test("haltAll while the save of Parking is held: nothing is parked, and chain.json keeps Parking for the restart", async () => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  let holding = false;
+  const repo = identified();
+  const persistence: ChainPersistence = {
+    save: (state) =>
+      Effect.suspend(() => (state.chain._tag === "Parking" && !holding ? ((holding = true), Effect.promise(() => held)) : Effect.void)).pipe(
+        Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+      ),
+    remove: Effect.void,
+  };
+  const h = await harness([halting(leftOnly), converging], { repo, persistence });
+  const start = git(repo, "rev-parse", "HEAD");
+  await begin(h, "1");
+  await until("the held save of Parking", () => holding);
+  await run(h.manager.haltAll("write EPIPE"));
+  release();
+  await sleep(500);
+  assert.deepEqual(haltedBranches(repo), []);
+  assert.equal(git(repo, "rev-parse", "HEAD"), start);
+  assert.match(git(repo, "status", "--porcelain"), /left\.txt/);
+  const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
+  assert.equal(onDisk.chain._tag, "Parking");
+});
+
+test("a failed save during a running parking keeps starts refused until the work is on its branch, then ends SaveFailed", async () => {
+  let entered = () => {};
+  const inside = new Promise<void>((r) => (entered = r));
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  let failing = false;
+  const repo = identified();
+  const park = (store: StoreShape, item: ItemId) => Effect.sync(entered).pipe(Effect.andThen(Effect.promise(() => held)), Effect.andThen(parkHalted(store, item)));
+  const h = await harness([halting(leftOnly), converging], { repo, persistence: flagged(repo, () => failing), park });
+  const start = git(repo, "rev-parse", "HEAD");
+  await begin(h, "1");
+  await inside;
+  failing = true;
+  await run(h.manager.setChain(settings(5)));
+  assert.equal((await chainOf(h)).chain._tag, "Parking");
+  assert.deepEqual(await run(h.manager.start(startOf("implementation", "3"))), { refused: chainParkingText("1"), mode: "implementation" });
+  failing = false;
+  release();
+  await until("the chain to end", async () => (await chainOf(h)).chain._tag === "Idle");
+  assert.equal(await endedReason(h), "SaveFailed");
+  const branches = haltedBranches(repo);
+  assert.equal(branches.length, 1);
+  assert.match(branches[0]!, /^interloq\/halted\/1\//);
+  assert.match(git(repo, "show", "--name-only", "--format=", branches[0]!), /left\.txt/);
+  assert.equal(git(repo, "rev-parse", "HEAD"), start);
+  assert.equal(typeof (await run(h.manager.start(startOf("implementation", "3")))), "number");
+});
+
+test("a failed save before the parking abandons it: nothing parked, the chain ends SaveFailed, and starts are accepted", async () => {
+  let failing = false;
+  const repo = identified();
+  const h = await harness([halting((r) => (leftOnly(r), (failing = true))), converging], { repo, persistence: flagged(repo, () => failing) });
+  const start = git(repo, "rev-parse", "HEAD");
+  await begin(h, "1");
+  await until("the chain to end", async () => (await chainOf(h)).chain._tag === "Idle" && (await run(h.manager.current)).implementation === null, 5_000);
+  assert.equal(await endedReason(h), "SaveFailed");
+  assert.deepEqual(haltedBranches(repo), []);
+  assert.equal(git(repo, "rev-parse", "HEAD"), start);
+  failing = false;
+  assert.equal(typeof (await run(h.manager.start(startOf("implementation", "3")))), "number");
 });
