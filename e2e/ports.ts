@@ -10,7 +10,7 @@ import type { FakeItem } from "../test/fakeTracker.ts";
 // within each file the tests of one server form one group that runs in order in one worker.
 
 /** The servers of e2e/run.spec.ts, by scenario. */
-export const RUN_PORTS = { twoModes: 8123, noTracker: 8124, converge: 8101, decision: 8102, stop: 8103, interview: 8104, workCorrection: 8105, tabs: 8106, drop: 8107, long: 8108, questionReview: 8109, longChoices: 8110, decide: 8111, decideLong: 8112, decideRevise: 8113, decideBlank: 8114, planSteps: 8115, transportRetry: 8116, unchangedPause: 8117, longQuestion: 8118, permissionLong: 8119, whitespace: 8120, transportLong: 8121, emptyQuestions: 8122 } as const;
+export const RUN_PORTS = { twoModes: 8123, noTracker: 8124, converge: 8101, decision: 8102, stop: 8103, interview: 8104, workCorrection: 8105, tabs: 8106, drop: 8107, long: 8108, questionReview: 8109, longChoices: 8110, decide: 8111, decideLong: 8112, decideRevise: 8113, decideBlank: 8114, planSteps: 8115, transportRetry: 8116, unchangedPause: 8117, longQuestion: 8118, permissionLong: 8119, whitespace: 8120, transportLong: 8121, emptyQuestions: 8122, chain: 8125 } as const;
 /** The servers of e2e/layout.spec.ts, by scenario. */
 export const LAYOUT_PORTS = { tabs: 8206, long: 8208, longChoices: 8210, decide: 8211, decideLong: 8212, planSteps: 8215, longQuestion: 8218, permissionLong: 8219, whitespace: 8220, transportLong: 8221, longContextShortAnswers: 8222, decideBlank: 8223 } as const;
 

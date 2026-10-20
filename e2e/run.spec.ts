@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { NOTHING_TO_SETTLE, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { CHAIN_SWITCH_LABEL, NOTHING_TO_SETTLE, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, transportRetryLine, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -841,5 +841,24 @@ test.describe("the tests of the noTracker server, in order", () => {
       await expect(listOf(page).getByRole("alert")).toContainText("no issue tracker is configured");
     }
     await expect(page.locator("header .location")).toHaveText(/^\/tmp\//);
+  });
+});
+
+// Issue #147: the chain over the real server. The developer starts the first item; when its run finishes, the next
+// refined item's run starts by itself in the tab, and turning the mode off during it keeps it going.
+test.describe("the tests of the chain server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(31) a finished run starts the next refined item, and turning the mode off during it keeps it going", async ({ page }) => {
+    const first = await startFromTab(page, url("chain"), "implementation");
+    const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+    await expect(control.getByRole("status")).toContainText(/Run 2 of the chain: item #(\d+)/, { timeout: 60_000 });
+    const second = /item #(\d+)/.exec((await control.getByRole("status").textContent()) ?? "")?.[1];
+    expect(second).not.toBe(first);
+    await expect(rail(page).getByText("Planning", { exact: true })).toBeVisible();
+    await expect(page.locator("button[name=stop]")).toBeEnabled();
+    await control.locator("label.switch").click();
+    await expect(control.getByRole("status")).toContainText(`Turned off. The run of item #${second} goes on to its end`);
+    await expect(page.locator("button[name=stop]")).toBeEnabled();
   });
 });
