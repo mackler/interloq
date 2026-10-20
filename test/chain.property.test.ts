@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
 import fc from "fast-check";
-import { begun, type ChainCommand, type ChainState, ChainFileSchema, due, ended, initialState, listed, parked, restored, runLimitOf, started } from "../src/chain.ts";
+import { begun, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, parked, restored, runLimitOf, saveFailed, started } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 
@@ -92,6 +92,31 @@ test("a restore of Running or Starting always ends the chain; every state round-
         }
         const file = { version: 2 as const, state: s };
         assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
+      }
+    }),
+    RUNS,
+  );
+});
+
+test("a Parking chain never leaves Parking through saveFailed or a change of settings (W1-R1-5)", () => {
+  const arbOp = fc.constantFrom("saveFailed", "off", "on", "due", "listed", "stale");
+  fc.assert(
+    fc.property(fc.array(arbEnd, { maxLength: 8 }), arbItems, fc.array(arbOp, { maxLength: 10 }), (ends, items, ops) => {
+      const { seen } = drive(null, ends, items);
+      for (const { state: start } of seen) {
+        if (start.chain._tag !== "Parking") continue;
+        let s: ChainState = start;
+        const g = start.chain.generation;
+        for (const op of ops) {
+          s =
+            op === "saveFailed" ? saveFailed(s, "m")
+            : op === "off" ? configured(s, OFF_SETTINGS, null)
+            : op === "on" ? configured(s, { enabled: true, limits: { runs: null, cutoff: null } }, null)
+            : op === "due" ? due(s, g, 0)[0]
+            : op === "listed" ? listed(s, g, { item: "1" as ItemId, title: "t" })[0]
+            : parked(s, g + 1, { _tag: "NothingParked" })[0];
+          assert.equal(s.chain._tag, "Parking", op);
+        }
       }
     }),
     RUNS,

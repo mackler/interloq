@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Result, Schema } from "effect";
 import {
   begun, blocksImplementationStart, type ChainSettings, type ChainState, ChainFileSchema, configured, cutoffOf, DEFAULT_SETTINGS, due, ended, initialState,
-  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard,
+  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand,
 } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
@@ -217,3 +217,69 @@ test("a saved state round-trips through the file's schema", () => {
   assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
 });
 
+
+test("a failed save during parking keeps Parking, its exclusion, and ends the chain SaveFailed once parked (W1-R1-5)", () => {
+  const notes = [{ _tag: "Parked", branch: "b", commit: "c" }, { _tag: "NothingParked" }] as const;
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  for (const before of [p, configured(p, OFF_SETTINGS, null)]) {
+    const f = saveFailed(before, "disk full");
+    assert.equal(f.chain._tag, "Parking");
+    assert.deepEqual(f.chain._tag === "Parking" && f.chain.then, { _tag: "SaveFailed", message: "disk full" });
+    assert.equal(blocksImplementationStart(f), true);
+    for (const note of notes) {
+      const [after, c] = parked(f, gen(f), note);
+      assert.deepEqual(after.chain._tag === "Idle" && after.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+      assert.equal(c, null);
+      assert.equal(blocksImplementationStart(after), false);
+    }
+    const [pf] = parked(f, gen(f), { _tag: "ParkFailed", message: "m" });
+    assert.deepEqual(pf.chain._tag === "Idle" && pf.chain.ended, { _tag: "ParkFailed", item: "1", message: "m" });
+  }
+  const [h1] = ended(startedChain(), 1, { code: 1, root: null });
+  const twice = chainStart(h1, 2, "1");
+  const [p2] = ended(twice, 2, { code: 1, root: root("2") });
+  assert.deepEqual(p2.chain._tag === "Parking" && p2.chain.then, { _tag: "HaltedTwice", item: "1" });
+  const f2 = saveFailed(p2, "x");
+  assert.deepEqual(f2.chain._tag === "Parking" && f2.chain.then, { _tag: "SaveFailed", message: "x" });
+});
+
+test("a failed save outside parking ends the chain as before", () => {
+  const run = startedChain();
+  const [r] = ended(run, 1, { code: 0, root: null });
+  const [l] = listed(r, gen(r), { item: id("2"), title: "two" });
+  for (const s of [run, r, l]) {
+    const f = saveFailed(s, "m");
+    assert.deepEqual(f.chain, { _tag: "Idle", ended: { _tag: "SaveFailed", message: "m" }, history: s.chain.history });
+  }
+});
+
+test("parkingAbandoned ends a Parking of its generation with its end, else SaveFailed; another generation unchanged", () => {
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const a = parkingAbandoned(p, gen(p));
+  assert.deepEqual(a.chain._tag === "Idle" && a.chain.ended, { _tag: "SaveFailed", message: "" });
+  assert.deepEqual(a.chain.history, p.chain.history);
+  assert.deepEqual(a.chain.history[0]?.outcome, { _tag: "Halted", park: { _tag: "Pending" } });
+  assert.equal(blocksImplementationStart(a), false);
+  const f = parkingAbandoned(saveFailed(p, "disk full"), gen(p));
+  assert.deepEqual(f.chain._tag === "Idle" && f.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+  assert.deepEqual(parkingAbandoned(p, gen(p) + 1), p);
+  const [r] = ended(startedChain(), 1, { code: 0, root: null });
+  assert.deepEqual(parkingAbandoned(r, gen(r)), r);
+});
+
+test("commandApplies: each command in its own state and generation, never another", () => {
+  const [p, park] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [r, dueC] = ended(startedChain(), 1, { code: 0, root: null });
+  const [, list] = due(r, gen(r), 0);
+  const [l, start] = listed(r, gen(r), { item: id("2"), title: "two" });
+  const cases: readonly [ChainState, ChainCommand][] = [[p, park!], [r, dueC!], [r, list!], [l, start!]];
+  for (const [s, c] of cases) {
+    assert.equal(commandApplies(s, c), true, c.command._tag);
+    assert.equal(commandApplies(s, { ...c, generation: c.generation + 1 }), false, `${c.command._tag} other generation`);
+    for (const [other] of cases) if (other.chain._tag !== s.chain._tag) assert.equal(commandApplies(other, c), false, `${c.command._tag} in ${other.chain._tag}`);
+    assert.equal(commandApplies(initialState(DEFAULT_SETTINGS), c), false);
+  }
+  assert.equal(commandApplies(p, { generation: gen(p), command: { _tag: "Park", item: id("9"), root: root("1") } }), false);
+  assert.equal(commandApplies(p, { generation: gen(p), command: { _tag: "Park", item: id("1"), root: root("9") } }), false);
+  assert.equal(commandApplies(l, { generation: gen(l), command: { _tag: "Start", item: id("9") } }), false);
+});

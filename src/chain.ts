@@ -251,8 +251,36 @@ export const started = (state: ChainState, generation: number, run: number, item
 export const refused = (state: ChainState, generation: number, reason: ChainEndReason): ChainState =>
   ofGeneration(state, generation) && (state.chain._tag === "Starting" || state.chain._tag === "Ready") ? idle(state, reason) : state;
 
-/** The chain's state could not be saved: it stops rather than risk a start after a restart. */
-export const saveFailed = (state: ChainState, message: string): ChainState => idle(state, { _tag: "SaveFailed", message });
+/**
+ * The chain's state could not be saved: it stops rather than risk a start after a restart. A parking in progress keeps
+ * `Parking`, so no implementation run is reserved beside its git writes (behavior 15), and the chain ends saying the state
+ * could not be saved once the parking ends (`parked` applies `then`).
+ */
+export const saveFailed = (state: ChainState, message: string): ChainState => {
+  const reason: ChainEndReason = { _tag: "SaveFailed", message };
+  return state.chain._tag === "Parking" ? { ...state, chain: { ...state.chain, then: reason } } : idle(state, reason);
+};
+
+/** The save that must precede a parking failed, so no parking runs: the chain ends with the end decided, else SaveFailed. */
+export const parkingAbandoned = (state: ChainState, generation: number): ChainState => {
+  const chain = state.chain;
+  return chain._tag === "Parking" && chain.generation === generation ? idle(state, chain.then ?? { _tag: "SaveFailed", message: "" }) : state;
+};
+
+/** Whether a command computed for a chain still applies to the chain as it is now (the manager drops a stale one). */
+export const commandApplies = (state: ChainState, { generation, command }: ChainCommand): boolean => {
+  const chain = state.chain;
+  if (!ofGeneration(state, generation)) return false;
+  switch (command._tag) {
+    case "Park":
+      return chain._tag === "Parking" && chain.item === command.item && chain.root === command.root;
+    case "Due":
+    case "List":
+      return chain._tag === "Ready";
+    case "Start":
+      return chain._tag === "Starting" && chain.item === command.item;
+  }
+};
 
 /** The developer changed the settings; `running` is the implementation run in progress, if any. */
 export const configured = (state: ChainState, settings: ChainSettings, running: ItemId | null): ChainState => {
