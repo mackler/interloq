@@ -31,13 +31,13 @@ export type UiEvent =
   | Readonly<{ _tag: "PlanWritten"; phase: number; resultText: string }>
   | Readonly<{ _tag: "ExecutionEnded"; phase: number; outcome: ExecOutcome }>
   | Readonly<{ _tag: "AgentCallStarted"; agent: Agent; purpose: string; callId: string }>
-  | Readonly<{ _tag: "ToolUsed"; agent: Agent; tool: string; target: string }>
+  | Readonly<{ _tag: "ToolUsed"; agent: Agent; tool: string; target: string; callId: string }>
   | Readonly<{ _tag: "AgentCallEnded"; agent: Agent; ok: boolean; callId: string }>
   /**
    * The SDK's own reconnection during a call (issue #26): Codex's error event (no attempt, count or delay), or the Agent
    * SDK's api_retry message (its attempt, its maximum and its delay).
    */
-  | Readonly<{ _tag: "AgentReconnecting"; agent: Agent; by: "sdk"; attempt: number | null; of: number | null; delayMs: number | null; detail: string }>
+  | Readonly<{ _tag: "AgentReconnecting"; agent: Agent; by: "sdk"; attempt: number | null; of: number | null; delayMs: number | null; detail: string; callId: string }>
   /** The program retries a call that failed from a transport fault (issue #26): retry `attempt` of `of`, after `delaySeconds`. */
   | Readonly<{ _tag: "TransportRetrying"; agent: Agent; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
   /** A call succeeded after a retry. */

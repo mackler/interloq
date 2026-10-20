@@ -7,13 +7,14 @@ export type ToolUse = Readonly<{ id: string; event: Extract<UiEvent, { _tag: "To
 
 /**
  * The tool use an event reports, or null. A command and a web search are reported on item.started, a file
- * change on item.completed (the SDK emits it only then); an item id in `seen` is not reported again.
+ * change on item.completed (the SDK emits it only then); an item id in `seen` is not reported again. The event carries
+ * the id of the turn it belongs to (W3-R2-1 of issue #184).
  */
-export const toolEventOf = (seen: ReadonlySet<string>, event: ThreadEvent): ToolUse | null => {
+export const toolEventOf = (seen: ReadonlySet<string>, event: ThreadEvent, callId: string): ToolUse | null => {
   if (event.type !== "item.started" && event.type !== "item.completed") return null;
   const item = event.item;
   if (seen.has(item.id)) return null;
-  const used = (tool: string, target: string): ToolUse => ({ id: item.id, event: { _tag: "ToolUsed", agent: "codex", tool, target } });
+  const used = (tool: string, target: string): ToolUse => ({ id: item.id, event: { _tag: "ToolUsed", agent: "codex", tool, target, callId } });
   switch (item.type) {
     case "command_execution":
       return event.type === "item.started" ? used("command", item.command) : null;

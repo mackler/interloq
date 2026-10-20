@@ -31,7 +31,7 @@ const review = { issues: [issue("P1-R1-1", "The plan does not say which file hol
 const eventOf = (i: number): UiEvent =>
   i % 10 === 0
     ? { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1 + Math.floor(i / 10), review, counted: 3 }
-    : { _tag: "ToolUsed", agent: i % 3 === 0 ? "codex" : "claude", tool: i % 2 === 0 ? "Read" : "command", target: `src/module-${i % 97}/file-${i}.ts` };
+    : { _tag: "ToolUsed", agent: i % 3 === 0 ? "codex" : "claude", tool: i % 2 === 0 ? "Read" : "command", target: `src/module-${i % 97}/file-${i}.ts`, callId: "claude-1" };
 
 test("measurement: a run of 10,000 events, its retained size, and the time to replay it to one client", async (t) => {
   const repo = tempRepo();

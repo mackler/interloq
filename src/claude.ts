@@ -372,7 +372,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
               if (block.type === "tool_use" && block.name !== "StructuredOutput") {
                 const input = block.input as Record<string, unknown>;
                 const target = String(input?.file_path ?? input?.pattern ?? input?.command ?? "");
-                yield* ui.notify({ _tag: "ToolUsed", agent: "claude", tool: block.name, target });
+                yield* ui.notify({ _tag: "ToolUsed", agent: "claude", tool: block.name, target, callId });
                 if (show === "tools") yield* ui.say(`  [claude: ${block.name} ${target}]`);
               }
             }
@@ -382,7 +382,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             yield* store.recordRateLimit({ session: yield* Ref.get(session), info: message.rate_limit_info });
           } else if (message.type === "system" && message.subtype === "api_retry") {
             // Issue #26: the SDK's own retry of a failed request, invisible until now.
-            yield* ui.notify({ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: message.attempt, of: message.max_retries, delayMs: message.retry_delay_ms, detail: prompts.apiRetryDetail(message.error_status, message.error) });
+            yield* ui.notify({ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: message.attempt, of: message.max_retries, delayMs: message.retry_delay_ms, detail: prompts.apiRetryDetail(message.error_status, message.error), callId });
           } else if (message.type === "result") {
             const id = yield* Ref.get(session);
             yield* store.recordUsage({ agent: "claude", session: id, turns: message.num_turns, totalCostUsd: message.total_cost_usd });

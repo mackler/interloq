@@ -46,9 +46,9 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
           if (step.done === true) return;
           seen.push(step.value);
           if (step.value.type === "error") {
-            yield* ui.notify({ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: step.value.message });
+            yield* ui.notify({ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: step.value.message, callId });
           }
-          const tool = toolEventOf(reported, step.value);
+          const tool = toolEventOf(reported, step.value, callId);
           if (tool !== null) {
             reported.add(tool.id);
             yield* ui.notify(tool.event);

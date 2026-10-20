@@ -164,9 +164,9 @@ test("a streamed turn notifies its start, one tool use per item, and its end, in
   await run(session.review("review"));
   assert.deepEqual(fake.ui.notified, [
     { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" },
-    { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff" },
-    { _tag: "ToolUsed", agent: "codex", tool: "edit", target: "a.ts, b.ts" },
-    { _tag: "ToolUsed", agent: "codex", tool: "search", target: "effect v4" },
+    { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" },
+    { _tag: "ToolUsed", agent: "codex", tool: "edit", target: "a.ts, b.ts", callId: "codex-1" },
+    { _tag: "ToolUsed", agent: "codex", tool: "search", target: "effect v4", callId: "codex-1" },
     { _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" },
   ]);
 });
@@ -202,7 +202,7 @@ test("an error notice followed by a completed turn succeeds, and the notice is n
   assert.equal((await run(session.review("review"))).text, empty);
   assert.deepEqual(
     fake.ui.notified.filter((e) => e._tag === "AgentReconnecting"),
-    [{ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: reconnecting }],
+    [{ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: reconnecting, callId: "codex-1" }],
   );
 });
 

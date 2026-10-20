@@ -132,7 +132,7 @@ describe("who speaks in the left panel", () => {
   test("the activity line and the page's prompts say Claude", () => {
     const s = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" })]));
     expect(s.modes.implementation.run?.activity).toBe("Claude — planning");
-    const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x" })]));
+    const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x", callId: "claude-1" })]));
     expect(tool.modes.implementation.run?.activity).toBe("Claude — Read: x");
   });
 });
@@ -194,7 +194,7 @@ test("every prompt is shown in the page's words, without the hint's key conventi
 
 describe("activity and timeline", () => {
   test("the activity line shows the last agent event and is cleared at the end of a phase", () => {
-    const s1 = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" }), notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff" })]));
+    const s1 = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" }), notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" })]));
     expect(s1.modes.implementation.run?.activity).toBe("Codex — review — command: git diff");
     expect(s1.modes.implementation.run?.busy).toBe(true);
     const s2 = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" }) }], s1);
@@ -591,7 +591,7 @@ describe("runs, replay and gaps", () => {
       { _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" },
       { _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 },
       { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" },
-      { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "a" },
+      { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "a", callId: "claude-1" },
       // Issue #6: the phases ahead, the plan, and nested calls.
       { _tag: "PhasesForeseen", phases: phasesOf(true, 1) },
       { _tag: "PhasesForeseen", phases: phasesOf(true, 2) },
@@ -1209,9 +1209,38 @@ describe("transport retries on the activity line", () => {
   });
 
   test("the SDK's own reconnection during a call is shown on the activity line", () => {
-    const reconnecting: UiEvent = { _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503, server_error" };
+    const reconnecting: UiEvent = { _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503, server_error", callId: "claude-1" };
     for (const s of both([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" }), notified(reconnecting)])) {
       expect(s.modes.implementation.run?.activity).toBe("Claude — planning — reconnecting 2 of 10 (status 503, server_error)");
+    }
+  });
+
+  // W3-R2-1 of issue #184: calls overlap, so a tool event or a reconnection is labeled by the call whose id it carries,
+  // not by the call started last.
+  const interview: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" };
+  const review: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
+  const labelOf = (events: readonly RunEvent[]) => fold(live(events)).modes.implementation.run?.activity;
+
+  test("a tool event of an earlier call that still runs is labeled by that call", () => {
+    const interviewLabel = labelOf([started, notified(interview)]);
+    const read: UiEvent = { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "src/example.ts", callId: "claude-1" };
+    for (const s of both([started, notified(interview), notified(review), notified(read)])) {
+      expect(s.modes.implementation.run?.activity).toBe(`${interviewLabel} — Read: src/example.ts`);
+    }
+  });
+
+  test("a tool event of the latest call is labeled by it, and one of no running call by its agent alone", () => {
+    const command: UiEvent = { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" };
+    expect(labelOf([started, notified(interview), notified(review), notified(command)])).toBe("Codex — review — command: git diff");
+    const stray: UiEvent = { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x", callId: "claude-9" };
+    expect(labelOf([started, notified(interview), notified(review), notified(stray)])).toBe("Claude — Read: x");
+  });
+
+  test("a reconnection of an earlier call that still runs is labeled by that call", () => {
+    const codexFirst: UiEvent = { _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: "stream lost", callId: "codex-1" };
+    const reviewLabel = labelOf([started, notified(review)]);
+    for (const s of both([started, notified(review), notified(interview), notified(codexFirst)])) {
+      expect(s.modes.implementation.run?.activity).toBe(`${reviewLabel} — reconnecting (stream lost)`);
     }
   });
 });

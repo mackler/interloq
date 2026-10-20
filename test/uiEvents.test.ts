@@ -27,9 +27,9 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   PlanWritten: [{ _tag: "PlanWritten", phase: 1, resultText: "" }, /plan written in phase 1$/],
   ExecutionEnded: [{ _tag: "ExecutionEnded", phase: 1, outcome }, /execution 1 ended: finished/],
   AgentCallStarted: [{ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" }, /Codex call started: review/],
-  ToolUsed: [{ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "src/run.ts" }, /Claude Code used Read src\/run\.ts/],
+  ToolUsed: [{ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "src/run.ts", callId: "claude-1" }, /Claude Code used Read src\/run\.ts/],
   AgentCallEnded: [{ _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" }, /Claude Code call ended: failed/],
-  AgentReconnecting: [{ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503" }, /Claude Code: reconnecting 2 of 10 in 1\.5 s \(status 503\)/],
+  AgentReconnecting: [{ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503", callId: "claude-1" }, /Claude Code: reconnecting 2 of 10 in 1\.5 s \(status 503\)/],
   TransportRetrying: [{ _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 }, /Codex: connection lost, retry 2 of 3 in 10 s \(stream disconnected\)/],
   TransportRecovered: [{ _tag: "TransportRecovered", agent: "claude" }, /Claude Code: connection restored/],
   // Issue #171: the tracker's repeats.

@@ -472,8 +472,8 @@ test("a planning call notifies its start, every tool use other than StructuredOu
   await run(fake.planner.planning("write the plan", schema, "planning"));
   assert.deepEqual(activity(fake.ui), [
     { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" },
-    { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "/x" },
-    { _tag: "ToolUsed", agent: "claude", tool: "Grep", target: "foo" },
+    { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "/x", callId: "claude-1" },
+    { _tag: "ToolUsed", agent: "claude", tool: "Grep", target: "foo", callId: "claude-1" },
     { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" },
   ]);
   assert.ok(!fake.ui.said.some((l) => l.includes("[claude: Read")), "a planning call printed its tool use");
@@ -821,7 +821,7 @@ test("an api_retry message is notified as AgentReconnecting", async () => {
   const fake = await planner([messages(init(), retry, success({ questions_for_user: [] }))]);
   await run(fake.planner.planning("write the plan", schema));
   assert.deepEqual(fake.ui.notified.filter((e) => e._tag === "AgentReconnecting"), [
-    { _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503, server_error" },
+    { _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503, server_error", callId: "claude-1" },
   ]);
 });
 

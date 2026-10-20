@@ -369,6 +369,8 @@ const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
 const suiteResultOf = (phase: Phase, result: string): SuiteOutcome | null => (phase.kind === "suite" ? (SUITE_OUTCOMES.find((o) => o === result) ?? null) : null);
 /** The index of the last element that satisfies `p`, or -1 (the page's library has no findLastIndex). */
 const lastIndex = <T>(list: readonly T[], p: (t: T) => boolean): number => list.reduce((found, t, i) => (p(t) ? i : found), -1);
+/** The running call with the given id, the latest if two share it, or undefined (W3-R2-1 of issue #184). */
+export const callOf = (calls: readonly AgentCall[], callId: string): AgentCall | undefined => calls[lastIndex(calls, (c) => c.callId === callId)];
 /** The entry that the run is in: the active one, else the last one begun. */
 export const currentIndex = (timeline: readonly TimelineEntry[]): number => {
   const active = lastIndex(timeline, (e) => e.state === "active");
@@ -610,11 +612,12 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // Issue #63: the retried call's start ends the wait before it; the retry's text stays with the call.
       return { ...run, limitWait: null, retry: run.retry === null ? null : { ...run.retry, wait: null }, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time, callId: event.callId }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
     }
+    // W3-R2-1 of issue #184: calls overlap, so an event is labeled by the running call whose id it carries.
     case "ToolUsed":
-      return { ...run, activity: `${run.calls.at(-1)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, "") };
+      return { ...run, activity: `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, "") };
     // Issue #26: the SDK's own reconnection during a call, and the program's retry while it lasts; neither is progress.
     case "AgentReconnecting":
-      return { ...run, activity: `${run.calls.at(-1)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}` };
+      return { ...run, activity: `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}` };
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
       return { ...run, retry: { agent: event.agent, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${AGENT[event.agent]} — ${text}` };

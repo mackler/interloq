@@ -103,7 +103,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("PlanWritten" as const), phase: nat, resultText: text }),
   fc.record({ _tag: fc.constant("ExecutionEnded" as const), phase: nat, outcome }),
   fc.record({ _tag: fc.constant("AgentCallStarted" as const), agent, purpose: text, callId: text }),
-  fc.record({ _tag: fc.constant("ToolUsed" as const), agent, tool: text, target: text }),
+  fc.record({ _tag: fc.constant("ToolUsed" as const), agent, tool: text, target: text, callId: text }),
   fc.record({ _tag: fc.constant("AgentCallEnded" as const), agent, ok: fc.boolean(), callId: text }),
   fc.record({ _tag: fc.constant("InterviewTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
   fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const), total: nat }),
@@ -119,7 +119,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("UsageLimitWaiting" as const), agent, limitType: fc.option(text, { nil: null }), basis: limitBasis, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("UsageLimitLifted" as const), agent, waitedMs: nat }),
   // Issue #26: the SDK's own reconnection.
-  fc.record({ _tag: fc.constant("AgentReconnecting" as const), agent, by: fc.constant("sdk" as const), attempt: fc.option(nat, { nil: null }), of: fc.option(nat, { nil: null }), delayMs: fc.option(nat, { nil: null }), detail: text }),
+  fc.record({ _tag: fc.constant("AgentReconnecting" as const), agent, by: fc.constant("sdk" as const), attempt: fc.option(nat, { nil: null }), of: fc.option(nat, { nil: null }), delayMs: fc.option(nat, { nil: null }), detail: text, callId: text }),
   // Issue #6: the phases known of the run.
   fc.record({ _tag: fc.constant("PhasesForeseen" as const), phases: fc.array(phase, { maxLength: 4 }) }),
   // Issue #6: the plan with its statuses, after every write and every report of a step.

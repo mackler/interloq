@@ -8,18 +8,18 @@ import { command, fileChange, webSearch } from "./fakeSdk.ts";
 const fold = (events: readonly ThreadEvent[]) =>
   events.reduce<{ seen: ReadonlySet<string>; out: unknown[] }>(
     (acc, event) => {
-      const tool = toolEventOf(acc.seen, event);
+      const tool = toolEventOf(acc.seen, event, "codex-1");
       return tool === null ? acc : { seen: new Set([...acc.seen, tool.id]), out: [...acc.out, tool.event] };
     },
     { seen: new Set(), out: [] },
   ).out;
 
 test("a command is reported once, on item.started, though the SDK reports it started and completed", () => {
-  assert.deepEqual(fold(command("c1", "npm test")), [{ _tag: "ToolUsed", agent: "codex", tool: "command", target: "npm test" }]);
+  assert.deepEqual(fold(command("c1", "npm test")), [{ _tag: "ToolUsed", agent: "codex", tool: "command", target: "npm test", callId: "codex-1" }]);
 });
 
 test("a file change, reported only on completion, is reported with its paths", () => {
-  assert.deepEqual(fold(fileChange("f1", "src/a.ts", "src/b.ts")), [{ _tag: "ToolUsed", agent: "codex", tool: "edit", target: "src/a.ts, src/b.ts" }]);
+  assert.deepEqual(fold(fileChange("f1", "src/a.ts", "src/b.ts")), [{ _tag: "ToolUsed", agent: "codex", tool: "edit", target: "src/a.ts, src/b.ts", callId: "codex-1" }]);
 });
 
 test("a web search is reported once with its query; messages, reasoning and turn events are not tool uses", () => {
@@ -28,7 +28,7 @@ test("a web search is reported once with its query; messages, reasoning and turn
     { type: "item.completed", item: { id: "m", type: "agent_message", text: "x" } },
     { type: "item.completed", item: { id: "r", type: "reasoning", text: "y" } },
   ] as ThreadEvent[];
-  assert.deepEqual(fold([...other, ...webSearch("w", "q")]), [{ _tag: "ToolUsed", agent: "codex", tool: "search", target: "q" }]);
+  assert.deepEqual(fold([...other, ...webSearch("w", "q")]), [{ _tag: "ToolUsed", agent: "codex", tool: "search", target: "q", callId: "codex-1" }]);
 });
 
 // Issue #26: an error event is a notice of the CLI's reconnection, not a failure; the SDK's own run() ignores it.
