@@ -2,6 +2,7 @@
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
+import type { ChainEndReason, ChainEntry, ChainState } from "./chain.ts";
 import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -3355,3 +3356,103 @@ export const parkedRecordLine = (record: ParkedRecord): string => {
 
 /** The line written to the halted run's conversation.md where there was nothing to keep. */
 export const nothingParkedLine = "**Parked:** this run halted with no work to keep: it made no commit and left no file uncommitted.";
+
+/** The chain's switch on the Implementation tab, its two optional fields and their supporting texts. */
+export const CHAIN_SWITCH_LABEL = "Start the next refined item when a run ends";
+export const CHAIN_RUNS_LABEL = "Stop after this many runs";
+export const CHAIN_RUNS_SUPPORT = "Empty means no limit. The count includes the run you start yourself.";
+export const CHAIN_CUTOFF_LABEL = "Start no run after";
+export const CHAIN_CUTOFF_SUPPORT = "Empty means no limit. A run in progress at that time goes on to its end.";
+export const CHAIN_INVALID_RUNS = "Enter a whole number of 1 or more, or leave the field empty.";
+/** The moment a cutoff resolved to, shown under its field. */
+export const chainCutoffResolved = (time: string): string => `No run starts after ${time}.`;
+
+/** A formatter of an ISO instant in the reader's own time (the page's `fullTime`). */
+export type TimeText = (iso: string) => string;
+const cutoffText = (cutoff: number, time: TimeText): string => time(new Date(cutoff).toISOString());
+
+/** One line saying what the chain is doing now. */
+export const chainStatusText = (state: ChainState): string => {
+  const chain = state.chain;
+  const runs = state.settings.limits.runs;
+  switch (chain._tag) {
+    case "Running":
+      return `Run ${chain.count}${runs === null ? "" : ` of ${runs}`} of the chain: item #${chain.item} ${chain.title}.`;
+    case "Parking":
+      return `Keeping the work of the halted run of item #${chain.item} on a branch.`;
+    case "Ready":
+      return "Looking for the next refined item.";
+    case "Starting":
+      return `Starting item #${chain.item} ${chain.title}.`;
+    case "Idle":
+      return state.settings.enabled ? "On. The next run you start begins a chain." : "Off. No run starts by itself.";
+  }
+};
+
+/** Why the last chain ended, so the developer knows why the machine is idle. No text names a cost (requirements Q2). */
+export const chainEndedText = (reason: ChainEndReason, time: TimeText): string => {
+  switch (reason._tag) {
+    case "NoItems":
+      return "The chain ended: no refined item is left.";
+    case "RunLimitReached":
+      return `The chain ended: it reached its limit of ${reason.limit} ${reason.limit === 1 ? "run" : "runs"}.`;
+    case "CutoffPassed":
+      return `The chain ended: no run starts after ${cutoffText(reason.cutoff, time)}, and that time has passed.`;
+    case "StoppedByDeveloper":
+      return `The chain ended: the run of item #${reason.item} was stopped with Stop task.`;
+    case "HaltedTwice":
+      return `The chain ended: item #${reason.item} halted twice.`;
+    case "ServerEnded":
+      return `The chain ended: the server ended during the run of item #${reason.item}, which waits for you.`;
+    case "TurnedOff":
+      return reason.running === null
+        ? "Turned off. No run was in progress, and nothing starts by itself."
+        : `Turned off. The run of item #${reason.running} goes on to its end; nothing starts after it.`;
+    case "StartRefused":
+      return `The chain ended: the start of item #${reason.item} was refused: ${reason.reason}`;
+    case "ParkFailed":
+      return `The chain ended: the work of the halted run of item #${reason.item} could not be kept on a branch, so no run was started on it. Git said: ${reason.message}`;
+    case "SaveFailed":
+      return `The chain stopped: its state could not be saved under plan-review/, so a restart could not tell what it was doing. ${reason.message}`;
+    case "Unreadable":
+      return `The chain's saved state under plan-review/ could not be read, so the mode started from its defaults. ${reason.message}`;
+    case "ChainChanged":
+      return `The chain ended: it changed before item #${reason.item} could start.`;
+  }
+};
+
+/** The refusal of an implementation start while a halted run's work is being moved to its branch. */
+export const chainParkingText = (item: string): string =>
+  `No implementation run can start yet: the work of the halted run of item #${item} is being moved to a branch of its own. Try again in a moment.`;
+
+/** The refusal of a start whose chain state could be neither saved nor removed. */
+export const chainSaveRefusedText = (message: string): string =>
+  `The run was not started: the chain's state could not be saved under plan-review/, nor its old state removed, so a restart could start a run by itself. ${message}`;
+
+/** One line per run of a chain. */
+export const chainEntryText = (entry: ChainEntry): string => {
+  const head = `Item #${entry.item} ${entry.title}`;
+  switch (entry.outcome._tag) {
+    case "Finished":
+      return `${head}: finished.`;
+    case "Stopped":
+      return `${head}: stopped with Stop task.`;
+    case "Halted": {
+      const park = entry.outcome.park;
+      switch (park._tag) {
+        case "Pending":
+          return `${head}: halted; its work is being moved to a branch.`;
+        case "Parked":
+          return `${head}: halted; its work is on branch ${park.branch}; it stays implementing.`;
+        case "NothingParked":
+          return `${head}: halted with no work to keep; it stays where it was.`;
+        case "ParkFailed":
+          return `${head}: halted; its work could not be kept on a branch.`;
+      }
+    }
+  }
+};
+
+/** Said and written when an item's newest earlier run was parked (S7): this run plans from nothing. */
+export const earlierRunParkedLine = (earlier: RunRoot, branch: string): string =>
+  `The earlier implementation run in ${RECORDS_DIR}/${earlier} halted and its work was moved to the branch ${branch}, so this run takes no plan from it and plans the item from nothing. The branch is left for you.`;
