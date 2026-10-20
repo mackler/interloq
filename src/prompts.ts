@@ -3456,3 +3456,9 @@ export const chainEntryText = (entry: ChainEntry): string => {
 /** Said and written when an item's newest earlier run was parked (S7): this run plans from nothing. */
 export const earlierRunParkedLine = (earlier: RunRoot, branch: string): string =>
   `The earlier implementation run in ${RECORDS_DIR}/${earlier} halted and its work was moved to the branch ${branch}, so this run takes no plan from it and plans the item from nothing. The branch is left for you.`;
+
+/** Why a halted run's work was not parked: a branch of its name already holds another commit, which is not overwritten. */
+export const parkBranchTakenText = (branch: string, tip: string, head: string): string =>
+  `the branch ${branch} already exists at commit ${tip}, not at the halted run's last commit ${head}; Interloq does not overwrite it.`;
+/** Why a halted run's work was not parked: its baseline records no commit to return the working branch to. */
+export const PARK_NO_START_COMMIT = "the run's baseline.json records no commit the run began at, so there is no commit to return the working branch to.";
