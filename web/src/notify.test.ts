@@ -6,6 +6,7 @@ import { promptOf } from "../../src/userPrompts.ts";
 import { type DraftKey, pendingKey, sameKey } from "./draft.ts";
 import { combinedMark, type Decision, decide, type Mark, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey } from "./notify.ts";
 import { initialState, reduce, shownRun, type ViewState } from "./state.ts";
+import { helloChain } from "./testChain.ts";
 
 // Issue #16: the decision whether to alert the user that a run waits for him, or that a run he watched has ended.
 
@@ -149,7 +150,7 @@ const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task
 const TIME = "2026-10-08T10:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
 const asked: RunEvent = { _tag: "Asked", prompt: 1, ...promptOf(prompts.decisionPrompt) };
-const hello: ServerMessage = { type: "hello", location: "/p", current: { refinement: null, implementation: 1 }, incarnation: "a" };
+const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: 1 }, incarnation: "a" };
 const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked]) }] };
 
 describe("decide: examples", () => {

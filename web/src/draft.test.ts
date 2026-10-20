@@ -8,6 +8,7 @@ import fc from "fast-check";
 import { plainPieces } from "../../src/pieces.ts";
 import type { UiEvent } from "../../src/uiEvents.ts";
 import { initialState, reduce, type Shown, shownRun, type ViewState } from "./state.ts";
+import { helloChain } from "./testChain.ts";
 
 // Finding 5 of docs/gui-review.md: a draft belongs to (incarnation, run, prompt).
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id: "1", title: "t" } };
@@ -15,7 +16,7 @@ const TIME = "2026-09-27T14:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
 const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt) });
 const answered = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "" });
-const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", location: "/p", current: { refinement: null, implementation: current }, incarnation });
+const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: current }, incarnation });
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
 const liveState = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", ui: [], runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
 /** The implementation tab's run, as the page keys its draft by (issue #120). */

@@ -14,7 +14,7 @@ import { type Broadcast, makeRunManager, type RunManager } from "../src/runManag
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
 import { fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { chainFrame, itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
@@ -23,7 +23,8 @@ import { codexReviewerLayer } from "../src/codex.ts";
 import { codexThread } from "../src/codexExec.ts";
 import type { AgentSdk } from "../src/sdk.ts";
 import { FakeSdk } from "./fakeSdk.ts";
-import { initialState as initialChain, OFF_SETTINGS } from "../src/chain.ts";
+import { DEFAULT_SETTINGS, initialState as initialChain, OFF_SETTINGS } from "../src/chain.ts";
+const helloChain = initialChain(DEFAULT_SETTINGS);
 
 const run = Effect.runPromise;
 // Plan step 3.4: the server over NodeHttpServer.layerTest, with Node's WebSocket as the scripted client.
@@ -110,7 +111,7 @@ test("on connect: hello and an empty replay", async () => {
   await serve(await managerOf(repo, []), dist(), async (port) => {
     const c = await connect(port);
     await until("two messages", () => c.messages.length >= 2);
-    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", location: repo, current: { refinement: null, implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
+    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", chain: initialChain(OFF_SETTINGS), location: repo, current: { refinement: null, implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
     c.close();
   });
 });
@@ -748,6 +749,30 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
     assert.equal((await fetch(`http://127.0.0.1:${port}/`)).status, 200);
     const b = await connect(port);
     await until("hello", () => b.messages.some((m) => m.type === "hello"));
+    b.close();
+  });
+});
+
+// Issue #147 (S11): the seam of the chain's settings. The frame the page builds, sent over the real server, changes the
+// manager's state, and every connected tab receives the same chain frame, folded by the page's own reducer.
+test("the chain frame the page builds changes the manager's chain, and every tab receives the same state", async () => {
+  const repo = tempRepo();
+  const manager = await managerOf(repo, []);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    const hello = a.messages[0] as Extract<ServerMessage, { type: "hello" }>;
+    assert.deepEqual(hello.chain, await Effect.runPromise(manager.chain));
+    const cutoff = "2026-10-21T07:00:00.000Z";
+    a.send(chainFrame({ enabled: true, runs: 3, cutoff }));
+    const chainOf = (c: Client) => c.messages.reduce(reduce, initialState).chain;
+    await until("the chain in both tabs", () => chainOf(a)?.settings.enabled === true && chainOf(b)?.settings.enabled === true);
+    const state = await Effect.runPromise(manager.chain);
+    assert.deepEqual(state.settings, { enabled: true, limits: { runs: 3, cutoff: Date.parse(cutoff) } });
+    assert.deepEqual(chainOf(a), state);
+    assert.deepEqual(chainOf(b), state);
+    a.close();
     b.close();
   });
 });

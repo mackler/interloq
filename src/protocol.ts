@@ -9,6 +9,7 @@ import type { Choice, PromptKind } from "./userPrompts.ts";
 import { excerptOf, RunMode } from "./runMode.ts";
 import { itemUrlOf, type TrackerItem } from "./tracker.ts";
 import { ATTACHED_KINDS } from "./question.ts";
+import { type ChainSettings, type ChainState, ChainStateSchema, cutoffOf, runLimitOf } from "./chain.ts";
 
 
 /** A prompt the run waits on, with its widget (src/userPrompts.ts). `prompt` numbers the prompts of a run. */
@@ -57,7 +58,19 @@ export type ClientMessage =
   | Readonly<{ type: "answer"; incarnation: string; run: number; prompt: number; text: string }>
   | Readonly<{ type: "stop"; incarnation: string; run: number }>
   /** Open or close one scope of the run's shared state (issue #87). */
-  | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>;
+  | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>
+  /** The chain's settings (issue #147): the mode on or off, a number of runs and the resolved cutoff instant, each optional. */
+  | Readonly<{ type: "chain"; settings: ChainFrameSettings }>;
+/** The chain's settings as the page sends them: the run limit a positive whole number, the cutoff an ISO instant. */
+export type ChainFrameSettings = Readonly<{ enabled: boolean; runs: number | null; cutoff: string | null }>;
+/** The settings a decoded chain frame names; a value its schema let through that the constructors refuse is the reason. */
+export const chainSettingsOf = (frame: ChainFrameSettings): Result.Result<ChainSettings, string> => {
+  const runs = frame.runs === null ? Result.succeed(null) : Result.mapError(runLimitOf(frame.runs), () => `not a number of runs: ${frame.runs}`);
+  const cutoff = frame.cutoff === null ? Result.succeed(null) : Result.mapError(cutoffOf(frame.cutoff), () => `not an instant: ${frame.cutoff}`);
+  if (Result.isFailure(runs)) return Result.fail(runs.failure);
+  if (Result.isFailure(cutoff)) return Result.fail(cutoff.failure);
+  return Result.succeed({ enabled: frame.enabled, limits: { runs: runs.success, cutoff: cutoff.success } });
+};
 /**
  * An item as a tab lists it (issue #120): its id, its title, enough of its text to choose by, and (issue #125) the
  * address of its page in its tracker, null where the tracker gave none. No credential.
@@ -85,6 +98,8 @@ export type ServerMessage =
       /** The run in progress of each mode, or null (issue #120: one run per mode). */
       current: Readonly<Record<RunMode, number | null>>;
       incarnation: string;
+      /** The chain's state (issue #147). */
+      chain: ChainState;
     }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
@@ -93,6 +108,8 @@ export type ServerMessage =
   | Readonly<{ type: "refused"; mode: RunMode | null; reason: string }>
   /** The run's whole shared state after a change (issue #87); a tab keeps the state of the higher version. */
   | Readonly<{ type: "ui"; run: number; state: RunUiState }>
+  /** The chain's whole state after a change (issue #147); every tab receives it. */
+  | Readonly<{ type: "chain"; state: ChainState }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
   | Readonly<{ type: "closing" }>;
 
@@ -227,15 +244,23 @@ export const ClientMessageSchema = Schema.Union([
   typed("answer", { incarnation: Str, run: Int, prompt: Int, text: Str }),
   typed("stop", { incarnation: Str, run: Int }),
   typed("ui", { incarnation: Str, run: Int, flag: UiFlagSchema }),
+  typed("chain", {
+    settings: Schema.Struct({
+      enabled: Schema.Boolean,
+      runs: Schema.NullOr(S.PositiveInt),
+      cutoff: Schema.NullOr(Str.check(Schema.makeFilter((text: string) => Result.isSuccess(cutoffOf(text)) || "a cutoff must be an ISO instant with its zone"))),
+    }),
+  }),
 ]);
 export const ServerMessageSchema = Schema.Union([
-  typed("hello", { location: Str, current: Schema.Struct({ refinement: Schema.NullOr(Int), implementation: Schema.NullOr(Int) }), incarnation: Str }),
+  typed("hello", { location: Str, current: Schema.Struct({ refinement: Schema.NullOr(Int), implementation: Schema.NullOr(Int) }), incarnation: Str, chain: ChainStateSchema }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
   typed("items", { mode: Schema.Literal("implementation"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema }), UnavailableSchema]) }),
   typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
+  typed("chain", { state: ChainStateSchema }),
   typed("closing", {}),
 ]);
 

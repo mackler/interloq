@@ -7,7 +7,7 @@ import fc from "fast-check";
 import { Schema } from "effect";
 import { excerptOf, RUN_MODES } from "../src/runMode.ts";
 import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
-import { type ClientMessage, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import { chainSettingsOf, type ClientMessage, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
@@ -18,6 +18,8 @@ import { DECISION_SECTIONS, type RunUiState, type UiScope } from "../src/uiState
 import { promptOf } from "../src/userPrompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { entryOf, workExecution , TEST_ROOT } from "./helpers.ts";
+import { begun, DEFAULT_SETTINGS, initialState } from "../src/chain.ts";
+import type { ItemId } from "../src/tracker.ts";
 
 // Plan step 3.1: both sides decode with the same schemas; every variant survives the JSON round trip.
 const nat = fc.nat({ max: 10_000 });
@@ -182,7 +184,7 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
 const httpsUrl = fc.tuple(fc.stringMatching(/^[a-z0-9]{1,10}$/u), fc.stringMatching(/^[a-z0-9/]{0,12}$/u)).map(([host, path]) => `https://${host}.example/${path}`);
 const listedItem = fc.record({ id: text, title: text, excerpt: text, url: fc.option(httpsUrl, { nil: null }) });
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
-  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.option(nat, { nil: null }), implementation: fc.option(nat, { nil: null }) }), incarnation: text }),
+  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.option(nat, { nil: null }), implementation: fc.option(nat, { nil: null }) }), incarnation: text, chain: fc.constant(initialState(DEFAULT_SETTINGS)) }),
   fc.constant({ type: "closing" as const }),
   fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
   fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
@@ -426,4 +428,20 @@ test("a usage limit's wait decodes with each basis, and not with a try numbered 
     assert.deepEqual(decoded(decodeServer(frame({ ...waiting, basis }))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...waiting, basis } } });
   assert.ok(Result.isFailure(decodeServer(frame({ ...waiting, basis: { kind: "noKnownEnd", attempt: 0 } }))));
   assert.ok(Result.isFailure(decodeServer(frame(waiting))));
+});
+
+// Issue #147 (S11): the chain's frames. A setting the constructors refuse does not decode, like any malformed frame.
+test("the chain frames survive the JSON round trip, and an invalid setting does not decode", () => {
+  const frames: ClientMessage[] = [
+    { type: "chain", settings: { enabled: true, runs: null, cutoff: null } },
+    { type: "chain", settings: { enabled: false, runs: 3, cutoff: "2026-10-21T07:00:00.000Z" } },
+  ];
+  for (const frame of frames) assert.deepEqual(decoded(decodeClient(JSON.stringify(frame))), frame);
+  for (const settings of [{ enabled: true, runs: 0, cutoff: null }, { enabled: true, runs: 1.5, cutoff: null }, { enabled: true, runs: null, cutoff: "07:00" }]) {
+    assert.ok(Result.isFailure(decodeClient(JSON.stringify({ type: "chain", settings }))), JSON.stringify(settings));
+  }
+  const state = begun(initialState(DEFAULT_SETTINGS), 2, "7" as ItemId, "seven");
+  const server: ServerMessage = { type: "chain", state };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(server))), server);
+  assert.deepEqual(Result.getOrThrow(chainSettingsOf({ enabled: true, runs: 2, cutoff: "2026-10-21T07:00:00.000Z" })), { enabled: true, limits: { runs: 2, cutoff: Date.parse("2026-10-21T07:00:00.000Z") } });
 });

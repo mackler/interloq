@@ -4,7 +4,7 @@
 import { Deferred, Effect, Exit, FileSystem, Path, Queue, Ref, Result, type Scope } from "effect";
 import { HttpPlatform, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Socket } from "effect/socket";
-import { type ClientMessage, decodeClient, inSnapshot, type ServerMessage } from "./protocol.ts";
+import { chainSettingsOf, type ClientMessage, decodeClient, inSnapshot, type ServerMessage } from "./protocol.ts";
 import type { Broadcast, Refusal, RunManager } from "./runManager.ts";
 
 /** What the server's handler needs besides the request. */
@@ -105,7 +105,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
       const { queue: buffered, overflowed } = yield* subscribeBounded(manager, queueBound);
       const { runs, ui } = yield* manager.replay;
-      yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation });
+      yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation, chain: yield* manager.chain });
       yield* send({ type: "replay", runs, ui });
       const forward = Effect.gen(function* () {
         for (;;) {
@@ -119,7 +119,8 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
               if (!inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
               break;
             case "chain":
-              // Issue #147: sent as a frame from S11 of its plan.
+              // Issue #147: every frame carries the whole state, so none is filtered by the replay.
+              yield* send({ type: "chain", state: event.state });
               break;
           }
         }
@@ -146,6 +147,13 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
             return Effect.forkScoped(manager.stop(message.incarnation, message.run).pipe(Effect.flatMap(refuse))).pipe(Effect.asVoid);
           case "ui":
             return manager.setUi(message.incarnation, message.run, message.flag).pipe(Effect.flatMap(refuse));
+          case "chain": {
+            // Issue #147: the answer is the chain broadcast every tab receives, so all tabs agree; forked like a start,
+            // since the change waits for its save.
+            const settings = chainSettingsOf(message.settings);
+            if (Result.isFailure(settings)) return refuse({ refused: settings.failure, mode: "implementation" });
+            return Effect.forkScoped(manager.setChain(settings.success)).pipe(Effect.asVoid);
+          }
         }
       };
       // Every termination of the socket is a SocketError (Socket.d.ts); it ends the loop.

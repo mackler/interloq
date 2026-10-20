@@ -16,6 +16,7 @@ import type { LimitWaitBasis } from "../../src/limitReset.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
+import type { ChainState } from "../../src/chain.ts";
 
 export type Author = "program" | "user" | "codex" | "claude";
 /**
@@ -208,6 +209,8 @@ export type ViewState = Readonly<{
    * then shows the listing's configured value. It applies to the next refinement alone.
    */
   termsChoice: TermsMode | null;
+  /** The chain's state from the last hello or chain frame (issue #147); null before the first hello. */
+  chain: ChainState | null;
 }>;
 
 export const initialState: ViewState = {
@@ -222,6 +225,7 @@ export const initialState: ViewState = {
   notices: [],
   unsent: [],
   termsChoice: null,
+  chain: null,
 };
 
 /** The state with one mode's tab changed. */
@@ -812,7 +816,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(message.current[m]) : reconnectedMode(state.modes[m], message.current[m])])) as Record<RunMode, ModeView>;
-      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice };
+      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the
@@ -837,6 +841,9 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const mode = state.runModes[message.run];
       return mode === undefined ? state : withMode(state, mode, (m) => ({ ...m, run: apply(m.run), last: apply(m.last) }));
     }
+    case "chain":
+      // Issue #147: every frame carries the chain's whole state.
+      return { ...state, chain: message.state };
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.
