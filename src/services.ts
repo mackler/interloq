@@ -57,6 +57,12 @@ export class Ui extends Context.Service<Ui, UiShape>()("plan-review/Ui") {}
 /** What a planning call is for, as the activity line names it; the interview also says its tool use. */
 /** "context": the call that writes a question's context paragraph and terms (S9), in a fresh session, with the capability "readProject". */
 export type PlanningPurpose = "planning" | "interview" | "context";
+/**
+ * The purpose a Codex review turn and an execution call announce in AgentCallStarted and put on their wait events, so that
+ * the page clears a wait only at the waited call's own start or end (W4-R2-1 of issue #184).
+ */
+export const REVIEW_PURPOSE = "review";
+export const EXECUTION_PURPOSE = "execution";
 export type PlanningResult = Readonly<{ output: unknown; resultText: string; costUsd: number | null }>;
 /**
  * What a planning call may do (finding 1 of docs/gui-review.md): "records" may edit only under plan-review/ (behaviour 3);

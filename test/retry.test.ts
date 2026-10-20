@@ -68,13 +68,13 @@ const errorOf = <A, E>(exit: Exit.Exit<A, E>): E => {
 test("a fault, then success: one retry, notified and said, then recovered", async () => {
   const { layer, ui, conversation } = await setup([]);
   const { calls, attempt } = scripted(["fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void), layer);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer);
   assert.deepEqual(exit, Exit.succeed("reply 2"));
   assert.deepEqual(calls, [1, 2]);
   // The wait's start and end are read from the Clock; the seam test below checks them on a stepping clock.
   const withoutWait = ui.notified.map((e) => (e._tag === "TransportRetrying" ? (({ fromMs: _f, untilMs: _u, ...rest }) => rest)(e) : e));
   assert.deepEqual(withoutWait.filter((e) => e._tag === "TransportRetrying" || e._tag === "TransportRecovered"), [
-    { _tag: "TransportRetrying", agent: "codex", attempt: 1, of: 2, delaySeconds: 0.01, fault: "stream disconnected before completion" },
+    { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 2, delaySeconds: 0.01, fault: "stream disconnected before completion" },
     { _tag: "TransportRecovered", agent: "codex" },
   ]);
   const line = prompts.transportRetryLine("codex", 1, 2, 0.01, "stream disconnected before completion");
@@ -85,7 +85,7 @@ test("a fault, then success: one retry, notified and said, then recovered", asyn
 test("faults beyond the retries, then Retry again, then success: the backoff restarts", async () => {
   const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.retry]);
   const { calls, attempt } = scripted(["fault", "fault", "fault", "fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void), layer);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer);
   assert.deepEqual(exit, Exit.succeed("reply 5"));
   assert.deepEqual(calls, [1, 2, 3, 4, 5]);
   assert.equal(ui.asked.length, 1);
@@ -95,7 +95,7 @@ test("faults beyond the retries, then Retry again, then success: the backoff res
 test("faults beyond the retries, then Stop: AgentUnreachable with the agent, the attempts and the last fault", async () => {
   const { layer, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
   const { calls, attempt } = scripted(["fault", "fault", "fault"]);
-  const error = errorOf(await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void), layer));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer));
   assert.equal(error._tag, "AgentUnreachable");
   assert.deepEqual(calls, [1, 2, 3]);
   assert.match(describe(error as never), /Codex could not be reached after 3 attempts: stream disconnected before completion\. The records are preserved\./);
@@ -106,7 +106,7 @@ test("faults beyond the retries, then Stop: AgentUnreachable with the agent, the
 test("a failure that is not a transport fault is not retried", async () => {
   const { layer } = await setup([]);
   const { calls, attempt } = scripted(["other"]);
-  const error = errorOf(await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void), layer));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer));
   assert.equal(error._tag, "CodexCallFailed");
   assert.deepEqual(calls, [1]);
 });
@@ -115,7 +115,7 @@ test("beforeRetry failing halts with its error, and no further attempt is made",
   const { layer } = await setup([]);
   const { calls, attempt } = scripted(["fault", "ok"]);
   const guard = Effect.fail(new ProjectChanged({ during: "review", fileLabel: null, changes: [{ kind: "content_changed", path: "a.txt" }] }));
-  const error = errorOf(await exitOf(withTransportRetry("codex", "the review", attempt, guard), layer));
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, guard), layer));
   assert.equal(error._tag, "ProjectChanged");
   assert.deepEqual(calls, [1]);
 });
@@ -124,7 +124,7 @@ test("an interruption during the backoff ends the call: no further attempt", asy
   const { layer } = await setup([]);
   const { calls, attempt } = scripted(["fault", "ok"]);
   const slow = Layer.merge(layer, Layer.succeed(RunConfig, { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 60 }));
-  const fiber = Effect.runFork(withTransportRetry("codex", "the review", attempt, Effect.void).pipe(Effect.provide(slow)));
+  const fiber = Effect.runFork(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(Effect.provide(slow)));
   await new Promise((r) => setTimeout(r, 100));
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
@@ -140,7 +140,7 @@ test("Help me decide at the exhaustion pause runs a decision and asks again", as
   };
   const { layer, ui } = await setup([DECIDE, prompts.TRANSPORT_ANSWERS.retry], decider);
   const { attempt } = scripted(["fault", "fault", "fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void), layer);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void), layer);
   assert.deepEqual(exit, Exit.succeed("reply 4"));
   assert.equal(requests.length, 1);
   assert.deepEqual((requests[0] as { options: { label: string }[] }).options.map((o) => o.label), [prompts.TRANSPORT_RETRY_AGAIN, prompts.TRANSPORT_STOP]);
@@ -178,7 +178,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
     explained.length = 0;
     const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop], decider);
     const attempt = () => Effect.fail(new TransportFault({ agent, message: "read ECONNRESET", status: null }));
-    await exitOf(withTransportRetry(agent, "the review", attempt, Effect.void), layer);
+    await exitOf(withTransportRetry(agent, "review", "the review", attempt, Effect.void), layer);
     const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
     if (agent === "codex") {
       assert.equal(explained.length, 1);
@@ -195,7 +195,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
 test("at the exhaustion pause, the attached material holds the attempts and the whole fault; the question does not", async () => {
   const long = `stream disconnected: <endpoint> ${"e".repeat(2500)}`;
   const { layer, ui, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
-  await exitOf(withTransportRetry("claude", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null })), Effect.void), layer);
+  await exitOf(withTransportRetry("claude", "review", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null })), Effect.void), layer);
   const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
   assert.ok(!piecesText(q.question).includes(long.slice(0, 40)), piecesText(q.question));
   assert.deepEqual(q.attached, { kind: "fault", blocks: prompts.transportDetails(3, long) });
@@ -236,14 +236,14 @@ test("a usage limit with a reset: one wait until the reset plus the margin, noti
   const { calls, attempt } = limitScripted([limited(reset), "ok"]);
   let guards = 0;
   const guard = Effect.sync(() => void guards++);
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, guard).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, guard).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 2"));
   assert.deepEqual(calls, [1, 2]);
   assert.deepEqual(sleeps, [9_000_000 + MARGIN_MS]);
   assert.equal(guards, 1);
   const until = reset + MARGIN_MS;
   assert.deepEqual(ui.notified.filter((e) => e._tag === "UsageLimitWaiting" || e._tag === "UsageLimitLifted" || e._tag === "TransportRecovered"), [
-    { _tag: "UsageLimitWaiting", agent: "claude", limitType: "five_hour", basis: { kind: "reset" }, fromMs: START, untilMs: until },
+    { _tag: "UsageLimitWaiting", agent: "claude", purpose: "review", limitType: "five_hour", basis: { kind: "reset" }, fromMs: START, untilMs: until },
     { _tag: "UsageLimitLifted", agent: "claude", waitedMs: until - START },
   ]);
   const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, until);
@@ -271,7 +271,7 @@ test("a usage limit leaves the transport retries untouched: a later fault still 
   const { layer, ui } = await setup([]);
   const { clock } = steppingClock(START);
   const { calls, attempt } = limitScripted([limited(START + 1000), "fault", "fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 4"));
   assert.deepEqual(calls, [1, 2, 3, 4]);
   assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => e._tag === "TransportRetrying" && e.attempt), [1, 2]);
@@ -281,7 +281,7 @@ test("a reset already past: one wait of the margin alone", async () => {
   const { layer } = await setup([]);
   const { clock, sleeps } = steppingClock(START);
   const { attempt } = limitScripted([limited(START - 3_600_000), "ok"]);
-  await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(sleeps, [MARGIN_MS]);
 });
 
@@ -289,7 +289,7 @@ test("two limits in a row: two waits, then success", async () => {
   const { layer, usage } = await setup([]);
   const { clock, sleeps } = steppingClock(START);
   const { calls, attempt } = limitScripted([limited(START + 1000), limited(START + 1000 + MARGIN_MS + 5000), "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 3"));
   assert.deepEqual(calls, [1, 2, 3]);
   assert.deepEqual(sleeps, [1000 + MARGIN_MS, 5000 + MARGIN_MS]);
@@ -301,7 +301,7 @@ test("a project changed during the wait halts with the guard's ProjectChanged; n
   const { clock } = steppingClock(START, () => Effect.sync(() => fs.writeFileSync(path.join(repo, "outside.txt"), "x")));
   const { calls, attempt } = limitScripted([limited(START + 1000), "ok"]);
   const guard = Effect.suspend(() => (fs.existsSync(path.join(repo, "outside.txt")) ? Effect.fail(new ProjectChanged({ during: "planning", fileLabel: null, changes: [{ kind: "added", path: "outside.txt" }] })) : Effect.void));
-  const error = errorOf(await exitOf(withTransportRetry("claude", "the plan", attempt, guard).pipe(withClock(clock)), layer));
+  const error = errorOf(await exitOf(withTransportRetry("claude", "review", "the plan", attempt, guard).pipe(withClock(clock)), layer));
   assert.equal(error._tag, "ProjectChanged");
   assert.deepEqual(calls, [1]);
 });
@@ -320,7 +320,7 @@ test("an interruption one minute into a weekly wait: no further attempt, no lift
     sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
   };
   const { calls, attempt } = limitScripted([limited(START + WEEK, "seven_day"), "ok"]);
-  const fiber = Effect.runFork(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
+  const fiber = Effect.runFork(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
   const ended = Effect.runPromise(Fiber.await(fiber)).then(() => assert.fail("the call ended before the wait began"));
   await Promise.race([waiting, ended]);
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
@@ -345,7 +345,7 @@ test("a time of day later than the refusal: one wait until that time plus a minu
   const { layer, ui, usage } = await setup([]);
   const { clock, sleeps } = steppingClock(REFUSED_15_OCT);
   const { calls, attempt } = limitScripted([limitedBy(timeOfDay("You've hit your session limit · resets 11:10pm (UTC)"), null), "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 2"));
   assert.deepEqual(calls, [1, 2]);
   assert.deepEqual(sleeps, [Date.parse("2026-10-15T23:11:00Z") - REFUSED_15_OCT]);
@@ -360,7 +360,7 @@ test("Q4: a time earlier than the refusal is tried a minute later; earlier again
   const { clock, sleeps } = steppingClock(REFUSED_15_OCT);
   const earlier = timeOfDay("You've hit your session limit · resets 12:30am (UTC)");
   const { calls, attempt } = limitScripted([limitedBy(earlier, null), limitedBy(earlier, null), "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 3"));
   assert.deepEqual(calls, [1, 2, 3]);
   const second = REFUSED_15_OCT + MARGIN_MS;
@@ -376,7 +376,7 @@ test("Q2: no known end is tried every 5 minutes, each try counted and said, noth
   const { clock, sleeps } = steppingClock(START);
   const { calls, attempt } = limitScripted([limitedBy(UNKNOWN, null), limitedBy(UNKNOWN, null), limitedBy(UNKNOWN, null), "ok"]);
   let guards = 0;
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.sync(() => void guards++)).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.sync(() => void guards++)).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 4"));
   assert.deepEqual(calls, [1, 2, 3, 4]);
   assert.deepEqual(sleeps, [RETRY_MS, RETRY_MS, RETRY_MS]);
@@ -393,7 +393,7 @@ test("Q2: a transport fault between two limits with no known end restarts their 
   const { layer, ui } = await setup([]);
   const { clock } = steppingClock(START);
   const { attempt } = limitScripted([limitedBy(UNKNOWN), limitedBy(UNKNOWN), "fault", limitedBy(UNKNOWN), "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 5"));
   assert.deepEqual(limitWaits(ui).map((e) => e.basis), [1, 2, 1].map((attempt) => ({ kind: "noKnownEnd", attempt })));
 });
@@ -410,7 +410,7 @@ test("Q2: an interruption during a wait with no known end records it interrupted
     sleep: () => Effect.suspend(() => ((time += 60_000), reached(), Effect.never)),
   };
   const { calls, attempt } = limitScripted([limitedBy(UNKNOWN), "ok"]);
-  const fiber = Effect.runFork(withTransportRetry("claude", "the plan", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
+  const fiber = Effect.runFork(withTransportRetry("claude", "review", "the plan", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
   await waiting;
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
@@ -456,7 +456,7 @@ test("each retry announces its wait's start and end; the next attempt starts at 
   const { attempt: scriptedAttempt } = scripted(["fault", "fault", "ok"]);
   const starts: number[] = [];
   const attempt = (n: number) => Effect.sync(() => void starts.push(now())).pipe(Effect.andThen(scriptedAttempt(n)));
-  const exit = await exitOf(withTransportRetry("codex", "the review", attempt, Effect.void).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 3"));
   const waits = ui.notified.flatMap((e) => (e._tag === "TransportRetrying" ? [e] : []));
   assert.equal(waits.length, delays.length);
@@ -491,7 +491,7 @@ const withRetries = (layer: Layer.Layer<Store | Ui | RunConfig | Decider>, maxTr
 test("a process ending, then success: one retry, notified, said and recorded, then recovered; nothing asked", async () => {
   const { layer, ui, conversation } = await setup([]);
   const { calls, attempt } = endingScripted(["ended", "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), layer);
   assert.deepEqual(exit, Exit.succeed("reply 2"));
   assert.deepEqual(calls, [1, 2]);
   assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => e._tag === "TransportRetrying" && e.fault), [SIGBUS_TEXT]);
@@ -505,7 +505,7 @@ test("a process ending, then success: one retry, notified, said and recorded, th
 test("a process ending on every attempt: four attempts with three retries, then the last ProcessEnded, nothing asked", async () => {
   const { layer, ui } = await setup([]);
   const { calls, attempt } = endingScripted(["ended", "ended", "ended", "ended", "ok"]);
-  const error = errorOf(await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
+  const error = errorOf(await exitOf(withTransportRetry("claude", "review", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
   assert.equal(error._tag, "ProcessEnded");
   assert.equal((error as ProcessEnded).attempts, 4);
   assert.deepEqual(calls, [1, 2, 3, 4]);
@@ -516,7 +516,7 @@ test("a process ending on every attempt: four attempts with three retries, then 
 test("one budget for both: a transport fault, then process endings until the retries are used up, ends with ProcessEnded", async () => {
   const { layer, ui } = await setup([]);
   const { calls, attempt } = endingScripted(["fault", "ended", "ended", "ended", "ok"]);
-  const error = errorOf(await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
+  const error = errorOf(await exitOf(withTransportRetry("claude", "review", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
   assert.equal(error._tag, "ProcessEnded");
   assert.deepEqual(calls, [1, 2, 3, 4]);
   assert.deepEqual(ui.asked, []);
@@ -525,7 +525,7 @@ test("one budget for both: a transport fault, then process endings until the ret
 test("a process ending, then transport faults until the retries are used up: the exhaustion pause is asked", async () => {
   const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
   const { calls, attempt } = endingScripted(["ended", "fault", "fault", "fault", "ok"]);
-  const error = errorOf(await exitOf(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
+  const error = errorOf(await exitOf(withTransportRetry("claude", "review", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void), withRetries(layer, 3)));
   assert.equal(error._tag, "AgentUnreachable");
   assert.deepEqual(calls, [1, 2, 3, 4]);
   assert.equal(ui.asked.length, 1);
@@ -535,7 +535,7 @@ test("an interruption during the wait after a process ending ends the call: no f
   const { layer } = await setup([]);
   const { calls, attempt } = endingScripted(["ended", "ok"]);
   const slow = Layer.merge(layer, Layer.succeed(RunConfig, { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 60 }));
-  const fiber = Effect.runFork(withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(Effect.provide(slow)));
+  const fiber = Effect.runFork(withTransportRetry("claude", "review", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(Effect.provide(slow)));
   await new Promise((r) => setTimeout(r, 100));
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
@@ -552,7 +552,7 @@ test("background: exhausted retries go on every five minutes, each try counted a
   const { layer, ui, conversation } = await setup([]);
   const { clock, sleeps } = steppingClock(START);
   const { calls, attempt } = scripted(["fault", "fault", "fault", "fault", "fault", "fault", "ok"]);
-  const exit = await exitOf(withTransportRetry("claude", "an interview turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "an interview turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
   assert.deepEqual(exit, Exit.succeed("reply 7"));
   assert.deepEqual(calls, [1, 2, 3, 4, 5, 6, 7]);
   assert.deepEqual(sleeps, [10, 20, BACKGROUND_MS, BACKGROUND_MS, BACKGROUND_MS, BACKGROUND_MS]);
@@ -568,7 +568,7 @@ const wokenBackground = async (answers: string[], script: Script) => {
   // The background sleep never ends by itself: only the developer's reaching the end of the list (untilWaiting) wakes it.
   const { clock } = steppingClock(START, (ms) => (ms === BACKGROUND_MS ? Effect.sync(() => void (waiting = true)).pipe(Effect.andThen(woken.open), Effect.andThen(Effect.never)) : Effect.void));
   const { calls, attempt } = scripted(script);
-  const exit = await exitOf(withTransportRetry("claude", "an interview turn", attempt, Effect.void, background(() => waiting, woken.await)).pipe(withClock(clock)), layer);
+  const exit = await exitOf(withTransportRetry("claude", "review", "an interview turn", attempt, Effect.void, background(() => waiting, woken.await)).pipe(withClock(clock)), layer);
   return { exit, ui, calls };
 };
 

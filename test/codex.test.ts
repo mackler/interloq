@@ -10,7 +10,7 @@ import { describe, type RunError } from "../src/errors.ts";
 import type { AgentSdk } from "../src/sdk.ts";
 import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as S from "../src/schema.ts";
-import { type ReviewerShape, RunConfig, Sdk, Store, Ui } from "../src/services.ts";
+import { REVIEW_PURPOSE, type ReviewerShape, RunConfig, Sdk, Store, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { command, FakeSdk, fileChange, turn, turnFailed, type TurnAnswer, webSearch } from "./fakeSdk.ts";
@@ -163,7 +163,7 @@ test("a streamed turn notifies its start, one tool use per item, and its end, in
   const session = await run(fake.reviewer.startPhase);
   await run(session.review("review"));
   assert.deepEqual(fake.ui.notified, [
-    { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" },
+    { _tag: "AgentCallStarted", agent: "codex", purpose: REVIEW_PURPOSE, callId: "codex-1" },
     { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" },
     { _tag: "ToolUsed", agent: "codex", tool: "edit", target: "a.ts, b.ts", callId: "codex-1" },
     { _tag: "ToolUsed", agent: "codex", tool: "search", target: "effect v4", callId: "codex-1" },

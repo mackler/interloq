@@ -19,7 +19,7 @@ import { chooseOption } from "./input.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
 import * as prompts from "./prompts.ts";
 import * as S from "./schema.ts";
-import { Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, RunConfig, Sdk, Store, Ui } from "./services.ts";
+import { Decider, type DeciderShape, EXECUTION_PURPOSE, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, RunConfig, Sdk, Store, Ui } from "./services.ts";
 
 const EDIT_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"];
 /** How often a wait for background commands looks at the call's state (issue #154). */
@@ -308,7 +308,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
    * callback still rejects the callback's Promise. The messages are shown and the usage recorded as
    * they arrive; the outcome is the pure reduction of the list at the end.
    */
-  const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | "execution", show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback, ended: AbortSignal) => Options = () => ({}), observe: (message: SDKMessage) => Effect.Effect<void> = () => Effect.void): Effect.Effect<CallOutcome, CallbackError> =>
+  const call = (session: Ref.Ref<string | null>, prompt: string, purpose: PlanningPurpose | typeof EXECUTION_PURPOSE, show: "none" | "tools" | "text", options: Options, permission: (inCallback: InCallback) => CanUseTool, callbacks: (inCallback: InCallback, ended: AbortSignal) => Options = () => ({}), observe: (message: SDKMessage) => Effect.Effect<void> = () => Effect.void): Effect.Effect<CallOutcome, CallbackError> =>
     // Issue #184 (S13): the call's id, numbered by the planner's counter shared by its fresh sessions, on its start and end.
     Ref.updateAndGet(callCount, (n) => n + 1).pipe(Effect.map((n) => `claude-${n}`), Effect.flatMap((callId) => Effect.gen(function* () {
       yield* ui.notify({ _tag: "AgentCallStarted", agent: "claude", purpose, callId });
@@ -526,7 +526,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             const outcome = yield* call(
               session,
               n === 1 ? prompt : prompts.executionContinuePrompt,
-              "execution",
+              EXECUTION_PURPOSE,
               "text",
               {
                 permissionMode: config.execPermissionMode,
@@ -567,7 +567,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           });
         // The retry lives here, where the call's session, stop and reporter are (P2-R2-1): no TransportFault leaves.
         // Issue #157: nor does a ProcessEnded, which becomes the call's outcome once its retries are used up.
-        return yield* withTransportRetry("claude", prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(
+        return yield* withTransportRetry("claude", EXECUTION_PURPOSE, prompts.TRANSPORT_WHAT_EXECUTION, attempt, Effect.void).pipe(
           Effect.catchTag("ProcessEnded", (e) => Effect.succeed<ExecCallOutcome>({ status: "processEnded", end: e.end, attempts: e.attempts, fault: e.message })),
           Effect.provideService(Ui, ui),
           Effect.provideService(Store, store),

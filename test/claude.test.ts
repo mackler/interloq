@@ -13,6 +13,7 @@ import { Clock, Effect, Exit, Fiber, Layer } from "effect";
 import { claudeEnv, makeClaudePlanner, makeClaudePlannerWith, toSdkAnswers } from "../src/claude.ts";
 import { FileSystemError, type RunError } from "../src/errors.ts";
 import type { NamedEnd } from "../src/claudeEvents.ts";
+import type { UiEvent } from "../src/uiEvents.ts";
 import { agentJsonSchema } from "../src/jsonSchema.ts";
 import * as prompts from "../src/prompts.ts";
 import * as S from "../src/schema.ts";
@@ -862,6 +863,38 @@ test("an execution call whose stream drops is resumed with the continue prompt a
   assert.ok(prompts.executionContinuePrompt.includes(prompts.REPORT_STEP_TOOL_NAME), "the continue prompt names the tool the call offers");
   assert.deepEqual(reports, ["S1:done"]);
   assert.equal(fake.ui.notified.filter((e) => e._tag === "TransportRetrying").length, 1);
+});
+
+// W4-R2-1 of issue #184: a wait names the call it waits for by the agent and purpose of that call's AgentCallStarted.
+const waitedCall = (notified: readonly UiEvent[]) => {
+  const start = notified.find((e) => e._tag === "AgentCallStarted");
+  const wait = notified.find((e) => e._tag === "TransportRetrying");
+  return [start?._tag === "AgentCallStarted" ? [start.agent, start.purpose] : null, wait?._tag === "TransportRetrying" ? [wait.agent, wait.purpose] : null];
+};
+
+test("an execution call's retry names the call by the agent and purpose its start announced", async () => {
+  const first: Script = () => (async function* () {
+    yield init("session-exec");
+    throw econnreset();
+  })();
+  const second: Script = messages(init("session-exec"), success(report));
+  const fake = await planner([first, second], [], quickRetry);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  const [start, wait] = waitedCall(fake.ui.notified);
+  assert.ok(wait !== null);
+  assert.deepEqual(wait, start);
+});
+
+test("a planning call's retry through planningCall names the call by the agent and purpose its start announced", async () => {
+  const first: Script = () => (async function* () {
+    yield init("session-plan");
+    throw econnreset();
+  })();
+  const fake = await planner([first, messages(init("session-plan"), success({ questions_for_user: [] }))], [], quickRetry);
+  await run(planningCall("write the plan", schema, "interview").pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps)));
+  const [start, wait] = waitedCall(fake.ui.notified);
+  assert.deepEqual(wait, ["claude", "interview"]);
+  assert.deepEqual(wait, start);
 });
 
 test("a valid finished report delivered before the stream drops stands: no second query (P1-R1-3)", async () => {

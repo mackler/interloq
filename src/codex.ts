@@ -9,7 +9,7 @@ import { agentJsonSchema } from "./jsonSchema.ts";
 import * as S from "./schema.ts";
 import { reduceTurn, toolEventOf } from "./codexEvents.ts";
 import type { SdkThread } from "./sdk.ts";
-import { Reviewer, type ReviewerShape, type ReviewSession, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
+import { REVIEW_PURPOSE, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
 
 const failedWith = (e: unknown): CodexCallFailed => new CodexCallFailed({ message: e instanceof Error ? e.message : String(e) });
 /** A failure of a turn: TransportFault when src/transport.ts identifies a transport fault, CodexCallFailed otherwise (issue #26). */
@@ -31,7 +31,7 @@ const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault => {
 const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: Effect.Effect<string>): ReviewSession => ({
   review: (prompt) =>
     nextCallId.pipe(Effect.flatMap((callId) => Effect.gen(function* () {
-      yield* ui.notify({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId });
+      yield* ui.notify({ _tag: "AgentCallStarted", agent: "codex", purpose: REVIEW_PURPOSE, callId });
       const controller = new AbortController();
       const streamed = yield* Effect.tryPromise({
         try: () => thread.runStreamed(prompt, { outputSchema: agentJsonSchema(S.Review), signal: controller.signal }),

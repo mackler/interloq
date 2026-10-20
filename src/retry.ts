@@ -50,10 +50,13 @@ const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e 
  * execution call's Claude Code process that ended) is retried in the same way under the same budget, and when the
  * retries are used up it passes through as it is, with no pause, whatever `onExhausted` says. Any other failure passes
  * through. A UsageLimited (issues #68 and #170) is waited out for as long as planLimitWait decides, with no question
- * and without spending the transport budget, then `beforeRetry` and the next attempt.
+ * and without spending the transport budget, then `beforeRetry` and the next attempt. `purpose` is the purpose the call
+ * announces in its AgentCallStarted, put on both wait events, so that the page knows which call's start ends the wait
+ * (W4-R2-1 of issue #184).
  */
 export const withTransportRetry = <A, E, R>(
   agent: "claude" | "codex",
+  purpose: string,
   what: string,
   attempt: (n: number) => Effect.Effect<A, E | TransportFault | UsageLimited, R>,
   beforeRetry: Effect.Effect<void, RunError, R>,
@@ -89,7 +92,7 @@ export const withTransportRetry = <A, E, R>(
         const fromMs = yield* Clock.currentTimeMillis;
         const { basis, untilMs, next } = planLimitWait(error.reset, fromMs, limitState);
         limitState = next;
-        yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, limitType: error.limitType, basis, fromMs, untilMs });
+        yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, purpose, limitType: error.limitType, basis, fromMs, untilMs });
         yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
         const ranOut = basis.kind === "reset" ? "lifted" : "elapsed";
         const began: LimitWaitBegan = { agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs };
@@ -119,7 +122,7 @@ export const withTransportRetry = <A, E, R>(
         // down and its countdown ends when the wait does.
         const fromMs = yield* Clock.currentTimeMillis;
         const untilMs = fromMs + delay * 1000;
-        yield* ui.notify({ _tag: "TransportRetrying", agent, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
+        yield* ui.notify({ _tag: "TransportRetrying", agent, purpose, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
         yield* say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message));
         yield* Effect.sleep(Duration.millis(Math.max(untilMs - (yield* Clock.currentTimeMillis), 0)));
       } else if (onExhausted.kind === "background" && !(yield* onExhausted.waiting)) {

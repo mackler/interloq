@@ -39,7 +39,7 @@ export type UiEvent =
    */
   | Readonly<{ _tag: "AgentReconnecting"; agent: Agent; by: "sdk"; attempt: number | null; of: number | null; delayMs: number | null; detail: string; callId: string }>
   /** The program retries a call that failed from a transport fault (issue #26): retry `attempt` of `of`, after `delaySeconds`. */
-  | Readonly<{ _tag: "TransportRetrying"; agent: Agent; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
+  | Readonly<{ _tag: "TransportRetrying"; agent: Agent; purpose: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
   /** A call succeeded after a retry. */
   | Readonly<{ _tag: "TransportRecovered"; agent: Agent }>
   /**
@@ -50,7 +50,7 @@ export type UiEvent =
   /** A tracker request succeeded after a repeat, or the item read back showed a write applied. */
   | Readonly<{ _tag: "TrackerRecovered"; tracker: string }>
   // Issue #68: a wait for a usage limit with a stated reset, from its start to its scheduled end, and its end.
-  | Readonly<{ _tag: "UsageLimitWaiting"; agent: Agent; limitType: string | null; basis: LimitWaitBasis; fromMs: number; untilMs: number }>
+  | Readonly<{ _tag: "UsageLimitWaiting"; agent: Agent; purpose: string; limitType: string | null; basis: LimitWaitBasis; fromMs: number; untilMs: number }>
   | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; waitedMs: number }>
   /** `answered` of `total` questions so far (issue #21): the agreed ones and the follow-ups Claude reports asking. */
   | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>

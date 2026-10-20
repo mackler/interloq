@@ -8,7 +8,7 @@ import { decodeValidating, decodeWithRepair, planningCall, type Repair } from ".
 import { Planner } from "../src/services.ts";
 import { noDecider, pathsOf, ScriptedPlanner, ScriptedUi, questionOf , TEST_ROOT } from "./helpers.ts";
 import * as S from "../src/schema.ts";
-import { Decider, RunConfig, RunKind, Store, type StoreShape, Ui } from "../src/services.ts";
+import { Decider, REVIEW_PURPOSE, RunConfig, RunKind, Store, type StoreShape, Ui } from "../src/services.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { tempRepo } from "./helpers.ts";
@@ -87,6 +87,8 @@ test("(a) a Codex turn that fails with the message of #26 is retried, and the ru
   assert.equal(probe.reviewer.prompts[0], probe.reviewer.prompts[1], "the retry repeats the turn");
   assert.equal(probe.reviewer.callPhases[1], probe.reviewer.callPhases[0], "the retry is in the same thread");
   assert.ok(probe.ui.notified.some((e) => e._tag === "TransportRetrying" && e.agent === "codex"));
+  // W4-R2-1 of issue #184: the wait names the Codex turn by the purpose the Codex adapter announces (test/codex.test.ts).
+  assert.ok(probe.ui.notified.filter((e) => e._tag === "TransportRetrying").every((e) => e._tag === "TransportRetrying" && e.purpose === REVIEW_PURPOSE));
   assert.ok(probe.ui.notified.some((e) => e._tag === "TransportRecovered"));
   assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(prompts.transportRetryLine("codex", 1, 1, 0.01, issue26)));
 });

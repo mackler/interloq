@@ -12,6 +12,7 @@ import { isTermsRequest } from "../../src/input.ts";
 import { correctionCount } from "../../src/issueLog.ts";
 import { SUITE_OUTCOMES, type SuiteOutcome } from "../../src/suite.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
+import type { LimitWaitBasis } from "../../src/limitReset.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
@@ -133,11 +134,11 @@ export type RunView = Readonly<{
   /** The agent calls that run, the innermost last (P1-R2-1). */
   calls: readonly AgentCall[];
   /**
-   * The program's retry of a transport fault while it lasts (issue #26): shown on the activity line with the retried call
-   * of its agent; every call's end clears it (W1-R1-3).
+   * The program's retry of a transport fault while it lasts (issue #26), or a tracker request's (issue #171): shown on the
+   * activity line with the retried call; the retried call's end clears it (W1-R1-3), and no other call's (W4-R2-1 of
+   * issue #184).
    */
-  /** A retry while it lasts: an agent's call (issue #26), or a request to the tracker (issue #171), which no agent call is. */
-  retry: Readonly<{ agent: "claude" | "codex" | "tracker"; text: string; wait: Countdown | null }> | null;
+  retry: Retry | null;
   /** A wait for a usage limit while it lasts (issue #68): from its start to its scheduled end, both known. */
   limitWait: LimitWait | null;
   timeline: readonly TimelineEntry[];
@@ -609,8 +610,17 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
-      // Issue #63: the retried call's start ends the wait before it; the retry's text stays with the call.
-      return { ...run, limitWait: null, retry: run.retry === null ? null : { ...run.retry, wait: null }, calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time, callId: event.callId }], activity: run.retry === null || run.retry.agent !== event.agent ? label : `${label} — ${run.retry.text}`, busy: true };
+      // Issue #63: the retried call's start ends the wait before it; the retry's text stays with the call. W4-R2-1 of
+      // issue #184: only the waited call's start, named by its agent and purpose; another call leaves the wait in place.
+      const retried = run.retry !== null && waitedBy(run.retry, event);
+      return {
+        ...run,
+        limitWait: run.limitWait !== null && waitedBy(run.limitWait, event) ? null : run.limitWait,
+        retry: run.retry !== null && retried ? { ...run.retry, wait: null } : run.retry,
+        calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time, callId: event.callId }],
+        activity: run.retry !== null && retried ? `${label} — ${run.retry.text}` : label,
+        busy: true,
+      };
     }
     // W3-R2-1 of issue #184: calls overlap, so an event is labeled by the running call whose id it carries.
     case "ToolUsed":
@@ -620,20 +630,24 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return { ...run, activity: `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}` };
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
-      return { ...run, retry: { agent: event.agent, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${AGENT[event.agent]} — ${text}` };
+      const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } };
+      return { ...run, retry, activity: retryLine(event.agent, text) };
     }
     case "TransportRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
     // Issue #171: a tracker request's repeat, counted down like an agent's retry and named by its tracker.
     case "TrackerRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
-      return { ...run, retry: { agent: "tracker", text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${event.tracker} — ${text}` };
+      return { ...run, retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${event.tracker} — ${text}` };
     }
     case "TrackerRecovered":
       return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
-      return { ...run, limitWait: { agent: event.agent, limitType: event.limitType, fromMs: event.fromMs, untilMs: event.untilMs }, activity: `${AGENT[event.agent]} — ${usageLimitActivity(event.limitType, event.basis, event.untilMs)}` };
+    {
+      const limitWait: LimitWait = { agent: event.agent, purpose: event.purpose, limitType: event.limitType, basis: event.basis, fromMs: event.fromMs, untilMs: event.untilMs };
+      return { ...run, limitWait, activity: limitWaitLine(limitWait) };
+    }
     case "UsageLimitLifted":
       return { ...run, limitWait: null, activity: run.calls.at(-1)?.label ?? "" };
     case "AgentCallEnded": {
@@ -645,11 +659,21 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       const ended = run.calls[at];
       const calls = [...run.calls.slice(0, at), ...run.calls.slice(at + 1)];
       const outer = calls.at(-1);
-      const activity = outer !== undefined ? outer.label : `${ended?.label ?? AGENT[event.agent]} — ${event.ok ? "done" : "failed"}`;
+      // W4-R2-1 of issue #184: the ended call's end clears a retry only where it is the retried call; with no call left
+      // running, a wait still counting down is shown again from its own data.
+      const retry = run.retry !== null && ended !== undefined && waitedBy(run.retry, ended) ? null : run.retry;
+      const activity =
+        outer !== undefined
+          ? outer.label
+          : run.limitWait !== null
+            ? limitWaitLine(run.limitWait)
+            : retry !== null && retry.agent !== "tracker" && retry.wait !== null
+              ? retryLine(retry.agent, retry.text)
+              : `${ended?.label ?? AGENT[event.agent]} — ${event.ok ? "done" : "failed"}`;
       // Issue #53 (P1-R1-1): the end of the execution call itself, a retried attempt's included, leaves no step current;
       // the end of a call nested in it does not.
       const timeline = ended?.purpose === "execution" ? run.timeline.map((e) => (e.currentStep === null ? e : { ...e, currentStep: null })) : run.timeline;
-      return { ...run, calls, activity, busy: calls.length > 0, retry: null, timeline };
+      return { ...run, calls, activity, busy: calls.length > 0, retry, timeline };
     }
     case "ExecutionEnded":
       return run;
@@ -861,7 +885,22 @@ export const progressOf = (run: RunView): string => {
 /** A wait whose start and end the program knows (issues #26 and #68): what a determinate indicator counts down. */
 export type Countdown = Readonly<{ fromMs: number; untilMs: number }>;
 /** A wait for a usage limit as the page holds it (issue #68). */
-export type LimitWait = Countdown & Readonly<{ agent: "claude" | "codex"; limitType: string | null }>;
+export type LimitWait = Countdown & Readonly<{ agent: "claude" | "codex"; purpose: string; limitType: string | null; basis: LimitWaitBasis }>;
+
+/**
+ * A retry while it lasts: an agent's call (issue #26) with the purpose the call announces (W4-R2-1 of issue #184), or a
+ * request to the tracker (issue #171), which no agent call is and whose purpose is null.
+ */
+export type Retry = Readonly<{ agent: "claude" | "codex" | "tracker"; purpose: string | null; text: string; wait: Countdown | null }>;
+
+/** Whether a call is the one a wait waits for (W4-R2-1 of issue #184): the same agent and the same purpose. */
+export const waitedBy = (wait: Readonly<{ agent: string; purpose: string | null }>, call: Readonly<{ agent: string; purpose: string }>): boolean => wait.agent === call.agent && wait.purpose === call.purpose;
+
+/** The activity line of a usage limit's wait, from the wait itself. */
+const limitWaitLine = (wait: LimitWait): string => `${AGENT[wait.agent]} — ${usageLimitActivity(wait.limitType, wait.basis, wait.untilMs)}`;
+
+/** The activity line of an agent's retry, from the retry itself; a tracker's is built by its own case. */
+const retryLine = (agent: "claude" | "codex", text: string): string => `${AGENT[agent]} — ${text}`;
 
 /**
  * A wait for a usage limit at an instant (issue #68): the percentage of it elapsed, 0 to 100 and never falling, and the

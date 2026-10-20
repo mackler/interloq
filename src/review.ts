@@ -19,7 +19,7 @@ import { answerOf, parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
+import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
@@ -242,7 +242,7 @@ export const planningCall = <Out extends Schema.Decoder<unknown>>(prompt: string
           });
         // S10: the context call of a question does not ask a question of its own when its retries are exhausted (FAIL, the
         // default for it); issue #184: the first interview's requests try again in the background while the developer answers.
-        return yield* withTransportRetry("claude", transportWhat(purpose), attempt, check, exhaustion);
+        return yield* withTransportRetry("claude", purpose, transportWhat(purpose), attempt, check, exhaustion);
       });
     const first = yield* call(prompt);
     const repairCall = yield* Ref.make<PlanningResult | null>(null);
@@ -355,7 +355,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             yield* Ref.update(roundInputs, (inputs) => [...inputs, accepted.inputTokens]);
             return accepted;
           });
-        return yield* withTransportRetry("codex", transportReviewWhat(heading), attempt, check);
+        return yield* withTransportRetry("codex", REVIEW_PURPOSE, transportReviewWhat(heading), attempt, check);
       });
 
     /**

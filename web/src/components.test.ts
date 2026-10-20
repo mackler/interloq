@@ -1784,7 +1784,7 @@ test("the activity line shows retry 2 of 3", () => {
   const events: UiEvent[] = [
     { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" },
     { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" },
-    { _tag: "TransportRetrying", agent: "codex", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 },
+    { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 },
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
@@ -1854,7 +1854,7 @@ test("a countdown received 250 ms before its end is gone at its end, before the 
     const now = Date.UTC(2026, 9, 7, 12, 0, 0);
     vi.setSystemTime(now);
     const wait = { fromMs: now - 4750, untilMs: now + 250 };
-    for (const props of [{ text: "Codex — retry", retry: wait }, { text: "Claude — waiting", wait: { ...wait, agent: "claude" as const, limitType: "five_hour" } }]) {
+    for (const props of [{ text: "Codex — retry", retry: wait }, { text: "Claude — waiting", wait: { ...wait, agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const } }]) {
       vi.setSystemTime(now);
       const root = show(ActivityLine, props);
       expect(root.querySelector("[role=progressbar]")).not.toBe(null);
@@ -2430,7 +2430,7 @@ test("each option card shows its label in bold as its own element and its descri
 // the wait elapsed and the time remaining, in place of the indeterminate one.
 test("the activity line shows a determinate progressbar and the time remaining during a usage-limit wait", () => {
   const now = Date.now();
-  const wait = { agent: "claude" as const, limitType: "five_hour", fromMs: now - 3_600_000, untilMs: now + 3_600_000 };
+  const wait = { agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const, fromMs: now - 3_600_000, untilMs: now + 3_600_000 };
   const root = show(ActivityLine, { text: "Claude — waiting", wait });
   const bar = one(root, "[role=progressbar]");
   expect(bar.getAttribute("aria-label")).toBe(prompts.USAGE_LIMIT_WAITING_LABEL);
