@@ -41,7 +41,12 @@
   const toggle = (enabled: boolean) => onChange({ ...current(), enabled });
   const commitRuns = () => {
     const text = runsText.trim();
-    if (text === "") return onChange({ ...current(), runs: null });
+    if (text === "") {
+      // An empty field is valid and means no limit; the effect above does not rerun when the server's limit stays null,
+      // so the error is cleared here (W2-R1-2).
+      runsInvalid = false;
+      return onChange({ ...current(), runs: null });
+    }
     const n = /^[0-9]+$/u.test(text) ? Number(text) : Number.NaN;
     runsInvalid = !(Number.isSafeInteger(n) && n >= 1);
     if (!runsInvalid) onChange({ ...current(), runs: n });

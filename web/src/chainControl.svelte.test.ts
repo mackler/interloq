@@ -118,3 +118,19 @@ describe("ChainControl's drafts", () => {
     expect(root.textContent).not.toContain(prompts.CHAIN_INVALID_RUNS);
   });
 });
+
+// Work review 2 of issue #147, W2-R1-2: an empty runs field is valid and means no limit, so committing it clears the
+// error, even where the server's run limit stays null and nothing else would reset the field.
+describe("ChainControl's empty runs field", () => {
+  test("clearing an invalid number of runs clears its error and sends no limit", () => {
+    const { root, sent } = control(initialState(DEFAULT_SETTINGS));
+    commit(input(root, "chain-runs"), "abc");
+    expect(root.textContent).toContain(prompts.CHAIN_INVALID_RUNS);
+    expect(sent.length).toBe(0);
+    commit(input(root, "chain-runs"), "");
+    expect(root.textContent).not.toContain(prompts.CHAIN_INVALID_RUNS);
+    expect(root.textContent).toContain(prompts.CHAIN_RUNS_SUPPORT);
+    expect(root.querySelector(".support.error")).toBeNull();
+    expect(sent.at(-1)).toEqual({ enabled: true, runs: null, cutoff: null });
+  });
+});
