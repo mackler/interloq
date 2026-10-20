@@ -334,3 +334,25 @@ Q1 in the interview of 9 Oct 2026).
   pixels high and taller; below that, the run area scrolls to the first answer (`IN_VIEW_MIN_HEIGHT` in `web/src/layout.ts`). Since issue
   #133 the decision page holds its question and option cards at its top, so they are in view when it appears, and the
   run area scrolls to what lies below them in a low window (his decision of 12 Oct 2026).
+
+## The chain's control (issue #147, 20 Oct 2026)
+
+The Implementation tab carries the control of the mode that starts the next refined item when an implementation run
+ends (behavior 15 of CLAUDE.md).
+
+- **The control.** M3's switch (m3-svelte's `Switch`) for the mode, which is a setting that takes effect at once, what M3
+  specifies a switch for; two M3 outlined text fields (m3-svelte's `TextFieldOutlined`) for the optional limits, a number
+  of runs and a time, both empty by default, each with its supporting text below it, written by hand since the
+  component takes none. Nothing asks a confirmation (behavior 1), and turning the switch on never refuses an empty form.
+- **Visibility of system status.** One status line asserts that the mode is on or off, that a chain is going with the
+  count of its runs (and its limit where one is set), or why the last chain ended, and nothing more; it names no cost.
+  Under the cutoff field, once set, the moment it resolved to is shown in the browser's time, so a cutoff set on an
+  earlier day is never the unexplained reason the machine is idle. The chain's runs are listed, a halted one naming the
+  branch its work is on.
+- **Error prevention.** A number of runs that is not a positive whole number is the field's error (M3's error state and
+  its supporting text in the error color) and is not sent; the server refuses such a frame too.
+- **User control and freedom.** Turning the mode off takes effect at once, never interrupts the run in progress, and the
+  status says which it did: that the run goes on to its end and nothing starts after it, or that no run was in progress.
+- **Placement.** Above the item list, as the Refinement tab's choice of terms stands, and during a run at the top of the
+  progress rail's column in both layouts. The rail's column holds no question, so the question page and the decision
+  page keep their room and the question with its first answer stays in view at 450 pixels (CLAUDE.md, User interface).
