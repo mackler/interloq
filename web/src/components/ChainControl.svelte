@@ -26,10 +26,14 @@
   let runsText = $state("");
   let cutoffText = $state("");
   let runsInvalid = $state(false);
-  // The fields follow the server's settings whenever they change, from this tab or another.
+  // The fields follow the server's settings whenever they change, from this tab or another. The limits are read through
+  // their own deriveds, numbers or null, so an event that gives a new but equal `shown` leaves a draft and its error
+  // alone (W1-R1-4): a derived notifies its dependents only when its value changes.
+  const runsLimit = $derived(shown.settings.limits.runs);
+  const cutoffLimit = $derived(shown.settings.limits.cutoff);
   $effect(() => {
-    runsText = shown.settings.limits.runs === null ? "" : String(shown.settings.limits.runs);
-    cutoffText = shown.settings.limits.cutoff === null ? "" : hourOf(shown.settings.limits.cutoff);
+    runsText = runsLimit === null ? "" : String(runsLimit);
+    cutoffText = cutoffLimit === null ? "" : hourOf(cutoffLimit);
     runsInvalid = false;
   });
 

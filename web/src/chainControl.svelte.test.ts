@@ -74,3 +74,47 @@ describe("ChainControl", () => {
     expect(root.textContent).not.toMatch(/\$|cost/i);
   });
 });
+
+// Work review 1 of issue #147, W1-R1-4: a draft and its error survive an event that leaves the settings as they were.
+describe("ChainControl's drafts", () => {
+  const live = () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const props = $state({ shown: chainShown({ ...initialView, chain: initialState(DEFAULT_SETTINGS) }, (iso) => fullTime(iso))!, onChange: (_: ChainFrameSettings) => {}, now: () => new Date(2026, 9, 20, 22, 0) });
+    mounted.push(mount(ChainControl, { target: root, props }));
+    flushSync();
+    const replace = (shown: typeof props.shown) => {
+      props.shown = shown;
+      flushSync();
+    };
+    return { root, props, replace };
+  };
+
+  test("an invalid number of runs and its error stay when an equal but new shown arrives", () => {
+    const { root, props, replace } = live();
+    commit(input(root, "chain-runs"), "abc");
+    expect(root.textContent).toContain(prompts.CHAIN_INVALID_RUNS);
+    replace({ ...props.shown, status: "another status" });
+    expect(input(root, "chain-runs").value).toBe("abc");
+    expect(root.textContent).toContain(prompts.CHAIN_INVALID_RUNS);
+  });
+
+  test("an hour typed and not committed stays when an equal but new shown arrives", () => {
+    const { root, props, replace } = live();
+    const field = input(root, "chain-cutoff");
+    field.value = "07:00";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    replace({ ...props.shown, settings: { ...props.shown.settings, limits: { ...props.shown.settings.limits } }, status: "another status" });
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+  });
+
+  test("a real change of the run limit replaces the draft and clears the error", () => {
+    const { root, props, replace } = live();
+    commit(input(root, "chain-runs"), "abc");
+    const limits = { ...props.shown.settings.limits, runs: 4 as never };
+    replace({ ...props.shown, settings: { ...props.shown.settings, limits } });
+    expect(input(root, "chain-runs").value).toBe("4");
+    expect(root.textContent).not.toContain(prompts.CHAIN_INVALID_RUNS);
+  });
+});
