@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, listOf, startFromTab, test, toTheList } from "./fixtures.ts";
-import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -510,9 +510,12 @@ test.describe("the tests of the longChoices server, in order", () => {
       }
       await cards.nth(1).focus();
       await page.keyboard.press("Enter");
-      await sectionToggle(page, CONTEXT_HEADING).click();
-      await expect(pane(page).getByText("Anything else?")).toBeVisible();
+      // Issue #184: the answer goes to Claude Code in the background and the agreed list is then done, so the next
+      // prompt is the summary. The reply "Anything else?" acknowledges the answer and asks nothing (requirements, "What
+      // Claude Code is told"), so it is said as Claude Code's message in the conversation and is no longer a prompt.
+      await expect(pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true })).toBeVisible();
       await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
+      await expect(panel(page, LEFT).getByText("Anything else?")).toBeVisible();
       await expect(panel(page, LEFT).locator("[data-author=user]").last()).toContainText("Relative time");
       await page.locator("button[name=stop]").click();
       await confirmEnd(page);
