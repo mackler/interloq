@@ -13,9 +13,10 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { chainShown, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
-import { type ChainState, configured, OFF_SETTINGS } from "../../src/chain.ts";
+import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
+import type { ItemId } from "../../src/tracker.ts";
 
 // Plan step 4.2: the page's reducer.
 const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: current }, incarnation: "a" });
@@ -2233,5 +2234,23 @@ describe("the chain", () => {
     const second = reduce(first, { type: "chain", state: changed });
     expect(second.chain).toEqual(changed);
     expect(reduce(second, hello("b", helloChain)).chain).toEqual(helloChain);
+  });
+});
+
+// Issue #147 (S12): what the chain control shows, through the texts of src/prompts.ts.
+describe("chainShown", () => {
+  const time = (iso: string) => `<${iso}>`;
+  const withChain = (chain: ChainState): ViewState => ({ ...initialState, chain });
+  test("null before the first hello", () => {
+    expect(chainShown(initialState, time)).toBeNull();
+  });
+  test("each chain gives its status, and an ended chain its reason and its runs", () => {
+    const running = begun(helloChain, 4, "7" as ItemId, "seven");
+    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, status: prompts.chainStatusText(running), ended: null, runs: [] });
+    const [stopped] = ended(running, 4, { code: 130, root: null });
+    const shown = chainShown(withChain(stopped), time);
+    expect(shown?.ended).toBe(prompts.chainEndedText({ _tag: "StoppedByDeveloper", item: "7" as ItemId }, time));
+    expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped" } })]);
+    expect(chainShown(withChain(helloChain), time)?.ended).toBeNull();
   });
 });

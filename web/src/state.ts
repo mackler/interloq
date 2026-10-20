@@ -5,7 +5,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isTermsRequest } from "../../src/input.ts";
@@ -16,7 +16,7 @@ import type { LimitWaitBasis } from "../../src/limitReset.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
-import type { ChainState } from "../../src/chain.ts";
+import type { ChainSettings, ChainState } from "../../src/chain.ts";
 
 export type Author = "program" | "user" | "codex" | "claude";
 /**
@@ -921,3 +921,15 @@ export const limitWaitView = (wait: Countdown, nowMs: number): Readonly<{ percen
 
 /** A wait at an instant while it lasts, as `limitWaitView` gives it; null at and after its end, so nothing asserts a wait that is over. */
 export const countdownView = (wait: Countdown, nowMs: number): Readonly<{ percent: number; remainingMs: number }> | null => (nowMs >= wait.untilMs ? null : limitWaitView(wait, nowMs));
+
+/**
+ * What the Implementation tab's chain control shows (issue #147): the settings, one line of what the chain is doing, why
+ * the last chain ended where it did, and one line per run of the chain; null before the first hello. The cutoff is
+ * formatted by `time`, the page's own formatter of an instant.
+ */
+export type ChainShown = Readonly<{ settings: ChainSettings; status: string; ended: string | null; runs: readonly string[] }>;
+export const chainShown = (view: ViewState, time: TimeText): ChainShown | null => {
+  if (view.chain === null) return null;
+  const chain = view.chain.chain;
+  return { settings: view.chain.settings, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText) };
+};
