@@ -1,0 +1,219 @@
+// Issue #147 (S1): the chain's pure transitions (src/chain.ts), case by case of the requirements.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { Result, Schema } from "effect";
+import {
+  begun, blocksImplementationStart, type ChainSettings, type ChainState, ChainFileSchema, configured, cutoffOf, DEFAULT_SETTINGS, due, ended, initialState,
+  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard,
+} from "../src/chain.ts";
+import type { ItemId } from "../src/tracker.ts";
+import type { RunRoot } from "../src/artifacts.ts";
+
+const id = (s: string) => s as ItemId;
+const root = (s: string) => `runs/2026-10-20T00-00-00-000Z-implementation-${s}` as RunRoot;
+const limit = (n: number) => Result.getOrThrow(runLimitOf(n));
+const cutoff = (iso: string) => Result.getOrThrow(cutoffOf(iso));
+const withRuns = (n: number | null): ChainSettings => ({ enabled: true, limits: { runs: n === null ? null : limit(n), cutoff: null } });
+const gen = (s: ChainState) => (s.chain._tag === "Idle" ? -1 : s.chain.generation);
+
+/** The developer starts item 1 as run 1. */
+const startedChain = (settings: ChainSettings = DEFAULT_SETTINGS): ChainState => begun(initialState(settings), 1, id("1"), "one");
+/** Ready → listed → started as run `run` of `item`. */
+const chainStart = (s: ChainState, run: number, item: string): ChainState => {
+  const [l] = listed(s, gen(s), { item: id(item), title: item });
+  return started(l, gen(s), run, id(item), item);
+};
+
+test("a start with the mode on begins a chain counting the developer's own run; with it off, nothing", () => {
+  const s = startedChain();
+  assert.equal(s.chain._tag, "Running");
+  assert.equal(s.chain._tag === "Running" && s.chain.count, 1);
+  assert.deepEqual(begun(initialState(OFF_SETTINGS), 1, id("1"), "one"), initialState(OFF_SETTINGS));
+});
+
+test("a finished run makes the next start due; due lists; listed starts the first item given", () => {
+  const [r, c] = ended(startedChain(), 1, { code: 0, root: root("1") });
+  assert.equal(r.chain._tag, "Ready");
+  assert.deepEqual(c?.command, { _tag: "Due" });
+  const [d, dc] = due(r, gen(r), 0);
+  assert.deepEqual(dc?.command, { _tag: "List" });
+  const [l, lc] = listed(d, gen(d), { item: id("7"), title: "seven" });
+  assert.equal(l.chain._tag, "Starting");
+  assert.deepEqual(lc?.command, { _tag: "Start", item: "7" });
+  const s = started(l, gen(l), 2, id("7"), "seven");
+  assert.equal(s.chain._tag === "Running" && s.chain.count, 2);
+});
+
+test("an empty listing ends the chain with NoItems; the mode stays on", () => {
+  const [r] = ended(startedChain(), 1, { code: 0, root: root("1") });
+  const [l, c] = listed(r, gen(r), null);
+  assert.deepEqual(l.chain._tag === "Idle" && l.chain.ended, { _tag: "NoItems" });
+  assert.equal(c, null);
+  assert.equal(l.settings.enabled, true);
+});
+
+test("Stop task (130) ends the chain", () => {
+  const [s, c] = ended(startedChain(), 1, { code: 130, root: root("1") });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "StoppedByDeveloper", item: "1" });
+  assert.equal(c, null);
+});
+
+test("a halt with a records directory parks, then continues", () => {
+  const [p, c] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  assert.equal(p.chain._tag, "Parking");
+  assert.deepEqual(c?.command, { _tag: "Park", item: "1", root: root("1") });
+  assert.equal(blocksImplementationStart(p), true);
+  const [r, rc] = parked(p, gen(p), { _tag: "Parked", branch: "b", commit: "c" });
+  assert.equal(r.chain._tag, "Ready");
+  assert.deepEqual(rc?.command, { _tag: "Due" });
+  assert.equal(blocksImplementationStart(r), false);
+  assert.deepEqual(r.chain._tag === "Ready" && r.chain.history[0]?.outcome, { _tag: "Halted", park: { _tag: "Parked", branch: "b", commit: "c" } });
+});
+
+test("a failed parking ends the chain", () => {
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [s] = parked(p, gen(p), { _tag: "ParkFailed", message: "m" });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "ParkFailed", item: "1", message: "m" });
+});
+
+test("a halt before the records existed starts the item again; the second halt ends the chain", () => {
+  const [r, c] = ended(startedChain(), 1, { code: 1, root: null });
+  assert.equal(r.chain._tag, "Ready");
+  assert.deepEqual(c?.command, { _tag: "Due" });
+  const again = chainStart(r, 2, "1");
+  const [s] = ended(again, 2, { code: 1, root: null });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "HaltedTwice", item: "1" });
+});
+
+test("the same item halting twice with records is still parked before the chain ends", () => {
+  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [r] = parked(p1, gen(p1), { _tag: "Parked", branch: "b", commit: "c" });
+  const [p2, c] = ended(chainStart(r, 2, "1"), 2, { code: 1, root: root("1b") });
+  assert.equal(p2.chain._tag, "Parking");
+  assert.deepEqual(c?.command._tag, "Park");
+  const [s] = parked(p2, gen(p2), { _tag: "Parked", branch: "b2", commit: "c2" });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "HaltedTwice", item: "1" });
+});
+
+test("a run limit of 1 starts nothing after the developer's run; of 3, two more", () => {
+  const [r1] = ended(startedChain(withRuns(1)), 1, { code: 0, root: root("1") });
+  const [s1] = due(r1, gen(r1), 0);
+  assert.deepEqual(s1.chain._tag === "Idle" && s1.chain.ended, { _tag: "RunLimitReached", limit: 1 });
+  let s = startedChain(withRuns(3));
+  let starts = 0;
+  for (let run = 1; ; run++) {
+    const [r] = ended(s, run, { code: 0, root: root(String(run)) });
+    const [d, c] = due(r, gen(r), 0);
+    if (c === null) {
+      assert.deepEqual(d.chain._tag === "Idle" && d.chain.ended, { _tag: "RunLimitReached", limit: 3 });
+      break;
+    }
+    s = chainStart(d, run + 1, String(run + 1));
+    starts++;
+  }
+  assert.equal(starts, 2);
+});
+
+test("a halt at the run limit is parked before the limit ends the chain", () => {
+  const [p, c] = ended(startedChain(withRuns(1)), 1, { code: 1, root: root("1") });
+  assert.equal(c?.command._tag, "Park");
+  const [r] = parked(p, gen(p), { _tag: "Parked", branch: "b", commit: "c" });
+  const [s] = due(r, gen(r), 0);
+  assert.equal(s.chain._tag === "Idle" && s.chain.ended?._tag, "RunLimitReached");
+});
+
+test("a passed cutoff ends the chain at due and refuses a start in flight", () => {
+  const settings: ChainSettings = { enabled: true, limits: { runs: null, cutoff: cutoff("2026-10-20T07:00:00.000Z") } };
+  const [r] = ended(startedChain(settings), 1, { code: 0, root: root("1") });
+  const at = Date.parse("2026-10-20T07:00:00.000Z");
+  const [s] = due(r, gen(r), at);
+  assert.equal(s.chain._tag === "Idle" && s.chain.ended?._tag, "CutoffPassed");
+  const [d] = due(r, gen(r), at - 1);
+  const [l] = listed(d, gen(d), { item: id("2"), title: "two" });
+  assert.equal(startGuard(l, gen(l), id("2"), at - 1), null);
+  assert.equal(startGuard(l, gen(l), id("2"), at)?._tag, "CutoffPassed");
+});
+
+test("startGuard refuses at the limit, after the mode was turned off, and for another generation", () => {
+  const [r] = ended(startedChain(withRuns(2)), 1, { code: 0, root: root("1") });
+  const [l] = listed(r, gen(r), { item: id("2"), title: "two" });
+  assert.equal(startGuard(l, gen(l), id("2"), 0), null);
+  const atLimit = configured(l, withRuns(1), null);
+  assert.equal(startGuard(atLimit, gen(l), id("2"), 0)?._tag, "RunLimitReached");
+  const off = configured(l, { ...withRuns(2), enabled: false }, null);
+  assert.equal(startGuard(off, gen(l), id("2"), 0)?._tag, "ChainChanged");
+  assert.equal(startGuard(l, gen(l) + 1, id("2"), 0)?._tag, "ChainChanged");
+  const refusedState = refused(l, gen(l), { _tag: "StartRefused", item: id("2"), reason: "r" });
+  assert.equal(refusedState.chain._tag === "Idle" && refusedState.chain.ended?._tag, "StartRefused");
+});
+
+test("turning the mode off ends a going chain saying which run goes on; during parking the parking finishes first", () => {
+  const off = (s: ChainState, running: string | null) => configured(s, OFF_SETTINGS, running === null ? null : id(running));
+  const s = off(startedChain(), "1");
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "TurnedOff", running: "1" });
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const po = off(p, null);
+  assert.equal(po.chain._tag, "Parking");
+  const [after, c] = parked(po, gen(po), { _tag: "NothingParked" });
+  assert.deepEqual(after.chain._tag === "Idle" && after.chain.ended, { _tag: "TurnedOff", running: null });
+  assert.equal(c, null);
+  const back = configured(after, DEFAULT_SETTINGS, null);
+  assert.equal(back.chain._tag === "Idle" && back.chain.ended, null);
+  assert.equal(back.chain.history.length, 1);
+});
+
+test("an end of another run, and a stale generation, do nothing", () => {
+  const s = startedChain();
+  assert.deepEqual(ended(s, 2, { code: 0, root: null }), [s, null]);
+  const [r] = ended(s, 1, { code: 0, root: null });
+  assert.deepEqual(due(r, gen(r) + 1, 0), [r, null]);
+  assert.deepEqual(listed(r, gen(r) - 1, null), [r, null]);
+  assert.deepEqual(parked(r, gen(r), { _tag: "NothingParked" }), [r, null]);
+});
+
+test("a restart: running and starting end with ServerEnded, parking parks again, ready is due, idle waits", () => {
+  const run = startedChain();
+  const [rr, rc] = restored(run);
+  assert.deepEqual(rr.chain._tag === "Idle" && rr.chain.ended, { _tag: "ServerEnded", item: "1" });
+  assert.equal(rc, null);
+  const [r] = ended(run, 1, { code: 0, root: null });
+  const [l] = listed(r, gen(r), { item: id("2"), title: "two" });
+  assert.deepEqual(restored(l)[0].chain._tag === "Idle" && restored(l)[0].chain, { _tag: "Idle", ended: { _tag: "ServerEnded", item: "2" }, history: r.chain.history });
+  assert.deepEqual(restored(r)[1]?.command, { _tag: "Due" });
+  const [p] = ended(run, 1, { code: 1, root: root("1") });
+  assert.deepEqual(restored(p)[1]?.command, { _tag: "Park", item: "1", root: root("1") });
+  assert.deepEqual(restored(initialState(DEFAULT_SETTINGS)), [initialState(DEFAULT_SETTINGS), null]);
+});
+
+test("a failed save ends the chain keeping the settings and the history", () => {
+  const [r] = ended(startedChain(withRuns(3)), 1, { code: 0, root: null });
+  const s = saveFailed(r, "disk full");
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+  assert.equal(s.settings.limits.runs, 3);
+  assert.equal(s.chain.history.length, 1);
+});
+
+test("a manual start after a chain ended begins a new chain with a new generation and fresh halts", () => {
+  const [h] = ended(startedChain(), 1, { code: 1, root: null });
+  const [, c] = due(h, gen(h), 0);
+  assert.notEqual(c, null);
+  const again = begun(h, 5, id("9"), "nine");
+  assert.equal(gen(again), gen(h) + 1);
+  assert.equal(again.chain._tag === "Running" && again.chain.halts.length, 0);
+});
+
+test("the limits and the cutoff are constructed only from valid values", () => {
+  assert.equal(Result.isFailure(runLimitOf(0)), true);
+  assert.equal(Result.isFailure(runLimitOf(1.5)), true);
+  assert.equal(Result.isFailure(cutoffOf("07:00")), true);
+  assert.equal(Result.isFailure(cutoffOf("2026-10-20T07:00:00")), true);
+  assert.equal(Result.getOrThrow(cutoffOf("2026-10-20T07:00:00.000Z")), Date.parse("2026-10-20T07:00:00.000Z"));
+});
+
+test("a saved state round-trips through the file's schema", () => {
+  const [p] = ended(startedChain(withRuns(2)), 1, { code: 1, root: root("1") });
+  const file = { version: 2 as const, state: p };
+  const decode = Schema.decodeUnknownSync(ChainFileSchema);
+  assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
+});
+
