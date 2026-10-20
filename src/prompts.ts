@@ -1,6 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
+import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -3333,3 +3334,24 @@ export const earlierPlanTakenLine = (earlier: RunRoot): string =>
 /** Said and written where the earlier run's record of the project at its start is gone (issue #180, F1). */
 export const earlierPlanSetAsideLine = (earlier: RunRoot): string =>
   `The plan of the earlier implementation run in ${RECORDS_DIR}/${earlier} is set aside: that run's record of the project at its start is gone, so this run plans the item from nothing, and the earlier run's changes count as already there when this run began.`;
+
+// ---- Issue #147: the chain of implementation runs, and the parking of a halted run's work ----
+
+/** The message of the commit that keeps a halted run's leftovers on its branch; its last line is the trailer. */
+export const parkCommitMessage = (item: string, root: RunRoot, branch: string): string =>
+  [
+    `Work of a halted implementation run of item #${item} (${rootName(root)})`,
+    "",
+    `Interloq made this commit after the run halted, with ${PARK_NO_VERIFY}, skipping the repository's hooks, so the run's work is kept on the branch ${branch}.`,
+    "",
+    parkTrailerOf(root),
+  ].join("\n");
+
+/** The line written to the halted run's conversation.md once its work is on its branch. */
+export const parkedRecordLine = (record: ParkedRecord): string => {
+  const paths = record.committed.length === 0 ? "no files were left uncommitted" : `the files it left uncommitted were committed with ${PARK_NO_VERIFY}, skipping the repository's hooks: ${record.committed.join(", ")}`;
+  return `**Parked:** this run halted; ${paths}. Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began. The item keeps the label implementing.`;
+};
+
+/** The line written to the halted run's conversation.md where there was nothing to keep. */
+export const nothingParkedLine = "**Parked:** this run halted with no work to keep: it made no commit and left no file uncommitted.";
