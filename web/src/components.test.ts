@@ -765,6 +765,19 @@ describe("App and the draft", () => {
       expect(sentOf(ws).at(-1)).toEqual(startFrame({ mode: "refinement", item: fixture, terms: "onRequest" }));
     });
 
+    // Issue #147 (S13): the chain's control is on the Implementation tab and not on the Refinement tab.
+    test("the Implementation tab shows the chain's control, and the Refinement tab does not", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      flushSync();
+      expect(root.querySelector("input[name=chain]")).toBe(null);
+      select(root, "implementation");
+      ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+      flushSync();
+      expect(root.querySelector("input[name=chain]")).not.toBe(null);
+      expect(root.textContent).toContain(prompts.CHAIN_SWITCH_LABEL);
+    });
+
     test("the Implementation tab has no choice of terms", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");

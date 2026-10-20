@@ -11,10 +11,11 @@
   import { untrack } from "svelte";
   import { BACK_TO_LIST, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
-  import type { ClientMessage, ListedItem } from "../../../src/protocol.ts";
+  import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
-  import { itemsFrame, startFrame } from "../tabs.ts";
+  import { chainFrame, itemsFrame, startFrame } from "../tabs.ts";
+  import { fullTime } from "../time.ts";
   import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { isTermsRequest } from "../../../src/input.ts";
   import { connect, type Connection } from "../socket.ts";
@@ -24,13 +25,14 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { type RunView, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { type RunView, chainShown, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
   import { isOpen, openSectionOf, type UiScope } from "../../../src/uiState.ts";
   import { railView } from "../rail.ts";
   import ItemList from "./ItemList.svelte";
+  import ChainControl from "./ChainControl.svelte";
   import QuestionPane from "./QuestionPane.svelte";
   import TimelineRail from "./TimelineRail.svelte";
   import TopBar from "./TopBar.svelte";
@@ -130,6 +132,9 @@
     return r === null || (r.ended !== null && listWanted[m]);
   };
   const showList = $derived(showsList(mode));
+  // Issue #147: the chain's control, on the Implementation tab alone.
+  const chain = $derived(mode === "implementation" ? chainShown(view, (iso) => fullTime(iso)) : null);
+  const setChain = (settings: ChainFrameSettings) => send(chainFrame(settings));
   /** Selecting a tab that shows its list asks for its items every time, so a revisited list is current (S15). */
   const selectTab = (value: RunMode) => {
     view = selectMode(view, value);
@@ -279,6 +284,7 @@
            notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
+      {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
       <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
@@ -288,6 +294,7 @@
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
+          {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
           <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
         </details>
         <!-- While the analysis is shown both panels are hidden, so the buttons would select nothing; "Show the
@@ -303,6 +310,13 @@
         {/if}
         <!-- The latest notice above the panels, whichever is shown (W2-R1-2) [visibility of system status]. -->
         {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
+      {:else if chain !== null}
+        <!-- Issue #147: the chain's control at the top of the rail's column, which holds no question, so the question
+             pane and the decision page keep their room. The column takes the rail's place in the grid. -->
+        <div class="rail rail-column">
+          <ChainControl shown={chain} onChange={setChain} />
+          <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
+        </div>
       {:else}
         <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
       {/if}
@@ -399,6 +413,8 @@
   .run.compact.deciding > .decision-area { flex: 1 0 auto; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
+  .rail-column { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+  .rail-column > :global(nav.rail) { flex: 1 1 auto; min-height: 0; }
   .progress :global(.rail) { max-height: 40vh; }
   .badge { font-weight: 700; }
   .ended { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem; background: var(--m3c-surface-container); }
