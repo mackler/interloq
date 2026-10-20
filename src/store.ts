@@ -19,6 +19,7 @@ import { decodeText } from "./state.ts";
 import { carriedPlan, type EarlierPlan, type EarlierRunRecords, latestQualifying } from "./earlierPlan.ts";
 import type { ItemId } from "./tracker.ts";
 import type { LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
+import { PARK_NO_VERIFY, ParkRecordSchema } from "./park.ts";
 
 /**
  * The store of one run of one project (issue #120): its records are under <project>/plan-review/<root>/, a root that
@@ -246,6 +247,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         Effect.orElseSucceed(() => null),
       );
     const baselineFile = at({ kind: "baseline" });
+    const parkedFile = at({ kind: "parked" });
     const readBaseline = () => readText(baselineFile).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(baselineFile, Baseline, text))));
     /** The text of the diff from the baseline tree to the current one; null before init wrote the baseline. */
     const diffText = (): Effect.Effect<string | null, StoreError> =>
@@ -340,6 +342,53 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       adoptBaseline: (baseline: Baseline) =>
         Effect.gen(function* () {
           yield* writeJson(baselineFile, { ...baseline, start_commit: yield* headCommit() });
+        }),
+      commitLeftovers: (message) =>
+        Effect.gen(function* () {
+          const check = commitCheckOf((yield* readBaseline()).uncommitted, yield* uncommittedNow());
+          if (check._tag === "Committed") return { _tag: "NothingLeft" } as const;
+          // The paths as literal NUL-separated pathspecs from a file in the git directory, as workingTree removes its
+          // exclusions, so only the run's own paths are staged and committed, whatever else is staged.
+          const pathspecs = yield* gitPath(`plan-review-park-${yield* Clock.currentTimeMillis}-${process.pid}`);
+          const literal = { GIT_LITERAL_PATHSPECS: "1" };
+          const from = [`--pathspec-from-file=${pathspecs}`, "--pathspec-file-nul"];
+          const nul = (paths: readonly string[]) => paths.map((p) => p + "\0").join("");
+          const commit = Effect.gen(function* () {
+            // `git commit` with pathspecs (its --only mode) commits each path as the working tree has it, deletions and a
+            // rename's source included, but knows no untracked file: those are added first, and only those, since
+            // `git add` refuses a path that is in neither the index nor the working tree.
+            const untracked = new Set((yield* git(["ls-files", "-z", "--others"])).split("\0"));
+            const added = check.paths.filter((p) => untracked.has(p));
+            if (added.length > 0) {
+              yield* writeText(pathspecs, nul(added));
+              yield* git(["add", ...from], literal);
+            }
+            yield* writeText(pathspecs, nul(check.paths));
+            yield* git(["commit", "-q", PARK_NO_VERIFY, "-m", message, ...from], literal);
+            return { _tag: "Committed", commit: (yield* git(["rev-parse", "--verify", "HEAD"])).trim() } as const;
+          });
+          return yield* commit.pipe(Effect.ensuring(fs.remove(pathspecs, { force: true }).pipe(Effect.ignore)));
+        }),
+      parkedPaths: (start, branch, trailer) =>
+        Effect.gen(function* () {
+          const commits = (yield* git(["log", "--format=%H", `--grep=${trailer}`, "--fixed-strings", `${start}..refs/heads/${branch}`])).split("\n").filter((c) => c !== "");
+          const paths = new Set<string>();
+          for (const c of commits) for (const p of (yield* git(["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", c])).split("\0")) if (p !== "") paths.add(p);
+          return [...paths].sort();
+        }),
+      head: () => headCommit(),
+      branchTip: (branch) =>
+        git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).pipe(
+          Effect.map((out) => out.trim()),
+          Effect.catchTag("GitError", () => Effect.succeed(null)),
+        ),
+      createBranch: (branch) => git(["branch", branch, "HEAD"]).pipe(Effect.asVoid),
+      resetTo: (start) => git(["reset", "-q", "--keep", start]).pipe(Effect.asVoid),
+      saveParked: (record) => writeJson(parkedFile, record),
+      loadParked: () =>
+        Effect.gen(function* () {
+          if (!(yield* exists(parkedFile))) return null;
+          return yield* Effect.fromResult(decodeText(parkedFile, ParkRecordSchema, yield* readText(parkedFile)));
         }),
       baseline: () => Effect.gen(function* () {
         return (yield* exists(baselineFile)) ? yield* readBaseline() : null;

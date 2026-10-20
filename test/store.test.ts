@@ -4,7 +4,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { test } from "node:test";
-import { Effect, Option } from "effect";
+import { Cause, Effect, Exit, Option, Result } from "effect";
+import { branchNameOf, type ParkRecord } from "../src/park.ts";
+import { GitError } from "../src/errors.ts";
 import { platformLayer } from "../src/platform.ts";
 import type { StoreShape } from "../src/services.ts";
 import { allocateRunRoot, makeStore } from "../src/store.ts";
@@ -464,4 +466,118 @@ test("a baseline.json written without the start commit decodes with null", async
   await run(store.init("task"));
   fs.writeFileSync(path.join(store.dir, "baseline.json"), JSON.stringify({ version: 2, tree: git(repo, "write-tree").trim(), uncommitted: [], time: "t" }));
   assert.equal((await run(store.baseline()))?.start_commit, null);
+});
+
+// Issue #147 (S6): the store's git writes for a halted run's work. Each repository carries an identity in its own config,
+// since the store passes none.
+const identified = (): string => {
+  const repo = tempRepo();
+  git(repo, "config", "user.email", "t@t");
+  git(repo, "config", "user.name", "t");
+  return repo;
+};
+const branch = (name: string) => Result.getOrThrow(branchNameOf(name));
+const begun = async (repo: string): Promise<StoreShape> => {
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  return store;
+};
+const committedFiles = (repo: string, rev: string): string[] => git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", rev).split("\n").filter((l) => l !== "").sort();
+
+test("commitLeftovers commits only the run's paths, a deletion and a rename included; a second call commits nothing", async () => {
+  const repo = identified();
+  write(repo, "gone.txt", "g\n");
+  write(repo, "old.txt", "o\n");
+  git(repo, "add", ".");
+  commit(repo, "files");
+  write(repo, "dirty.txt", "dirty at the start\n");
+  const store = await begun(repo);
+  write(repo, "new.txt", "n\n");
+  write(repo, "a.txt", "changed\n");
+  fs.rmSync(path.join(repo, "gone.txt"));
+  git(repo, "mv", "old.txt", "renamed.txt");
+  const made = await run(store.commitLeftovers("leftovers"));
+  assert.equal(made._tag, "Committed");
+  assert.deepEqual(committedFiles(repo, "HEAD"), ["a.txt", "gone.txt", "new.txt", "old.txt", "renamed.txt"]);
+  assert.match(git(repo, "status", "--porcelain"), /\?\? dirty\.txt/);
+  assert.deepEqual(await run(store.commitLeftovers("again")), { _tag: "NothingLeft" });
+});
+
+test("commitLeftovers commits past a pre-commit hook that refuses", async () => {
+  const repo = identified();
+  const store = await begun(repo);
+  write(repo, ".git/hooks/pre-commit", "#!/bin/sh\nexit 1\n");
+  fs.chmodSync(path.join(repo, ".git/hooks/pre-commit"), 0o755);
+  write(repo, "a.txt", "changed\n");
+  const made = await run(store.commitLeftovers("leftovers"));
+  assert.equal(made._tag === "Committed" && made.commit, git(repo, "rev-parse", "HEAD").trim());
+});
+
+test("parkedPaths lists the files of the trailer's commit and none of the run's earlier commit without it", async () => {
+  const repo = identified();
+  const store = await begun(repo);
+  const start = git(repo, "rev-parse", "HEAD").trim();
+  write(repo, "earlier.txt", "e\n");
+  git(repo, "add", "earlier.txt");
+  commit(repo, "the run's own commit");
+  write(repo, "left.txt", "l\n");
+  await run(store.commitLeftovers("leftovers\n\nInterloq-Parked: r"));
+  const b = branch("interloq/halted/1/r");
+  await run(store.createBranch(b));
+  assert.deepEqual(await run(store.parkedPaths(start, b, "Interloq-Parked: r")), ["left.txt"]);
+});
+
+test("branchTip, createBranch, head and resetTo", async () => {
+  const repo = identified();
+  const store = await begun(repo);
+  const start = git(repo, "rev-parse", "HEAD").trim();
+  const b = branch("interloq/halted/1/r");
+  assert.equal(await run(store.branchTip(b)), null);
+  write(repo, "a.txt", "work\n");
+  commit(repo, "work");
+  const tip = git(repo, "rev-parse", "HEAD").trim();
+  assert.equal(await run(store.head()), tip);
+  await run(store.createBranch(b));
+  assert.equal(await run(store.branchTip(b)), tip);
+  write(repo, "mine.txt", "the developer's own\n");
+  await run(store.resetTo(start));
+  assert.equal(git(repo, "rev-parse", "HEAD").trim(), start);
+  assert.equal(fs.readFileSync(path.join(repo, "mine.txt"), "utf8"), "the developer's own\n");
+  assert.equal(git(repo, "rev-parse", b).trim(), tip);
+});
+
+test("a reset that would overwrite an uncommitted change fails with GitError and leaves the branch in place", async () => {
+  const repo = identified();
+  const store = await begun(repo);
+  const start = git(repo, "rev-parse", "HEAD").trim();
+  write(repo, "a.txt", "work\n");
+  commit(repo, "work");
+  const tip = git(repo, "rev-parse", "HEAD").trim();
+  write(repo, "a.txt", "uncommitted on top\n");
+  const exit = await Effect.runPromiseExit(store.resetTo(start));
+  assert.ok(Exit.isFailure(exit));
+  assert.equal(Exit.isFailure(exit) && Cause.squash(exit.cause) instanceof GitError, true);
+  assert.equal(git(repo, "rev-parse", "HEAD").trim(), tip);
+  assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "uncommitted on top\n");
+});
+
+test("parked.json round-trips", async () => {
+  const store = await begun(identified());
+  assert.equal(await run(store.loadParked()), null);
+  const record: ParkRecord = { _tag: "Parked", version: 2, branch: "b", commit: "c", start_commit: "s", committed: ["a.txt"], recorded: true, time: "t" };
+  await run(store.saveParked(record));
+  assert.deepEqual(await run(store.loadParked()), record);
+  assert.ok(fs.existsSync(path.join(store.dir, "parked.json")));
+});
+
+test("commitLeftovers leaves a change staged before the run began staged and uncommitted", async () => {
+  const repo = identified();
+  write(repo, "staged.txt", "staged by the developer\n");
+  git(repo, "add", "staged.txt");
+  const store = await begun(repo);
+  write(repo, "a.txt", "the run's change\n");
+  await run(store.commitLeftovers("leftovers"));
+  assert.deepEqual(committedFiles(repo, "HEAD"), ["a.txt"]);
+  assert.match(git(repo, "status", "--porcelain"), /^A  staged\.txt/m);
 });

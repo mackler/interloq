@@ -11,6 +11,7 @@ import type { EarlierPlan } from "./earlierPlan.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
 import type { CommitCheck } from "./commitCheck.ts";
+import type { BranchName, LeftoverCommit, ParkRecord } from "./park.ts";
 import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
@@ -175,6 +176,30 @@ export interface StoreShape {
    * track is never listed. A missing baseline.json is a StoreError: only an implementation run, which writes one, checks.
    */
   uncommittedSinceStart(): Effect.Effect<CommitCheck, StoreError>;
+  // Issue #147 (requirements Q1): git writes of the store's own, used at the one moment after an implementation run
+  // halted, to keep its work on a branch. Each is one git command and safe to repeat; when to call each is
+  // src/parking.ts's. plan-review/ is gitignored, so none of them touches a run's records.
+  /**
+   * Commits the paths uncommittedSinceStart reports, and only those (literal pathspecs, so nothing else staged is
+   * committed), with --no-verify, skipping the repository's hooks. Nothing left: NothingLeft, so a repeat commits nothing.
+   */
+  commitLeftovers(message: string): Effect.Effect<LeftoverCommit, StoreError>;
+  /** The files of the commits in start..branch whose message carries the trailer, sorted and unique, read from git. */
+  parkedPaths(start: string, branch: BranchName, trailer: string): Effect.Effect<readonly string[], StoreError>;
+  /** The commit HEAD names, or null on an unborn branch. */
+  head(): Effect.Effect<string | null, StoreError>;
+  /** The commit the branch names, or null where it does not exist. */
+  branchTip(branch: BranchName): Effect.Effect<string | null, StoreError>;
+  /** Creates the branch at HEAD. */
+  createBranch(branch: BranchName): Effect.Effect<void, StoreError>;
+  /**
+   * Returns the working branch to `start` with `git reset --keep`: uncommitted changes in files the reset does not touch
+   * are kept, and a reset that would overwrite one is refused (a GitError), so the developer's own work is never lost.
+   */
+  resetTo(start: string): Effect.Effect<void, StoreError>;
+  /** parked.json in the run's records directory: the record of the parking of its work. */
+  saveParked(record: ParkRecord): Effect.Effect<void, StoreError>;
+  loadParked(): Effect.Effect<ParkRecord | null, StoreError>;
   /** Codex's raw reply of a round (`review-<n>.json`). */
   saveReview(subject: SubjectId, round: number, review: Review): Effect.Effect<void, StoreError>;
   /** Claude Code's raw response of a round (`cc-<n>.json`). */

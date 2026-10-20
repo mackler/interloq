@@ -12,7 +12,7 @@ export type SubjectId = "questions" | "terms" | "requirements" | Readonly<{ plan
 export type PhasedSubject = Exclude<SubjectId, Readonly<{ decision: number }>>;
 
 export type Artifact =
-  | Readonly<{ kind: "conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" }>
+  | Readonly<{ kind: "conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked" }>
   | Readonly<{ kind: "log"; subject: SubjectId }>
   | Readonly<{ kind: "review" | "response" | "round"; subject: SubjectId; round: number }>
   /** The raw reply of corrective turn `attempt` of a round (issue #30), beside the round's response. */
@@ -106,7 +106,7 @@ export const reviewedFile = (subject: SubjectId): Artifact =>
       : "work" in subject
         ? { kind: "changes", phase: subject.work }
         : { kind: "analysis", decision: subject.decision };
-const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config"), string> = {
+const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked"), string> = {
   conversation: "conversation.md",
   decisions: "user-decisions.md",
   feedback: "reviewer-feedback.md",
@@ -121,6 +121,8 @@ const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation
   planFile: "plan.json",
   checkpoint: "checkpoint.json",
   config: "config.json",
+  /** The record of the parking of a halted run's work (issue #147), written after the run ended. */
+  parked: "parked.json",
 };
 const ROUND_FILE = { review: "review", response: "cc", round: "round" } as const;
 /** The path of an artifact relative to plan-review/, with "/" separators. */
@@ -177,4 +179,5 @@ export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "questions", "te
  * written before a repair turn). Every other path is guarded, a kind added later included. No archive lives inside a
  * run's directory (issue #120).
  */
-export const guardedRecord = (relPath: string): boolean => relPath !== pathOf({ kind: "usage" }) && relPath !== "invalid-replies" && !relPath.startsWith("invalid-replies/");
+export const guardedRecord = (relPath: string): boolean =>
+  relPath !== pathOf({ kind: "usage" }) && relPath !== pathOf({ kind: "parked" }) && relPath !== "invalid-replies" && !relPath.startsWith("invalid-replies/");

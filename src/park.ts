@@ -54,3 +54,6 @@ export const ParkRecordSchema = Schema.Union([
 ]);
 export type ParkRecord = typeof ParkRecordSchema.Type;
 export type ParkedRecord = Extract<ParkRecord, { _tag: "Parked" }>;
+
+/** What committing a halted run's leftovers did: nothing was left, or the commit it made. */
+export type LeftoverCommit = Readonly<{ _tag: "NothingLeft" }> | Readonly<{ _tag: "Committed"; commit: string }>;
