@@ -28,6 +28,7 @@ import { liveSdk } from "./sdkLive.ts";
 import { distMissingMessage, parsePort, WEB_USAGE } from "./webArgs.ts";
 import { makeWebServer } from "./webServer.ts";
 import type { WebUi } from "./webUi.ts";
+import { DEFAULT_SETTINGS } from "./chain.ts";
 
 const port = parsePort(process.argv.slice(2));
 const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
@@ -68,7 +69,7 @@ const main = Effect.gen(function* () {
   const files = yield* FileSystem.FileSystem;
   const mounts = parseMountinfo(yield* files.readFileString("/proc/self/mountinfo").pipe(Effect.orElseSucceed(() => "")));
   // Issue #120: the tracker of the project in the server's directory, reached from the server and never from the page.
-  const manager = yield* makeRunManager(wiringOf, process.cwd(), mounts, incarnation, { sharedConfig: fileURLToPath(new URL("../config.json", import.meta.url)), tracker: liveTracker });
+  const manager = yield* makeRunManager(wiringOf, process.cwd(), mounts, incarnation, { sharedConfig: fileURLToPath(new URL("../config.json", import.meta.url)), tracker: liveTracker }, DEFAULT_SETTINGS);
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);
   // Registered after serveEffect, so that it runs before the HTTP shutdown, which would wait for the open tabs (finding 15).

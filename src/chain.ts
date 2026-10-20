@@ -81,7 +81,8 @@ export type ChainEndReason =
   | Readonly<{ _tag: "ParkFailed"; item: ItemId; message: string }>
   | Readonly<{ _tag: "SaveFailed"; message: string }>
   | Readonly<{ _tag: "Unreadable"; message: string }>
-  | Readonly<{ _tag: "ChainChanged"; item: ItemId }>;
+  | Readonly<{ _tag: "ChainChanged"; item: ItemId }>
+  | Readonly<{ _tag: "ListingFailed"; message: string }>;
 const ChainEndReasonSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NoItems") }),
   Schema.Struct({ _tag: Schema.Literal("RunLimitReached"), limit: RunLimitSchema }),
@@ -95,6 +96,7 @@ const ChainEndReasonSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("SaveFailed"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Unreadable"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("ChainChanged"), item: ItemIdSchema }),
+  Schema.Struct({ _tag: Schema.Literal("ListingFailed"), message: Schema.String }),
 ]);
 
 /** The halts of one item within one chain (the requirements' default: reset when a new chain begins). */

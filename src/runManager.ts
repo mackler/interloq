@@ -10,12 +10,19 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { ITEM_ID_EMPTY, itemMovedText, runInProgressText, serverEndingText } from "./prompts.ts";
+import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, runInProgressText, serverEndingText } from "./prompts.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import { itemIdOf } from "./tracker.ts";
+import { type ItemId, itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
+import {
+  begun, blocksImplementationStart, type ChainCommand, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+} from "./chain.ts";
+import { loadChain, removeChain, saveChain } from "./chainFile.ts";
+import { makeStore } from "./store.ts";
+import { parkHalted } from "./parking.ts";
+import type { RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { makeWebUi, type WebUi } from "./webUi.ts";
 
@@ -23,8 +30,10 @@ import { makeWebUi, type WebUi } from "./webUi.ts";
 export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
 /** The shared state of the page for a run after a change (issue #87): the whole state, with its version. */
 export type UiBroadcast = Readonly<{ _tag: "ui"; run: number; state: RunUiState }>;
+/** The chain's whole state after a change (issue #147). */
+export type ChainBroadcast = Readonly<{ _tag: "chain"; state: ChainState }>;
 /** What a listener receives, in the order of publication. */
-export type Broadcast = EventBroadcast | UiBroadcast;
+export type Broadcast = EventBroadcast | UiBroadcast | ChainBroadcast;
 /** The snapshot a tab starts from: the runs' records and, beside them, their shared states (issue #87). */
 export type Replay = Readonly<{ runs: readonly RunRecord[]; ui: readonly RunUi[] }>;
 /** Why an action of the page was not carried out; shown to the user in the tab of its mode, or in none (issue #120). */
@@ -59,7 +68,17 @@ export type RunManager = Readonly<{
    * the bounds, after publishing its end itself.
    */
   haltAll: (message: string) => Effect.Effect<HaltReport>;
+  /** The chain's state (issue #147). */
+  chain: Effect.Effect<ChainState>;
+  /** Changes the chain's settings at once; turning the mode off ends a chain and never interrupts a run (issue #147). */
+  setChain: (settings: ChainSettings) => Effect.Effect<ChainState>;
 }>;
+
+/**
+ * How the chain's state is kept across a restart (issue #147, requirements Q4): plan-review/chain.json by default; a test
+ * injects a save it holds or fails. A failure is its text.
+ */
+export type ChainPersistence = Readonly<{ save: (state: ChainState) => Effect.Effect<void, string>; remove: Effect.Effect<void, string> }>;
 
 /**
  * The runs `haltAll` halted (issue #158): `halted`, those that ended with their halt record written; `unconfirmed`, every
@@ -83,10 +102,29 @@ export type Listener<B> = (event: B) => Effect.Effect<void>;
  * Listeners do not block, so the protected region stays short. Returns the event, or null when `record` produced none.
  */
 export const makePublisher = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<ReadonlySet<Listener<B>>>): Effect.Effect<(record: (s: S) => readonly [B | null, S]) => Effect.Effect<B | null>> =>
+  makeStepper(state, listeners).pipe(
+    Effect.map((step) => (record: (s: S) => readonly [B | null, S]) =>
+      step((s) => {
+        const [b, next] = record(s);
+        return [b, b === null ? [] : [b], next] as const;
+      }),
+    ),
+  );
+
+/**
+ * The publisher's one serialized, uninterruptible step in its general form (issue #147): `record` returns a value for the
+ * caller, the broadcasts to offer in order, and the next state, so that a run's end and the chain's transition it causes
+ * are one step.
+ */
+export const makeStepper = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<ReadonlySet<Listener<B>>>): Effect.Effect<<X>(record: (s: S) => readonly [X, readonly B[], S]) => Effect.Effect<X>> =>
   Semaphore.make(1).pipe(
-    Effect.map((serial) => (record: (s: S) => readonly [B | null, S]) =>
-      Ref.modify(state, record).pipe(
-        Effect.tap((b) => (b === null ? Effect.void : Ref.get(listeners).pipe(Effect.flatMap((set) => Effect.forEach([...set], (listener) => listener(b), { discard: true }))))),
+    Effect.map((serial) => <X>(record: (s: S) => readonly [X, readonly B[], S]) =>
+      Ref.modify(state, (s): readonly [readonly [X, readonly B[]], S] => {
+        const [x, bs, next] = record(s);
+        return [[x, bs], next];
+      }).pipe(
+        Effect.tap(([, bs]) => (bs.length === 0 ? Effect.void : Ref.get(listeners).pipe(Effect.flatMap((set) => Effect.forEach(bs, (b) => Effect.forEach([...set], (listener) => listener(b), { discard: true }), { discard: true }))))),
+        Effect.map(([x]) => x),
         serial.withPermits(1),
         Effect.uninterruptible,
       ),
@@ -94,14 +132,21 @@ export const makePublisher = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readon
   );
 
 /** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
-type Run = Readonly<{ id: number; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal }>;
+type Run = Readonly<{ id: number; item: ItemId; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal }>;
 /** A mode's run in progress, and its last finished run (issue #120: one run per mode). */
 type Slot = Readonly<{ current: Run | null; last: Run | null }>;
 /**
  * The next id (one sequence for the server, so that an id names one run in either mode), each mode's slot, and whether
  * the server is ending after an error it could not trace to one run (issue #158), when no run is started.
  */
-type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean }>;
+type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean; chain: ChainState }>;
+/** Who asked for a start: the page, or the chain of that generation (issue #147). */
+type Origin = Readonly<{ _tag: "manual" }> | Readonly<{ _tag: "chain"; generation: number }>;
+const MANUAL: Origin = { _tag: "manual" };
+/** The chain's broadcast where a step changed it, none otherwise. */
+const chainChange = (before: ChainState, after: ChainState): readonly ChainBroadcast[] => (before === after ? [] : [{ _tag: "chain", state: after }]);
+/** What a save of the chain's state came to: saved; failed and the file removed; or failed and not removed either. */
+type Saved = "saved" | "removed" | "lost";
 const record = (r: Run): RunRecord => ({ id: r.id, events: r.events });
 const EMPTY: Slot = { current: null, last: null };
 /** The mode whose slot holds the run with that id as `which`, or null. */
@@ -125,15 +170,35 @@ export const makeRunManager = (
   mounts: MountTable,
   incarnation: string,
   access: TrackerAccess,
+  chainDefaults: ChainSettings,
   bounds: HaltBounds = LIVE_BOUNDS,
+  persistence?: ChainPersistence,
 ): Effect.Effect<RunManager, never, Platform> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const platform = Layer.succeedContext(yield* Effect.context<Platform>());
-    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false });
+    const kept: ChainPersistence = persistence ?? {
+      save: (chain) => saveChain(cwd, chain).pipe(Effect.provide(platform), Effect.mapError(describe)),
+      remove: removeChain(cwd).pipe(Effect.provide(platform), Effect.mapError(describe)),
+    };
+    // Issue #147 (requirements Q4): the chain as the last server left it, through what a restart does to it.
+    const loaded = yield* loadChain(cwd, chainDefaults).pipe(Effect.provide(platform));
+    const [restoredChain, resume] = restored(loaded);
+    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain });
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
-    const publish = yield* makePublisher(state, listeners);
+    const step = yield* makeStepper(state, listeners);
+    const publish = (record: (s: State) => readonly [Broadcast | null, State]): Effect.Effect<Broadcast | null> =>
+      step((s) => {
+        const [b, next] = record(s);
+        return [b, b === null ? [] : [b], next] as const;
+      });
+    /** One transition of the chain as a step of the publisher, broadcast where it changed; its command. */
+    const chainStep = (transition: (s: State) => readonly [ChainState, ChainCommand | null]): Effect.Effect<ChainCommand | null> =>
+      step((s) => {
+        const [chain, command] = transition(s);
+        return [command, chainChange(s.chain, chain), { ...s, chain }] as const;
+      });
 
     /** Appends an event to the run in progress with the given id and broadcasts it; nothing when no mode's current run has it. */
     const now = Clock.currentTimeMillis.pipe(Effect.map((ms) => new Date(ms).toISOString()));
@@ -149,17 +214,23 @@ export const makeRunManager = (
         ),
         Effect.asVoid,
       );
-    /** Appends Ended and makes the run its mode's last one, in the same step. */
-    const end = (id: number, code: number): Effect.Effect<void> =>
+    /**
+     * Appends Ended and makes the run its mode's last one, in the same step; issue #147: in that step too the chain learns
+     * of its run's end, unless the server is ending after a fault (issue #158), when the chain is left as it is, so that
+     * the restart finds the run cut off and starts nothing.
+     */
+    const end = (id: number, code: number, root: RunRoot | null = null): Effect.Effect<void> =>
       now.pipe(
         Effect.flatMap((time) =>
-          publish((s): readonly [Broadcast | null, State] => {
+          step((s): readonly [Readonly<{ changed: boolean; command: ChainCommand | null }>, readonly Broadcast[], State] => {
             const mode = modeOf(s, id, ["current"]);
             const run = mode === null ? null : s.runs[mode].current;
-            if (mode === null || run === null) return [null, s];
+            if (mode === null || run === null) return [{ changed: false, command: null }, [], s];
             const event: RunEvent = { _tag: "Ended", code };
-            return [{ _tag: "event", run: id, seq: run.events.length, time, event }, withSlot(s, mode, { current: null, last: { ...run, events: [...run.events, { time, event }] } })];
-          }),
+            const moved = withSlot(s, mode, { current: null, last: { ...run, events: [...run.events, { time, event }] } });
+            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root });
+            return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
+          }).pipe(Effect.flatMap(({ changed, command }) => (changed ? settle(command) : Effect.void))),
         ),
         Effect.asVoid,
       );
@@ -220,6 +291,74 @@ export const makeRunManager = (
         }),
       );
 
+    // ---- issue #147: the chain ----
+    // The git-index hazard recorded in CLAUDE.md stays out of reach: the chain is sequential, only an implementation run
+    // builds the baseline and the work review's diff through a temporary index, and the parking runs after the run ended
+    // while no implementation run can be reserved (blocksImplementationStart).
+
+    const writes = yield* Semaphore.make(1);
+    const continuations = yield* Semaphore.make(1);
+    const stderr = (text: string) => Effect.sync(() => void process.stderr.write(`${text}\n`));
+    /**
+     * Writes the chain as the State holds it at the moment of writing, never a snapshot taken at the change, under one
+     * permit, so writes never interleave and whatever write completes last holds the newest state (P1-R3-3). A failed save
+     * ends the chain (saveFailed, broadcast) and removes the file, since a missing file restores to an idle chain; where
+     * the removal fails too, both failures go to stderr (P1-R1-5).
+     */
+    const persist: Effect.Effect<Saved> = writes.withPermits(1)(
+      Effect.gen(function* () {
+        const saved = yield* Effect.result(Effect.flatMap(Ref.get(state), (s) => kept.save(s.chain)));
+        if (Result.isSuccess(saved)) return "saved" as const;
+        yield* chainStep((s) => [saveFailed(s.chain, saved.failure), null]);
+        const removed = yield* Effect.result(kept.remove);
+        if (Result.isSuccess(removed)) return "removed" as const;
+        yield* stderr(`Interloq: the chain's state could not be saved (${saved.failure}) nor its file removed (${removed.failure}).`);
+        return "lost" as const;
+      }),
+    );
+
+    /** Runs one command of the chain, for the generation it was computed for; the next command, or none. */
+    const execute = ({ generation, command }: ChainCommand): Effect.Effect<ChainCommand | null> => {
+      switch (command._tag) {
+        case "Park":
+          return Effect.gen(function* () {
+            const config = yield* Effect.result(loadConfig(cwd, access.sharedConfig).pipe(Effect.provide(platform)));
+            const store = Result.isFailure(config)
+              ? Result.fail(describe(config.failure))
+              : yield* Effect.result(makeStore(cwd, command.root, config.success.ignorePaths).pipe(Effect.provide(platform)));
+            const note: ParkNote = Result.isFailure(store) ? { _tag: "ParkFailed", message: typeof store.failure === "string" ? store.failure : describe(store.failure) } : yield* parkHalted(store.success, command.item).pipe(Effect.provide(platform));
+            return yield* chainStep((s) => parked(s.chain, generation, note));
+          });
+        case "Due":
+          return Clock.currentTimeMillis.pipe(Effect.flatMap((nowMs) => chainStep((s) => due(s.chain, generation, nowMs))));
+        case "List":
+          return withTracker((t) => t.list(listedState("implementation"))).pipe(
+            Effect.flatMap((listed) =>
+              chainStep((s) =>
+                Result.isFailure(listed)
+                  ? [chainRefused(s.chain, generation, { _tag: "ListingFailed", message: listed.failure }), null]
+                  : listedNext(s.chain, generation, listed.success[0] === undefined ? null : { item: listed.success[0].id, title: listed.success[0].title }),
+              ),
+            ),
+          );
+        case "Start":
+          return start({ mode: "implementation", item: command.item }, { _tag: "chain", generation }).pipe(
+            Effect.flatMap((result) =>
+              typeof result === "number" ? Effect.succeed(null) : chainStep((s) => [chainRefused(s.chain, generation, { _tag: "StartRefused", item: command.item, reason: result.refused }), null]),
+            ),
+          );
+      }
+    };
+    /** Persists the chain, then runs its commands one after another; nothing once the server is ending. */
+    const continueFrom = (command: ChainCommand | null): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        if ((yield* Ref.get(state)).closing) return;
+        if ((yield* persist) !== "saved" || command === null) return;
+        yield* continueFrom(yield* execute(command));
+      });
+    /** After a change of the chain: its persistence and its commands, in a detached fiber under one permit (P1-R3-1). */
+    const settle = (command: ChainCommand | null): Effect.Effect<void> => Effect.asVoid(Effect.forkDetach(continuations.withPermits(1)(continueFrom(command))));
+
     /** The run with that id, if it is a mode's run in progress, with its mode. */
     const currentRun = (id: number) =>
       Ref.get(state).pipe(
@@ -229,7 +368,7 @@ export const makeRunManager = (
         }),
       );
 
-    const start = (request: StartRequest): Effect.Effect<number | Refusal> =>
+    const start = (request: StartRequest, origin: Origin = MANUAL): Effect.Effect<number | Refusal> =>
       Effect.gen(function* () {
         const { mode, item: itemText } = request;
         const refused = (text: string): Refusal => ({ refused: text, mode });
@@ -249,6 +388,8 @@ export const makeRunManager = (
         const signal = yield* makeFaultSignal;
         // The ui's sink needs the id, and the id is taken with the reservation of the run.
         const idRef = yield* Ref.make(0);
+        // Issue #147: the run's records directory once allocated, which the chain needs at the run's end, however it ends.
+        const allocated = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
         // Issue #142: the run takes the choice the page sent, which is what its control showed.
         const runStart: RunStart = request.mode === "refinement" ? { mode: request.mode, item: item.id, project: cwd, terms: request.terms } : { mode: request.mode, item: item.id, project: cwd };
@@ -261,21 +402,50 @@ export const makeRunManager = (
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal))),
+              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal, allocated))),
               // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
               Effect.onExit((exit: Exit.Exit<number>) =>
-                Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault)]).pipe(Effect.flatMap(([rid, faulted]) => end(rid, faulted ? 1 : exitCodeOf(exit)))),
+                Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated)]).pipe(
+                  Effect.flatMap(([rid, faulted, root]) => end(rid, faulted ? 1 : exitCodeOf(exit), Option.getOrNull(root))),
+                ),
               ),
               Effect.forkDetach({ startImmediately: true }),
             );
             // The reservation is the one atomic check of closing (issue #158): a start that waited on the tracker while
-            // haltAll ran is refused here.
-            const reserved = yield* Ref.modify(state, (s): readonly [number | string | null, State] =>
-              s.closing ? [serverEndingText, s] : s.runs[mode].current !== null ? [null, s] : [s.nextId, withSlot({ ...s, nextId: s.nextId + 1 }, mode, { ...s.runs[mode], current: { id: s.nextId, events: [], ui, fiber, shared: emptyUiState, signal } })],
-            );
+            // haltAll ran is refused here. Issue #147: in the same step, an implementation start is refused while a halted
+            // run's work is being parked, the chain's own start is checked against its limits at this moment (startGuard,
+            // the Clock read just before), and the chain learns of the start, so it is Running with the run's id before
+            // the gate exists to release (P1-R3-2).
+            const nowMs = yield* Clock.currentTimeMillis;
+            const reserved = yield* step((s): readonly [number | string | null, readonly Broadcast[], State] => {
+              if (s.closing) return [serverEndingText, [], s];
+              if (s.runs[mode].current !== null) return [null, [], s];
+              if (mode === "implementation" && blocksImplementationStart(s.chain)) return [chainParkingText(s.chain.chain._tag === "Parking" ? s.chain.chain.item : item.id), [], s];
+              const guard = origin._tag === "chain" ? startGuard(s.chain, origin.generation, item.id, nowMs) : null;
+              if (guard !== null) {
+                const chain = chainRefused(s.chain, origin._tag === "chain" ? origin.generation : 0, guard);
+                return [chainEndedText(guard, (iso) => iso), chainChange(s.chain, chain), { ...s, chain }];
+              }
+              const id = s.nextId;
+              const chain = mode !== "implementation" ? s.chain : origin._tag === "chain" ? chainStarted(s.chain, origin.generation, id, item.id, item.title) : begun(s.chain, id, item.id, item.title);
+              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, { ...s.runs[mode], current: { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal } });
+              return [id, chainChange(s.chain, chain), next];
+            });
             if (typeof reserved !== "number") {
               yield* Fiber.interrupt(fiber);
               return refused(reserved ?? runInProgressText(mode));
+            }
+            // The chain's Running is saved before the run's gate is released (P1-R1-5), so a server that ends during the
+            // run finds it cut off after the restart and starts nothing. Where neither the save nor the removal of the old
+            // file succeeded, the run is not started: its slot is freed in one step and its fiber, whose id is still 0, interrupted.
+            const chainOf = (yield* Ref.get(state)).chain.chain;
+            if (mode === "implementation" && chainOf._tag === "Running" && chainOf.run === reserved) {
+              const saved = yield* persist;
+              if (saved === "lost") {
+                yield* step((s) => [null, [], withSlot(s, mode, { ...s.runs[mode], current: null })] as const);
+                yield* Fiber.interrupt(fiber);
+                return refused(chainSaveRefusedText("the file system refused both"));
+              }
             }
             yield* Ref.set(idRef, reserved);
             yield* append(reserved, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item), () => item.title), mode, item: { id: item.id, title: item.title } });
@@ -311,6 +481,9 @@ export const makeRunManager = (
         return { halted: runs.filter((_, i) => recorded[i]).map((r) => r.id), unconfirmed: runs.filter((_, i) => !recorded[i]).map((r) => r.id) };
       });
 
+    // Issue #147 (Q4): a restored Parking chain is parked again, a restored Ready one started at once if no limit is reached.
+    if (resume !== null || restoredChain !== loaded) yield* settle(resume);
+
     /** The refusal of an action naming a run that no mode holds now: it belongs to no tab. */
     const ended: Refusal = { refused: "that run has ended", mode: null };
     const earlier = (mode: RunMode | null): Refusal => ({ refused: "that run belongs to an earlier start of the server", mode });
@@ -330,9 +503,16 @@ export const makeRunManager = (
         }),
       ),
       current: Ref.get(state).pipe(Effect.map((s) => ({ refinement: s.runs.refinement.current?.id ?? null, implementation: s.runs.implementation.current?.id ?? null }))),
-      start,
+      start: (request) => start(request),
       listItems,
       haltAll,
+      chain: Ref.get(state).pipe(Effect.map((s) => s.chain)),
+      setChain: (settings) =>
+        Effect.gen(function* () {
+          yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current?.item ?? null), null]);
+          yield* persist;
+          return (yield* Ref.get(state)).chain;
+        }),
       stop: (of, id) =>
         currentRun(id).pipe(
           Effect.flatMap((found) => {

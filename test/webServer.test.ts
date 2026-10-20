@@ -23,6 +23,7 @@ import { codexReviewerLayer } from "../src/codex.ts";
 import { codexThread } from "../src/codexExec.ts";
 import type { AgentSdk } from "../src/sdk.ts";
 import { FakeSdk } from "./fakeSdk.ts";
+import { initialState as initialChain, OFF_SETTINGS } from "../src/chain.ts";
 
 const run = Effect.runPromise;
 // Plan step 3.4: the server over NodeHttpServer.layerTest, with Node's WebSocket as the scripted client.
@@ -37,7 +38,7 @@ const startFrame = (): ClientMessage => ({ type: "start", mode: "implementation"
 const managerOf = async (repo: string, scripts: TestOptions[], mounts: MountTable = [], tracker: FakeTracker = fakeTrackerOf(MANAGER_ITEMS)): Promise<RunManager> => {
   const queue = [...scripts];
   started = 0;
-  return Effect.runPromise(makeRunManager((ui) => ({ ...testWiring(repo, { tracker, ...(queue.shift() ?? {}) }).wiring, ui: Effect.succeed(ui) }), repo, mounts, "test", trackerAccessOf(tracker)).pipe(Effect.provide(platformLayer)));
+  return Effect.runPromise(makeRunManager((ui) => ({ ...testWiring(repo, { tracker, ...(queue.shift() ?? {}) }).wiring, ui: Effect.succeed(ui) }), repo, mounts, "test", trackerAccessOf(tracker), OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
 };
 const dist = (): string => {
   const d = tempDir("pr-dist-");
@@ -492,6 +493,8 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     answer: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
+    chain: Effect.succeed(initialChain(OFF_SETTINGS)),
+    setChain: () => Effect.succeed(initialChain(OFF_SETTINGS)),
   };
   await run(
     Effect.scoped(
@@ -729,6 +732,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
       [],
       "test",
       trackerAccessOf(tracker),
+      OFF_SETTINGS,
     ).pipe(Effect.provide(platformLayer)),
   );
   await serve(manager, dist(), async (port) => {

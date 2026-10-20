@@ -22,6 +22,7 @@ import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
 import { startOf } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
+import { OFF_SETTINGS } from "../src/chain.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -51,11 +52,11 @@ const harness = async (
 ): Promise<Harness> => {
   const queue = [...scripts];
   const access = trackerAccessOf(tracker);
-  const manager = await run(makeRunManager((ui) => ({ ...wiringOf({ tracker, ...(queue.shift() ?? {}) }), ui: Effect.succeed(ui) }), repo, mounts, "test", access, bounds).pipe(Effect.provide(platformLayer)));
+  const manager = await run(makeRunManager((ui) => ({ ...wiringOf({ tracker, ...(queue.shift() ?? {}) }), ui: Effect.succeed(ui) }), repo, mounts, "test", access, OFF_SETTINGS, bounds).pipe(Effect.provide(platformLayer)));
   const received: EventBroadcast[] = [];
   const uiReceived: UiBroadcast[] = [];
   const scope = await run(Scope.make());
-  await run(manager.subscribe((b: Broadcast) => Effect.sync(() => void (b._tag === "event" ? received.push(b) : uiReceived.push(b)))).pipe(Scope.provide(scope)));
+  await run(manager.subscribe((b: Broadcast) => Effect.sync(() => void (b._tag === "event" ? received.push(b) : b._tag === "ui" ? uiReceived.push(b) : undefined))).pipe(Scope.provide(scope)));
   return { manager, received, uiReceived, scope, repo, scripts, tracker, used: new Set() };
 };
 const until = async (what: string, condition: () => boolean, ms = 30_000): Promise<void> => {
@@ -523,7 +524,7 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
 
   const shared = path.join(tempDir("pr-shared-"), "config.json");
   fs.writeFileSync(shared, "{}");
-  const none = await run(makeRunManager(() => testWiring(repo).wiring, repo, [], "test", { sharedConfig: shared, tracker: () => Result.fail(new NoTracker()) }).pipe(Effect.provide(platformLayer)));
+  const none = await run(makeRunManager(() => testWiring(repo).wiring, repo, [], "test", { sharedConfig: shared, tracker: () => Result.fail(new NoTracker()) }, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
   const notice = (await run(none.listItems("implementation"))).result;
   assert.equal(notice._tag, "Unavailable");
   assert.match(notice._tag === "Unavailable" ? notice.notice : "", /no issue tracker is configured/);

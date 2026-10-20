@@ -3418,6 +3418,8 @@ export const chainEndedText = (reason: ChainEndReason, time: TimeText): string =
       return `The chain's saved state under plan-review/ could not be read, so the mode started from its defaults. ${reason.message}`;
     case "ChainChanged":
       return `The chain ended: it changed before item #${reason.item} could start.`;
+    case "ListingFailed":
+      return `The chain ended: the refined items could not be listed: ${reason.message}`;
   }
 };
 

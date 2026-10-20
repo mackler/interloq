@@ -111,8 +111,17 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
         for (;;) {
           const event = yield* Queue.take(buffered);
           // Issue #87: a shared state is sent whatever the snapshot holds; the page keeps the higher version.
-          if (event._tag === "ui") yield* send({ type: "ui", run: event.run, state: event.state });
-          else if (!inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
+          switch (event._tag) {
+            case "ui":
+              yield* send({ type: "ui", run: event.run, state: event.state });
+              break;
+            case "event":
+              if (!inSnapshot(runs, event)) yield* send({ type: "event", run: event.run, seq: event.seq, time: event.time, event: event.event });
+              break;
+            case "chain":
+              // Issue #147: sent as a frame from S11 of its plan.
+              break;
+          }
         }
       });
       yield* Effect.forkScoped(forward);

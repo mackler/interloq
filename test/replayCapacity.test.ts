@@ -13,6 +13,7 @@ import { Planner, type PlannerShape, Reviewer, type StepReporter, Ui } from "../
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeWebServer } from "../src/webServer.ts";
 import { fakeTrackerOf, finished, issue, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf } from "./helpers.ts";
+import { OFF_SETTINGS } from "../src/chain.ts";
 
 // Finding 13 of docs/gui-review.md, decision Q4: a long scripted run of about 10,000 events typical of a run (tool
 // activity, program lines, reviews with issues), published through the manager, then replayed to one client over
@@ -70,7 +71,7 @@ test("measurement: a run of 10,000 events, its retained size, and the time to re
   };
   const dist = tempDir("pr-dist-");
   const before = heap();
-  const manager = await Effect.runPromise(makeRunManager(wiringOf, repo, [], "measure", trackerAccessOf(tracker)).pipe(Effect.provide(platformLayer)));
+  const manager = await Effect.runPromise(makeRunManager(wiringOf, repo, [], "measure", trackerAccessOf(tracker), OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
   await Effect.runPromise(manager.start({ mode: "implementation", item: MANAGER_ITEMS[0].id }));
   const running = async () => (await Effect.runPromise(manager.current)).implementation !== null;
   for (let i = 0; i < 6000 && (await running()); i++) await sleep(10);

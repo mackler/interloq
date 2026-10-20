@@ -25,6 +25,7 @@ const reasons: readonly ChainEndReason[] = [
   { _tag: "SaveFailed", message: "ENOSPC" },
   { _tag: "Unreadable", message: "not JSON" },
   { _tag: "ChainChanged", item },
+  { _tag: "ListingFailed", message: "the tracker could not be reached" },
 ];
 const chains: readonly Chain[] = [
   { _tag: "Idle", ended: null, history: [] },
