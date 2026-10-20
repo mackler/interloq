@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
 import { type ChainState, cutoffOf, DEFAULT_SETTINGS, initialState, OFF_SETTINGS } from "../../src/chain.ts";
 import { Result } from "effect";
-import type { ChainFrameSettings } from "../../src/protocol.ts";
+import { chainSettingsOf, type ChainFrameSettings } from "../../src/protocol.ts";
 import ChainControl from "./components/ChainControl.svelte";
 import { chainShown, initialState as initialView } from "./state.ts";
 import { chainFrame } from "./tabs.ts";
@@ -132,5 +132,65 @@ describe("ChainControl's empty runs field", () => {
     expect(root.textContent).toContain(prompts.CHAIN_RUNS_SUPPORT);
     expect(root.querySelector(".support.error")).toBeNull();
     expect(sent.at(-1)).toEqual({ enabled: true, runs: null, cutoff: null });
+  });
+});
+
+// Work review 3 of issue #147, W3-R1-1: two changes made before the server answers never undo each other, since each
+// frame is composed from the frames not yet acknowledged.
+describe("ChainControl's consecutive changes", () => {
+  const NOW = new Date(2026, 9, 20, 22, 0);
+  const CUTOFF = new Date(2026, 9, 21, 7, 0).toISOString();
+  const live = () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const sent: ChainFrameSettings[] = [];
+    const props = $state({ shown: chainShown({ ...initialView, chain: initialState(DEFAULT_SETTINGS) }, (iso) => fullTime(iso))!, onChange: (s: ChainFrameSettings) => void sent.push(s), now: () => NOW });
+    mounted.push(mount(ChainControl, { target: root, props }));
+    flushSync();
+    // The server's broadcast of the given settings, as the reducer passes it on.
+    const serverHas = (frame: ChainFrameSettings) => {
+      const settings = Result.getOrThrow(chainSettingsOf(frame));
+      props.shown = chainShown({ ...initialView, chain: { ...initialState(DEFAULT_SETTINGS), settings } }, (iso) => fullTime(iso))!;
+      flushSync();
+    };
+    const click = () => {
+      input(root, "chain").click();
+      flushSync();
+    };
+    return { root, sent, serverHas, click };
+  };
+
+  test("(a) runs 3, then a cutoff: the second frame carries both", () => {
+    const { root, sent } = live();
+    commit(input(root, "chain-runs"), "3");
+    commit(input(root, "chain-cutoff"), "07:00");
+    expect(sent.at(-1)).toEqual({ enabled: true, runs: 3, cutoff: CUTOFF });
+  });
+
+  test("(b) runs 3, then the switch: the frame carries enabled false and runs 3", () => {
+    const { root, sent, click } = live();
+    commit(input(root, "chain-runs"), "3");
+    click();
+    expect(sent.at(-1)).toEqual({ enabled: false, runs: 3, cutoff: null });
+  });
+
+  test("(c) the first of two changes acknowledged, then the switch: the frame carries all three, the hour kept", () => {
+    const { root, sent, serverHas, click } = live();
+    commit(input(root, "chain-runs"), "3");
+    commit(input(root, "chain-cutoff"), "07:00");
+    serverHas(sent[0]!);
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+    click();
+    expect(sent.at(-1)).toEqual({ enabled: false, runs: 3, cutoff: CUTOFF });
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+  });
+
+  test("(d) another tab's change replaces the drafts, and the next frame is composed from it", () => {
+    const { root, sent, serverHas } = live();
+    commit(input(root, "chain-runs"), "3");
+    serverHas({ enabled: true, runs: 7, cutoff: null });
+    expect(input(root, "chain-runs").value).toBe("7");
+    commit(input(root, "chain-cutoff"), "07:00");
+    expect(sent.at(-1)).toEqual({ enabled: true, runs: 7, cutoff: CUTOFF });
   });
 });

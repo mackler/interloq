@@ -7,10 +7,12 @@
   // Enter), and a runs field that is not a positive whole number shows its error and sends nothing [error prevention].
   // Nothing asks a confirmation (behavior 1), and nothing names a cost (Q2).
   import { Result } from "effect";
+  import { untrack } from "svelte";
   import { Switch, TextFieldOutlined } from "m3-svelte";
   import { CHAIN_CUTOFF_LABEL, CHAIN_CUTOFF_SUPPORT, CHAIN_INVALID_RUNS, CHAIN_RUNS_LABEL, CHAIN_RUNS_SUPPORT, CHAIN_SWITCH_LABEL, chainCutoffResolved } from "../../../src/prompts.ts";
   import type { ChainFrameSettings } from "../../../src/protocol.ts";
   import type { ChainShown } from "../state.ts";
+  import { acknowledged, effective, NO_IN_FLIGHT, sent } from "../chainPending.ts";
   import { cutoffAt } from "../cutoff.ts";
   import { fullTime } from "../time.ts";
 
@@ -21,40 +23,56 @@
     const d = new Date(ms);
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
-  const cutoffIso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
   let runsText = $state("");
   let cutoffText = $state("");
   let runsInvalid = $state(false);
-  // The fields follow the server's settings whenever they change, from this tab or another. The limits are read through
-  // their own deriveds, numbers or null, so an event that gives a new but equal `shown` leaves a draft and its error
-  // alone (W1-R1-4): a derived notifies its dependents only when its value changes.
+  // The frames this tab sent and the server has not acknowledged (W3-R1-1): every frame is composed from the last of
+  // them, so two changes made before the server answers never undo each other.
+  let inFlight = $state(NO_IN_FLIGHT);
+  // The fields follow the server's settings whenever they change, from this tab or another. The effect tracks these three
+  // deriveds alone, numbers, booleans or null, so an event that gives a new but equal `shown` leaves a draft and its
+  // error alone (W1-R1-4): a derived notifies its dependents only when its value changes. The reconciliation reads
+  // `shown` and `inFlight` untracked, so neither is a dependency and its own write of `inFlight` does not rerun it, and
+  // it resets the drafts from the frames still in flight, so a committed change not yet acknowledged keeps its value
+  // when an earlier change's acknowledgment arrives.
+  const enabledNow = $derived(shown.settings.enabled);
   const runsLimit = $derived(shown.settings.limits.runs);
   const cutoffLimit = $derived(shown.settings.limits.cutoff);
   $effect(() => {
-    runsText = runsLimit === null ? "" : String(runsLimit);
-    cutoffText = cutoffLimit === null ? "" : hourOf(cutoffLimit);
-    runsInvalid = false;
+    void [enabledNow, runsLimit, cutoffLimit];
+    untrack(() => {
+      inFlight = acknowledged(inFlight, shown.settings);
+      const e = effective(inFlight, shown.settings);
+      runsText = e.runs === null ? "" : String(e.runs);
+      cutoffText = e.cutoff === null ? "" : hourOf(Date.parse(e.cutoff));
+      runsInvalid = false;
+    });
   });
 
-  const current = (): ChainFrameSettings => ({ enabled: shown.settings.enabled, runs: shown.settings.limits.runs, cutoff: cutoffIso(shown.settings.limits.cutoff) });
-  const toggle = (enabled: boolean) => onChange({ ...current(), enabled });
+  // What the control shows and composes every frame from: the last frame it sent, else the server's settings.
+  const shownNow = $derived(effective(inFlight, shown.settings));
+  const send = (frame: ChainFrameSettings) => {
+    inFlight = sent(inFlight, frame);
+    onChange(frame);
+  };
+  const toggle = (enabled: boolean) => send({ ...shownNow, enabled });
   const commitRuns = () => {
     const text = runsText.trim();
     if (text === "") {
       // An empty field is valid and means no limit; the effect above does not rerun when the server's limit stays null,
       // so the error is cleared here (W2-R1-2).
       runsInvalid = false;
-      return onChange({ ...current(), runs: null });
+      return send({ ...shownNow, runs: null });
     }
     const n = /^[0-9]+$/u.test(text) ? Number(text) : Number.NaN;
     runsInvalid = !(Number.isSafeInteger(n) && n >= 1);
-    if (!runsInvalid) onChange({ ...current(), runs: n });
+    if (!runsInvalid) send({ ...shownNow, runs: n });
   };
   const commitCutoff = () => {
-    if (cutoffText.trim() === "") return onChange({ ...current(), cutoff: null });
+    if (cutoffText.trim() === "") return send({ ...shownNow, cutoff: null });
     const resolved = cutoffAt(cutoffText, now());
-    if (Result.isSuccess(resolved)) onChange({ ...current(), cutoff: new Date(resolved.success).toISOString() });
+    if (Result.isSuccess(resolved)) send({ ...shownNow, cutoff: new Date(resolved.success).toISOString() });
   };
   const onEnter = (commit: () => void) => (e: KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -65,7 +83,7 @@
 </script>
 
 <section class="chain" aria-label={CHAIN_SWITCH_LABEL}>
-  <label class="switch m3-font-label-large"><Switch name="chain" checked={shown.settings.enabled} onchange={(e: Event) => toggle((e.currentTarget as HTMLInputElement).checked)} />{CHAIN_SWITCH_LABEL}</label>
+  <label class="switch m3-font-label-large"><Switch name="chain" checked={shownNow.enabled} onchange={(e: Event) => toggle((e.currentTarget as HTMLInputElement).checked)} />{CHAIN_SWITCH_LABEL}</label>
   <div class="fields">
     <div class="field">
       <TextFieldOutlined label={CHAIN_RUNS_LABEL} name="chain-runs" inputmode="numeric" error={runsInvalid} bind:value={runsText} onchange={commitRuns} onkeydown={onEnter(commitRuns)} />
@@ -73,7 +91,7 @@
     </div>
     <div class="field">
       <TextFieldOutlined label={CHAIN_CUTOFF_LABEL} name="chain-cutoff" type="time" bind:value={cutoffText} onchange={commitCutoff} onkeydown={onEnter(commitCutoff)} />
-      <p class="support m3-font-body-small">{shown.settings.limits.cutoff === null ? CHAIN_CUTOFF_SUPPORT : chainCutoffResolved(fullTime(new Date(shown.settings.limits.cutoff).toISOString()))}</p>
+      <p class="support m3-font-body-small">{shownNow.cutoff === null ? CHAIN_CUTOFF_SUPPORT : chainCutoffResolved(fullTime(shownNow.cutoff))}</p>
     </div>
   </div>
   <p class="status m3-font-body-medium" role="status">{shown.status}{#if shown.ended !== null}<br /><span class="ended">{shown.ended}</span>{/if}</p>
