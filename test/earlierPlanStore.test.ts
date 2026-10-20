@@ -8,6 +8,7 @@ import { type RunRoot, runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
 import { PLAN_FILE_LABEL, reviewConvergedMarkdown } from "../src/prompts.ts";
 import type { Baseline } from "../src/records.ts";
+import type { ParkRecord } from "../src/park.ts";
 import { subjectHeading } from "../src/render.ts";
 import type { RecordedPlan } from "../src/schema.ts";
 import type { StoreShape } from "../src/services.ts";
@@ -89,4 +90,28 @@ test("an adopted baseline: the change record holds what was committed since it, 
   const diff = fs.readFileSync(path.join(store.dir, "work-review-1", "changes.diff"), "utf8");
   assert.ok(diff.includes("committed between the runs") && diff.includes("left by the earlier run"), diff);
   assert.deepEqual(await run(store.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["left.txt"] });
+});
+
+// Issue #147 (S7): a newest earlier run whose work was parked, or whose parking was intended, ends the search.
+const parkedIn = (repo: string, root: RunRoot, record: ParkRecord) => fs.writeFileSync(path.join(repo, "plan-review", root, "parked.json"), JSON.stringify(record));
+
+test("parked: a newest run parked, or with its parking intended, gives EarlierRunParked and no older run is tried", async () => {
+  const records: readonly ParkRecord[] = [
+    { _tag: "Parked", version: 2, branch: "interloq/halted/80/x", commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" },
+    { _tag: "Intended", version: 2, branch: "interloq/halted/80/x", start_commit: "s", time: "t" },
+  ];
+  for (const record of records) {
+    const repo = tempRepo();
+    earlier(repo, OLD, {});
+    earlier(repo, NEW, {});
+    parkedIn(repo, NEW, record);
+    assert.deepEqual(await run((await storeOf(repo)).earlierPlan(item("80"))), { _tag: "EarlierRunParked", root: NEW, branch: "interloq/halted/80/x" }, record._tag);
+  }
+});
+
+test("a newest run whose parking found nothing to keep is read as before", async () => {
+  const repo = tempRepo();
+  earlier(repo, NEW, {});
+  parkedIn(repo, NEW, { _tag: "Nothing", version: 2, time: "t" });
+  assert.equal((await run((await storeOf(repo)).earlierPlan(item("80"))))._tag, "EarlierPlanTaken");
 });

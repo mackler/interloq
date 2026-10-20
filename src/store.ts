@@ -332,6 +332,8 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           if (!(yield* exists(runsDir))) return { _tag: "NoEarlierPlan" } as const;
           // Read newest first and stop at the first that qualifies: the requirement names the most recent one (Q1).
           for (const earlier of implementationRootsOf(yield* list(runsDir), item, root)) {
+            const parked = yield* decodedOrNull(path.join(project, RECORDS_DIR, earlier, pathOf({ kind: "parked" })), ParkRecordSchema);
+            if (parked !== null && parked._tag !== "Nothing") return { _tag: "EarlierRunParked", root: earlier, branch: parked.branch } as const;
             const found = latestQualifying([yield* earlierRecords(earlier)]);
             if (found === null) continue;
             const kept = found.baseline !== null && (yield* treeExists(found.baseline.tree)) ? found.baseline : null;

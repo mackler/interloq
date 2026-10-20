@@ -25,7 +25,12 @@ export type EarlierRunRecords = Readonly<{
 export type EarlierPlan =
   | Readonly<{ _tag: "NoEarlierPlan" }>
   | Readonly<{ _tag: "EarlierPlanTaken"; root: RunRoot; plan: RecordedPlan; baseline: Baseline }>
-  | Readonly<{ _tag: "EarlierPlanSetAside"; root: RunRoot }>;
+  | Readonly<{ _tag: "EarlierPlanSetAside"; root: RunRoot }>
+  /**
+   * The newest earlier run halted and its work was parked on a branch (issue #147): its commits are off the working
+   * branch, so this run takes no plan and no baseline from it, nor from an older run, and plans from nothing.
+   */
+  | Readonly<{ _tag: "EarlierRunParked"; root: RunRoot; branch: string }>;
 
 /** Whether some plan review of the run ended in agreement, as its records show. */
 export const planReviewConverged = (records: EarlierRunRecords): boolean =>

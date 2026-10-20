@@ -9,7 +9,8 @@ import { describe, type RunError, SuiteStopped, TrackerStepFailed, trackerFailur
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+import type { EarlierPlan } from "./earlierPlan.ts";
+import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -102,8 +103,7 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
     // Issue #180 (Q1): the plan of the newest earlier run of the item whose plan review ended in agreement, without
     // asking; after the requirements, so that the revision is written for the item's section as it stands now (Q5).
     const earlier = yield* store.earlierPlan(item);
-    if (earlier._tag !== "NoEarlierPlan") yield* sayAndWrite(earlier._tag === "EarlierPlanTaken" ? earlierPlanTakenLine(earlier.root) : earlierPlanSetAsideLine(earlier.root));
-    const start: PlanStart = earlier._tag === "EarlierPlanTaken" ? { _tag: "Earlier", root: earlier.root, plan: earlier.plan, baseline: earlier.baseline } : { _tag: "Fresh" };
+    const start: PlanStart = yield* planStartOf(earlier);
     const phases = yield* implementationPhases(task, requirements !== null, checks, start);
     yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("implementation") }, env, "setImplemented", null);
     return phases;
@@ -115,6 +115,20 @@ export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effe
     yield* (yield* Store).init(task);
     return yield* implementationPhases(task, false, checks, { _tag: "Fresh" });
   });
+
+/** Where an implementation run's planning starts, from what the Store found of the item's earlier runs, with its line said and written. */
+const planStartOf = (earlier: EarlierPlan): Effect.Effect<PlanStart, StoreError, Ui | Store> => {
+  switch (earlier._tag) {
+    case "NoEarlierPlan":
+      return Effect.succeed({ _tag: "Fresh" });
+    case "EarlierPlanTaken":
+      return sayAndWrite(earlierPlanTakenLine(earlier.root)).pipe(Effect.as({ _tag: "Earlier", root: earlier.root, plan: earlier.plan, baseline: earlier.baseline } as const));
+    case "EarlierPlanSetAside":
+      return sayAndWrite(earlierPlanSetAsideLine(earlier.root)).pipe(Effect.as({ _tag: "Fresh" } as const));
+    case "EarlierRunParked":
+      return sayAndWrite(earlierRunParkedLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "Fresh" } as const));
+  }
+};
 
 /** A line said on the page and written to conversation.md (issues #162, #176, #180). */
 const sayAndWrite = (line: string): Effect.Effect<void, StoreError, Ui | Store> =>

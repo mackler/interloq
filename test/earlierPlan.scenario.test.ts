@@ -103,3 +103,15 @@ test("a qualifying run whose plan.json holds a later revision never agreed: that
   await implement(repo, { steps: [{ output: revision(LATER_PLAN), onCall: () => (atRevision = statusesOf(path.join(dir, "plan.json"))) }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
   assert.deepEqual(atRevision, ["S1:done", "S9:pending"]);
 });
+
+test("an earlier run whose work was parked (issue #147, S7): the run plans from nothing and says so", async () => {
+  const repo = tempRepo();
+  earlierRun(repo, EARLIER_ROOT, {});
+  const branch = "interloq/halted/1/earlier";
+  fs.writeFileSync(path.join(repo, "plan-review", EARLIER_ROOT, "parked.json"), JSON.stringify({ _tag: "Parked", version: 2, branch, commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" }));
+  const probe = await implement(repo, { steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+  assert.ok(initialText(probe), "the run did not plan from nothing");
+  const line = prompts.earlierRunParkedLine(EARLIER_ROOT, branch);
+  assert.ok(conversationOf(probe.dir).includes(line));
+  assert.ok(probe.ui.said.includes(line));
+});
