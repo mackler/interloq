@@ -466,3 +466,89 @@ test("a failed save before the parking abandons it: nothing parked, the chain en
   failing = false;
   assert.equal(typeof (await run(h.manager.start(startOf("implementation", "3")))), "number");
 });
+
+// ---- work review 1 of issue #147, W1-R1-6: the concurrency scenarios S10 named (S19) ----
+
+const hanging: TestOptions = { ...converging, steps: [{ output: noQuestions, plan: "v1", hang: true }] };
+/** A tracker whose first listing waits for `held`; `listed()` says whether it was asked. */
+const heldListing = (held: Promise<void>) => {
+  let lists = 0;
+  return {
+    asked: () => lists > 0,
+    trackerOf: (fake: FakeTracker): TrackerShape => ({ ...fake.tracker, list: (state) => Effect.suspend(() => (++lists === 1 ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(fake.tracker.list(state))) }),
+  };
+};
+
+test("a chained start out of Ready waits for a held save of the limits before its run's gate, and the file ends at Running", async () => {
+  let releaseList = () => {};
+  const listing = heldListing(new Promise<void>((r) => (releaseList = r)));
+  let releaseSave = () => {};
+  const saveHeld = new Promise<void>((r) => (releaseSave = r));
+  let holding = false;
+  const repo = identified();
+  const persistence: ChainPersistence = {
+    save: (state) =>
+      Effect.suspend(() => (state.settings.limits.runs === 5 && !holding ? ((holding = true), Effect.promise(() => saveHeld)) : Effect.void)).pipe(
+        Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+      ),
+    remove: Effect.void,
+  };
+  const h = await harness([converging, hanging], { repo, persistence, trackerOf: listing.trackerOf });
+  const order = await refinedOrder(h.tracker);
+  await begin(h, order[0]!);
+  await until("the chain's listing", async () => listing.asked() && (await chainOf(h)).chain._tag === "Ready");
+  const configuring = Effect.runPromise(h.manager.setChain(settings(5)));
+  await until("the held save of the limits", () => holding);
+  releaseList();
+  await until("the chained start", async () => (await chainOf(h)).chain._tag !== "Ready");
+  await sleep(300);
+  assert.equal(startedRuns(h).length, 1, "the chained run's gate was released before its Running was saved");
+  releaseSave();
+  await configuring;
+  await until("the chained run", () => startedRuns(h).length === 2);
+  const second = order.filter((i) => i !== order[0])[0];
+  assert.equal(startedRuns(h)[1]?.item, second);
+  const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
+  assert.equal(onDisk.chain._tag === "Running" && onDisk.chain.item, second);
+  assert.equal(onDisk.settings.limits.runs, 5);
+  await run(h.manager.haltAll("end"));
+  const next = await harness([converging], { repo });
+  await idle(next);
+  assert.equal(startedRuns(next).length, 0);
+  assert.equal(await endedReason(next), "ServerEnded");
+});
+
+test("a continuation held at its listing after a manual start of another item starts nothing", async () => {
+  let releaseList = () => {};
+  const listing = heldListing(new Promise<void>((r) => (releaseList = r)));
+  const h = await harness([converging, hanging, converging], { trackerOf: listing.trackerOf });
+  const order = await refinedOrder(h.tracker);
+  await begin(h, order[0]!);
+  await until("the chain's listing", () => listing.asked());
+  const manual = await begin(h, order[2]!);
+  releaseList();
+  await sleep(500);
+  assert.deepEqual(startedRuns(h).map((r) => r.item), [order[0], order[2]]);
+  const chain = (await chainOf(h)).chain;
+  assert.equal(chain._tag, "Running");
+  assert.deepEqual(chain._tag === "Running" && { run: chain.run, item: chain.item }, { run: manual, item: order[2] });
+  await run(h.manager.haltAll("end"));
+});
+
+test("turning the mode off while the next item's read is held starts nothing and says no run was in progress", async () => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  let reads = 0;
+  const h = await harness([converging, converging], {
+    trackerOf: (fake) => ({ ...fake.tracker, read: (id) => Effect.suspend(() => (++reads === 2 ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(fake.tracker.read(id))) }),
+  });
+  await begin(h, "1");
+  await until("the chained start's read", () => reads === 2);
+  await run(h.manager.setChain(OFF_SETTINGS));
+  release();
+  await sleep(500);
+  assert.equal((await run(h.manager.current)).implementation, null);
+  assert.equal(startedRuns(h).length, 1);
+  const chain = (await chainOf(h)).chain;
+  assert.deepEqual(chain._tag === "Idle" && chain.ended, { _tag: "TurnedOff", running: null });
+});
