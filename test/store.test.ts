@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { test } from "node:test";
 import { Effect, Option } from "effect";
 import { platformLayer } from "../src/platform.ts";
@@ -420,4 +421,47 @@ test("a rename across the ignorePaths boundary is judged by each of its paths on
   const outStore = await startedStore(out, ["ign"]);
   gitAs(out, "mv", "ign/b.txt", "b.txt");
   assert.deepEqual(await run(outStore.uncommittedSinceStart()), { _tag: "Uncommitted", paths: ["b.txt"] });
+});
+
+// Issue #147 (S5): baseline.json records the commit the run began at, to which a halted run's working branch returns.
+const headOf = (repo: string): string => git(repo, "rev-parse", "HEAD").trim();
+const baselineOf = (repo: string) => JSON.parse(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, "baseline.json"), "utf8"));
+
+test("writeBaseline records HEAD as the start commit, and baseline() reads it back", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  assert.equal(await run(store.baseline()), null);
+  await run(store.writeBaseline());
+  assert.equal(baselineOf(repo).start_commit, headOf(repo));
+  assert.equal((await run(store.baseline()))?.start_commit, headOf(repo));
+});
+
+test("an unborn repository gives a null start commit and the baseline is still written", async () => {
+  const repo = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pr-unborn-"));
+  git(repo, "init", "-q");
+  write(repo, "a.txt", "x\n");
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.writeBaseline());
+  assert.equal(baselineOf(repo).start_commit, null);
+});
+
+test("an adopted baseline keeps the earlier tree and uncommitted paths, with this run's HEAD as its start commit", async () => {
+  const repo = tempRepo();
+  const tree = git(repo, "write-tree").trim();
+  write(repo, "a.txt", "later\n");
+  commit(repo, "later");
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  await run(store.adoptBaseline({ version: 2, tree, uncommitted: ["x.txt"], start_commit: "0123456789abcdef0123456789abcdef01234567", time: "t" }));
+  assert.deepEqual(baselineOf(repo), { version: 2, tree, uncommitted: ["x.txt"], start_commit: headOf(repo), time: "t" });
+});
+
+test("a baseline.json written without the start commit decodes with null", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  fs.writeFileSync(path.join(store.dir, "baseline.json"), JSON.stringify({ version: 2, tree: git(repo, "write-tree").trim(), uncommitted: [], time: "t" }));
+  assert.equal((await run(store.baseline()))?.start_commit, null);
 });

@@ -37,7 +37,7 @@ const earlierRun = (repo: string, root: RunRoot, options: Earlier): Baseline => 
   const agreedBlock = (options.agreed ?? true) ? prompts.reviewConvergedMarkdown(subjectHeading({ plan: 1 }), 1, prompts.PLAN_FILE_LABEL) : "";
   fs.writeFileSync(path.join(dir, "conversation.md"), `# Conversation record\n\n${agreedBlock}`);
   fs.writeFileSync(path.join(dir, "plan.json"), JSON.stringify({ version: 2, plan: options.plan ?? EARLIER_PLAN }));
-  const baseline: Baseline = { version: 2, tree: options.tree ?? treeOf(repo), uncommitted: [], time: "2025-12-31T00:00:00.000Z" };
+  const baseline: Baseline = { version: 2, tree: options.tree ?? treeOf(repo), uncommitted: [], start_commit: null, time: "2025-12-31T00:00:00.000Z" };
   fs.writeFileSync(path.join(dir, "baseline.json"), JSON.stringify(baseline));
   return baseline;
 };
@@ -57,6 +57,7 @@ const initialText = (probe: { planner: { prompts: readonly string[] } }) => prob
 test("a qualifying earlier run: its plan, statuses carried, is revised by Claude Code and reviewed by Codex before the execution; its baseline is adopted", async () => {
   const repo = tempRepo();
   const baseline = earlierRun(repo, EARLIER_ROOT, {});
+  const startHead = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   let atRevision: readonly string[] = [];
   const dir = path.join(repo, "plan-review", TEST_ROOT);
   const probe = await implement(repo, {
@@ -69,7 +70,7 @@ test("a qualifying earlier run: its plan, statuses carried, is revised by Claude
   assert.deepEqual(atRevision, ["S1:done", "S2:unfinished", "S3:pending"]);
   assert.match(probe.reviewer.prompts[0], /plan\.json/);
   assert.equal(probe.planner.execPrompts.length, 1);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(probe.dir, "baseline.json"), "utf8")), baseline);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(probe.dir, "baseline.json"), "utf8")), { ...baseline, start_commit: startHead });
   const line = prompts.earlierPlanTakenLine(EARLIER_ROOT);
   assert.ok(conversationOf(probe.dir).includes(line));
   assert.ok(probe.ui.said.includes(line));

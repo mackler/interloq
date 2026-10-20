@@ -161,8 +161,14 @@ export interface StoreShape {
    * the earlier run's directory and writes nothing, there or here. No configuration decides it.
    */
   earlierPlan(item: ItemId): Effect.Effect<EarlierPlan, StoreError>;
-  /** Writes this run's baseline.json as an earlier run's (issue #180, Q4), in place of writeBaseline. */
+  /**
+   * Writes this run's baseline.json as an earlier run's (issue #180, Q4), in place of writeBaseline: the earlier run's tree
+   * and uncommitted paths, with this run's own HEAD as `start_commit` (issue #147), so a halted run returns its working
+   * branch to where it began, never to an earlier run's start.
+   */
   adoptBaseline(baseline: Baseline): Effect.Effect<void, StoreError>;
+  /** This run's baseline.json, or null where it has none yet (issue #147: the parking of a halted run reads it). */
+  baseline(): Effect.Effect<Baseline | null, StoreError>;
   /**
    * The commit check (issue #176): the paths git lists now as not committed, less those it listed when writeBaseline ran,
    * less `plan-review/` and `ignorePaths` (a rename's two paths judged each on its own); a file git ignores and does not

@@ -34,7 +34,7 @@ const validated = (phase: number, round: number): Readonly<{ phase: number; reco
 });
 const agreed = (phase: number, round: number): string => reviewConvergedMarkdown(subjectHeading({ plan: phase }), round, PLAN_FILE_LABEL);
 const PLAN: RecordedPlan = { stages: [{ number: 1, title: "T", steps: [{ id: "S1", number: 1, label: "l", text: "t", status: "done" }] }] };
-const BASELINE: Baseline = { version: 2, tree: "abc", uncommitted: [], time: "2026-10-16T09:00:00.000Z" };
+const BASELINE: Baseline = { version: 2, tree: "abc", uncommitted: [], start_commit: null, time: "2026-10-16T09:00:00.000Z" };
 const run = (root: RunRoot, conversation: string, rounds: EarlierRunRecords["rounds"], plan: RecordedPlan | null = PLAN): EarlierRunRecords => ({ root, conversation, rounds, plan, baseline: BASELINE });
 
 test("carriedPlan keeps every id, label and text and every status but started, which becomes unfinished", () => {

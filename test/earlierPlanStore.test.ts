@@ -37,7 +37,7 @@ const earlier = (repo: string, root: RunRoot, options: EarlierRun) => {
   fs.writeFileSync(path.join(dir, "planning-1", "round-1.json"), JSON.stringify(record));
   if (options.conversation ?? true) fs.writeFileSync(path.join(dir, "conversation.md"), `# Conversation record\n\n${(options.agreed ?? true) ? reviewConvergedMarkdown(subjectHeading({ plan: 1 }), 1, PLAN_FILE_LABEL) : ""}`);
   fs.writeFileSync(path.join(dir, "plan.json"), JSON.stringify({ version: 2, plan: options.plan ?? planOf("pending") }));
-  const baseline = options.baseline === undefined ? { version: 2, tree: treeOf(repo), uncommitted: [], time: "2026-10-16T09:00:00.000Z" } : options.baseline;
+  const baseline = options.baseline === undefined ? { version: 2, tree: treeOf(repo), uncommitted: [], start_commit: null, time: "2026-10-16T09:00:00.000Z" } : options.baseline;
   if (baseline !== null) fs.writeFileSync(path.join(dir, "baseline.json"), JSON.stringify(baseline));
 };
 const OLD = runRootOf("implementation", "80", "2026-10-15T09:00:00.000Z");
@@ -66,7 +66,7 @@ test("none: no runs directory, only validated rounds, a round without the agreem
 });
 
 test("set aside: a baseline naming a tree git does not have, and no baseline.json; an older qualifying run is not tried instead", async () => {
-  for (const baseline of [{ version: 2 as const, tree: "0123456789abcdef0123456789abcdef01234567", uncommitted: [], time: "t" }, null]) {
+  for (const baseline of [{ version: 2 as const, tree: "0123456789abcdef0123456789abcdef01234567", uncommitted: [], start_commit: null, time: "t" }, null]) {
     const repo = tempRepo();
     earlier(repo, OLD, {});
     earlier(repo, NEW, { baseline });
@@ -77,14 +77,14 @@ test("set aside: a baseline naming a tree git does not have, and no baseline.jso
 test("an adopted baseline: the change record holds what was committed since it, and the commit check counts what it did not list", async () => {
   const repo = tempRepo();
   fs.writeFileSync(path.join(repo, "dirty.txt"), "dirty at the earlier start\n");
-  const baseline: Baseline = { version: 2, tree: treeOf(repo), uncommitted: ["dirty.txt"], time: "2026-10-16T09:00:00.000Z" };
+  const baseline: Baseline = { version: 2, tree: treeOf(repo), uncommitted: ["dirty.txt"], start_commit: null, time: "2026-10-16T09:00:00.000Z" };
   fs.writeFileSync(path.join(repo, "a.txt"), "committed between the runs\n");
   git(repo, "commit", "-qam", "between");
   fs.writeFileSync(path.join(repo, "left.txt"), "left by the earlier run\n");
   const store = await storeOf(repo);
   await run(store.init("task"));
   await run(store.adoptBaseline(baseline));
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(store.dir, "baseline.json"), "utf8")), baseline);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(store.dir, "baseline.json"), "utf8")), { ...baseline, start_commit: git(repo, "rev-parse", "HEAD").trim() });
   await run(store.changeRecord(1));
   const diff = fs.readFileSync(path.join(store.dir, "work-review-1", "changes.diff"), "utf8");
   assert.ok(diff.includes("committed between the runs") && diff.includes("left by the earlier run"), diff);

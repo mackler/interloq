@@ -239,6 +239,12 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
     /** The paths not committed now, less plan-review/ and ignorePaths (issue #176). */
     const uncommittedNow = (): Effect.Effect<readonly string[], StoreError> =>
       statusRecords().pipe(Effect.map((records) => uncommittedPaths(records, (p) => excluded(p, ignorePaths))));
+    /** The commit HEAD names, or null on an unborn branch (issue #147), which must not halt a run. */
+    const headCommit = (): Effect.Effect<string | null> =>
+      git(["rev-parse", "--verify", "--quiet", "HEAD"]).pipe(
+        Effect.map((out) => out.trim()),
+        Effect.orElseSucceed(() => null),
+      );
     const baselineFile = at({ kind: "baseline" });
     const readBaseline = () => readText(baselineFile).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(baselineFile, Baseline, text))));
     /** The text of the diff from the baseline tree to the current one; null before init wrote the baseline. */
@@ -314,8 +320,9 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         }),
       writeBaseline: () =>
         Effect.gen(function* () {
+          const start_commit = yield* headCommit();
           const uncommitted = yield* uncommittedNow();
-          yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), uncommitted, time: yield* now });
+          yield* writeJson(baselineFile, { version: VERSION, tree: yield* workingTree(), uncommitted, start_commit, time: yield* now });
         }),
       earlierPlan: (item: ItemId): Effect.Effect<EarlierPlan, StoreError> =>
         Effect.gen(function* () {
@@ -330,7 +337,13 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           }
           return { _tag: "NoEarlierPlan" } as const;
         }),
-      adoptBaseline: (baseline: Baseline) => writeJson(baselineFile, baseline),
+      adoptBaseline: (baseline: Baseline) =>
+        Effect.gen(function* () {
+          yield* writeJson(baselineFile, { ...baseline, start_commit: yield* headCommit() });
+        }),
+      baseline: () => Effect.gen(function* () {
+        return (yield* exists(baselineFile)) ? yield* readBaseline() : null;
+      }),
       uncommittedSinceStart: (): Effect.Effect<CommitCheck, StoreError> =>
         Effect.gen(function* () {
           const baseline = yield* readBaseline();

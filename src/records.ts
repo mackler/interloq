@@ -66,8 +66,16 @@ export type RoundRecord = typeof RoundRecord.Type;
 /**
  * The tree of the project at the start of the run (decision Q7): the work reviews diff against it. `uncommitted` (issue
  * #176): the paths git listed as not committed when the run began, which the commit check does not count against it.
+ * `start_commit` (issue #147): the commit HEAD named when the run began, to which a halted run's working branch returns
+ * once its work is parked; null where the repository had no commit. A baseline written before the field reads as null.
  */
-export const Baseline = Schema.Struct({ version: V2, tree: Schema.NonEmptyString, uncommitted: Schema.Array(Schema.String), time: Schema.String });
+export const Baseline = Schema.Struct({
+  version: V2,
+  tree: Schema.NonEmptyString,
+  uncommitted: Schema.Array(Schema.String),
+  start_commit: Schema.NullOr(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  time: Schema.String,
+});
 export type Baseline = typeof Baseline.Type;
 
 // ---- decision support ------------------------------------------------------------------------------
