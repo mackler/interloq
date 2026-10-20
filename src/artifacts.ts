@@ -40,6 +40,8 @@ export const RECORDS_DIR = "plan-review";
 export type RunRoot = Brand.Branded<string, "RunRoot">;
 /** The directory that holds every run's records directory, relative to plan-review/. */
 export const RUNS_DIR = "runs";
+/** The chain's state (issue #147), relative to plan-review/: beside runs/, outside every run's records directory. */
+export const CHAIN_FILE = "chain.json";
 /** The longest item id a root carries; an item id is the adapter's own and may be long. */
 const ITEM_IN_ROOT = 40;
 /** An item id as a root carries it: its characters outside [A-Za-z0-9] become `_`, cut to ITEM_IN_ROOT; never contains `-`. */
