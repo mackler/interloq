@@ -140,5 +140,33 @@ test("explainedKnowledge names the meaning of a term, whether it needs explainin
     assert.match(text, /two wordings/);
     assert.match(text, /in how they read, not in what they claim|in how they read and not in what they claim/);
   }
-  assert.equal(prompts.QUESTION_RULES.findIndex((r) => r.id === "explainedKnowledge"), prompts.QUESTION_RULES.findIndex((r) => r.id === "whetherToAsk") + 1);
+  assert.equal(prompts.QUESTION_RULES.findIndex((r) => r.id === "explainedKnowledge"), prompts.QUESTION_RULES.findIndex((r) => r.id === "sameWorkOptions") + 1);
+});
+
+// Issue #183: an option whose only effect is time or usage is not an option, and a question whose options all lead to the
+// same work is not asked; it stands right after whetherToAsk, and explainedKnowledge follows it.
+test("sameWorkOptions stands after whetherToAsk and says that an option differing only in time is not offered", () => {
+  const ids = prompts.QUESTION_RULES.map((r) => r.id);
+  assert.equal(ids.indexOf("sameWorkOptions"), ids.indexOf("whetherToAsk") + 1);
+  assert.equal(ids.indexOf("explainedKnowledge"), ids.indexOf("sameWorkOptions") + 1);
+  const rule = prompts.QUESTION_RULES.find((r) => r.id === "sameWorkOptions")!;
+  for (const text of [rule.rule, rule.criterion]) {
+    assert.match(text, /same work/);
+    assert.match(text, /time or usage/);
+  }
+  assert.match(rule.rule, /is not asked/);
+  assert.match(rule.rule, /say what you settled/);
+  assert.ok(prompts.questionWritingRules().includes(rule.rule));
+  assert.ok(prompts.questionReviewCriteria().includes(rule.criterion));
+});
+
+// The developer's instruction of 20 Oct 2026: every question states each option's time cost where the records allow it to
+// be measured; the writer's rule and the reviewers' criterion of readerConsequence carry it from one constant.
+test("readerConsequence carries OPTION_TIME_COST in its rule and its criterion", () => {
+  const consequence = prompts.QUESTION_RULES.find((r) => r.id === "readerConsequence")!;
+  assert.ok(consequence.rule.includes(prompts.OPTION_TIME_COST));
+  assert.match(prompts.OPTION_TIME_COST, /records Interloq keeps of the earlier runs/);
+  assert.match(prompts.OPTION_TIME_COST, /minutes/);
+  assert.match(consequence.criterion, /states no time cost/);
+  assert.match(consequence.criterion, /cannot be measured/);
 });

@@ -90,12 +90,20 @@ export type QuestionRule = Readonly<{ id: string; rule: string; criterion: strin
  * carries `questionReviewCriteria()`, both rendered from this array; `validateQuestion` in src/question.ts checks the
  * mechanical part under the same ids.
  */
+/** Issue #183 (the developer's instruction of 20 Oct 2026): each option's time cost, where the records allow it to be measured. */
+export const OPTION_TIME_COST = "State in each option's description its time cost in minutes where the records Interloq keeps of the earlier runs in this project allow it to be measured, and say that it cannot be measured where they do not.";
 export const QUESTION_RULES: readonly QuestionRule[] = [
   {
     // Issues #95 and #99 (6 Oct 2026): the one statement of whether to ask, and of the premise a question's options share.
     id: "whetherToAsk",
     rule: "Where you decide whether to ask a question, ask it only if all three hold: its answer changes the plan or the work; nothing available settles it, neither the task text, the codebase, the project documentation, nor an answer the user has already given; and a difference the reader can act on, as stated below for each option, can be named between its options. Where any of the three fails, do not ask: settle the matter yourself and say what you settled. Before asking, state the premise the options share, what is true if any of them is chosen. If the same sources do not settle that premise, the premise is the question, and it is asked first; a question whose options all rest on an unsettled premise is not asked until the premise is.",
     criterion: "a question is asked that the task text, the codebase, the project documentation or an earlier answer of the user settles (name the file or the answer), or whose answer changes neither the plan nor the work, or whose options differ in nothing the reader can act on; or every proposed answer of a question assumes a premise that none of those sources establishes (name the premise and the files that would have settled it), and the premise is not asked first.",
+  },
+  {
+    // Issue #183 (the developer's instruction of 19 Oct 2026): an option that costs only time or usage is no choice.
+    id: "sameWorkOptions",
+    rule: "An option that leads to the same work as another option (the same code, tests, files committed and delivered behavior; for a question about requirements, the same requirements) and differs from it only in time or usage is not an option and is not offered. A question all of whose options lead to the same work is not asked: settle it with the option that costs least, and say what you settled.",
+    criterion: "a question offers an option that leads to the same work as another option and differs from it only in time or usage, or is asked although all of its options lead to the same work.",
   },
   {
     // Issue #111 (8 Oct 2026): beside whetherToAsk, whose second clause it sharpens. The explanations exist so that a
@@ -197,8 +205,8 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     // Issue #92 (5 Oct 2026): each option says what choosing it changes for the reader; issue #97 (6 Oct 2026): computed
     // for the configuration the task names.
     id: "readerConsequence",
-    rule: "In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently. Where the task names a concrete configuration (a window size, a file, a count, a version), compute each option's consequence for that configuration and state it in those terms, not in general terms or as a condition the reader must evaluate ('when X is taller than Y'); where the numbers cannot be had without building something, say so in the option.",
-    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run); or, where the task names a concrete configuration (a window size, a file, a count, a version), an option describes its consequence in general terms or as a condition the reader must evaluate ('when X is taller than Y') instead of computing it for that configuration, without saying that it cannot be computed without building something.",
+    rule: `In each option's description, state what choosing it changes for the reader, in terms the reader can act on: time spent or saved, work that falls to someone later, a risk carried, money, or what the reader must do differently while a run is going; not only what the program would do differently. Where the task names a concrete configuration (a window size, a file, a count, a version), compute each option's consequence for that configuration and state it in those terms, not in general terms or as a condition the reader must evaluate ('when X is taller than Y'); where the numbers cannot be had without building something, say so in the option. ${OPTION_TIME_COST}`,
+    criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run); or, where the task names a concrete configuration (a window size, a file, a count, a version), an option describes its consequence in general terms or as a condition the reader must evaluate ('when X is taller than Y') instead of computing it for that configuration, without saying that it cannot be computed without building something; or an option states no time cost and does not say that its time cost cannot be measured.",
   },
   {
     // Issue #93 (5 Oct 2026): a conclusion states its warrant.
