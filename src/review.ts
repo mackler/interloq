@@ -16,16 +16,15 @@ import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportW
 import { correctiveValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
 import { agentContext, askOffering, limitOptions, numberedOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
 import { answerOf, parseUnchangedAnswer } from "./input.ts";
-import { advance, type Asks, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
+import { advance, type Asks, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import * as S from "./schema.ts";
 import type { PlannerResponse, Review, UserQuestion } from "./schema.ts";
-import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
+import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, type PlanningResult, type RawReplyKind, REVIEW_PURPOSE, Reviewer, type ReviewSchema, RunConfig, RunKind, type Services, Store, type StoreError, Ui } from "./services.ts";
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
 
 /** Codex's reply text, decoded as JSON and then as a review; text that is not JSON is a decode failure. */
-const ReviewText = Schema.fromJsonString(S.Review);
 
 /** One planning call of a subject: its prompt, the schema of its output, and what is done with the output. */
 export type Operation<T> = Readonly<{
@@ -74,9 +73,12 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   /**
    * Issue #112: who settles a disagreement between the agents over an issue: the user at a pause, or the agents (Claude
    * Code's disposition stands), except one Claude Code marks as about what the task requires, which the user settles
-   * (issue #156).
+   * (issue #156); or, in the plan and the work, the agents where both state the disagreement changes nothing in the
+   * work, the user otherwise (issue #183).
    */
-  disputesSettledBy: "user" | "agents";
+  disputesSettledBy: DisputesSettledBy;
+  /** The schema of Codex's review (issue #183): S.EffectReview for the plan and the work, S.Review otherwise. */
+  reviewSchema: ReviewSchema;
   /** A decision's subject: the number of the question its analysis is for (S21), which its progress names; absent otherwise. */
   question?: number | null;
   /** Run before every round's Codex turn, before its guard's snapshot (the work review rewrites changes.diff); null otherwise. */
@@ -314,6 +316,8 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
     const config = yield* RunConfig;
     const reviewer = yield* Reviewer;
     const { id, heading, fileLabel } = subject;
+    // Issue #183: Codex's reply is decoded with the subject's review schema, the one its turns are given.
+    const reviewText = Schema.fromJsonString(subject.reviewSchema);
     const phase = subject.phase;
     /** The decision this loop works out, whose questions belong to it (issue #57); null for the other subjects. */
     const within = typeof id === "object" && "decision" in id ? id.decision : null;
@@ -349,7 +353,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
         });
         const attempt = () =>
           Effect.gen(function* () {
-            const reply = yield* Effect.result((yield* Ref.get(session)).review(text));
+            const reply = yield* Effect.result((yield* Ref.get(session)).review(text, subject.reviewSchema));
             yield* check;
             const accepted = yield* Effect.fromResult(reply);
             yield* Ref.update(roundInputs, (inputs) => [...inputs, accepted.inputTokens]);
@@ -456,7 +460,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
             // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
-            const { value: review } = yield* decodeValidating("codex", ReviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, thread))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
+            const { value: review } = yield* decodeValidating("codex", reviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, thread))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {

@@ -70,6 +70,7 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
     // Issue #112: a disagreement here about how a question to the user is worded is settled by the agents; one Claude
     // Code marks as about what the task requires is still the user's (issue #156).
     disputesSettledBy: "agents",
+    reviewSchema: S.Review,
     prepare: null,
   };
 }
@@ -102,6 +103,7 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
     // Issue #112: a disagreement here about how a question to the user is worded is settled by the agents; one Claude
     // Code marks as about what the task requires is still the user's (issue #156).
     disputesSettledBy: "agents",
+    reviewSchema: S.Review,
     prepare: null,
   };
 }
@@ -129,6 +131,7 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
     leaveOnDecision: false,
     onUnchanged: "pause",
     disputesSettledBy: "user",
+    reviewSchema: S.Review,
     prepare: null,
   };
 }
@@ -154,7 +157,8 @@ export function planSubject(root: RunRoot, phase: number, withRequirements: bool
     leaveOnAcceptance: false,
     leaveOnDecision: false,
     onUnchanged: "corrective",
-    disputesSettledBy: "user",
+    disputesSettledBy: "noWorkEffect",
+    reviewSchema: S.EffectReview,
     prepare: null,
   };
 }
@@ -214,6 +218,7 @@ export function decisionSubject(k: number, phase: number, format: string, valida
     leaveOnDecision: false,
     onUnchanged: "corrective",
     disputesSettledBy: "user",
+    reviewSchema: S.Review,
     prepare: null,
   };
 }
@@ -223,7 +228,7 @@ export function decisionSubject(k: number, phase: number, format: string, valida
  * issue or a user decision leaves for a planning phase; there is no proceed choice; changes.diff is rewritten before
  * every round's review.
  */
-export function workSubject(task: string, phase: number, withRequirements: boolean, execution: prompts.WorkExecution, checks: S.StepChecks): Subject<PlannerResponse, PlanWrite> {
+export function workSubject(task: string, phase: number, withRequirements: boolean, execution: prompts.WorkExecution, checks: S.StepChecks): Subject<S.WorkResponse, PlanWrite> {
   const id = { work: phase };
   return {
     id,
@@ -231,7 +236,7 @@ export function workSubject(task: string, phase: number, withRequirements: boole
     heading: subjectHeading(id),
     fileLabel: "changes.diff",
     reviewPrompt: (root, round, thread) => prompts.workReviewPrompt(root, phase, round, withRequirements, execution, thread),
-    respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution, task), schema: S.PlannerResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
+    respond: { prompt: (root, round, context) => prompts.workRespondPrompt(root, phase, round, context, execution, task), schema: S.WorkResponse, after: null, capability: "readOnly", validate: userQuestionsValidation() },
     // Never issued: leaveOnDecision ends the loop instead of a planning call (G-R1-1); typed as the plan's.
     applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks), schema: S.PlanWrite, after: null, validate: null },
     amend: null,
@@ -239,7 +244,8 @@ export function workSubject(task: string, phase: number, withRequirements: boole
     leaveOnAcceptance: true,
     leaveOnDecision: true,
     onUnchanged: null,
-    disputesSettledBy: "user",
+    disputesSettledBy: "noWorkEffect",
+    reviewSchema: S.EffectReview,
     prepare: Effect.gen(function* () {
       const store = yield* Store;
       yield* store.changeRecord(phase);

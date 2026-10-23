@@ -6,13 +6,15 @@ import { Result, Schema } from "effect";
 import { CorrectionInvalid, RoundInvalid } from "./errors.ts";
 import { correctionRepairPrompt, reviewRepairPrompt, roundRepairPrompt } from "./prompts.ts";
 import type { Validation } from "./review.ts";
-import type { Action, LogEntry, PlannerResponse, Review, UserQuestion } from "./schema.ts";
+import type { Action, LogEntry, PlannerResponse, Review, UserQuestion, WorkEffect } from "./schema.ts";
 
 import * as S from "./schema.ts";
+import { isEffectDisposition, isEffectIssue, workEffectOf } from "./workEffect.ts";
 import type { IssueId } from "./schema.ts";
 export type { IssueId };
 
-export type ValidatedIssue = Readonly<{ id: IssueId; severity: Review["issues"][number]["severity"]; location: string; problem: string; evidence: string }>;
+/** `workEffect` (issue #183): Codex's statement of the issue's effect on the work, null where the review carries none. */
+export type ValidatedIssue = Readonly<{ id: IssueId; severity: Review["issues"][number]["severity"]; location: string; problem: string; evidence: string; workEffect: WorkEffect | null }>;
 export type ValidatedReview = Readonly<{ issues: readonly ValidatedIssue[] }>;
 
 /** A reference that decision Q3 dropped: what the response named, in which field, and why it was dropped. */
@@ -24,7 +26,10 @@ const isMarked = Schema.is(S.MarkedDisposition);
  * those two subjects' schemas keep the field when the reply is decoded, so every other disposition has none.
  */
 export const taskDisputeOf = (d: S.Disposition): boolean => isMarked(d) && d[S.TASK_DISPUTE_FIELD] && d.action !== "accepted";
-/** `taskDispute`: Claude Code's mark (issue #156), true only on a disposition other than `accepted`. */
+/**
+ * `taskDispute`: Claude Code's mark (issue #156), true only on a disposition other than `accepted`. `workEffect` (issue
+ * #183): Claude Code's statement of the effect on the work, null where the response carries none and on `accepted`.
+ */
 export type ValidatedDisposition = Readonly<{
   id: IssueId;
   action: Action;
@@ -32,6 +37,7 @@ export type ValidatedDisposition = Readonly<{
   duplicateOf: IssueId | null;
   reverses: IssueId | null;
   taskDispute: boolean;
+  workEffect: WorkEffect | null;
 }>;
 export type ValidatedSelfCorrection = Readonly<{ id: IssueId; newAction: "accepted" | "rejected" | "plan_error"; explanation: string; generated: boolean }>;
 export type ValidatedRound = Readonly<{
@@ -49,15 +55,32 @@ const ACCEPTED = new Set(["accepted", "partially_accepted"]);
 const unique = <T>(items: readonly T[]): T[] => [...new Set(items)];
 const duplicates = (ids: readonly string[]): string[] => unique(ids.filter((id, i) => ids.indexOf(id) !== i));
 const roundInvalid = (fields: Partial<ConstructorParameters<typeof RoundInvalid>[0]>): RoundInvalid =>
-  new RoundInvalid({ duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], ...fields });
+  new RoundInvalid({ duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [], ...fields });
 
-/** A review with unique, non-empty issue ids. Checked before anything is counted or asked. */
+/**
+ * A reply's statement of its effect on the work (issue #183): absent (null), the program's value, or blank. Only the plan's
+ * and the work's schemas keep the field when the reply is decoded.
+ */
+type Stated = Readonly<{ kind: "absent" }> | Readonly<{ kind: "stated"; effect: WorkEffect }> | Readonly<{ kind: "blank" }>;
+const statedOf = (reply: S.Issue | S.Disposition): Stated => {
+  const raw = isEffectIssue(reply) || isEffectDisposition(reply) ? reply[S.WORK_EFFECT_FIELD] : null;
+  if (raw === null) return { kind: "absent" };
+  const effect = workEffectOf(raw);
+  return Result.isSuccess(effect) ? { kind: "stated", effect: effect.success } : { kind: "blank" };
+};
+const effectOf = (stated: Stated): WorkEffect | null => (stated.kind === "stated" ? stated.effect : null);
+
+/** A review with unique, non-empty issue ids, and no blank statement of an effect (issue #183). Checked before anything is counted or asked. */
 export const validateReview = (review: Review): Result.Result<ValidatedReview, RoundInvalid> => {
   const ids = review.issues.map((i) => i.id);
   const duplicateIssues = duplicates(ids);
   const empty = ids.filter((id) => id === "").length;
-  if (duplicateIssues.length > 0 || empty > 0) return Result.fail(roundInvalid({ duplicateIssues, emptyIds: empty > 0 ? ["an issue of the review"] : [] }));
-  return Result.succeed({ issues: review.issues.map((i) => ({ ...i, id: i.id as IssueId })) });
+  const stated = review.issues.map(statedOf);
+  const blankEffects = review.issues.filter((_, k) => stated[k].kind === "blank").map((i) => i.id);
+  if (duplicateIssues.length > 0 || empty > 0 || blankEffects.length > 0) return Result.fail(roundInvalid({ duplicateIssues, emptyIds: empty > 0 ? ["an issue of the review"] : [], blankEffects }));
+  return Result.succeed({
+    issues: review.issues.map((i, k) => ({ id: i.id as IssueId, severity: i.severity, location: i.location, problem: i.problem, evidence: i.evidence, workEffect: effectOf(stated[k]) })),
+  });
 };
 
 /**
@@ -69,11 +92,14 @@ export const validateReview = (review: Review): Result.Result<ValidatedReview, R
 export const validateRound = (review: ValidatedReview, response: PlannerResponse, log: readonly LogEntry[], phase: number, round: number, idPrefix: string, idNumber: number = phase): Result.Result<ValidatedRound, RoundInvalid> => {
   const issueIds = new Set<string>(review.issues.map((i) => i.id));
   const dispositionIds = response.dispositions.map((d) => d.id);
+  // A statement on `accepted` is ignored, like the mark (issue #183): an accepted issue is no disagreement.
+  const stated = response.dispositions.map((d): Stated => (d.action === "accepted" ? { kind: "absent" } : statedOf(d)));
   const problems = {
     missing: review.issues.map((i) => i.id).filter((id) => !dispositionIds.includes(id)),
     duplicateDispositions: duplicates(dispositionIds),
     unknownDispositions: unique(dispositionIds.filter((id) => id !== "" && !issueIds.has(id))),
     emptyIds: dispositionIds.some((id) => id === "") ? ["a disposition of the response"] : [],
+    blankEffects: unique(response.dispositions.filter((_, k) => stated[k].kind === "blank").map((d) => d.id)),
   };
   if (Object.values(problems).some((list) => list.length > 0)) return Result.fail(roundInvalid(problems));
 
@@ -93,7 +119,7 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
     }
     return named as IssueId;
   };
-  const dispositions: ValidatedDisposition[] = response.dispositions.map((d) => {
+  const dispositions: ValidatedDisposition[] = response.dispositions.map((d, k) => {
     const id = d.id as IssueId;
     return {
       id,
@@ -102,6 +128,7 @@ export const validateRound = (review: ValidatedReview, response: PlannerResponse
       duplicateOf: reference(id, "duplicate_of", d.duplicate_of),
       reverses: reference(id, "reverses", d.reverses),
       taskDispute: taskDisputeOf(d),
+      workEffect: effectOf(stated[k]),
     };
   });
 

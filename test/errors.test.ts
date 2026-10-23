@@ -48,7 +48,7 @@ test("RecordsChanged names the changed records, round-trips through decodeRunErr
 // Issue #14: the user reads "cycle" where the program says "round".
 test("the cycle limit's stop and an invalid cycle are described in cycles", () => {
   assert.equal(haltMessage(new RoundLimitStop({ heading: "Planning phase 1" })), "HALTED: stopped by the user at the cycle limit of Planning phase 1");
-  const invalid = new RoundInvalid({ duplicateIssues: ["A"], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [] });
+  const invalid = new RoundInvalid({ duplicateIssues: ["A"], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [] });
   assert.match(haltMessage(invalid) ?? "", /^HALTED: the cycle is invalid: /);
 });
 

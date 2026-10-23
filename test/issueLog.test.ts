@@ -9,8 +9,8 @@ const id = (s: string) => s as IssueId;
 const round = (dispositions: [string, ValidatedRound["dispositions"][number]["action"]][], self: [string, "accepted" | "rejected" | "plan_error"][] = []): ValidatedRound => ({
   phase: 1,
   round: 1,
-  review: { issues: dispositions.map(([i]) => ({ id: id(i), severity: "major", location: "l", problem: "p", evidence: "e" })) },
-  dispositions: dispositions.map(([i, action]) => ({ id: id(i), action, rationale: "r", duplicateOf: null, reverses: null, taskDispute: false })),
+  review: { issues: dispositions.map(([i]) => ({ id: id(i), severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null })) },
+  dispositions: dispositions.map(([i, action]) => ({ id: id(i), action, rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null })),
   selfCorrections: self.map(([i, newAction]) => ({ id: id(i), newAction, explanation: "x", generated: false })),
   notes: [],
   reviewerFeedback: "",
@@ -68,4 +68,21 @@ test("displayEntry omits file_change and keeps everything else", () => {
   assert.equal("file_change" in shown, false);
   const { file_change: _f, ...rest } = entry as typeof entry & { file_change: unknown };
   assert.deepEqual(shown, rest);
+});
+
+// Issue #183: a review entry carries both agents' statements of the issue's effect on the work in its round.
+test("appendRound writes work_effects where the issue and the disposition both state one, and null otherwise", () => {
+  const none = { kind: "none" as const };
+  const differs = { kind: "differs" as const, difference: "the README stays unwrapped" as import("../src/schema.ts").EffectText };
+  const base = round([["A", "rejected"], ["B", "accepted"], ["C", "rejected"], ["D", "rejected"]]);
+  const withEffects: ValidatedRound = {
+    ...base,
+    review: { issues: base.review.issues.map((i) => ({ ...i, workEffect: i.id === "D" ? null : none })) },
+    dispositions: base.dispositions.map((d) => ({ ...d, workEffect: d.id === "A" ? differs : d.id === "C" ? null : d.id === "D" ? none : null })),
+  };
+  const entries = appendRound([], withEffects, null);
+  assert.deepEqual(
+    entries.map((e) => [e.id, e.source === "review" ? e.work_effects : "?"]),
+    [["A", { reviewer: none, planner: differs }], ["B", null], ["C", null], ["D", null]],
+  );
 });

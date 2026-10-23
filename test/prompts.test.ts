@@ -28,7 +28,7 @@ test("the log rules name the entries list, the three sources and null references
 // Issue #31 (the seam of S7): every key the log rules name for the measurement is a key of an entry appendRound writes,
 // and the rules name the field by the schema's constant. The rules are in round 1's prompt; later rounds refer to them in the same thread.
 test("the log rules explain file_change with the keys the log entries carry", () => {
-  const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e" }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
+  const [entry] = appendRound([], { phase: 1, round: 1, review: { issues: [{ id: "P1-R1-1" as IssueId, severity: "major", location: "l", problem: "p", evidence: "e", workEffect: null }] }, dispositions: [{ id: "P1-R1-1" as IssueId, action: "accepted", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: null }], selfCorrections: [], notes: [], reviewerFeedback: "", questionsForUser: [] }, { changed: true, added: 1, removed: 0 });
   const serialized = JSON.parse(JSON.stringify(entry)) as Record<string, Record<string, unknown>>;
   for (const text of [planReviewPrompt(TEST_ROOT, 1, 1, false, NO_STEP_CHECKS, "continued"), questionReviewPrompt(TEST_ROOT, 1, "continued"), prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), prompts.decisionReviewPrompt(TEST_ROOT, "f", 1, 1, "continued"), prompts.workReviewPrompt(TEST_ROOT, 1, 1, true, workExecution, "continued")]) {
     assert.ok(text.includes(`${S.FILE_CHANGE_FIELD}:`), "the rules do not explain the field");
@@ -1009,7 +1009,7 @@ test("issue #156: the corrective prompt names the mark, and correctiveValidation
   const { respond } = await import("./helpers.ts");
   const { Result } = await import("effect");
   const prompt = prompts.correctivePrompt(TEST_ROOT, "questions.json", 1, ["A"]);
-  assert.match(prompt, new RegExp(`Only the action, the rationale and, where your response carries it, ${S.TASK_DISPUTE_FIELD} of A may differ`));
+  assert.match(prompt, new RegExp(`Only the action, the rationale and, where your response carries them, ${S.TASK_DISPUTE_FIELD} and ${S.WORK_EFFECT_FIELD} of A may differ`));
   assert.ok(prompts.correctionRepairPrompt({ changedIds: ["B"], other: [] }, ["A"]).includes(S.TASK_DISPUTE_FIELD));
   const previous = respond([["A", "accepted"], ["B", "rejected"]]);
   const validate = correctiveValidation(previous, ["A"]);

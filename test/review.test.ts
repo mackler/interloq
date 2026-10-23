@@ -174,7 +174,7 @@ test("decisionDraft asks a marked disagreement as a reading of the task, and an 
   const { programContext } = await import("../src/offer.ts");
   const { piecesText, blocksText } = await import("../src/pieces.ts");
   const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
-  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute });
+  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute, effects: null });
   const markedDraft = decisionDraft("Question review", { kind: "pause", facts: facts(true) }, options, null);
   assert.equal(piecesText(markedDraft.question), prompts.TASK_DISPUTE_QUESTION);
   assert.deepEqual(markedDraft.context, { blocks: [{ kind: "paragraph", pieces: [{ text: prompts.taskDisputeContext("Question review"), ref: "", code: false }] }], by: "program" });
@@ -194,7 +194,7 @@ test("a marked pause keeps its context when the context call falls back, and the
   const { plainBlocks } = await import("../src/pieces.ts");
   const { presentedQuestions } = await import("./helpers.ts");
   const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
-  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute });
+  const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute, effects: null });
   const asked = async (taskDispute: boolean) => {
     const { layer, probe } = testLayer(tempRepo(), { answers: ["1"] });
     const requests: prompts.ContextRequest[] = [];
@@ -217,3 +217,38 @@ test("a marked pause keeps its context when the context call falls back, and the
   assert.equal(unmarked.requests[0].facts, "");
   assert.ok(!prompts.contextPrompt("t", unmarked.requests[0]).includes("Facts for your understanding"));
 });
+
+// Issue #183: the work subject's review is decoded with the effect review, so its issues keep Codex's statement.
+test("a work review's issue keeps Codex's statement of its effect on the work in the round record", async () => {
+  const noQuestions = { questions_for_user: [] };
+  const stated = { ...issue("W1-R1-1"), [S.WORK_EFFECT_FIELD]: { kind: "none" } } as S.Issue;
+  const { layer, probe } = testLayer(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["W1-R1-1", "rejected"]]) }],
+    reviews: [{ issues: [] }, { issues: [stated] }, { issues: [] }],
+    execs: [finished],
+  });
+  assert.equal(await runTask(layer), 1);
+  const round = JSON.parse(fs.readFileSync(path.join(probe.dir, "work-review-1/round-1.json"), "utf8"));
+  assert.deepEqual(round.review.issues[0].workEffect, { kind: "none" });
+  assert.deepEqual(round.response.dispositions[0].workEffect, { kind: "differs", difference: "scripted" });
+});
+
+// Issue #183 (seam): the answer "2" and the planner's label, through askDecisionQuestion and decisionDraft, keep the work
+// review going instead of leaving for a planning phase.
+for (const answer of ["2", prompts.PLANNER_POSITION]) {
+  test(`a work-review dispute answered ${JSON.stringify(answer)} stays in the review`, async () => {
+    const noQuestions = { questions_for_user: [] };
+    const none = { kind: "none" };
+    const point = (effect: unknown) => ({ ...issue("W1-R1-1"), [S.WORK_EFFECT_FIELD]: effect }) as S.Issue;
+    const rejected = () => respond([], { dispositions: [{ id: "W1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "", [S.WORK_EFFECT_FIELD]: none } as S.Disposition] });
+    const { layer, probe } = testLayer(tempRepo(), {
+      config: { maxIdleRounds: 5 },
+      answers: [answer],
+      steps: [{ output: noQuestions, plan: "v1" }, { output: rejected() }, { output: rejected() }],
+      reviews: [{ issues: [] }, { issues: [point(none)] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [] }],
+      execs: [finished],
+    });
+    assert.equal(await runTask(layer), 1, "one execution phase: no plan revision");
+    assert.ok(probe.ui.notified.some((e) => e._tag === "QuestionPresented" && e.question.origin.kind === "pause"));
+  });
+}

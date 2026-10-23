@@ -54,7 +54,7 @@ test("the configured model is passed, and no model key is set when codexModel is
 test("review passes agentJsonSchema(Review) as outputSchema and records usage", async () => {
   const fake = await reviewer([turn(JSON.stringify({ issues: [{ id: "A", severity: "major", location: "l", problem: "p", evidence: "e" }] }))]);
   const session = await run(fake.reviewer.startPhase);
-  const reply = await run(session.review("review the plan"));
+  const reply = await run(session.review("review the plan", S.Review));
 
   // Issue #165: the reply carries the turn's input tokens, the figure recorded in usage.jsonl.
   assert.equal(reply.inputTokens, 10);
@@ -71,13 +71,13 @@ test("review passes agentJsonSchema(Review) as outputSchema and records usage", 
 test("a failed turn fails with CodexCallFailed", async () => {
   const fake = await reviewer([new Error("the model is overloaded")]);
   const session = await run(fake.reviewer.startPhase);
-  await assert.rejects(run(session.review("review the plan")), (e: unknown) => tag(e) === "CodexCallFailed");
+  await assert.rejects(run(session.review("review the plan", S.Review)), (e: unknown) => tag(e) === "CodexCallFailed");
 });
 
 test("the reviewer returns a reply without an issues array unchanged to the caller", async () => {
   const fake = await reviewer([turn(JSON.stringify({ findings: [] }))]);
   const session = await run(fake.reviewer.startPhase);
-  assert.equal((await run(session.review("review the plan"))).text, JSON.stringify({ findings: [] }));
+  assert.equal((await run(session.review("review the plan", S.Review))).text, JSON.stringify({ findings: [] }));
 });
 
 // Finding 11 / recommendation C: the session is a value bound to its thread, not a nullable Ref in the adapter.
@@ -86,9 +86,9 @@ test("each startPhase returns a session bound to its own thread, and calls do no
   const fake = await reviewer([turn(empty), turn(empty), turn(empty)]);
   const first = await run(fake.reviewer.startPhase);
   const second = await run(fake.reviewer.startPhase);
-  await run(second.review("second phase"));
-  await run(first.review("first phase"));
-  await run(first.review("first phase again"));
+  await run(second.review("second phase", S.Review));
+  await run(first.review("first phase", S.Review));
+  await run(first.review("first phase again", S.Review));
 
   assert.equal(fake.sdk.threads.length, 2);
   assert.deepEqual(fake.sdk.threads[0].calls.map((c) => c.input), ["first phase", "first phase again"]);
@@ -137,7 +137,7 @@ test("interrupting a review aborts the Codex turn and returns the event generato
   const fake = await reviewer([waitForAbort]);
   const session = await run(fake.reviewer.startPhase);
   const reached = fake.sdk.nextCall();
-  const fiber = Effect.runFork(session.review("review the plan"));
+  const fiber = Effect.runFork(session.review("review the plan", S.Review));
   await reached;
   await sleep(10);
   await run(Fiber.interrupt(fiber));
@@ -150,8 +150,8 @@ test("interrupting a review aborts the Codex turn and returns the event generato
 test("each turn's start and end carry one id, different for each turn", async () => {
   const fake = await reviewer([turn(JSON.stringify({ issues: [] })), turn(JSON.stringify({ issues: [] }))]);
   const session = await run(fake.reviewer.startPhase);
-  await run(session.review("one"));
-  await run(session.review("two"));
+  await run(session.review("one", S.Review));
+  await run(session.review("two", S.Review));
   const ids = fake.ui.notified.flatMap((e) => (e._tag === "AgentCallStarted" || e._tag === "AgentCallEnded" ? [`${e._tag}:${e.callId}`] : []));
   assert.deepEqual(ids, ["AgentCallStarted:codex-1", "AgentCallEnded:codex-1", "AgentCallStarted:codex-2", "AgentCallEnded:codex-2"]);
 });
@@ -161,7 +161,7 @@ test("a streamed turn notifies its start, one tool use per item, and its end, in
   const events = [...command("c1", "git diff"), ...fileChange("f1", "a.ts", "b.ts"), ...webSearch("w1", "effect v4")];
   const fake = await reviewer([turn(JSON.stringify({ issues: [] }), undefined, events)]);
   const session = await run(fake.reviewer.startPhase);
-  await run(session.review("review"));
+  await run(session.review("review", S.Review));
   assert.deepEqual(fake.ui.notified, [
     { _tag: "AgentCallStarted", agent: "codex", purpose: REVIEW_PURPOSE, callId: "codex-1" },
     { _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" },
@@ -175,7 +175,7 @@ test("the final response is the text of the last agent message", async () => {
   const earlier = [{ type: "item.completed", item: { id: "m0", type: "agent_message", text: "thinking" } }] as ThreadEvent[];
   const fake = await reviewer([turn("final", undefined, earlier)]);
   const session = await run(fake.reviewer.startPhase);
-  assert.equal((await run(session.review("review"))).text, "final");
+  assert.equal((await run(session.review("review", S.Review))).text, "final");
 });
 
 test("turn.failed, a stream error event, and a turn without an agent message fail with CodexCallFailed", async () => {
@@ -184,7 +184,7 @@ test("turn.failed, a stream error event, and a turn without an agent message fai
   for (const [events, text] of [[turnFailed("rate limited"), /rate limited/], [streamError, /stream lost/], [noReply, /no reply/]] as const) {
     const fake = await reviewer([[...events]]);
     const session = await run(fake.reviewer.startPhase);
-    const error = await typedFailure(session.review("review"));
+    const error = await typedFailure(session.review("review", S.Review));
     assert.equal(error._tag, "CodexCallFailed");
     assert.match(describe(error as RunError), text);
     assert.deepEqual(fake.ui.notified.at(-1), { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" });
@@ -199,7 +199,7 @@ test("an error notice followed by a completed turn succeeds, and the notice is n
   const empty = JSON.stringify({ issues: [] });
   const fake = await reviewer([turn(empty, undefined, [errorEvent(reconnecting)])]);
   const session = await run(fake.reviewer.startPhase);
-  assert.equal((await run(session.review("review"))).text, empty);
+  assert.equal((await run(session.review("review", S.Review))).text, empty);
   assert.deepEqual(
     fake.ui.notified.filter((e) => e._tag === "AgentReconnecting"),
     [{ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: reconnecting, callId: "codex-1" }],
@@ -209,19 +209,19 @@ test("an error notice followed by a completed turn succeeds, and the notice is n
 test("a notice followed by turn.failed with a stream-disconnected message is TransportFault", async () => {
   const fake = await reviewer([[errorEvent(reconnecting), ...turnFailed("stream disconnected before completion")]]);
   const session = await run(fake.reviewer.startPhase);
-  await assert.rejects(run(session.review("review")), (e: unknown) => (e as { _tag: string; agent: string })._tag === "TransportFault" && (e as { agent: string }).agent === "codex");
+  await assert.rejects(run(session.review("review", S.Review)), (e: unknown) => (e as { _tag: string; agent: string })._tag === "TransportFault" && (e as { agent: string }).agent === "codex");
 });
 
 test("turn.failed with a usage limit is CodexCallFailed", async () => {
   const fake = await reviewer([turnFailed("You've hit your usage limit.")]);
   const session = await run(fake.reviewer.startPhase);
-  await assert.rejects(run(session.review("review")), (e: unknown) => tag(e) === "CodexCallFailed");
+  await assert.rejects(run(session.review("review", S.Review)), (e: unknown) => tag(e) === "CodexCallFailed");
 });
 
 test("a rejected runStreamed with ECONNRESET is TransportFault", async () => {
   const fake = await reviewer([new Error("read ECONNRESET")]);
   const session = await run(fake.reviewer.startPhase);
-  await assert.rejects(run(session.review("review")), (e: unknown) => (e as { _tag: string })._tag === "TransportFault");
+  await assert.rejects(run(session.review("review", S.Review)), (e: unknown) => (e as { _tag: string })._tag === "TransportFault");
 });
 
 // W1-R1-2: the thrown value's network code is classified, not only its text.
@@ -229,7 +229,7 @@ import { rejecting } from "./fakeSdk.ts";
 const failureOf = async (answer: Parameters<typeof reviewer>[0][number]) => {
   const fake = await reviewer([answer]);
   const session = await run(fake.reviewer.startPhase);
-  return typedFailure(session.review("review"));
+  return typedFailure(session.review("review", S.Review));
 };
 
 test("a stream that rejects with a bare { code: ECONNRESET } is TransportFault, and its message names the code", async () => {
@@ -245,4 +245,23 @@ test("runStreamed rejecting with an Error whose message omits its ETIMEDOUT code
 
 test("a rejection with { code: ENOENT } is CodexCallFailed", async () => {
   assert.equal((await failureOf(rejecting({ code: "ENOENT" })))._tag, "CodexCallFailed");
+});
+
+// Issue #183: Codex's output schema is the subject's, chosen per turn: the plan's and the work's reviews state each issue's
+// effect on the work, every other review does not.
+test("review passes the given schema as the turn's outputSchema", async () => {
+  const fake = await reviewer([turn(JSON.stringify({ issues: [] })), turn(JSON.stringify({ issues: [] }))]);
+  const session = await run(fake.reviewer.startPhase);
+  await run(session.review("the work", S.EffectReview));
+  await run(session.review("the questions", S.Review));
+  assert.deepEqual(fake.sdk.threads[0].calls.map((c) => c.turnOptions?.outputSchema), [agentJsonSchema(S.EffectReview), agentJsonSchema(S.Review)]);
+});
+
+test("seam: the plan's and the work's subjects review with the effect review, every other subject with the plain one", async () => {
+  const { planSubject, workSubject, questionSubject, termsSubject, requirementsSubject, decisionSubject } = await import("../src/subjects.ts");
+  const execution = { outcome: { status: "finished" as const, summary: "s", question: "", remainingWork: "", userInput: null, checks: [] }, plan: "p" };
+  assert.equal(planSubject(TEST_ROOT, 1, false, null, S.NO_STEP_CHECKS).reviewSchema, S.EffectReview);
+  assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS).reviewSchema, S.EffectReview);
+  assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS).respond.schema, S.WorkResponse);
+  for (const subject of [questionSubject("t"), termsSubject([]), requirementsSubject(), decisionSubject(1, 1, "f", (a) => Effect.succeed({ value: a, notes: [] }) as never)]) assert.equal(subject.reviewSchema, S.Review, subject.heading);
 });

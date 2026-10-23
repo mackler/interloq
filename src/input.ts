@@ -72,10 +72,11 @@ export const isTermsRequest = (text: string): boolean => text.trim() === TERMS_R
 /** The text a reply stands for when it chooses one of the options by number ("label: description"); any other reply is itself. */
 export const answerOf = (reply: string, options: readonly Readonly<{ label: string; description: string }>[]): string => {
   const chosen = chooseOption(reply, options.length);
-  if (chosen === null) return reply;
-  const option = options[chosen];
-  return option.description === "" ? option.label : `${option.label}: ${option.description}`;
+  return chosen === null ? reply : optionText(options[chosen]);
 };
+/** The text a chosen option stands for (issue #183): its label alone where its description is empty, else "label: description". */
+export const optionText = (option: Readonly<{ label: string; description: string }>): string =>
+  option.description === "" ? option.label : `${option.label}: ${option.description}`;
 
 // ---- the answers that end the run (S24, issue #25) -----------------------------------------------------------------
 

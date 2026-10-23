@@ -13,6 +13,7 @@ import type { SuiteResult } from "./suite.ts";
 import type { CommitCheck } from "./commitCheck.ts";
 import type { BranchName, LeftoverCommit, ParkRecord } from "./park.ts";
 import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
+import type * as SchemaModule from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
@@ -93,9 +94,11 @@ export class Planner extends Context.Service<Planner, PlannerShape>()("plan-revi
  * tokens as Codex reported them (the figure usage.jsonl records), null where Codex reported no usage for the turn.
  */
 export type ReviewReply = Readonly<{ text: string; inputTokens: number | null }>;
+/** The output schema of a review turn (issue #183): the plan's and the work's reviews state each issue's effect on the work. */
+export type ReviewSchema = typeof SchemaModule.Review | typeof SchemaModule.EffectReview;
 export interface ReviewSession {
   /** One review turn. Returns the reply with the turn's input tokens; the caller decodes the text. */
-  review(prompt: string): Effect.Effect<ReviewReply, ReviewerError | TransportFault>;
+  review(prompt: string, schema: ReviewSchema): Effect.Effect<ReviewReply, ReviewerError | TransportFault>;
 }
 export interface ReviewerShape {
   /** Starts a new thread and returns the session bound to it. Called at the start of every review loop. A start failure is a typed error (finding 11). */

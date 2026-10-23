@@ -5,6 +5,7 @@ import fc from "fast-check";
 import * as log from "../src/issueLog.ts";
 import { type IssueId, validateReview, validateRound } from "../src/round.ts";
 import type { Action, LogEntry, PlannerResponse, Review } from "../src/schema.ts";
+import * as S from "../src/schema.ts";
 import { questionOf } from "./helpers.ts";
 
 // Properties of round validation, the log transitions, detection and counting: rows 1 and 2 of the table in
@@ -22,7 +23,7 @@ const arbIssue = (id: string) => record({ id: fc.constant(id), severity: fc.cons
 const arbReview: fc.Arbitrary<Review> = fc.uniqueArray(arbId, { minLength: 0, maxLength: 5 }).chain((ids) => fc.tuple(...ids.map(arbIssue)).map((issues) => ({ issues })));
 const arbEntry = (id: string): fc.Arbitrary<LogEntry> =>
   fc.oneof(
-    record({ id: fc.constant(id as IssueId), phase: fc.constant(0), round: fc.constant(0), source: fc.constant("review" as const), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), problem: fc.string(), evidence: fc.string(), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: fc.constant(null), reverses: fc.constant(null), superseded: fc.constant(false), file_change: fc.constant(null), task_dispute: fc.constant(false) }),
+    record({ id: fc.constant(id as IssueId), phase: fc.constant(0), round: fc.constant(0), source: fc.constant("review" as const), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), problem: fc.string(), evidence: fc.string(), action: fc.constantFrom(...ACTIONS), rationale: fc.string(), duplicate_of: fc.constant(null), reverses: fc.constant(null), superseded: fc.constant(false), file_change: fc.constant(null), task_dispute: fc.constant(false), work_effects: fc.constant(null) }),
     record({ id: fc.constant(id as IssueId), phase: fc.constant(0), round: fc.constant(0), source: fc.constant("user" as const), problem: fc.string(), action: fc.constant("decided_by_user" as const), rationale: fc.string(), superseded: fc.constant(false) }),
   );
 const arbLog: fc.Arbitrary<LogEntry[]> = fc.uniqueArray(arbId, { maxLength: 4 }).chain((ids) => fc.tuple(...ids.map(arbEntry)));
@@ -167,6 +168,32 @@ test("property: a disposition carries the mark exactly when it is marked and not
       if (Result.isFailure(validated)) return false;
       const round = validateRound(validated.success, response, [], 1, 1, "Q");
       return Result.isSuccess(round) && round.success.dispositions[0]!.taskDispute === (mark && action !== "accepted");
+    }),
+    RUNS,
+  );
+});
+
+// Issue #183: a disposition's statement of its effect on the work is kept exactly where it is a disagreement and stated.
+test("property: ValidatedDisposition.workEffect is null exactly when the action is accepted or the field is absent", () => {
+  const effect = fc.oneof(fc.constant({ kind: "none" as const }), fc.string({ minLength: 1 }).filter((t) => /\S/u.test(t)).map((difference) => ({ kind: "differs" as const, difference })));
+  const disposition = fc.tuple(fc.constantFrom(...ACTIONS), fc.option(effect, { nil: undefined }));
+  fc.assert(
+    fc.property(fc.array(disposition, { minLength: 1, maxLength: 5 }), (cases) => {
+      const ids = cases.map((_, i) => `W1-R1-${i + 1}`);
+      const reviewed = validateReview({ issues: ids.map((id) => ({ id, severity: "major" as const, location: "l", problem: "p", evidence: "e" })) });
+      assert.ok(Result.isSuccess(reviewed));
+      const response = {
+        dispositions: cases.map(([action, stated], i) => ({ id: ids[i], action, rationale: "r", duplicate_of: "", reverses: "", ...(stated === undefined ? {} : { [S.WORK_EFFECT_FIELD]: stated }) })),
+        self_corrections: [],
+        reviewer_feedback: "",
+        questions_for_user: [],
+      } as PlannerResponse;
+      const round = validateRound(reviewed.success, response, [], 1, 1, "W");
+      assert.ok(Result.isSuccess(round));
+      round.success.dispositions.forEach((d, i) => {
+        const [action, stated] = cases[i];
+        assert.deepEqual(d.workEffect, action === "accepted" || stated === undefined ? null : stated);
+      });
     }),
     RUNS,
   );

@@ -34,7 +34,7 @@ for (const code of NETWORK_CODES) {
     })();
     const claudeSdk = new FakeSdk([script]);
     const claude = await Effect.runPromise(makeClaudePlanner.pipe(Effect.provide(await setUp(claudeSdk))));
-    const [codexTag, claudeTag] = [await tagOf(session.review("review")), await tagOf(claude.planning("plan", S.PlanWriteResult).pipe(Effect.provideService(Decider, noDecider)))];
+    const [codexTag, claudeTag] = [await tagOf(session.review("review", S.Review)), await tagOf(claude.planning("plan", S.PlanWriteResult).pipe(Effect.provideService(Decider, noDecider)))];
     assert.deepEqual([codexTag, claudeTag], ["TransportFault", "TransportFault"]);
   });
 }

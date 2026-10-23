@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Result } from "effect";
+import { Result, Schema } from "effect";
 import type { RoundInvalid } from "../src/errors.ts";
 import { describe } from "../src/errors.ts";
 import * as log from "../src/issueLog.ts";
 import { type IssueId, validateReview, validateRound, type ValidatedReview } from "../src/round.ts";
 import type { LogEntry, PlannerResponse, Review } from "../src/schema.ts";
+import * as S from "../src/schema.ts";
 import { issue, respond } from "./helpers.ts";
 
 // Findings 3, 4 and 7 of docs/functional-design-review.md; decisions Q2 and Q3 of plan-review/requirements.md.
@@ -22,7 +23,7 @@ const invalid = <A>(result: Result.Result<A, RoundInvalid>, ...texts: RegExp[]):
 const review = (...issues: Review["issues"]): Review => ({ issues });
 /** A version-2 review entry by default; `extra` may change the source (the review-only fields are then ignored by the functions under test). */
 const entry = (id: string, action: string, extra: Partial<LogEntry> = {}): LogEntry =>
-  ({ id, phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, task_dispute: false, ...extra }) as LogEntry;
+  ({ id, phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action, rationale: "r", duplicate_of: null, reverses: null, superseded: false, task_dispute: false, work_effects: null, ...extra }) as LogEntry;
 const validated = (r: Review): ValidatedReview => ok(validateReview(r));
 
 test("validateReview: unique non-empty ids pass; a duplicate or an empty id is RoundInvalid", () => {
@@ -155,4 +156,48 @@ test("appendRound writes the round's mark on each review entry", () => {
   const round = ok(validateRound(r, respond([["A", "rejected", true], ["B", "rejected"]]), [], 1, 1, "Q"));
   const entries = log.appendRound([], round, null);
   assert.deepEqual(entries.map((e) => [e.id, e.source === "review" ? e.task_dispute : null]), [["A", true], ["B", false]]);
+});
+
+// ---- issue #183: each agent's statement of a disputed point's effect on the work -------------------------------------
+
+const decodeAs = <S extends Schema.Top>(schema: S, value: unknown): S["Type"] => Schema.decodeUnknownSync(schema as unknown as Schema.Decoder<unknown>)(value) as S["Type"];
+const stated = (id: string, effect: unknown) => ({ ...issue(id), [S.WORK_EFFECT_FIELD]: effect });
+const NONE = { kind: "none" };
+const differs = (difference: string) => ({ kind: "differs", difference });
+
+test("validateReview: an issue decoded with the effect review gets its statement, one decoded with the plain review none", () => {
+  const effectReview = decodeAs(S.EffectReview, { issues: [stated("A", NONE), stated("B", differs("the README stays unwrapped"))] });
+  assert.deepEqual(validated(effectReview).issues.map((i) => [i.id, i.workEffect]), [["A", NONE], ["B", differs("the README stays unwrapped")]]);
+  const plain = decodeAs(S.Review, { issues: [stated("A", NONE)] });
+  assert.deepEqual(validated(plain).issues.map((i) => i.workEffect), [null]);
+});
+
+test("validateReview: a stated difference that is blank is RoundInvalid naming the issue", () => {
+  for (const blank of ["", "   ", "\t"]) {
+    const failure = invalid(validateReview(decodeAs(S.EffectReview, { issues: [stated("A", NONE), stated("B", differs(blank))] })), /work_effect/);
+    assert.deepEqual(failure.blankEffects, ["B"]);
+  }
+});
+
+const effectDisposition = (id: string, action: S.Disposition["action"], effect: unknown) => ({ id, action, rationale: `rationale ${id}`, duplicate_of: "", reverses: "", [S.WORK_EFFECT_FIELD]: effect });
+const workResponse = (dispositions: readonly unknown[]): PlannerResponse => decodeAs(S.WorkResponse, { dispositions, self_corrections: [], reviewer_feedback: "", questions_for_user: [] });
+
+test("validateRound: a disposition of the work's response that is not accepted gets its statement; an accepted one none", () => {
+  const r = validated(review(issue("A"), issue("B"), issue("C")));
+  const round = ok(validateRound(r, workResponse([effectDisposition("A", "rejected", NONE), effectDisposition("B", "accepted", differs("x")), effectDisposition("C", "partially_accepted", differs("the test runs twice"))]), [], 1, 1, "W"));
+  assert.deepEqual(round.dispositions.map((d) => [d.id, d.workEffect]), [["A", NONE], ["B", null], ["C", differs("the test runs twice")]]);
+});
+
+test("validateRound: a blank stated difference on a disposition that is not accepted is RoundInvalid; on accepted it is ignored", () => {
+  const r = validated(review(issue("A"), issue("B")));
+  const failure = invalid(validateRound(r, workResponse([effectDisposition("A", "rejected", differs(" ")), effectDisposition("B", "accepted", differs(""))]), [], 1, 1, "W"), /work_effect/);
+  assert.deepEqual(failure.blankEffects, ["A"]);
+});
+
+test("validateRound: a disposition decoded with the plain or the question list's response carries no statement", () => {
+  const r = validated(review(issue("A")));
+  const raw = { dispositions: [effectDisposition("A", "rejected", NONE)], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
+  assert.deepEqual(ok(validateRound(r, decodeAs(S.PlannerResponse, raw), [], 1, 1, "P")).dispositions.map((d) => d.workEffect), [null]);
+  const marked = { ...raw, dispositions: [{ ...effectDisposition("A", "rejected", NONE), task_dispute: false }], questions: [] };
+  assert.deepEqual(ok(validateRound(r, decodeAs(S.QuestionListResponse, marked), [], 1, 1, "Q")).dispositions.map((d) => d.workEffect), [null]);
 });

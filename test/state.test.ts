@@ -485,7 +485,7 @@ test("a record is replaced atomically: a failure between the temporary file and 
   let armed = false;
   const s = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(faultyPlatform((method) => method === "rename" && armed))));
   await Effect.runPromise(s.init("task"));
-  const a = { id: "A" as IssueId, phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "l", problem: "p", evidence: "e", action: "accepted" as const, rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false };
+  const a = { id: "A" as IssueId, phase: 1, round: 1, source: "review" as const, severity: "major" as const, location: "l", problem: "p", evidence: "e", action: "accepted" as const, rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null };
   await Effect.runPromise(s.saveLog({ plan: 1 }, [a]));
   armed = true;
   await fails(s.saveLog({ plan: 1 }, [a, { ...a, id: "B" as IssueId }]), "FileSystemError", /injected/);

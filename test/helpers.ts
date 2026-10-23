@@ -496,7 +496,7 @@ export class ScriptedPlanner implements PlannerShape {
    */
   private withPlan(schema: Schema.Top, step: PlanningStep): unknown {
     if (step.plan !== undefined) this.root.lastPlan = step.plan;
-    const output = step.output;
+    const output = withWorkEffects(step.output);
     if (!carriesPlan(schema) || output === null || typeof output !== "object" || Array.isArray(output) || "plan" in output || this.lastPlan === null) return output;
     return { ...output, plan: scriptedPlan(this.lastPlan) };
   }
@@ -589,15 +589,29 @@ export class ScriptedReviewer implements ReviewerShape {
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
     if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map(withIssueEffect) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null };
   }
 }
 
-export const issue = (id: string, problem = "p"): Review["issues"][number] => ({ id, severity: "major", location: "s", problem, evidence: "e" });
+/** A scripted issue; it states SCRIPTED_WORK_EFFECT (issue #183), which the plan's and the work's reviews require and every other drops. */
+export const issue = (id: string, problem = "p"): Review["issues"][number] => ({ id, severity: "major", location: "s", problem, evidence: "e", [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT }) as Review["issues"][number];
 
 /**
+ * The default statement of a scripted reply's effect on the work (issue #183): `differs`, which settles no dispute, so
+ * every pause a test expects is still asked. The plan's and the work's schemas require the field; every other drops it.
+ */
+export const SCRIPTED_WORK_EFFECT = { kind: "differs", difference: "scripted" } as const;
+/** A scripted issue given SCRIPTED_WORK_EFFECT where it states none: the plan's and the work's reviews require it, every other drops it. */
+export const withIssueEffect = (i: Review["issues"][number]): Review["issues"][number] => (S.WORK_EFFECT_FIELD in i ? i : ({ ...i, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT } as Review["issues"][number]));
+/** A scripted response with each disposition given SCRIPTED_WORK_EFFECT where it states none; any other output unchanged. */
+export const withWorkEffects = (output: unknown): unknown => {
+  if (output === null || typeof output !== "object" || Array.isArray(output) || !("dispositions" in output) || !Array.isArray(output.dispositions)) return output;
+  return { ...output, dispositions: output.dispositions.map((d: unknown) => (d !== null && typeof d === "object" && !(S.WORK_EFFECT_FIELD in d) ? { ...d, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT } : d)) };
+};
+/**
  * A response with one disposition per tuple. Each carries Claude Code's mark (issue #156), the tuple's third element or
- * false, which the question list's and the terms' schemas require and every other subject's decode drops.
+ * false, which the question list's and the terms' schemas require and every other subject's decode drops, and the
+ * statement SCRIPTED_WORK_EFFECT (issue #183), which the plan's and the work's schemas require and every other drops.
  */
 export const respond = (
   dispositions: [string, PlannerResponse["dispositions"][number]["action"], boolean?][],
@@ -610,14 +624,21 @@ export const respond = (
     duplicate_of: "",
     reverses: "",
     [TASK_DISPUTE_FIELD]: mark ?? false,
+    [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT,
   }));
-  return { self_corrections: [], reviewer_feedback: "", questions_for_user: [], ...extra, dispositions: extra.dispositions?.map((d) => ({ [TASK_DISPUTE_FIELD]: false, ...d })) ?? marked };
+  return { self_corrections: [], reviewer_feedback: "", questions_for_user: [], ...extra, dispositions: extra.dispositions?.map((d) => ({ [TASK_DISPUTE_FIELD]: false, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT, ...d })) ?? marked };
 };
-/** Dispositions as a subject without the mark decodes them (issue #156): its schema drops `task_dispute`. */
+/**
+ * Dispositions as the plan's and the work's responses decode them: their schemas drop `task_dispute` (issue #156) and keep
+ * the statement of the effect on the work (issue #183).
+ */
 export const unmarked = (dispositions: readonly S.Disposition[]): readonly S.Disposition[] =>
-  dispositions.map(({ id, action, rationale, duplicate_of, reverses }) => ({ id, action, rationale, duplicate_of, reverses }));
+  dispositions.map((d) => {
+    const { id, action, rationale, duplicate_of, reverses } = d;
+    return S.WORK_EFFECT_FIELD in d ? { id, action, rationale, duplicate_of, reverses, [S.WORK_EFFECT_FIELD]: d[S.WORK_EFFECT_FIELD] } : { id, action, rationale, duplicate_of, reverses };
+  });
 /** A response whose dispositions carry the mark, which every subject's response accepts. */
-export type MarkedResponse = Omit<PlannerResponse, "dispositions"> & Readonly<{ dispositions: readonly MarkedDisposition[] }>;
+export type MarkedResponse = Omit<PlannerResponse, "dispositions"> & Readonly<{ dispositions: readonly (MarkedDisposition & Partial<Pick<S.EffectDisposition, typeof S.WORK_EFFECT_FIELD>>)[] }>;
 
 export const finished: ExecOutcome = { status: "finished", summary: "done", question: "", remainingWork: "", userInput: null, checks: [] };
 /** The execution a work response is given (issue #117): a finished report and a plan text of its own. */

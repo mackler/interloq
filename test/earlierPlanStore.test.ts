@@ -115,3 +115,14 @@ test("a newest run whose parking found nothing to keep is read as before", async
   parkedIn(repo, NEW, { _tag: "Nothing", version: 2, time: "t" });
   assert.equal((await run((await storeOf(repo)).earlierPlan(item("80"))))._tag, "EarlierPlanTaken");
 });
+
+// Issue #183: a round file written before work_effect existed (no workEffect on its issues) still decodes, so the earlier
+// run's plan is still taken.
+test("taken: an earlier run whose round file has the shape written before issue #183", async () => {
+  const repo = tempRepo();
+  earlier(repo, NEW, { plan: planOf("done") });
+  const old = { version: 2, kind: "no_response", subject: "planning-1", phase: 1, round: 1, reconstructed: false, review: { issues: [{ id: "P1-R1-1", severity: "minor", location: "l", problem: "p", evidence: "e" }] } };
+  fs.writeFileSync(path.join(repo, "plan-review", NEW, "planning-1", "round-1.json"), JSON.stringify(old));
+  const got = await run((await storeOf(repo)).earlierPlan(item("80")));
+  assert.equal(got._tag, "EarlierPlanTaken");
+});

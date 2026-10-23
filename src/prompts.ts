@@ -3,7 +3,7 @@
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { ChainEndReason, ChainEntry, ChainState } from "./chain.ts";
-import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -32,7 +32,7 @@ const SEVERITY = `Severity: blocking = the work cannot succeed with the file as 
 function logRules(root: RunRoot, logFile: string, idPrefix: string, round: number): string {
   return `${runDir(root)}/${logFile} is a JSON object whose 'entries' list every issue raised in earlier rounds with the planner's disposition and rationale, in order.
 Every entry has id, phase, round, source, problem, action, rationale and superseded. An entry with superseded = true has been replaced by a later entry with the same id; use the later entry.
-An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null. ${TASK_DISPUTE_FIELD} is true where the planner marked its disagreement with the issue as about what the task requires, not about how a question is worded; false otherwise.
+An entry with source 'review' is an issue you raised: it also has severity, location, evidence, the planner's action ('accepted', 'partially_accepted', 'rejected', 'no_change_needed' or 'clarification_requested'), and duplicate_of and reverses, each the id of an earlier issue or null. ${TASK_DISPUTE_FIELD} is true where the planner marked its disagreement with the issue as about what the task requires, not about how a question is worded; false otherwise. work_effects holds your and the planner's statements of the issue's effect on the work in that round (reviewer and planner, each ${WORK_EFFECT_FIELD} as you and the planner gave it); null where the review carries none or the planner accepted the issue.
 An entry with source 'self_correction' records a correction that the planner made to its own earlier work (action 'accepted', 'plan_error' or 'correction_disputed').
 Every entry with source 'review' or 'self_correction' also has ${FILE_CHANGE_FIELD}: what the program measured in the reviewed file during the planner's response in that round, for all of that round's entries together: changed (true or false), and the numbers of lines added and removed; null where nothing was measured. It is the program's measurement, not the planner's claim. If an 'accepted' or 'partially_accepted' entry's rationale describes amendments that ${FILE_CHANGE_FIELD} does not bear out, raise it as an issue.
 An entry with source 'user' (action 'decided_by_user') contains a decision of the user on that issue, which must be followed.
@@ -581,11 +581,46 @@ export const TWO_SENSES = "Where Codex and Claude Code disagree on what a term m
 /** The heading of the line in conversation.md that records a disputed issue the user was not asked about (issue #112). */
 export const WORDING_DISPUTE_HEADING = "Not put to the user:";
 /**
+ * Issue #183: the heading of a disputed pause of the plan's or the work's review that both agents state changes nothing
+ * in the work, recorded in conversation.md and said on the page instead of being asked.
+ */
+export const NO_WORK_EFFECT_HEADING = "Changes nothing in the work, not put to the user:";
+/**
  * A disputed issue of the question list or the terms, recorded instead of a pause (issue #112). It asserts nothing
  * about what the disagreement concerns, which nothing checked; only that Claude Code did not mark it (issue #156).
  */
 export const unmarkedDisputeLine = (origin: PauseOrigin, heading: string): string =>
   `${heading}: ${pauseSubject(origin)}. Claude Code did not mark this disagreement as one about what the task requires, so Codex and Claude Code settle it between themselves; ${origin.pause === "reraised" ? "Claude Code answers it in this cycle's response" : "Claude Code's disposition stands, and Codex reads its rationale in the next cycle"}.`;
+
+/**
+ * Issue #183: a disputed pause of the plan's or the work's review that both agents state changes nothing in the work, as
+ * recorded under NO_WORK_EFFECT_HEADING, with both positions.
+ */
+export const noWorkEffectDisputeLine = (origin: PauseOrigin, heading: string, reviewer: string, planner: string): string =>
+  `${heading}: ${pauseSubject(origin)}. Codex and Claude Code both state that following either position changes nothing in the work, so it is not put to the user; ${origin.pause === "reraised" ? "Claude Code answers it in this cycle's response" : "Claude Code's disposition stands"}. Codex's position: ${reviewer} Claude Code's position: ${planner}`;
+
+/** Issue #183: what each agent states would differ in the work, attributed, for a disputed pause's facts and Codex's option. */
+export const workEffectsFact = (effects: WorkEffects): string => `What each agent states would differ in the work if Codex's position were adopted: ${statedBy(effects)}`;
+/** Each agent's statement, attributed: its difference, or "nothing" for none. */
+const statedBy = (effects: WorkEffects): string => `Codex states: ${statedText(effects.reviewer)}. Claude Code states: ${statedText(effects.planner)}.`;
+const statedText = (effect: WorkEffect): string => (effect.kind === "none" ? "nothing" : effect.difference.trim().replace(/[.\s]+$/u, ""));
+/** Issue #183: Codex's option of a dispute of the plan's or the work's review: the differences each agent named. */
+export const followCodexChanges = (effects: WorkEffects): string => `What would differ in the work: ${statedBy(effects)}`;
+/** Issue #183: Claude Code's option: the work stays without those differences. */
+export const followClaudeCodeKeeps = (_effects: WorkEffects): string => "The work stays without those differences.";
+/** Issue #183: what choosing Codex's position costs: a plan revision cycle where the review leaves on a decision (the work), an amended plan otherwise. */
+export const followCodexCost = (leavesOnDecision: boolean): string =>
+  leavesOnDecision
+    ? "Interloq then revises the plan, Claude Code carries out the revision and Codex reviews the work again: one more planning phase, execution phase and work review."
+    : "Claude Code then amends the plan to follow it.";
+/** Issue #183: what choosing Claude Code's position costs. */
+export const FOLLOW_CLAUDE_CODE_COST = "The review goes on with no revision.";
+
+/** Issue #183: Codex's statement of an issue's effect on the work, as conversation.md shows it under the issue. */
+export const reviewerEffectLine = (effect: WorkEffectReply): string => `Codex: ${effectWords(effect)}`;
+const effectWords = (effect: WorkEffectReply): string => (effect.kind === "none" ? "nothing in the work would differ" : `what would differ in the work: ${effect.difference}`);
+/** Issue #183: Claude Code's statement on a disposition not accepted in full, as conversation.md shows it. */
+export const plannerEffectLine = (effect: WorkEffectReply): string => `Claude Code: ${effectWords(effect)}`;
 
 // ---- question list ------------------------------------------------------------------------------
 
@@ -954,13 +989,23 @@ ${COMMIT_STEP_REVIEW_CRITERION}
 The plan writer was given this rule on its questions to the user:
 ${PLAN_QUESTIONS_RULE}
 ${PLAN_QUESTIONS_REVIEW_CRITERION}
+${workEffectReviewRule("plan")}
 Put the step's id in the location field.
 ${logRules(root, log, prefix, round)}`;
 }
 
+/** Issue #183: Codex's rule on stating each issue's effect on the work, in the plan's and the work's reviews. */
+export const workEffectReviewRule = (kind: "plan" | "work"): string => {
+  const work = kind === "plan" ? "the work the plan would produce" : "the work";
+  return `Every issue has ${WORK_EFFECT_FIELD}: what would differ in ${work} if your position were adopted. Where something would differ, give { "kind": "differs", "difference": … }, naming the code, tests, files committed or delivered behavior that would differ; where nothing in ${work} would differ and the point concerns only what the review records, give { "kind": "none" }. A point you raise again, by its id or as a repetition under a new id, on which you and the planner both state that nothing in ${work} would differ, is not put to the user: the planner's disposition stands. So raise such a point again only where you name a difference.`;
+};
+/** Issue #183: Claude Code's rule on stating a disposition's effect on the work, in the plan's and the work's responses. */
+export const WORK_EFFECT_RESPONSE_RULE = `Every disposition has ${WORK_EFFECT_FIELD}. On a disposition that does not accept the issue in full, state what would differ in the work (for the plan, in the work the plan would produce) if Codex's position were adopted, naming the code, tests, files committed or delivered behavior, as { "kind": "differs", "difference": … }, or give { "kind": "none" } where nothing would differ. On an accepted disposition it is ignored. A disagreement on which both you and Codex state that nothing in the work would differ is not put to the user, and your disposition stands; where either of you names a difference, the user decides, and his options name that difference. State a difference only where one exists: a stated difference stops the run to ask the user.`;
+
 export function planRespondPrompt(root: RunRoot, phase: number, round: number, checks: StepChecks): string {
   return `${runDir(root)}/planning-${phase}/review-${round}.json contains a review of the plan in ${runDir(root)}/plan.json.
 ${respondRules(root, "you amend the plan for it")}
+${WORK_EFFECT_RESPONSE_RULE}
 ${PLAN_QUESTIONS_RULE}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
@@ -1096,9 +1141,9 @@ const correctableIds = (ids: readonly string[]): string => ids.join(", ");
  */
 export function correctivePrompt(root: RunRoot, fileLabel: string, round: number, acceptedIds: readonly string[]): string {
   return `${runDir(root)}/${fileLabel} did not change during your response to the review of cycle ${round}, although you accepted ${correctableIds(acceptedIds)} in full or in part.
-Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale; where your response carries ${TASK_DISPUTE_FIELD} and the disagreement is about what the task requires, set it on them.
+Either apply the amendments you described, or change the action of those dispositions and give the reason in the rationale; where your response carries ${TASK_DISPUTE_FIELD} and the disagreement is about what the task requires, set it on them; where your response carries ${WORK_EFFECT_FIELD}, state it on each disposition you no longer accept in full.
 Return the complete response again in the same form as before; where your response carries the plan, the question list or the analysis, return it whole, with the amendments applied.
-Only the action, the rationale and, where your response carries it, ${TASK_DISPUTE_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
+Only the action, the rationale and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response. Return every other disposition, every duplicate_of and reverses, the self_corrections, the reviewer_feedback and the questions_for_user exactly as before.
 Do not modify any file.`;
 }
 /** What a corrective reply changed that it may not (CorrectionInvalid), as the halt describes it. */
@@ -1112,12 +1157,12 @@ export function correctionInvalidText(changedIds: readonly string[], other: read
 /** The repair turn of a corrective reply that changed what it may not. */
 export function correctionRepairPrompt(error: Readonly<{ changedIds: readonly string[]; other: readonly string[] }>, acceptedIds: readonly string[]): string {
   return `Your structured output matched the schema, but the program cannot accept it: ${correctionInvalidText(error.changedIds, error.other)}.
-Only the action, the rationale and, where your response carries it, ${TASK_DISPUTE_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
+Only the action, the rationale and, where your response carries them, ${TASK_DISPUTE_FIELD} and ${WORK_EFFECT_FIELD} of ${correctableIds(acceptedIds)} may differ from your previous response; everything else must be returned exactly as before.
 Return the complete output again, corrected. Do not modify any file.`;
 }
 
 /** The fields of RoundInvalid (src/errors.ts), which imports this module for its texts. */
-export type RoundProblems = Readonly<{ duplicateIssues: readonly string[]; missing: readonly string[]; duplicateDispositions: readonly string[]; unknownDispositions: readonly string[]; emptyIds: readonly string[]; collidingIds: readonly string[] }>;
+export type RoundProblems = Readonly<{ duplicateIssues: readonly string[]; missing: readonly string[]; duplicateDispositions: readonly string[]; unknownDispositions: readonly string[]; emptyIds: readonly string[]; collidingIds: readonly string[]; blankEffects: readonly string[] }>;
 
 /** What a repair prompt asks for instead, one instruction per failure of RoundInvalid (issue #151), in the words of the review and response rules. */
 export const ROUND_REPAIR = {
@@ -1134,6 +1179,8 @@ export const ROUND_REPAIR = {
     const forms = [...new Set(ids.map((id) => `${id.replace(/\d+$/, "")}<k>`))];
     return `The program generated ${ids.join(", ")} for self-corrections with an empty id, and an entry of the issue log already has that id. Give each of those self-corrections an id of your own of the form ${forms.join(" or ")}, with a k that appears neither in the issue log nor elsewhere in your reply, and keep its new_action and explanation unchanged; it still concerns no issue.`;
   },
+  blankEffects: (ids: readonly string[]): string =>
+    `Give ${WORK_EFFECT_FIELD} of ${ids.join(", ")} a difference that says what would differ in the work (the code, tests, files committed or delivered behavior) if Codex's position were adopted, or set its kind to none where nothing in the work would differ.`,
 } as const;
 
 /** What a review or a response did wrong (RoundInvalid), one sentence per field: the halt's text and the repair prompts state it from here. */
@@ -1144,6 +1191,7 @@ export const roundInvalidParts = (error: RoundProblems): readonly string[] => [
   ...(error.unknownDispositions.length > 0 ? [`Claude Code returned a disposition for an id that is not in the review: ${error.unknownDispositions.join(", ")}`] : []),
   ...(error.emptyIds.length > 0 ? [`an empty id in ${error.emptyIds.join(" and ")}`] : []),
   ...(error.collidingIds.length > 0 ? [`a generated self-correction id already exists in the log: ${error.collidingIds.join(", ")}`] : []),
+  ...(error.blankEffects.length > 0 ? [`${WORK_EFFECT_FIELD} names a blank difference for: ${error.blankEffects.join(", ")}`] : []),
 ];
 
 /** A validation repair turn: what the program refused, one line each, then what to return instead. */
@@ -1159,6 +1207,7 @@ export const reviewRepairPrompt = (error: RoundProblems): string =>
   validationRepairPrompt(roundInvalidParts(error), [
     ...(error.duplicateIssues.length > 0 ? [ROUND_REPAIR.duplicateIssues(error.duplicateIssues)] : []),
     ...(error.emptyIds.length > 0 ? [ROUND_REPAIR.emptyIssueId] : []),
+    ...(error.blankEffects.length > 0 ? [ROUND_REPAIR.blankEffects(error.blankEffects)] : []),
   ]);
 
 /** The validation repair turn of a response whose dispositions or generated self-correction ids are invalid (Claude Code); `reviewIds` are the review's issue ids. */
@@ -1169,6 +1218,7 @@ export const roundRepairPrompt = (error: RoundProblems, reviewIds: readonly stri
     ...(error.unknownDispositions.length > 0 ? [ROUND_REPAIR.unknownDispositions(error.unknownDispositions, reviewIds)] : []),
     ...(error.emptyIds.length > 0 ? [ROUND_REPAIR.emptyDispositionId] : []),
     ...(error.collidingIds.length > 0 ? [ROUND_REPAIR.collidingIds(error.collidingIds)] : []),
+    ...(error.blankEffects.length > 0 ? [ROUND_REPAIR.blankEffects(error.blankEffects)] : []),
   ]);
 
 // ---- prompts to the user ------------------------------------------------------------------------
@@ -1512,6 +1562,7 @@ Put the file path, with a line number where it helps, in the location field.
 ${WORK_CHECK_CRITERION}
 The check commands execution phase ${phase} reported, per step:
 ${reportedChecksText(execution)}
+${workEffectReviewRule("work")}
 ${logRules(root, log, prefix, round)}`;
 }
 
@@ -1548,6 +1599,7 @@ export function workRespondPrompt(root: RunRoot, phase: number, round: number, c
   return `${runDir(root)}/${pathOf({ kind: "review", subject: { work: phase }, round })} contains a review of the work done in the project (the diff in ${runDir(root)}/${pathOf({ kind: "changes", phase })}).
 You cannot use any tool in this response: the task, the review, the earlier entries of this work review's log, the diff, ${requirementsText === null ? "" : "the requirements, "}the user's decisions, the report of execution phase ${phase} and the plan with its steps' statuses are below. This response runs in a Claude Code session of its own, which has not seen the planning or the execution: it has only what is below. Answer with the final structured output only.
 ${respondRules(root, "the correction will be made in a later execution phase after the plan has been revised; do not modify any file")}
+${WORK_EFFECT_RESPONSE_RULE}
 Every correction, including one that a self-correction calls for, is made in a later execution phase; state in the rationale what the correction requires.
 Do not modify any file.
 

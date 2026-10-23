@@ -46,6 +46,41 @@ export const TASK_DISPUTE_FIELD = "task_dispute";
  */
 export const MarkedDisposition = Schema.Struct({ ...Disposition.fields, [TASK_DISPUTE_FIELD]: Schema.Boolean });
 
+/**
+ * The name of each agent's statement of a disputed point's effect on the work (issue #183), the one source of it for the
+ * schemas, the prompts and the tests.
+ */
+export const WORK_EFFECT_FIELD = "work_effect";
+/**
+ * An agent's statement, as it writes it, of what would differ in the work if Codex's position were adopted (issue #183):
+ * `none`, or `differs` with the difference. A union rather than an empty string, so that an agent states "none"
+ * explicitly. `difference` is a plain string, as Codex's strict mode wants; workEffectOf of src/workEffect.ts refuses a
+ * blank one, with the round's validation repair turn.
+ */
+export const WorkEffectReply = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("none") }),
+  Schema.Struct({ kind: Schema.Literal("differs"), difference: Schema.String }),
+]);
+export type WorkEffectReply = typeof WorkEffectReply.Type;
+/** An issue of the plan's or the work's review, with Codex's statement of its effect on the work (issue #183). */
+export const EffectIssue = Schema.Struct({ ...Issue.fields, [WORK_EFFECT_FIELD]: WorkEffectReply });
+/** The review of the plan and of the work (issue #183): every issue states its effect on the work. */
+export const EffectReview = Schema.Struct({ issues: Schema.Array(EffectIssue) });
+/** A disposition of the plan's or the work's response, with Claude Code's statement of the effect (issue #183); ignored on `accepted`. */
+export const EffectDisposition = Schema.Struct({ ...Disposition.fields, [WORK_EFFECT_FIELD]: WorkEffectReply });
+/** A text with a character other than whitespace: the difference of a stated effect (issue #183). */
+export const EffectText = Schema.String.check(Schema.isPattern(/\S/u)).pipe(Schema.brand("EffectText"));
+export type EffectText = typeof EffectText.Type;
+/** The program's value of a stated effect (issue #183): `none`, or `differs` with a difference that is not blank. */
+export const WorkEffect = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("none") }),
+  Schema.Struct({ kind: Schema.Literal("differs"), difference: EffectText }),
+]);
+export type WorkEffect = typeof WorkEffect.Type;
+/** Codex's and Claude Code's statements on one disputed issue in one round (issue #183). */
+export const WorkEffects = Schema.Struct({ reviewer: WorkEffect, planner: WorkEffect });
+export type WorkEffects = typeof WorkEffects.Type;
+
 export const SelfCorrection = Schema.Struct({
   id: Schema.String,
   new_action: Schema.Literals(["accepted", "rejected", "plan_error"]),
@@ -119,6 +154,11 @@ const plannerResponseFields = {
 
 export const PlannerResponse = Schema.Struct(plannerResponseFields);
 
+/** The fields of a response whose dispositions state their effect on the work (issue #183): the plan and the work. */
+const effectResponseFields = { ...plannerResponseFields, dispositions: Schema.Array(EffectDisposition) };
+/** Claude Code's response to a review of the work (issue #183). */
+export const WorkResponse = Schema.Struct(effectResponseFields);
+
 /** The fields of a response whose dispositions carry Claude Code's mark (issue #156): the question list and the terms. */
 const markedResponseFields = { ...plannerResponseFields, dispositions: Schema.Array(MarkedDisposition) };
 
@@ -138,7 +178,7 @@ export const Plan = Schema.Struct({ stages: Schema.Array(PlanStage) });
 /** The plan write, its revision and the application of the user's decisions to it. */
 export const PlanWrite = Schema.Struct({ plan: Plan, questions_for_user: Schema.Array(UserQuestion) });
 /** A response to a review of the plan, with the complete amended plan. */
-export const PlanResponse = Schema.Struct({ ...plannerResponseFields, plan: Plan });
+export const PlanResponse = Schema.Struct({ ...effectResponseFields, plan: Plan });
 
 /** What the program records of a step (G-R1-2): reported started or done by report_step, unfinished when a call ended with it started. */
 export const StepStatus = Schema.Literals(["pending", "started", "done", "unfinished"]);
@@ -346,6 +386,11 @@ export const ReviewEntry = Schema.Struct({
   [FILE_CHANGE_FIELD]: Schema.NullOr(FileChange),
   /** Claude Code's mark (issue #156): true only where it marked a disposition other than `accepted`; false elsewhere. */
   [TASK_DISPUTE_FIELD]: Schema.Boolean,
+  /**
+   * Codex's and Claude Code's statements of the issue's effect on the work in that round (issue #183): null where the
+   * subject carries none (every subject but the plan and the work) and on an `accepted` disposition.
+   */
+  work_effects: Schema.NullOr(WorkEffects),
 });
 /** A correction Claude Code made to its own earlier work. */
 export const SelfCorrectionEntry = Schema.Struct({
@@ -579,6 +624,9 @@ export type Review = typeof Review.Type;
 export type Action = typeof Action.Type;
 export type Disposition = typeof Disposition.Type;
 export type MarkedDisposition = typeof MarkedDisposition.Type;
+export type EffectIssue = typeof EffectIssue.Type;
+export type EffectReview = typeof EffectReview.Type;
+export type EffectDisposition = typeof EffectDisposition.Type;
 export type SelfCorrection = typeof SelfCorrection.Type;
 export type UserQuestion = typeof UserQuestion.Type;
 export type Piece = typeof Piece.Type;
@@ -592,6 +640,7 @@ export type TermsEntry = typeof TermsEntry.Type;
 export type TermsWrite = typeof TermsWrite.Type;
 export type TermsResponse = typeof TermsResponse.Type;
 export type PlannerResponse = typeof PlannerResponse.Type;
+export type WorkResponse = typeof WorkResponse.Type;
 export type PlanWriteResult = typeof PlanWriteResult.Type;
 export type PlanStep = typeof PlanStep.Type;
 export type Plan = typeof Plan.Type;

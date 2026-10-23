@@ -5,7 +5,7 @@ import type { LimitWaitBasis } from "./limitReset.ts";
 import { agentReconnectingLine, cycleHeading, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { TermsResponse } from "./schema.ts";
-import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion } from "./schema.ts";
+import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion, WorkResponse, EffectReview } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
 import type { RunMode } from "./runMode.ts";
 
@@ -23,9 +23,9 @@ export type UiEvent =
   | Readonly<{ _tag: "PhaseBegan"; phase: Phase }>
   | Readonly<{ _tag: "PhaseEnded"; phase: Phase; result: string }>
   | Readonly<{ _tag: "RoundBegan"; subject: SubjectId; round: number; limit: number }>
-  | Readonly<{ _tag: "ReviewReceived"; subject: SubjectId; round: number; review: Review; counted: number }>
+  | Readonly<{ _tag: "ReviewReceived"; subject: SubjectId; round: number; review: Review | EffectReview; counted: number }>
   /** The question subject answers with its amended list besides (defect A of docs/page-question-phase-defects.md), a decision with its amended analysis (W2-R1-1), the plan with the whole plan (issue #6). */
-  | Readonly<{ _tag: "ResponseReceived"; subject: SubjectId; round: number; response: PlannerResponse | QuestionListResponse | TermsResponse | DecisionResponse | PlanResponse; resultText: string }>
+  | Readonly<{ _tag: "ResponseReceived"; subject: SubjectId; round: number; response: PlannerResponse | QuestionListResponse | TermsResponse | DecisionResponse | PlanResponse | WorkResponse; resultText: string }>
   | Readonly<{ _tag: "LoopFinished"; subject: SubjectId; result: LoopResult }>
   /** A plan was written; its questions for the user are presented one by one after it (S19), not listed here. */
   | Readonly<{ _tag: "PlanWritten"; phase: number; resultText: string }>

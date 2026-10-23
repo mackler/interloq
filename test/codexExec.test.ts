@@ -80,7 +80,7 @@ test("the seam with the classifier: the reviewer fails such a turn with Transpor
   const deps = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Sdk, sdk), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
   const reviewer = await Effect.runPromise(makeCodexReviewer.pipe(Effect.provide(deps)));
   const session = await Effect.runPromise(reviewer.startPhase);
-  const failure = await Effect.runPromise(Effect.flip(session.review(BIG)));
+  const failure = await Effect.runPromise(Effect.flip(session.review(BIG, S.Review)));
   assert.equal((failure as RunError | { _tag: string })._tag, "TransportFault");
   assert.equal((failure as { agent?: string }).agent, "codex");
 });

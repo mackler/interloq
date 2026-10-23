@@ -10,7 +10,7 @@ import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
 import { chainSettingsOf, type ClientMessage, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
-import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse } from "../src/schema.ts";
+import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, WorkResponse } from "../src/schema.ts";
 import { TERMS_MODES } from "../src/schema.ts";
 import { decisionSubject, planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
@@ -313,12 +313,14 @@ const decisionResponseSchema = decisionSubject(1, 1, "format", (a) => Result.suc
 
 test("every subject's response, as its own schema decodes it, survives the round trip inside a ResponseReceived", () => {
   const { questions: _questions, ...plannerResponse } = questionListResponse;
+  // Issue #183: the plan's and the work's responses state each disposition's effect on the work.
+  const effectResponse = { ...plannerResponse, dispositions: plannerResponse.dispositions.map((d) => ({ ...d, work_effect: { kind: "differs", difference: "a test" } })) };
   const subjects = [
     { subject: "questions" as SubjectId, schema: questionSubject("t").respond.schema, example: questionListResponse },
     { subject: "requirements" as const, schema: requirementsSubject().respond.schema, example: plannerResponse },
     // Issue #6: the plan's response carries the whole plan.
-    { subject: { plan: 1 }, schema: planSubject(TEST_ROOT, 1, true, null, NO_STEP_CHECKS).respond.schema, example: { ...plannerResponse, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x" }] }] } } },
-    { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS).respond.schema, example: plannerResponse },
+    { subject: { plan: 1 }, schema: planSubject(TEST_ROOT, 1, true, null, NO_STEP_CHECKS).respond.schema, example: { ...effectResponse, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x" }] }] } } },
+    { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS).respond.schema, example: effectResponse },
     // W2-R1-1: a decision's response carries the amended analysis.
     { subject: { decision: 1 }, schema: decisionResponseSchema, example: { ...plannerResponse, analysis: decisionAnalysis } },
   ];
@@ -335,7 +337,7 @@ test("every subject's response, as its own schema decodes it, survives the round
 // A subject added to src/subjects.ts is covered once it is added to this list.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type RespondOf<T> = T extends Subject<infer R, infer _D> ? R : never;
-type Carried<R> = Same<R, PlannerResponse> extends true ? true : Same<R, QuestionListResponse> extends true ? true : Same<R, PlanResponse> extends true ? true : Same<R, DecisionResponse>;
+type Carried<R> = Same<R, PlannerResponse> extends true ? true : Same<R, QuestionListResponse> extends true ? true : Same<R, PlanResponse> extends true ? true : Same<R, WorkResponse> extends true ? true : Same<R, DecisionResponse>;
 const holds = <_T extends true>(): void => undefined;
 const fails = <_T extends false>(): void => undefined;
 type Responses = [RespondOf<ReturnType<typeof questionSubject>>, RespondOf<ReturnType<typeof requirementsSubject>>, RespondOf<ReturnType<typeof planSubject>>, RespondOf<ReturnType<typeof workSubject>>, RespondOf<ReturnType<typeof decisionSubject>>];
@@ -444,4 +446,11 @@ test("the chain frames survive the JSON round trip, and an invalid setting does 
   const server: ServerMessage = { type: "chain", state };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(server))), server);
   assert.deepEqual(Result.getOrThrow(chainSettingsOf({ enabled: true, runs: 2, cutoff: "2026-10-21T07:00:00.000Z" })), { enabled: true, limits: { runs: 2, cutoff: Date.parse("2026-10-21T07:00:00.000Z") } });
+});
+
+// Issue #183: the plan's and the work's reviews carry each issue's statement of its effect on the work, and the page reads it.
+test("a ReviewReceived whose issues state their effect on the work survives the round trip", () => {
+  const review = { issues: [{ id: "W1-R1-1", severity: "major" as const, location: "S22", problem: "p", evidence: "e", work_effect: { kind: "none" as const } }] };
+  const message: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "ReviewReceived", subject: { work: 1 }, round: 1, review, counted: 1 } } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(message))), message);
 });

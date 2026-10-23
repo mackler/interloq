@@ -13,7 +13,7 @@ import { appendRound } from "../src/issueLog.ts";
 import { issue, respond } from "./helpers.ts";
 
 type Fields = ConstructorParameters<typeof RoundInvalid>[0];
-const EMPTY: Fields = { duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [] };
+const EMPTY: Fields = { duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [], blankEffects: [] };
 const invalidOf = (fields: Partial<Fields>): RoundInvalid => new RoundInvalid({ ...EMPTY, ...fields });
 const REVIEW_IDS = ["Q-R1-1", "Q-R1-2"] as const;
 
@@ -26,6 +26,8 @@ const CASES: readonly Readonly<{ field: keyof Fields; error: RoundInvalid; agent
   { field: "unknownDispositions", error: invalidOf({ unknownDispositions: ["Q-R1-9"] }), agent: "claude", instruction: ROUND_REPAIR.unknownDispositions(["Q-R1-9"], REVIEW_IDS) },
   { field: "emptyIds", error: invalidOf({ emptyIds: ["a disposition of the response"] }), agent: "claude", instruction: ROUND_REPAIR.emptyDispositionId },
   { field: "collidingIds", error: invalidOf({ collidingIds: ["P1-S1-1"] }), agent: "claude", instruction: ROUND_REPAIR.collidingIds(["P1-S1-1"]) },
+  { field: "blankEffects", error: invalidOf({ blankEffects: ["W1-R1-1"] }), agent: "codex", instruction: ROUND_REPAIR.blankEffects(["W1-R1-1"]) },
+  { field: "blankEffects", error: invalidOf({ blankEffects: ["W1-R1-2"] }), agent: "claude", instruction: ROUND_REPAIR.blankEffects(["W1-R1-2"]) },
 ];
 const promptOf = (c: (typeof CASES)[number]): string => (c.agent === "codex" ? reviewRepairPrompt(c.error) : roundRepairPrompt(c.error, REVIEW_IDS));
 
@@ -49,7 +51,8 @@ test("each field has its own instruction of what to return instead, and no promp
     const prompt = promptOf(c);
     assert.ok(c.instruction.length > 0, c.field);
     assert.ok(prompt.includes(c.instruction), `${c.field}\n${prompt}`);
-    for (const other of CASES) if (other !== c) assert.ok(!prompt.includes(other.instruction), `${c.field} carries ${other.field}'s instruction`);
+    // blankEffects is one instruction, which reads correctly to Codex for an issue and to Claude Code for a disposition.
+    for (const other of CASES) if (other.instruction !== c.instruction) assert.ok(!prompt.includes(other.instruction), `${c.field} carries ${other.field}'s instruction`);
   }
 });
 
@@ -59,7 +62,8 @@ test("the repair prompt of an unknown disposition names the review's own issue i
 });
 
 test("the halt and the repair prompts state the problem from one source", () => {
-  const error = invalidOf({ duplicateIssues: ["A"], missing: ["B"], duplicateDispositions: ["C"], unknownDispositions: ["D"], emptyIds: ["a disposition of the response"], collidingIds: ["P1-S1-1"] });
+  const error = invalidOf({ duplicateIssues: ["A"], missing: ["B"], duplicateDispositions: ["C"], unknownDispositions: ["D"], emptyIds: ["a disposition of the response"], collidingIds: ["P1-S1-1"], blankEffects: ["E"] });
+  assert.ok(roundInvalidParts(error).some((part) => part.includes("E")), "the halt names the blank statement");
   assert.equal(describe(error), cycleInvalidText(roundInvalidParts(error)));
 });
 
@@ -91,13 +95,13 @@ test("property: each prompt names every id of every field it covers", () => {
   const id = fc.string({ minLength: 1, maxLength: 12 }).filter((s) => !/[\r\n]/.test(s));
   const ids = fc.array(id, { maxLength: 3 });
   fc.assert(
-    fc.property(ids, ids, ids, ids, ids, fc.boolean(), (duplicateIssues, missing, duplicateDispositions, unknownDispositions, collidingIds, empty) => {
-      const review = invalidOf({ duplicateIssues, emptyIds: empty ? ["an issue of the review"] : [] });
-      const response = invalidOf({ missing, duplicateDispositions, unknownDispositions, collidingIds, emptyIds: empty ? ["a disposition of the response"] : [] });
+    fc.property(ids, ids, ids, ids, ids, ids, fc.boolean(), (duplicateIssues, missing, duplicateDispositions, unknownDispositions, collidingIds, blankEffects, empty) => {
+      const review = invalidOf({ duplicateIssues, blankEffects, emptyIds: empty ? ["an issue of the review"] : [] });
+      const response = invalidOf({ missing, duplicateDispositions, unknownDispositions, collidingIds, blankEffects, emptyIds: empty ? ["a disposition of the response"] : [] });
       const reviewPrompt = reviewRepairPrompt(review);
       const responsePrompt = roundRepairPrompt(response, REVIEW_IDS);
-      for (const x of duplicateIssues) assert.ok(reviewPrompt.includes(x));
-      for (const x of [...missing, ...duplicateDispositions, ...unknownDispositions, ...collidingIds]) assert.ok(responsePrompt.includes(x));
+      for (const x of [...duplicateIssues, ...blankEffects]) assert.ok(reviewPrompt.includes(x));
+      for (const x of [...missing, ...duplicateDispositions, ...unknownDispositions, ...collidingIds, ...blankEffects]) assert.ok(responsePrompt.includes(x));
       for (const part of roundInvalidParts(review)) assert.ok(reviewPrompt.includes(part));
       for (const part of roundInvalidParts(response)) assert.ok(responsePrompt.includes(part));
     }),

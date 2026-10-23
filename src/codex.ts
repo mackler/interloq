@@ -6,7 +6,6 @@ import { CodexCallFailed, TransportFault } from "./errors.ts";
 import { classifyCodex, errorCode } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
-import * as S from "./schema.ts";
 import { reduceTurn, toolEventOf } from "./codexEvents.ts";
 import type { SdkThread } from "./sdk.ts";
 import { REVIEW_PURPOSE, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
@@ -29,12 +28,12 @@ const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault => {
  * go to the activity line as they arrive, and on every early exit the turn is aborted and the stream closed.
  */
 const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: Effect.Effect<string>): ReviewSession => ({
-  review: (prompt) =>
+  review: (prompt, schema) =>
     nextCallId.pipe(Effect.flatMap((callId) => Effect.gen(function* () {
       yield* ui.notify({ _tag: "AgentCallStarted", agent: "codex", purpose: REVIEW_PURPOSE, callId });
       const controller = new AbortController();
       const streamed = yield* Effect.tryPromise({
-        try: () => thread.runStreamed(prompt, { outputSchema: agentJsonSchema(S.Review), signal: controller.signal }),
+        try: () => thread.runStreamed(prompt, { outputSchema: agentJsonSchema(schema), signal: controller.signal }),
         catch: turnFailedWith,
       }).pipe(Effect.onInterrupt(() => Effect.sync(() => controller.abort())));
       const events = streamed.events;

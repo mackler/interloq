@@ -5,15 +5,16 @@
 
 import { AcceptedWithoutChange, type RoundInvalid, RoundLimitStop, type RunError } from "./errors.ts";
 import { lineChange } from "./lineChange.ts";
-import { parseExtraRounds } from "./input.ts";
+import { optionText, parseExtraRounds } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import * as log from "./issueLog.ts";
 import { renderRound } from "./render.ts";
-import { type IssueId, validateRound, type ValidatedReview, type ValidatedRound } from "./round.ts";
+import { type IssueId, validateRound, type ValidatedIssue, type ValidatedReview, type ValidatedRound } from "./round.ts";
 import type { CheckpointPoint, RoundRecord } from "./records.ts";
-import type { Config, FileChange, LogEntry, PlannerResponse, Review, UserQuestion } from "./schema.ts";
+import type { Config, FileChange, LogEntry, PlannerResponse, Review, UserQuestion, WorkEffect, WorkEffects } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
 import { type PauseFacts, pauseOriginOf } from "./question.ts";
+import { changesNothing } from "./workEffect.ts";
 import type { SubjectId } from "./artifacts.ts";
 import type { LoopResult, UiEvent } from "./uiEvents.ts";
 import { Result } from "effect";
@@ -71,6 +72,8 @@ export type ReviewEvent =
   | Readonly<{ kind: "FileObserved"; hash: string; text: string }>;
 
 /** What the loop is set up with: the subject's names and the configuration. */
+/** Who settles a disputed pause of behavior 7 (issues #112, #156 and #183). */
+export type DisputesSettledBy = "user" | "agents" | "noWorkEffect";
 export type ReviewSetup = Readonly<{
   /** The subject, as the Ui events name it. */
   subject: SubjectId;
@@ -99,9 +102,10 @@ export type ReviewSetup = Readonly<{
    * 7: an issue raised again or repeated under a new id, a reversal, a disputed self-correction, a second clarification
    * request). "user": the pause is asked. "agents" (the question list and the terms): it is not, Claude Code's disposition
    * stands and the loop goes on, unless Claude Code's latest answer marks the disagreement as about what the task
-   * requires, which is asked (issue #156).
+   * requires, which is asked (issue #156). "noWorkEffect" (the plan and the work, issue #183): it is not asked where
+   * both agents state that it changes nothing in the work, and is asked otherwise.
    */
-  disputesSettledBy: "user" | "agents";
+  disputesSettledBy: DisputesSettledBy;
   maxRounds: number;
   maxIdleRounds: number;
   countMinor: boolean;
@@ -124,6 +128,17 @@ const positions = (reviewer: string, planner: string): readonly Option[] => [
 ];
 /** What Codex states in an issue: its problem and its evidence. */
 const reviewerSays = (i: Review["issues"][number] | undefined): string => (i === undefined ? "" : `${i.problem} ${i.evidence}`.trim());
+/**
+ * Both agents' statements on a disputed issue (issue #183): Codex's from the issue as this round's review raised it, Claude
+ * Code's latest answer as given; null where either stated nothing.
+ */
+const effectsAt = (issue: ValidatedIssue | undefined, planner: WorkEffect | null | undefined): WorkEffects | null =>
+  issue === undefined || issue.workEffect === null || planner === null || planner === undefined ? null : { reviewer: issue.workEffect, planner };
+/** Claude Code's latest statement on an id in the log: its current review entry's (issue #183). */
+const loggedPlannerEffect = (history: readonly LogEntry[], id: string): WorkEffect | null => {
+  const e = currentEntry(history, id);
+  return e !== undefined && e.source === "review" && e.work_effects !== null ? e.work_effects.planner : null;
+};
 /** The current entry of an id in the log (the last one that is not superseded). */
 const currentEntry = (history: readonly LogEntry[], id: string): LogEntry | undefined => history.filter((e) => e.id === id && e.superseded !== true).at(-1);
 /** Whether Claude Code's latest answer to an id in the log carries its mark (issue #156): its current entry is a marked review entry. */
@@ -294,17 +309,70 @@ const toResponse = (s: ReviewState, before: readonly ReviewCommand[] = []): Tran
  * what the task requires is asked, because no statement of the question rules settles it and the user can answer it in
  * a line. The planner's own questions are always asked.
  */
+/**
+ * Whether a subject's policy settles an ask without the user, the one statement of it (issues #112, #156 and #183): under
+ * "user" none; under "agents" a disputed pause Claude Code did not mark; under "noWorkEffect" a disputed pause on which
+ * both agents state that nothing in the work would differ.
+ */
+export const settles = (policy: DisputesSettledBy, a: Ask): boolean => {
+  if (a.asks.kind !== "pause") return false;
+  switch (policy) {
+    case "user":
+      return false;
+    case "agents":
+      return a.taskDispute !== true;
+    case "noWorkEffect":
+      return disputedEffects(a.asks.facts) !== null && changesNothing(disputedEffects(a.asks.facts)!);
+  }
+};
+/**
+ * An asked dispute of a "noWorkEffect" subject (issue #183): each position's option names the differences the agents stated
+ * and what choosing it costs; any other ask unchanged.
+ */
+const withEffectOptions = (setup: ReviewSetup, a: Ask): Ask => {
+  if (setup.disputesSettledBy !== "noWorkEffect" || a.asks.kind !== "pause" || !("effects" in a.asks.facts) || a.options === undefined) return a;
+  const effects = a.asks.facts.effects;
+  const join = (...texts: readonly string[]): string => texts.filter((t) => t.trim() !== "").join(" ");
+  return {
+    ...a,
+    options: a.options.map((o) =>
+      o.label === prompts.REVIEWER_POSITION
+        ? { ...o, description: join(o.description, effects === null ? "" : prompts.followCodexChanges(effects), prompts.followCodexCost(setup.leaveOnDecision)) }
+        : o.label === prompts.PLANNER_POSITION
+          ? { ...o, description: join(o.description, effects === null ? "" : prompts.followClaudeCodeKeeps(effects), prompts.FOLLOW_CLAUDE_CODE_COST) }
+          : o,
+    ),
+  };
+};
+/**
+ * Whether an answer at a disputed pause keeps Claude Code's position (issue #183): the planner's option as the answer
+ * stands for it (optionText, which answerOf returns for its number) or its label as typed. Such an answer decides nothing
+ * to carry out, so a subject that leaves on a decision goes on with the review instead.
+ */
+export const standsWithPlanner = (asking: Ask, text: string): boolean => {
+  if (asking.asks.kind !== "pause" || !("effects" in asking.asks.facts)) return false;
+  const planner = asking.options?.find((o) => o.label === prompts.PLANNER_POSITION);
+  return planner !== undefined && (text === optionText(planner) || text.trim() === planner.label);
+};
+/** The agents' statements a pause's facts carry: those of the five disputed pauses, null for every other pause (issue #183). */
+const disputedEffects = (facts: PauseFacts): WorkEffects | null => ("effects" in facts ? facts.effects : null);
+/** The line of a pause a subject's policy settles (issues #112, #156 and #183), as said on the page and written to conversation.md. */
+const settledLines = (s: ReviewState, a: Ask & { asks: { kind: "pause" } }): readonly ReviewCommand[] => {
+  const origin = pauseOriginOf(a.asks.facts);
+  if (s.setup.disputesSettledBy === "noWorkEffect") {
+    const line = prompts.noWorkEffectDisputeLine(origin, s.setup.heading, a.options?.[0]?.description ?? "", a.options?.[1]?.description ?? "");
+    return [say(`${prompts.NO_WORK_EFFECT_HEADING} ${line}`), { kind: "Converse", markdown: `**${prompts.NO_WORK_EFFECT_HEADING}** ${line}\n\n` }];
+  }
+  const line = prompts.unmarkedDisputeLine(origin, s.setup.heading);
+  return [say(line), { kind: "Converse", markdown: `**${prompts.WORDING_DISPUTE_HEADING}** ${line}\n\n` }];
+};
 const askedOrSettled = (s: ReviewState, asks: readonly Ask[]): Readonly<{ asked: readonly Ask[]; settledAsks: readonly Ask[]; settled: readonly ReviewCommand[] }> => {
   if (s.setup.disputesSettledBy === "user") return { asked: asks, settledAsks: [], settled: [] };
-  const settles = (a: Ask): a is Ask & { asks: { kind: "pause" } } => a.asks.kind === "pause" && a.taskDispute !== true;
-  const settledAsks = asks.filter(settles);
+  const settledAsks = asks.filter((a) => settles(s.setup.disputesSettledBy, a));
   return {
-    asked: asks.filter((a) => !settles(a)),
+    asked: asks.filter((a) => !settles(s.setup.disputesSettledBy, a)).map((a) => withEffectOptions(s.setup, a)),
     settledAsks,
-    settled: settledAsks.flatMap((a) => {
-      const line = prompts.unmarkedDisputeLine(pauseOriginOf(a.asks.facts), s.setup.heading);
-      return [say(line), { kind: "Converse", markdown: `**${prompts.WORDING_DISPUTE_HEADING}** ${line}\n\n` } as ReviewCommand];
-    }),
+    settled: settledAsks.flatMap((a) => (a.asks.kind === "pause" ? settledLines(s, a as Ask & { asks: { kind: "pause" } }) : [])),
   };
 };
 
@@ -331,7 +399,7 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
   const reraised: Ask[] = log.reraisedIds(s.log, review).map((id) => {
     const taskDispute = markedEntry(s.log, id);
     return {
-      asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null, taskDispute } },
+      asks: { kind: "pause", facts: { pause: "reraised", id, history: entriesOf(s.log, id), issue: review.issues.find((i) => i.id === id) ?? null, taskDispute, effects: effectsAt(validated.issues.find((i) => i.id === id), loggedPlannerEffect(s.log, id)) } },
       id: id as IssueId,
       options: positions(reviewerSays(review.issues.find((i) => i.id === id)), currentEntry(s.log, id)?.rationale ?? ""),
       taskDispute,
@@ -349,11 +417,13 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
   // Claude Code's latest answer to the new id is this response's disposition (issue #156).
   const markedNow = (id: string): boolean => round.dispositions.find((d) => d.id === id)?.taskDispute ?? false;
   const dispositionOf = (id: string) => response.dispositions.find((d) => d.id === id) ?? null;
+  // Issue #183: Codex's statement on the issue this round and Claude Code's in this response.
+  const effectsNow = (id: string): WorkEffects | null => effectsAt(round.review.issues.find((i) => i.id === id), round.dispositions.find((d) => d.id === id)?.workEffect);
   return [
     ...log.secondClarifications(history, round).map((id): Ask => {
       const taskDispute = markedNow(id);
       return {
-        asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: dispositionOf(id), taskDispute } },
+        asks: { kind: "pause", facts: { pause: "secondClarification", id, history: entriesOf(history, id), disposition: dispositionOf(id), taskDispute, effects: effectsNow(id) } },
         id: id as IssueId,
         options: positions(reviewerSays(review.issues.find((i) => i.id === id)), dispositionOf(id)?.rationale ?? ""),
         key: `clarification ${id}`,
@@ -364,7 +434,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       // A self-correction carries no mark: the answer it disputes is the issue's entry as the round began.
       const taskDispute = markedEntry(history, sc.id);
       return {
-        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute } },
+        asks: { kind: "pause", facts: { pause: "disputedSelfCorrection", id: sc.id, explanation: sc.explanation, history: entriesOf(history, sc.id), taskDispute, effects: null } },
         id: sc.id as IssueId,
         options: positions(currentEntry(history, sc.id)?.problem ?? "", sc.explanation),
         key: `disputed ${sc.id}`,
@@ -374,7 +444,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
     ...log.reversals(round).map(([idNew, idOld]): Ask => {
       const taskDispute = markedNow(idNew);
       return {
-        asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute } },
+        asks: { kind: "pause", facts: { pause: "reversal", id: idNew, reverses: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute, effects: effectsNow(idNew) } },
         id: idNew as IssueId,
         options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), dispositionOf(idNew)?.rationale ?? ""),
         key: `reversal ${idNew} ${idOld}`,
@@ -386,7 +456,7 @@ const disposedPauses = (history: readonly LogEntry[], review: Review, round: Val
       // Marked, Claude Code's position is the reading it gave the new id (P1-R1-1); unmarked, its earlier rationale as before.
       const planner = taskDispute ? (dispositionOf(idNew)?.rationale ?? "") : (currentEntry(history, idOld)?.rationale ?? "");
       return {
-        asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute } },
+        asks: { kind: "pause", facts: { pause: "repeatedUnderNewId", id: idNew, repeats: idOld, history: entriesOf(history, idOld), issue: review.issues.find((i) => i.id === idNew) ?? null, disposition: dispositionOf(idNew), taskDispute, effects: effectsNow(idNew) } },
         id: idNew as IssueId,
         options: positions(reviewerSays(review.issues.find((i) => i.id === idNew)), planner),
         key: `repeat ${idNew} ${idOld}`,
@@ -411,7 +481,7 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: Val
   const withCost: ReviewState = { ...s, costs: corrective ? [...s.costs.slice(0, -1), costUsd] : [...s.costs, costUsd] };
   // A pause asked this round is not asked again; one settled this round is not settled again, but is asked if a
   // corrective reply now marks it (issue #156, P1-R1-3).
-  const pauses = disposedPauses(history, review, round, response).filter((a) => !s.current.asked.includes(a.key ?? "") && (!s.current.settled.includes(a.key ?? "") || a.taskDispute === true));
+  const pauses = disposedPauses(history, review, round, response).filter((a) => !s.current.asked.includes(a.key ?? "") && (!s.current.settled.includes(a.key ?? "") || !settles(s.setup.disputesSettledBy, a)));
   const { asked, settledAsks, settled } = askedOrSettled(withCost, pauses);
   const keysOf = (asks: readonly Ask[]): readonly string[] => asks.map((a) => a.key ?? "");
   const state: ReviewState = {
@@ -601,7 +671,9 @@ const leaveOnDecision = (s: ReviewState, asking: Ask, text: string): Transition 
 const onDecisionGiven = (s: ReviewState, text: string): Transition => {
   const step = s.step;
   const given = text !== "";
-  if (given && "asking" in step) {
+  // Issue #183: an answer that keeps Claude Code's position applies nothing, so the review goes on.
+  const standing = given && "asking" in step && standsWithPlanner(step.asking, text);
+  if (given && "asking" in step && !standing) {
     const left = leaveOnDecision(s, step.asking, text);
     if (left !== null) return left;
   }
@@ -613,7 +685,10 @@ const onDecisionGiven = (s: ReviewState, text: string): Transition => {
     }
     case "askingPauses": {
       const decision = decisionOf(s, step.asking, text);
-      const state: ReviewState = given ? { ...s, current: { ...s.current, decided: true, toApply: true, decisions: step.asking.id === null ? s.current.decisions : [...s.current.decisions, decision] } } : s;
+      const decisions = step.asking.id === null ? s.current.decisions : [...s.current.decisions, decision];
+      // A standing answer in a subject that leaves on a decision is recorded and logged, and applies nothing (issue #183).
+      const applies = !(standing && s.setup.leaveOnDecision);
+      const state: ReviewState = given ? { ...s, current: { ...s.current, decided: s.current.decided || applies, toApply: s.current.toApply || applies, decisions } } : s;
       return askEach(state, step.queue, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, given ? record(s, decision) : []);
     }
     case "askingUnexplained":

@@ -5,7 +5,7 @@ import { type Brand, Result, Schema } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import { type QuestionProblem, sensesNumbered } from "./prompts.ts";
-import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption } from "./schema.ts";
+import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, type WorkEffects } from "./schema.ts";
 
 export type { QuestionOption };
 export type { Explanation, Piece, PieceOption } from "./schema.ts";
@@ -210,11 +210,13 @@ export type ShownEntry = LogEntry;
 /**
  * What a pause of behaviour 7 is about, as data (S11, issue #19): the ids of its origin, and the review issue, the
  * disposition and the earlier log entries that the user reads as prose (`pauseProse` in src/render.ts), never as JSON.
+ * `effects` (issue #183): each agent's statement of the disputed point's effect on the work, null where either is missing
+ * or the subject carries none; a disputed self-correction always carries null.
  */
 export type PauseFacts =
-  | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null; taskDispute: boolean }>
-  | Readonly<{ pause: "secondClarification"; id: string; history: readonly ShownEntry[]; disposition: Disposition | null; taskDispute: boolean }>
-  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; taskDispute: boolean }>
+  | Readonly<{ pause: "reraised"; id: string; history: readonly ShownEntry[]; issue: Issue | null; taskDispute: boolean; effects: WorkEffects | null }>
+  | Readonly<{ pause: "secondClarification"; id: string; history: readonly ShownEntry[]; disposition: Disposition | null; taskDispute: boolean; effects: WorkEffects | null }>
+  | Readonly<{ pause: "disputedSelfCorrection"; id: string; explanation: string; history: readonly ShownEntry[]; taskDispute: boolean; effects: null }>
   | Readonly<{
       pause: "reversal";
       id: string;
@@ -223,6 +225,7 @@ export type PauseFacts =
       issue: Issue | null;
       disposition: Disposition | null;
       taskDispute: boolean;
+      effects: WorkEffects | null;
     }>
   | Readonly<{
       pause: "repeatedUnderNewId";
@@ -232,6 +235,7 @@ export type PauseFacts =
       issue: Issue | null;
       disposition: Disposition | null;
       taskDispute: boolean;
+      effects: WorkEffects | null;
     }>
   | Readonly<{ pause: "unexplained"; fileLabel: string; heading: string; round: number; resultText: string }>
   | Readonly<{ pause: "identical"; fileLabel: string; round: number; seen: string }>

@@ -39,9 +39,13 @@ const arbConfig = record<S.Config>({
   suiteCommand: fc.option(nonBlank, { nil: null }),
 });
 const arbIssueId = nonEmpty.map((s) => s as S.IssueId);
+const arbWorkEffect: fc.Arbitrary<S.WorkEffect> = fc.oneof(
+  fc.constant({ kind: "none" as const }),
+  nonBlank.map((difference) => ({ kind: "differs" as const, difference: difference as S.EffectText })),
+);
 const entryBase = { id: arbIssueId, phase: nonNegativeInt, round: nonNegativeInt, problem: fc.string(), rationale: fc.string(), superseded: fc.boolean() };
 const arbLogEntry: fc.Arbitrary<S.LogEntry> = fc.oneof(
-  record({ ...entryBase, source: fc.constant("review" as const), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), evidence: fc.string(), action: fc.constantFrom("accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"), duplicate_of: fc.option(arbIssueId, { nil: null }), reverses: fc.option(arbIssueId, { nil: null }), file_change: fc.option(record({ changed: fc.boolean(), added: nonNegativeInt, removed: nonNegativeInt }), { nil: null }), task_dispute: fc.boolean() }),
+  record({ ...entryBase, source: fc.constant("review" as const), severity: fc.constantFrom("blocking", "major", "minor"), location: fc.string(), evidence: fc.string(), action: fc.constantFrom("accepted", "partially_accepted", "rejected", "no_change_needed", "clarification_requested"), duplicate_of: fc.option(arbIssueId, { nil: null }), reverses: fc.option(arbIssueId, { nil: null }), file_change: fc.option(record({ changed: fc.boolean(), added: nonNegativeInt, removed: nonNegativeInt }), { nil: null }), task_dispute: fc.boolean(), work_effects: fc.option(record({ reviewer: arbWorkEffect, planner: arbWorkEffect }), { nil: null }) }),
   record({ ...entryBase, source: fc.constant("self_correction" as const), action: fc.constantFrom("accepted", "plan_error", "correction_disputed"), file_change: fc.option(record({ changed: fc.boolean(), added: nonNegativeInt, removed: nonNegativeInt }), { nil: null }) }),
   record({ ...entryBase, source: fc.constant("user" as const), action: fc.constant("decided_by_user" as const) }),
 );

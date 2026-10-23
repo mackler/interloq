@@ -33,7 +33,12 @@ export type LogFile = typeof LogFile.Type;
 export const logFile = (entries: readonly LogEntry[]): LogFile => ({ version: VERSION, entries });
 export const questionsFile = (task: string, questions: QuestionsFile["questions"]): QuestionsFile => ({ version: VERSION, task, questions });
 
-const IssueRecord = Schema.Struct({ id: S.IssueId, severity: S.Severity, location: Schema.String, problem: Schema.String, evidence: Schema.String });
+/**
+ * A stated effect on the work in a round record (issue #183), null where the subject carries none. A round file written
+ * before the field reads as null, so an earlier run's round files still decode for earlierPlan (issue #180).
+ */
+const WorkEffectRecord = Schema.NullOr(S.WorkEffect).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null)));
+const IssueRecord = Schema.Struct({ id: S.IssueId, severity: S.Severity, location: Schema.String, problem: Schema.String, evidence: Schema.String, workEffect: WorkEffectRecord });
 export const ValidatedReviewRecord = Schema.Struct({ issues: Schema.Array(IssueRecord) });
 const DispositionRecord = Schema.Struct({
   id: S.IssueId,
@@ -42,6 +47,7 @@ const DispositionRecord = Schema.Struct({
   duplicateOf: Schema.NullOr(S.IssueId),
   reverses: Schema.NullOr(S.IssueId),
   taskDispute: Schema.Boolean,
+  workEffect: WorkEffectRecord,
 });
 const SelfCorrectionRecord = Schema.Struct({ id: S.IssueId, newAction: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Schema.String, generated: Schema.Boolean });
 const NoteRecord = Schema.Struct({ id: S.IssueId, field: Schema.Literals(["duplicate_of", "reverses"]), named: Schema.String, reason: Schema.Literals(["unknown", "not_accepted"]) });
@@ -52,7 +58,16 @@ export const ValidatedResponseRecord = Schema.Struct({
   reviewerFeedback: Schema.String,
   questionsForUser: Schema.Array(S.UserQuestion),
 });
-const ProblemsRecord = Schema.Struct({ duplicateIssues: Strings, missing: Strings, duplicateDispositions: Strings, unknownDispositions: Strings, emptyIds: Strings, collidingIds: Strings });
+const ProblemsRecord = Schema.Struct({
+  duplicateIssues: Strings,
+  missing: Strings,
+  duplicateDispositions: Strings,
+  unknownDispositions: Strings,
+  emptyIds: Strings,
+  collidingIds: Strings,
+  /** Issue #183; absent in a record written before it. */
+  blankEffects: Strings.pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+});
 /** `subject` is the subject directory (question-review, requirements-review, planning-<k>). `reconstructed` is always false now: it marked records rebuilt from files of the shape before Q5. */
 const roundBase = { subject: Schema.String, phase: S.NonNegativeInt, round: S.NonNegativeInt, reconstructed: Schema.Boolean };
 const validatedFields = { kind: Schema.Literal("validated"), ...roundBase, review: ValidatedReviewRecord, response: ValidatedResponseRecord, notes: Schema.Array(NoteRecord) };

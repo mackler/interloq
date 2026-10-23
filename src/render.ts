@@ -9,7 +9,8 @@ import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
 import type { Disposition, Issue, TermsEntry } from "./schema.ts";
-import type { PlannerResponse, Review } from "./schema.ts";
+import { type PlannerResponse, type Review, WORK_EFFECT_FIELD } from "./schema.ts";
+import { isEffectDisposition, isEffectIssue } from "./workEffect.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { TurnText } from "./schemaNormalize.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -99,13 +100,15 @@ export const interviewSays = (turn: TurnText): readonly string[] =>
 
 /** Codex's half of a round (the page shows it as Codex's message). */
 export const renderReview = (review: Review): string =>
-  `### Codex\n\n${review.issues.map((i) => `- **[${i.id}]** (${i.severity}, ${i.location}) ${i.problem}\n  Evidence: ${i.evidence}`).join("\n")}\n\n`;
+  `### Codex\n\n${review.issues.map((i) => `- **[${i.id}]** (${i.severity}, ${i.location}) ${i.problem}\n  Evidence: ${i.evidence}${isEffectIssue(i) ? `\n  ${words.reviewerEffectLine(i[WORK_EFFECT_FIELD])}` : ""}`).join("\n")}\n\n`;
 /** Claude Code's half of a round. */
 export const renderResponse = (response: PlannerResponse): string => {
   const answers = response.dispositions.map((d) => {
     const dup = d.duplicate_of !== "" ? ` (duplicate of ${d.duplicate_of})` : "";
     const rev = d.reverses !== "" ? ` (reverses ${d.reverses})` : "";
-    return `- **[${d.id}]** ${d.action}${dup}${rev}: ${d.rationale}`;
+    // Issue #183: Claude Code's statement of the effect on the work, on a disposition not accepted in full.
+    const effect = isEffectDisposition(d) && d.action !== "accepted" ? `\n  ${words.plannerEffectLine(d[WORK_EFFECT_FIELD])}` : "";
+    return `- **[${d.id}]** ${d.action}${dup}${rev}: ${d.rationale}${effect}`;
   });
   const self = response.self_corrections.map((s) => `- **Self-correction** (${s.new_action}, issue "${s.id}"): ${s.explanation}`);
   const feedback = response.reviewer_feedback !== "" ? [`- **Feedback to the reviewer:** ${response.reviewer_feedback}`] : [];
@@ -239,5 +242,7 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
     }
   })();
   const marked = taskDisputeOf(facts) ? [paragraph(words.TASK_DISPUTE_FACT)] : [];
-  return [paragraph(lead), ...marked, ...parts.filter((p) => p.kind !== "paragraph" || piecesText(p.pieces).trim() !== "")];
+  // Issue #183: what each agent states would differ in the work, where the facts carry it.
+  const effects = "effects" in facts && facts.effects !== null ? [paragraph(words.workEffectsFact(facts.effects))] : [];
+  return [paragraph(lead), ...marked, ...effects, ...parts.filter((p) => p.kind !== "paragraph" || piecesText(p.pieces).trim() !== "")];
 };

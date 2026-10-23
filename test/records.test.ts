@@ -19,7 +19,7 @@ const failureText = <A>(result: Result.Result<A, StateFileInvalid>): string => {
   assert.ok(Result.isFailure(result), "the read succeeded");
   return describe(result.failure);
 };
-const review = { id: "A", phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false };
+const review = { id: "A", phase: 1, round: 1, source: "review", severity: "major", location: "l", problem: "p", evidence: "e", action: "accepted", rationale: "r", duplicate_of: null, reverses: null, superseded: false, file_change: null, task_dispute: false, work_effects: null };
 
 test("readLog reads a version-2 log file and rejects a bare array (the old shape)", () => {
   const entries = ok(readLog("issue-log.json", JSON.stringify({ version: 2, entries: [review] })));
@@ -184,4 +184,38 @@ test("a validated round record keeps taskDispute through write and decode; a rev
   assert.throws(() => Schema.decodeUnknownSync(RoundFile)({ ...round, response: { ...round.response, dispositions: [unmarked] } }));
   const { task_dispute: _u, ...withoutMark } = review;
   assert.match(failureText(readLog("issue-log.json", JSON.stringify({ version: 2, entries: [withoutMark] }))), /task_dispute/);
+});
+
+// Issue #183: a round record keeps each agent's statement of the effect on the work; a round file written before the field
+// still decodes (earlierPlan reads an earlier run's round files, issue #180); a log entry's work_effects is required.
+test("a validated round record keeps workEffect through write and decode, and an older round file decodes with none", () => {
+  const issueNow = { id: "W1-R1-1", severity: "major", location: "S22", problem: "p", evidence: "e", workEffect: { kind: "none" } };
+  const disposition = { id: "W1-R1-1", action: "rejected", rationale: "r", duplicateOf: null, reverses: null, taskDispute: false, workEffect: { kind: "differs", difference: "the README stays unwrapped" } };
+  const round = { version: 2, kind: "validated", subject: "work-review-1", phase: 1, round: 1, reconstructed: false, review: { issues: [issueNow] }, response: { dispositions: [disposition], selfCorrections: [], reviewerFeedback: "", questionsForUser: [] }, notes: [] };
+  const decoded = Schema.decodeUnknownSync(RoundFile)(JSON.parse(JSON.stringify(round)));
+  assert.ok(decoded.kind === "validated");
+  assert.deepEqual(decoded.review.issues[0]!.workEffect, { kind: "none" });
+  assert.deepEqual(decoded.response.dispositions[0]!.workEffect, { kind: "differs", difference: "the README stays unwrapped" });
+
+  const { workEffect: _i, ...oldIssue } = issueNow;
+  const { workEffect: _d, ...oldDisposition } = disposition;
+  const old = Schema.decodeUnknownSync(RoundFile)({ ...round, review: { issues: [oldIssue] }, response: { ...round.response, dispositions: [oldDisposition] } });
+  assert.ok(old.kind === "validated");
+  assert.equal(old.review.issues[0]!.workEffect, null);
+  assert.equal(old.response.dispositions[0]!.workEffect, null);
+  const problems = { duplicateIssues: [], missing: [], duplicateDispositions: [], unknownDispositions: [], emptyIds: [], collidingIds: [] };
+  const invalidRound = Schema.decodeUnknownSync(RoundFile)({ version: 2, kind: "invalid", subject: "planning-1", phase: 1, round: 1, reconstructed: false, review: { issues: [] }, response: null, problems });
+  assert.ok(invalidRound.kind === "invalid");
+  assert.deepEqual(invalidRound.problems.blankEffects, []);
+});
+
+test("a log entry's work_effects decodes; a blank difference, or an entry without the field, fails", () => {
+  const effects = { reviewer: { kind: "none" }, planner: { kind: "differs", difference: "the test runs twice" } };
+  const entries = readLog("work-review-log.json", JSON.stringify({ version: 2, entries: [{ ...review, work_effects: effects }] }));
+  assert.ok(Result.isSuccess(entries));
+  assert.deepEqual((entries.success[0] as { work_effects: unknown }).work_effects, effects);
+  const blank = { ...effects, planner: { kind: "differs", difference: " " } };
+  assert.ok(Result.isFailure(readLog("work-review-log.json", JSON.stringify({ version: 2, entries: [{ ...review, work_effects: blank }] }))));
+  const { work_effects: _w, ...without } = review;
+  assert.match(failureText(readLog("work-review-log.json", JSON.stringify({ version: 2, entries: [without] }))), /work_effects/);
 });

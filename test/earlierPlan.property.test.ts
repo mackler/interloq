@@ -23,7 +23,7 @@ const arbStatus = fc.constantFrom<StepStatus>("pending", "started", "done", "unf
 const arbPlan: fc.Arbitrary<RecordedPlan> = fc
   .array(fc.array(fc.tuple(fc.string({ maxLength: 5 }), fc.string({ maxLength: 5 }), arbStatus), { maxLength: 4 }), { maxLength: 3 })
   .map((stages) => ({ stages: stages.map((steps, i) => ({ number: i + 1, title: `T${i}`, steps: steps.map(([label, text, status], j) => ({ id: `S${i}-${j}`, number: j + 1, label, text, status })) })) }));
-const minor = { id: "P1-R1-1" as IssueId, severity: "minor" as const, location: "l", problem: "p", evidence: "e" };
+const minor = { id: "P1-R1-1" as IssueId, severity: "minor" as const, location: "l", problem: "p", evidence: "e", workEffect: null };
 const noResponse = (phase: number, round: number, issues: readonly (typeof minor)[] = []): Readonly<{ phase: number; record: RoundRecord }> => ({
   phase,
   record: { kind: "no_response", subject: `planning-${phase}`, phase, round, reconstructed: false, review: { issues } },
