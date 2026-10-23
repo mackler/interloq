@@ -17,6 +17,10 @@ const Disposition = Schema.Struct({
 });
 // Issue #156: Claude Code's mark, in the question list's and the terms' responses only.
 const MarkedDisposition = Schema.Struct({ ...Disposition.fields, task_dispute: Schema.Boolean });
+// Issue #183: each agent's statement of a disputed point's effect on the work, in the plan's and the work's reviews and responses.
+const WorkEffect = Schema.Union([Schema.Struct({ kind: Schema.Literal("none") }), Schema.Struct({ kind: Schema.Literal("differs"), difference: Str })]);
+const EffectIssue = Schema.Struct({ ...Issue.fields, work_effect: WorkEffect });
+const EffectDisposition = Schema.Struct({ ...Disposition.fields, work_effect: WorkEffect });
 const SelfCorrection = Schema.Struct({ id: Str, new_action: Schema.Literals(["accepted", "rejected", "plan_error"]), explanation: Str });
 // Issue #36 (30 Sep 2026): a question's text is blocks and pieces, and its explanations a list the pieces refer to.
 const Piece = Schema.Struct({ text: Str, ref: Str, code: Schema.Boolean });
@@ -32,6 +36,7 @@ const PieceOption = Schema.Struct({ label: Pieces, description: Pieces });
 const UserQuestion = Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) });
 const plannerFields = { dispositions: Schema.Array(Disposition), self_corrections: Schema.Array(SelfCorrection), reviewer_feedback: Str, questions_for_user: Schema.Array(UserQuestion) };
 const markedFields = { ...plannerFields, dispositions: Schema.Array(MarkedDisposition) };
+const effectFields = { ...plannerFields, dispositions: Schema.Array(EffectDisposition) };
 const QuestionEntry = Schema.Struct({
   id: Str,
   context: Blocks,
@@ -79,6 +84,8 @@ export const RECURSIVE = new Set(["decisionAnalysis", "decisionResponse", "decis
 
 export const protoSchemas: Record<string, Schema.Top> = {
   review: Schema.Struct({ issues: Schema.Array(Issue) }),
+  effectReview: Schema.Struct({ issues: Schema.Array(EffectIssue) }),
+  workResponse: Schema.Struct(effectFields),
   plannerResponse: Schema.Struct(plannerFields),
   planWrite: Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) }),
   execReport: Schema.Struct({ status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]), summary: Str, question: Str, remaining_work: Str, checks: Schema.Array(Schema.Struct({ step: Str, command: Str, seconds: Schema.Finite })) }),
@@ -96,7 +103,7 @@ export const protoSchemas: Record<string, Schema.Top> = {
   decisionResponse: Schema.Struct({ ...plannerFields, analysis: DecisionAnalysis }),
   decisionApplied: Schema.Struct({ analysis: DecisionAnalysis }),
   planReply: Schema.Struct({ plan: Plan, questions_for_user: Schema.Array(UserQuestion) }),
-  planResponse: Schema.Struct({ ...plannerFields, plan: Plan }),
+  planResponse: Schema.Struct({ ...effectFields, plan: Plan }),
   // S9: the reply of the call that writes the context paragraph of a question the program composes, with the whole
   // question as pieces (issue #36, decisions G-R1-1 and F1).
   questionContext: Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),

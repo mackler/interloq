@@ -1,0 +1,20 @@
+$ node prototypes/proto-schema.ts /workspace prototypes/proto-schema-output --only=:effectReview:   (23 Oct 2026, issue #183)
+codex  effectReview raw: accepted, decodes (12 s)
+claude effectReview raw: accepted, decodes (13 s)
+codex  effectReview strict: accepted, decodes (15 s)
+claude effectReview strict: accepted, decodes (17 s)
+4 accepted, 0 not accepted. Schemas written to /workspace/prototypes/proto-schema-output
+
+$ node prototypes/proto-schema.ts /workspace prototypes/proto-schema-output --only=:workResponse:   (23 Oct 2026, issue #183)
+codex  workResponse raw: accepted, decodes (13 s)
+claude workResponse raw: accepted, decodes (14 s)
+codex  workResponse strict: accepted, decodes (15 s)
+claude workResponse strict: accepted, decodes (14 s)
+4 accepted, 0 not accepted. Schemas written to /workspace/prototypes/proto-schema-output
+
+$ node prototypes/proto-schema.ts /workspace prototypes/proto-schema-output --only=:planResponse:   (23 Oct 2026, issue #183)
+codex  planResponse raw: accepted, decodes (16 s)
+claude planResponse raw: accepted, decodes (16 s)
+codex  planResponse strict: accepted, decodes (18 s)
+claude planResponse strict: accepted, decodes (14 s)
+4 accepted, 0 not accepted. Schemas written to /workspace/prototypes/proto-schema-output

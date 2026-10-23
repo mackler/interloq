@@ -27,6 +27,44 @@
           },
           "reverses": {
             "type": "string"
+          },
+          "work_effect": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "none"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "differs"
+                    ]
+                  },
+                  "difference": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "difference"
+                ],
+                "additionalProperties": false
+              }
+            ]
           }
         },
         "required": [
@@ -34,7 +72,8 @@
           "action",
           "rationale",
           "duplicate_of",
-          "reverses"
+          "reverses",
+          "work_effect"
         ],
         "additionalProperties": false
       }

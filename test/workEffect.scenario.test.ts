@@ -120,7 +120,7 @@ test("an answer that keeps Claude Code's position is recorded, and the work revi
   assert.equal(planningPhases(probe.ui.notified), 1, "no planning phase 2");
   assert.equal(probe.planner.execPrompts.length, 1);
   assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), /W1-R1-1/);
-  assert.equal(json(probe.dir, "work-review-1/round-3.json").kind, "no_response", "the review went on to round 3 and converged");
+  assert.equal(json(probe.dir, "work-review-1/round-3.json").kind, "no_response", "the review went on to round 3, which raised no issue");
 });
 
 test("the plan review: a point raised again with no effect stated by either agent is settled, and planning goes on to execution", async () => {

@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "properties": {
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "major",
+              "minor"
+            ]
+          },
+          "location": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "work_effect": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "none"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "differs"
+                    ]
+                  },
+                  "difference": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "difference"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "location",
+          "problem",
+          "evidence",
+          "work_effect"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "issues"
+  ],
+  "additionalProperties": false
+}
