@@ -16,6 +16,10 @@ start() { ps_line; up; }
 # The calls before the program when container abc exists: the detection reads both hashes, then up.
 start_existing() { ps_line; inspect_line abc; hash_line; up; }
 claude() { argv docker compose -f "$COMPOSE" exec -it cc claude "$@"; }
+# The session lookup run in the container before claude, its script taken from the generated script itself, so
+# that the argument the test expects and the one bin/ilcli sends come from one source.
+lookup_script() { sed -n "s/^SESSION_LOOKUP_SCRIPT='\\(.*\\)'\$/\\1/p" "$ILCLI"; }
+lookup() { argv docker compose -f "$COMPOSE" exec -T cc sh -c "$(lookup_script)"; }
 web_line() { argv docker compose -f "$COMPOSE" exec -it cc node /opt/interloq/src/web.ts "$@"; }
 
 expect_log() {
@@ -24,10 +28,51 @@ expect_log() {
   [ "$(cat "$STUB_LOG")" = "$expected" ] || { echo "expected:"; echo "$expected"; echo "got:"; cat "$STUB_LOG"; return 1; }
 }
 
-@test "no arguments starts the container, then claude" {
+# The developer's decision of 28 Oct 2026: a start resumes the most recent conversation of the container's
+# working directory, and --new starts a fresh one. The lookup is the newest session file that holds a user
+# message, since Claude Code's -c chose a stub of four records that held none.
+@test "no arguments resumes the most recent conversation" {
+  export STUB_SESSION_ID=23e19b38-30a7-4133-a818-487a24a1ca1f
   run "$ILCLI"
   [ "$status" -eq 0 ]
+  expect_log "$(start)" "$(lookup)" "$(claude --resume 23e19b38-30a7-4133-a818-487a24a1ca1f)"
+}
+
+@test "no arguments with no earlier conversation starts a new one and says so" {
+  run "$ILCLI"
+  [ "$status" -eq 0 ]
+  expect_log "$(start)" "$(lookup)" "$(claude)"
+  [[ "$output" == *"no earlier conversation"* ]] || { echo "$output"; return 1; }
+}
+
+@test "--new starts a new conversation, makes no lookup and is not passed on" {
+  export STUB_SESSION_ID=abc123
+  run "$ILCLI" --new
+  [ "$status" -eq 0 ]
   expect_log "$(start)" "$(claude)"
+  [[ "$output" != *"no earlier conversation"* ]] || { echo "$output"; return 1; }
+}
+
+@test "--new keeps the other arguments, in order" {
+  export STUB_SESSION_ID=abc123
+  run "$ILCLI" --new --model opus
+  run "$ILCLI" run --model opus --new
+  expect_log "$(start)" "$(claude --model opus)" "$(start)" "$(claude --model opus)"
+}
+
+@test "an argument that does not name a session still resumes" {
+  export STUB_SESSION_ID=b6080b04-1b3f-4c2e-9a77-2f1d6c5e8a90
+  run "$ILCLI" --model opus
+  expect_log "$(start)" "$(lookup)" "$(claude --resume b6080b04-1b3f-4c2e-9a77-2f1d6c5e8a90 --model opus)"
+}
+
+# A lookup whose answer is not a session id, as a changed layout or a failing shell would give, starts a new
+# conversation and passes nothing to claude.
+@test "an answer that is not a session id starts a new conversation" {
+  export STUB_SESSION_ID="sh: 1: cannot open /home/node/.claude/projects"
+  run "$ILCLI"
+  [ "$status" -eq 0 ]
+  expect_log "$(start)" "$(lookup)" "$(claude)"
 }
 
 @test "an unknown first argument goes to claude" {
@@ -63,7 +108,7 @@ expect_log() {
 @test "arguments pass through without splitting, in order" {
   run "$ILCLI" -abc --model=opus
   run "$ILCLI" run -p "two words"
-  expect_log "$(start)" "$(claude -abc --model=opus)" "$(start)" "$(claude -p "two words")"
+  expect_log "$(start)" "$(lookup)" "$(claude -abc --model=opus)" "$(start)" "$(claude -p "two words")"
 }
 
 @test "--version and -v as the first argument reach claude" {
@@ -113,7 +158,7 @@ expect_log() {
 # reaches Claude Code like any word that is not a command.
 @test "review is no command: it reaches claude with its arguments" {
   run "$ILCLI" review "a task" /p
-  expect_log "$(start)" "$(claude review "a task" /p)"
+  expect_log "$(start)" "$(lookup)" "$(claude review "a task" /p)"
 }
 
 @test "a failing 'up -d' shows its output, says so, exits 1 and runs no exec" {
@@ -159,10 +204,11 @@ expect_log() {
 # is already running and never recreate it; a configuration that differs from the running container's gives a note
 # on stderr, and the program still starts. A detection command that fails gives no note.
 
-# program_line <command>: the exec line of run, web or shell with no arguments.
+# program_line <command>: the exec line of run, web or shell with no arguments; run looks the most recent
+# conversation up first, and with no STUB_SESSION_ID set finds none and starts a new conversation.
 program_line() {
   case $1 in
-    run) claude ;;
+    run) lookup; claude ;;
     web) web_line ;;
     shell) argv docker compose -f "$COMPOSE" exec -it cc bash ;;
   esac

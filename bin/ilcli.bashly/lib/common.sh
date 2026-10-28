@@ -253,3 +253,67 @@ installed_copy_users() {
   done <<< "$containers"
   printf '%s' "$report"
 }
+
+# The most recent conversation of the container's working directory (the developer's decision of 28 Oct 2026):
+# the newest session file that holds a user message. Claude Code keeps one JSON Lines file per session under
+# ~/.claude/projects/<working directory with every slash as a dash>/, and its own -c chose a file of four records
+# that held no user message, so the newest file alone is not the conversation. The script runs in the container,
+# where the files are; the lookup is one line, so that the test can read it from the generated script and compare
+# it with the argument sent.
+SESSION_LOOKUP_SCRIPT='d="$HOME/.claude/projects/$(pwd | sed "s#/#-#g")"; [ -d "$d" ] || exit 0; for f in $(ls -t "$d"/*.jsonl 2>/dev/null); do if grep -m1 -q "\"type\":\"user\"" "$f"; then basename "$f" .jsonl; exit 0; fi; done'
+
+# last_session: the id of that conversation on stdout, nothing when the directory holds none, the lookup fails, or
+# the layout it reads has changed. An id is accepted only in Claude Code's own form, so that a message or a path
+# printed by a failing lookup is never passed to claude as a session.
+last_session() {
+  local id
+  id=$(ilcli_compose exec -T cc sh -c "$SESSION_LOOKUP_SCRIPT" 2>/dev/null | tr -d '\r' | head -n 1) || return 0
+  if [[ $id =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    printf '%s\n' "$id"
+  fi
+}
+
+# has_arg <argument> <given>...: succeeds when one of the given arguments is exactly <argument>.
+has_arg() {
+  local wanted=$1 arg
+  shift
+  for arg in "$@"; do
+    [[ $arg == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+# names_session <given>...: succeeds when the arguments already decide which session claude opens (-c,
+# --continue, --resume, -r) or that it opens none (-p, --print, --version, -v, a literal --). The start is then
+# left exactly as it was typed.
+SESSION_ARGS='-c --continue --resume -r -p --print --version -v --'
+names_session() {
+  local arg
+  for arg in $SESSION_ARGS; do
+    has_arg "$arg" "$@" && return 0
+  done
+  return 1
+}
+
+# resume_args: sets forwarded so that a start resumes the most recent conversation. --new, the developer's way to
+# a fresh one, is removed from the arguments and nothing is looked up; so is the lookup where the arguments name
+# the session themselves. Otherwise --resume <id> goes before the arguments, and where no conversation is found
+# the start is a new one, said on stderr so that a layout Claude Code has changed is seen rather than silent.
+resume_args() {
+  local arg id
+  local -a kept=()
+  if has_arg --new "${forwarded[@]}"; then
+    for arg in "${forwarded[@]}"; do
+      [[ $arg == --new ]] || kept+=("$arg")
+    done
+    forwarded=("${kept[@]}")
+    return 0
+  fi
+  names_session "${forwarded[@]}" && return 0
+  id=$(last_session)
+  if [[ -z $id ]]; then
+    note run "no earlier conversation of this directory was found in the container; starting a new one (bin/ilcli --new always does)."
+    return 0
+  fi
+  forwarded=(--resume "$id" "${forwarded[@]}")
+}

@@ -15,6 +15,8 @@
 #   exits with that status. Otherwise it reads `<id>.procs` (lines `pid cmdline`; absent: no processes), prints
 #   each line whose cmdline matches the pattern under `grep -E`, as `pgrep -a` would, and exits 0 if any
 #   matched, else 1 with nothing on stderr.
+# - STUB_SESSION_ID: `docker compose -f <file> exec -T cc sh -c <script>` prints it, the session the lookup of
+#   bin/ilcli run finds (nothing when unset: no earlier conversation).
 # - STUB_DOCKER_MOUNTS: a directory scripting a plain `docker inspect --format <template> <id>` whose template
 #   contains `.Mounts`. Where `<id>.inspect-status` exists, the stub prints `<id>.inspect-err` to stderr (if
 #   present) and exits with that status. Otherwise it prints `<id>.mounts` (lines `source<TAB>destination`, the
@@ -28,6 +30,11 @@ if [[ ${1:-} == compose ]]; then
   sub=${4:-}
 else
   sub=${1:-}
+fi
+
+if [[ ${1:-} == compose && ${4:-} == exec && ${5:-} == -T ]]; then
+  [[ -n ${STUB_SESSION_ID:-} ]] && printf '%s\n' "$STUB_SESSION_ID"
+  exit 0
 fi
 
 if [[ ${1:-} == exec ]]; then

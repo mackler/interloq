@@ -15,7 +15,7 @@ version_command() {
 ilcli_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli\n\n"
-    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  run, shell and web create the container only when none exists and never\n  recreate a running one, so none of them stops a program another started. The\n  container keeps the configuration it was created with, the credential\n  variables of the shell that created it included; when compose.cc.yaml, or the\n  variables of the shell in use, resolve differently, these commands say so on\n  stderr and start in the container as it is. bin/ilcli down, then a start,\n  applies the new configuration, and down stops Claude Code and the web server\n  running in the container.\n  \n  Any first argument that is not a command, --version and -v included, is passed\n  to claude, so run can be left out. After any command, --help and -h show that\n  command's usage; -- passes the rest on to the program the command starts\n  (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test and the end-to-end tests on GitHub and advances the release\n  branch only if both pass, then bin/ilcli upgrade in the installed copy. The\n  installed copy follows release, so it can only ever install a commit whose\n  tests passed.\n\n"
+    printf "  Interloq's development container, and the route of a change to the installed\n  copy.\n  \n  The docker commands (run, shell, web, build, down) and release run on the host\n  in the development clone; upgrade runs on the host in the installed copy\n  (~/work/interloq). The script uses compose.cc.yaml in the root of the clone\n  that contains it, and that file mounts the same clone at /workspace.\n  \n  run, shell and web create the container only when none exists and never\n  recreate a running one, so none of them stops a program another started. The\n  container keeps the configuration it was created with, the credential\n  variables of the shell that created it included; when compose.cc.yaml, or the\n  variables of the shell in use, resolve differently, these commands say so on\n  stderr and start in the container as it is. bin/ilcli down, then a start,\n  applies the new configuration, and down stops Claude Code and the web server\n  running in the container.\n  \n  A start resumes the most recent conversation of the container's working\n  directory; bin/ilcli --new starts a fresh one. Any first argument that is not\n  a command, --version and -v included, is passed to claude, so run can be left\n  out. After any command, --help and -h show that command's usage; -- passes the\n  rest on to the program the command starts (bin/ilcli run -- --help).\n  \n  The route of a change: commit on main, bin/ilcli release (pushes main), CI\n  runs npm test and the end-to-end tests on GitHub and advances the release\n  branch only if both pass, then bin/ilcli upgrade in the installed copy. The\n  installed copy follows release, so it can only ever install a commit whose\n  tests passed.\n\n"
   else
     printf "ilcli - Interloq's development container, and the route of a change to the installed copy.\n\n"
   fi
@@ -54,7 +54,7 @@ ilcli_usage() {
 ilcli_run_usage() {
   if [[ -n $long_usage ]]; then
     printf "ilcli run\n\n"
-    printf "  Start the container if needed, then start Claude Code in it\n  \n  An existing container is never recreated; if its configuration is older than\n  compose.cc.yaml gives in this shell, a note on stderr says so and that\n  bin/ilcli down, then a start, applies it.\n  \n  --help and -h show this usage; -- passes the rest on to claude unchanged, so\n  bin/ilcli run -- --help is Claude Code's own help.\n  \n  -c, --continue   continue the most recent session (passed to claude, not read\n  by ilcli)\n\n"
+    printf "  Start the container if needed, then start Claude Code in it\n  \n  An existing container is never recreated; if its configuration is older than\n  compose.cc.yaml gives in this shell, a note on stderr says so and that\n  bin/ilcli down, then a start, applies it.\n  \n  --help and -h show this usage; -- passes the rest on to claude unchanged, so\n  bin/ilcli run -- --help is Claude Code's own help.\n  \n  A start resumes the most recent conversation of the container's working\n  directory: the newest session file that holds a message of yours. Claude\n  Code's own -c reads the newest file whether or not it holds one, which is why\n  ilcli does not use it. --new starts a fresh conversation instead and is not\n  passed on; so does an argument that already names the session (-c, --continue,\n  --resume, -r) or that opens none (-p, --print, --version, -v, --), which ilcli\n  leaves to claude untouched. Where no earlier conversation is found, the start\n  is a new one and a line on stderr says so.\n  \n  -c, --continue   continue the most recent session (passed to claude, not read\n  by ilcli)\n\n"
   else
     printf "ilcli run - Start the container if needed, then start Claude Code in it\n\n"
   fi
@@ -75,13 +75,14 @@ ilcli_run_usage() {
     printf "%s\n" "Arguments:"
 
     echo "  CLAUDE ARGUMENTS..."
-    printf "    Passed to claude unchanged, -- included\n"
+    printf "    Passed to claude unchanged, -- included; --new starts a fresh conversation\n"
     echo
 
     printf "%s\n" "Examples:"
-    printf "  bin/ilcli                  new session\n"
-    printf "  bin/ilcli --continue       most recent session\n"
-    printf "  bin/ilcli run -c           most recent session\n"
+    printf "  bin/ilcli                  most recent conversation\n"
+    printf "  bin/ilcli --new            new conversation\n"
+    printf "  bin/ilcli --new --model opus   new conversation, that model\n"
+    printf "  bin/ilcli --continue       claude's own most recent session\n"
     printf "  bin/ilcli run --resume     session list\n"
     printf "  bin/ilcli run -- --help    Claude Code's own help\n"
     printf "  bin/ilcli run --help       this usage\n"
@@ -551,10 +552,75 @@ installed_copy_users() {
   printf '%s' "$report"
 }
 
+# The most recent conversation of the container's working directory (the developer's decision of 28 Oct 2026):
+# the newest session file that holds a user message. Claude Code keeps one JSON Lines file per session under
+# ~/.claude/projects/<working directory with every slash as a dash>/, and its own -c chose a file of four records
+# that held no user message, so the newest file alone is not the conversation. The script runs in the container,
+# where the files are; the lookup is one line, so that the test can read it from the generated script and compare
+# it with the argument sent.
+SESSION_LOOKUP_SCRIPT='d="$HOME/.claude/projects/$(pwd | sed "s#/#-#g")"; [ -d "$d" ] || exit 0; for f in $(ls -t "$d"/*.jsonl 2>/dev/null); do if grep -m1 -q "\"type\":\"user\"" "$f"; then basename "$f" .jsonl; exit 0; fi; done'
+
+# last_session: the id of that conversation on stdout, nothing when the directory holds none, the lookup fails, or
+# the layout it reads has changed. An id is accepted only in Claude Code's own form, so that a message or a path
+# printed by a failing lookup is never passed to claude as a session.
+last_session() {
+  local id
+  id=$(ilcli_compose exec -T cc sh -c "$SESSION_LOOKUP_SCRIPT" 2>/dev/null | tr -d '\r' | head -n 1) || return 0
+  if [[ $id =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    printf '%s\n' "$id"
+  fi
+}
+
+# has_arg <argument> <given>...: succeeds when one of the given arguments is exactly <argument>.
+has_arg() {
+  local wanted=$1 arg
+  shift
+  for arg in "$@"; do
+    [[ $arg == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+# names_session <given>...: succeeds when the arguments already decide which session claude opens (-c,
+# --continue, --resume, -r) or that it opens none (-p, --print, --version, -v, a literal --). The start is then
+# left exactly as it was typed.
+SESSION_ARGS='-c --continue --resume -r -p --print --version -v --'
+names_session() {
+  local arg
+  for arg in $SESSION_ARGS; do
+    has_arg "$arg" "$@" && return 0
+  done
+  return 1
+}
+
+# resume_args: sets forwarded so that a start resumes the most recent conversation. --new, the developer's way to
+# a fresh one, is removed from the arguments and nothing is looked up; so is the lookup where the arguments name
+# the session themselves. Otherwise --resume <id> goes before the arguments, and where no conversation is found
+# the start is a new one, said on stderr so that a layout Claude Code has changed is seen rather than silent.
+resume_args() {
+  local arg id
+  local -a kept=()
+  if has_arg --new "${forwarded[@]}"; then
+    for arg in "${forwarded[@]}"; do
+      [[ $arg == --new ]] || kept+=("$arg")
+    done
+    forwarded=("${kept[@]}")
+    return 0
+  fi
+  names_session "${forwarded[@]}" && return 0
+  id=$(last_session)
+  if [[ -z $id ]]; then
+    note run "no earlier conversation of this directory was found in the container; starting a new one (bin/ilcli --new always does)."
+    return 0
+  fi
+  forwarded=(--resume "$id" "${forwarded[@]}")
+}
+
 ilcli_run_command() {
 
   ensure_running run
   forwarded_args run
+  resume_args
   exec docker compose -f "$(compose_file)" exec -it cc claude "${forwarded[@]}"
 
 }

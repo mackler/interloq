@@ -6,7 +6,7 @@ help: |-
 
   run, shell and web create the container only when none exists and never recreate a running one, so none of them stops a program another started. The container keeps the configuration it was created with, the credential variables of the shell that created it included; when compose.cc.yaml, or the variables of the shell in use, resolve differently, these commands say so on stderr and start in the container as it is. bin/ilcli down, then a start, applies the new configuration, and down stops Claude Code and the web server running in the container.
 
-  Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
+  A start resumes the most recent conversation of the container's working directory; bin/ilcli --new starts a fresh one. Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
 
   The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test and the end-to-end tests on GitHub and advances the release branch only if both pass, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
 version: "1"
@@ -21,14 +21,17 @@ commands:
 
     --help and -h show this usage; -- passes the rest on to claude unchanged, so bin/ilcli run -- --help is Claude Code's own help.
 
+    A start resumes the most recent conversation of the container's working directory: the newest session file that holds a message of yours. Claude Code's own -c reads the newest file whether or not it holds one, which is why ilcli does not use it. --new starts a fresh conversation instead and is not passed on; so does an argument that already names the session (-c, --continue, --resume, -r) or that opens none (-p, --print, --version, -v, --), which ilcli leaves to claude untouched. Where no earlier conversation is found, the start is a new one and a line on stderr says so.
+
     -c, --continue   continue the most recent session (passed to claude, not read by ilcli)
   catch_all:
     label: claude arguments
-    help: Passed to claude unchanged, -- included
+    help: Passed to claude unchanged, -- included; --new starts a fresh conversation
   examples:
-  - bin/ilcli                  new session
-  - bin/ilcli --continue       most recent session
-  - bin/ilcli run -c           most recent session
+  - bin/ilcli                  most recent conversation
+  - bin/ilcli --new            new conversation
+  - bin/ilcli --new --model opus   new conversation, that model
+  - bin/ilcli --continue       claude's own most recent session
   - bin/ilcli run --resume     session list
   - bin/ilcli run -- --help    Claude Code's own help
   - bin/ilcli run --help       this usage
