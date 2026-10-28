@@ -25,7 +25,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { type RunView, chainShown, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import ActivityLine from "./ActivityLine.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -92,7 +92,8 @@
         const mode: RunMode = m.type === "answer" ? (view.runModes[m.run] ?? view.selected) : view.selected;
         const restored = restoreUnsent(drafts[mode], shownRun(view, mode), m);
         drafts = { ...drafts, [mode]: restored.draft };
-        const kept = restored.quoted === null ? view : keepUnsent(view, restored.quoted);
+        const withdrawn = m.type === "chain" ? chainUnsent(view, m.settings) : view;
+        const kept = restored.quoted === null ? withdrawn : keepUnsent(withdrawn, restored.quoted);
         view = notice(kept, notSentNotice(m.type, "disconnected", restored.quoted ?? undefined));
       },
     });
@@ -134,7 +135,13 @@
   const showList = $derived(showsList(mode));
   // Issue #147: the chain's control, on the Implementation tab alone.
   const chain = $derived(mode === "implementation" ? chainShown(view, (iso) => fullTime(iso)) : null);
-  const setChain = (settings: ChainFrameSettings) => send(chainFrame(settings));
+  // Issue #147 (the work review of 21 Oct 2026, W1-R1-1): every chain frame sent or queued is recorded in the view until
+  // the server acknowledges it, so the control composes from it whatever remounts it; one handed back is not recorded,
+  // since `onUnsent` has already run.
+  const setChain = (settings: ChainFrameSettings) => {
+    const delivery = connection?.send(chainFrame(settings));
+    if (delivery === "sent" || delivery === "queued") view = chainSent(view, settings, delivery === "queued");
+  };
   /** Selecting a tab that shows its list asks for its items every time, so a revisited list is current (S15). */
   const selectTab = (value: RunMode) => {
     view = selectMode(view, value);

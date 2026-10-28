@@ -778,6 +778,60 @@ describe("App and the draft", () => {
       expect(root.textContent).toContain(prompts.CHAIN_SWITCH_LABEL);
     });
 
+    // The work review of 21 Oct 2026 of issue #147, W1-R1-1 (S30): the chain frames not yet acknowledged are the page's,
+    // so a frame composed after the control's remount, a server restart or a failure never undoes an earlier one.
+    const chainFrames = (ws: FakeWebSocket) => sentOf(ws).flatMap((m) => (m.type === "chain" ? [m.settings] : []));
+    const commitField = (root: HTMLElement, name: string, value: string) => {
+      const f = one(root, `input[name=${name}]`) as HTMLInputElement;
+      f.value = value;
+      f.dispatchEvent(new Event("input", { bubbles: true }));
+      f.dispatchEvent(new Event("change", { bubbles: true }));
+      flushSync();
+    };
+    const hourIso = () => {
+      const now = new Date();
+      const at = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 7, 0);
+      return (at.getTime() > now.getTime() ? at : new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1, 7, 0)).toISOString();
+    };
+
+    test("chain pending survives a tab switch", async () => {
+      const { root, ws } = await begin();
+      select(root, "implementation");
+      commitField(root, "chain-runs", "3");
+      select(root, "refinement");
+      select(root, "implementation");
+      expect((one(root, "input[name=chain-runs]") as HTMLInputElement).value).toBe("3");
+      commitField(root, "chain-cutoff", "07:00");
+      expect(chainFrames(ws).at(-1)).toEqual({ enabled: true, runs: 3, cutoff: hourIso() });
+    });
+
+    test("chain pending queued across a restart", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { root, ws } = await begin();
+      select(root, "implementation");
+      ws.close();
+      flushSync();
+      commitField(root, "chain-runs", "3");
+      vi.advanceTimersByTime(30_000);
+      flushSync();
+      const next = FakeWebSocket.last!;
+      expect(next).not.toBe(ws);
+      next.onopen?.({});
+      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation: "b" });
+      commitField(root, "chain-cutoff", "07:00");
+      expect(chainFrames(next)).toEqual([{ enabled: true, runs: 3, cutoff: null }, { enabled: true, runs: 3, cutoff: hourIso() }]);
+    });
+
+    test("chain pending withdrawn when unsent", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const { root } = await begin();
+      select(root, "implementation");
+      failThreeTimes();
+      commitField(root, "chain-runs", "3");
+      expect((one(root, "input[name=chain-runs]") as HTMLInputElement).value).toBe("");
+      expect(root.textContent).toContain(prompts.notSentNotice("chain", "disconnected"));
+    });
+
     test("the Implementation tab has no choice of terms", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");

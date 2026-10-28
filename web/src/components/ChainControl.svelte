@@ -12,7 +12,6 @@
   import { CHAIN_CUTOFF_LABEL, CHAIN_CUTOFF_SUPPORT, CHAIN_INVALID_RUNS, CHAIN_RUNS_LABEL, CHAIN_RUNS_SUPPORT, CHAIN_SWITCH_LABEL, chainCutoffResolved } from "../../../src/prompts.ts";
   import type { ChainFrameSettings } from "../../../src/protocol.ts";
   import type { ChainShown } from "../state.ts";
-  import { acknowledged, effective, NO_IN_FLIGHT, sent } from "../chainPending.ts";
   import { cutoffAt } from "../cutoff.ts";
   import { fullTime } from "../time.ts";
 
@@ -27,52 +26,63 @@
   let runsText = $state("");
   let cutoffText = $state("");
   let runsInvalid = $state(false);
-  // The frames this tab sent and the server has not acknowledged (W3-R1-1): every frame is composed from the last of
-  // them, so two changes made before the server answers never undo each other.
-  let inFlight = $state(NO_IN_FLIGHT);
   // The fields follow the server's settings whenever they change, from this tab or another. The effect tracks these three
   // deriveds alone, numbers, booleans or null, so an event that gives a new but equal `shown` leaves a draft and its
-  // error alone (W1-R1-4): a derived notifies its dependents only when its value changes. The reconciliation reads
-  // `shown` and `inFlight` untracked, so neither is a dependency and its own write of `inFlight` does not rerun it, and
-  // it resets the drafts from the frames still in flight, so a committed change not yet acknowledged keeps its value
-  // when an earlier change's acknowledgment arrives.
+  // error alone (W1-R1-4): a derived notifies its dependents only when its value changes. It resets the drafts from
+  // `shown.effective`, read untracked: the frames not yet acknowledged, which the page holds (the work review of 21 Oct
+  // 2026, W1-R1-1), else the server's settings, so a committed change keeps its value when an earlier change's
+  // acknowledgment arrives, and a remounted control (a tab switch, a move to the rail's column) shows it at once. It
+  // tracks the server's settings rather than `effective`, which changes with every frame this tab sends and would
+  // overwrite a draft in the other field.
   const enabledNow = $derived(shown.settings.enabled);
   const runsLimit = $derived(shown.settings.limits.runs);
   const cutoffLimit = $derived(shown.settings.limits.cutoff);
+  const runsFrom = (e: ChainFrameSettings) => {
+    runsText = e.runs === null ? "" : String(e.runs);
+    runsInvalid = false;
+  };
+  const cutoffFrom = (e: ChainFrameSettings) => {
+    cutoffText = e.cutoff === null ? "" : hourOf(Date.parse(e.cutoff));
+  };
   $effect(() => {
     void [enabledNow, runsLimit, cutoffLimit];
     untrack(() => {
-      inFlight = acknowledged(inFlight, shown.settings);
-      const e = effective(inFlight, shown.settings);
-      runsText = e.runs === null ? "" : String(e.runs);
-      cutoffText = e.cutoff === null ? "" : hourOf(Date.parse(e.cutoff));
-      runsInvalid = false;
+      runsFrom(shown.effective);
+      cutoffFrom(shown.effective);
+    });
+  });
+  // A reset the effect above cannot see, since the server's settings stayed equal: a frame the failed page handed back,
+  // or one a server restart dropped. Only the fields the page names are reset, so a draft in the other is kept. The
+  // version seen at mount is not a reset: the effect above has just set every field.
+  const resets = $derived(shown.reset.version);
+  let seenReset = untrack(() => shown.reset.version);
+  $effect(() => {
+    const version = resets;
+    untrack(() => {
+      if (version === seenReset) return;
+      seenReset = version;
+      for (const field of shown.reset.fields) (field === "runs" ? runsFrom : cutoffFrom)(shown.effective);
     });
   });
 
-  // What the control shows and composes every frame from: the last frame it sent, else the server's settings.
-  const shownNow = $derived(effective(inFlight, shown.settings));
-  const send = (frame: ChainFrameSettings) => {
-    inFlight = sent(inFlight, frame);
-    onChange(frame);
-  };
-  const toggle = (enabled: boolean) => send({ ...shownNow, enabled });
+  // Every frame is composed from `shown.effective`, the last frame not yet acknowledged, else the server's settings.
+  const toggle = (enabled: boolean) => onChange({ ...shown.effective, enabled });
   const commitRuns = () => {
     const text = runsText.trim();
     if (text === "") {
       // An empty field is valid and means no limit; the effect above does not rerun when the server's limit stays null,
       // so the error is cleared here (W2-R1-2).
       runsInvalid = false;
-      return send({ ...shownNow, runs: null });
+      return onChange({ ...shown.effective, runs: null });
     }
     const n = /^[0-9]+$/u.test(text) ? Number(text) : Number.NaN;
     runsInvalid = !(Number.isSafeInteger(n) && n >= 1);
-    if (!runsInvalid) send({ ...shownNow, runs: n });
+    if (!runsInvalid) onChange({ ...shown.effective, runs: n });
   };
   const commitCutoff = () => {
-    if (cutoffText.trim() === "") return send({ ...shownNow, cutoff: null });
+    if (cutoffText.trim() === "") return onChange({ ...shown.effective, cutoff: null });
     const resolved = cutoffAt(cutoffText, now());
-    if (Result.isSuccess(resolved)) send({ ...shownNow, cutoff: new Date(resolved.success).toISOString() });
+    if (Result.isSuccess(resolved)) onChange({ ...shown.effective, cutoff: new Date(resolved.success).toISOString() });
   };
   const onEnter = (commit: () => void) => (e: KeyboardEvent) => {
     if (e.key === "Enter") {
@@ -83,7 +93,7 @@
 </script>
 
 <section class="chain" aria-label={CHAIN_SWITCH_LABEL}>
-  <label class="switch m3-font-label-large"><Switch name="chain" checked={shownNow.enabled} onchange={(e: Event) => toggle((e.currentTarget as HTMLInputElement).checked)} />{CHAIN_SWITCH_LABEL}</label>
+  <label class="switch m3-font-label-large"><Switch name="chain" checked={shown.effective.enabled} onchange={(e: Event) => toggle((e.currentTarget as HTMLInputElement).checked)} />{CHAIN_SWITCH_LABEL}</label>
   <div class="fields">
     <div class="field">
       <TextFieldOutlined label={CHAIN_RUNS_LABEL} name="chain-runs" inputmode="numeric" error={runsInvalid} bind:value={runsText} onchange={commitRuns} onkeydown={onEnter(commitRuns)} />
@@ -91,7 +101,7 @@
     </div>
     <div class="field">
       <TextFieldOutlined label={CHAIN_CUTOFF_LABEL} name="chain-cutoff" type="time" bind:value={cutoffText} onchange={commitCutoff} onkeydown={onEnter(commitCutoff)} />
-      <p class="support m3-font-body-small">{shownNow.cutoff === null ? CHAIN_CUTOFF_SUPPORT : chainCutoffResolved(fullTime(shownNow.cutoff))}</p>
+      <p class="support m3-font-body-small">{shown.effective.cutoff === null ? CHAIN_CUTOFF_SUPPORT : chainCutoffResolved(fullTime(shown.effective.cutoff))}</p>
     </div>
   </div>
   <p class="status m3-font-body-medium" role="status">{shown.status}{#if shown.ended !== null}<br /><span class="ended">{shown.ended}</span>{/if}</p>

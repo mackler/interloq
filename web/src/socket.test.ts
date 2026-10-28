@@ -326,3 +326,33 @@ describe("socket and the shared state's action", () => {
     expect(h.notices).toEqual([prompts.notSentNotice("ui", "restarted")]);
   });
 });
+
+// Issue #147, S30 (P1-R1-2): what became of a frame, which the page records for the chain's control.
+describe("socket delivery", () => {
+  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: null }, incarnation: "a" };
+  const frame: ClientMessage = { type: "chain", settings: { enabled: true, runs: 3, cutoff: null } };
+  test("delivery: a frame sent after the hello is sent", () => {
+    const c = connect("ws://x/ws", wire(handlers()), env());
+    sockets[0].receive(hello);
+    expect(c.send(frame)).toBe("sent");
+    expect(sockets[0].sent).toHaveLength(1);
+  });
+  test("delivery: a frame sent before the hello, or after a close, is queued", () => {
+    const c = connect("ws://x/ws", wire(handlers()), env());
+    expect(c.send(frame)).toBe("queued");
+    sockets[0].receive(hello);
+    sockets[0].drop();
+    expect(c.send(frame)).toBe("queued");
+  });
+  test("delivery: a frame sent after the page failed is unsent", () => {
+    const h = handlers();
+    const c = connect("ws://x/ws", wire(h), env());
+    for (let i = 0; i < 3; i++) {
+      sockets[i].receiveRaw("not json");
+      vi.advanceTimersByTime(30_000);
+    }
+    expect(h.states).toContain("failed");
+    expect(c.send(frame)).toBe("unsent");
+    expect(h.unsent).toEqual([frame]);
+  });
+});

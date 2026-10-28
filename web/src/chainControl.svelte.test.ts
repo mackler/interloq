@@ -6,7 +6,9 @@ import { type ChainState, cutoffOf, DEFAULT_SETTINGS, initialState, OFF_SETTINGS
 import { Result } from "effect";
 import { chainSettingsOf, type ChainFrameSettings } from "../../src/protocol.ts";
 import ChainControl from "./components/ChainControl.svelte";
-import { chainShown, initialState as initialView } from "./state.ts";
+import { chainSent, chainShown, chainUnsent, initialState as initialView, reduce, type ViewState } from "./state.ts";
+import { helloChain } from "./testChain.ts";
+import type { ServerMessage } from "../../src/protocol.ts";
 import { chainFrame } from "./tabs.ts";
 import { fullTime } from "./time.ts";
 
@@ -112,8 +114,8 @@ describe("ChainControl's drafts", () => {
   test("a real change of the run limit replaces the draft and clears the error", () => {
     const { root, props, replace } = live();
     commit(input(root, "chain-runs"), "abc");
-    const limits = { ...props.shown.settings.limits, runs: 4 as never };
-    replace({ ...props.shown, settings: { ...props.shown.settings, limits } });
+    const settings = Result.getOrThrow(chainSettingsOf({ enabled: true, runs: 4, cutoff: null }));
+    replace(chainShown({ ...initialView, chain: { ...initialState(DEFAULT_SETTINGS), settings } }, (iso) => fullTime(iso))!);
     expect(input(root, "chain-runs").value).toBe("4");
     expect(root.textContent).not.toContain(prompts.CHAIN_INVALID_RUNS);
   });
@@ -135,29 +137,51 @@ describe("ChainControl's empty runs field", () => {
   });
 });
 
-// Work review 3 of issue #147, W3-R1-1: two changes made before the server answers never undo each other, since each
-// frame is composed from the frames not yet acknowledged.
+// Work review 3 of issue #147, W3-R1-1, and the work review of 21 Oct 2026, W1-R1-1 (S30): two changes made before the
+// server answers never undo each other, since each frame is composed from the frames not yet acknowledged, which the
+// page's ViewState holds, so they survive the control's remount, a frame handed back and a server restart.
 describe("ChainControl's consecutive changes", () => {
   const NOW = new Date(2026, 9, 20, 22, 0);
   const CUTOFF = new Date(2026, 9, 21, 7, 0).toISOString();
+  const helloOf = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+  const shownOf = (view: ViewState) => chainShown(view, (iso) => fullTime(iso))!;
+  // A harness of the page: its view, the control's props derived from it, and each frame recorded as App records it.
   const live = () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     const sent: ChainFrameSettings[] = [];
-    const props = $state({ shown: chainShown({ ...initialView, chain: initialState(DEFAULT_SETTINGS) }, (iso) => fullTime(iso))!, onChange: (s: ChainFrameSettings) => void sent.push(s), now: () => NOW });
-    mounted.push(mount(ChainControl, { target: root, props }));
-    flushSync();
-    // The server's broadcast of the given settings, as the reducer passes it on.
-    const serverHas = (frame: ChainFrameSettings) => {
-      const settings = Result.getOrThrow(chainSettingsOf(frame));
-      props.shown = chainShown({ ...initialView, chain: { ...initialState(DEFAULT_SETTINGS), settings } }, (iso) => fullTime(iso))!;
+    let view = reduce(initialView, helloOf("a"));
+    const props = $state({ shown: shownOf(view), onChange: (s: ChainFrameSettings) => {
+      sent.push(s);
+      apply(chainSent(view, s, false));
+    }, now: () => NOW });
+    function apply(next: ViewState) {
+      view = next;
+      props.shown = shownOf(next);
+    }
+    const settle = (next: ViewState) => {
+      apply(next);
       flushSync();
     };
+    mounted.push(mount(ChainControl, { target: root, props }));
+    flushSync();
+    // The server's broadcast of the given settings, through the reducer.
+    const serverHas = (frame: ChainFrameSettings) => settle(reduce(view, { type: "chain", state: { ...view.chain!, settings: Result.getOrThrow(chainSettingsOf(frame)) } }));
     const click = () => {
       input(root, "chain").click();
       flushSync();
     };
-    return { root, sent, serverHas, click };
+    const remount = () => {
+      unmount(mounted.pop()!);
+      mounted.push(mount(ChainControl, { target: root, props }));
+      flushSync();
+    };
+    return { root, sent, serverHas, click, remount, restart: (incarnation: string) => settle(reduce(view, helloOf(incarnation))), unsent: (frame: ChainFrameSettings) => settle(chainUnsent(view, frame)) };
+  };
+  const type = (field: HTMLInputElement, value: string) => {
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
   };
 
   test("(a) runs 3, then a cutoff: the second frame carries both", () => {
@@ -192,5 +216,34 @@ describe("ChainControl's consecutive changes", () => {
     expect(input(root, "chain-runs").value).toBe("7");
     commit(input(root, "chain-cutoff"), "07:00");
     expect(sent.at(-1)).toEqual({ enabled: true, runs: 7, cutoff: CUTOFF });
+  });
+
+  test("(e) a run limit not yet acknowledged survives the control's remount, and the next frame carries it", () => {
+    const { root, sent, remount } = live();
+    commit(input(root, "chain-runs"), "3");
+    remount();
+    expect(input(root, "chain-runs").value).toBe("3");
+    commit(input(root, "chain-cutoff"), "07:00");
+    expect(sent.at(-1)).toEqual({ enabled: true, runs: 3, cutoff: CUTOFF });
+  });
+
+  test("(f) a frame handed back resets its own field and keeps a draft in the other", () => {
+    const { root, sent, unsent } = live();
+    commit(input(root, "chain-runs"), "3");
+    type(input(root, "chain-cutoff"), "07:00");
+    unsent(sent[0]!);
+    expect(input(root, "chain-runs").value).toBe("");
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+  });
+
+  test("(g) a frame sent to a server that ended is dropped on the restart: its field reset, the other draft kept", () => {
+    const { root, sent, restart } = live();
+    commit(input(root, "chain-runs"), "3");
+    type(input(root, "chain-cutoff"), "07:00");
+    restart("b");
+    expect(input(root, "chain-runs").value).toBe("");
+    expect(input(root, "chain-cutoff").value).toBe("07:00");
+    commit(input(root, "chain-cutoff"), "07:00");
+    expect(sent.at(-1)).toEqual({ enabled: true, runs: null, cutoff: CUTOFF });
   });
 });

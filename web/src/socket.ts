@@ -32,7 +32,9 @@ export type Handlers = {
   /** An action that will never be sent, because the page has stopped reconnecting. */
   onUnsent: (message: ClientMessage) => void;
 };
-export type Connection = { send: (message: ClientMessage) => void; reconnect: () => void; close: () => void };
+/** What became of a frame given to `send` (issue #147): written to the socket, queued until a hello, or handed back. */
+export type Delivery = "sent" | "queued" | "unsent";
+export type Connection = { send: (message: ClientMessage) => Delivery; reconnect: () => void; close: () => void };
 
 /** The delay before the n-th reconnection attempt (from 1): 1 s, 2 s, 4 s, … at most 30 s. */
 export const backoff = (attempt: number): number => Math.min(30_000, 1000 * 2 ** Math.max(0, attempt - 1));
@@ -143,9 +145,16 @@ export const connect = (url: string, handlers: Handlers, env: Environment = brow
 
   return {
     send: (m) => {
-      if (failed) handlers.onUnsent(m);
-      else if (ready && socket !== null) socket.send(JSON.stringify(m));
-      else queue = [...queue, m];
+      if (failed) {
+        handlers.onUnsent(m);
+        return "unsent";
+      }
+      if (ready && socket !== null) {
+        socket.send(JSON.stringify(m));
+        return "sent";
+      }
+      queue = [...queue, m];
+      return "queued";
     },
     /** A gap in the events: a new connection gives a fresh replay. */
     reconnect: () => {
