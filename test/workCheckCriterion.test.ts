@@ -21,6 +21,19 @@ test("the work review's first round and a new thread carry the widened criterion
   assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 3, false, work, "new").includes(prompts.WORK_CHECK_CRITERION));
 });
 
+test("an exempted check still counts toward the two-minute total (W1-R1-1)", () => {
+  const criterion = prompts.WORK_CHECK_CRITERION;
+  const timed = criterion.indexOf(prompts.EXEMPTED_CHECKS_TIMED);
+  assert.ok(timed >= 0, "the criterion carries EXEMPTED_CHECKS_TIMED");
+  assert.ok(timed > criterion.indexOf(prompts.PROJECT_RULE_EXEMPTION) && timed > criterion.indexOf(prompts.STEP_RULE_EXEMPTION), "after both exemptions");
+  assert.ok(prompts.EXEMPTED_CHECKS_TIMED.includes(`${prompts.STEP_CHECK_LIMIT_MS / 60_000} minutes`));
+  for (const exemption of [prompts.PROJECT_RULE_EXEMPTION, prompts.STEP_RULE_EXEMPTION]) {
+    assert.ok(!exemption.includes("under this criterion"), `no exemption lifts the whole criterion: ${exemption}`);
+  }
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 1, false, work, "continued").includes(prompts.EXEMPTED_CHECKS_TIMED));
+  assert.ok(prompts.workReviewPrompt(TEST_ROOT, 1, 3, false, work, "new").includes(prompts.EXEMPTED_CHECKS_TIMED));
+});
+
 test("the writer's rule and the plan review's criterion are not tightened", () => {
   assert.equal(
     prompts.STEP_CHECK_TOUCHED_ONLY,

@@ -1524,17 +1524,19 @@ export function cycleInvalidText(parts: readonly string[]): string {
 export type WorkReviewEnd = "converged" | Readonly<{ revisedInRound: number }>;
 
 /**
+ * Issue #183, decision Q1: a test or command that the project's own instruction files required, or that the selection
+ * rule written in the step's own text selected, does not make a step an issue for running a test its change does not
+ * touch or a command its text does not name. W1-R1-1: the exemptions cover those two clauses alone, and
+ * `EXEMPTED_CHECKS_TIMED` tells Codex that the time clause still applies to an exempted check.
+ */
+export const PROJECT_RULE_EXEMPTION = "A test or command that the project's own instruction files (its CLAUDE.md, AGENTS.md or similar) required does not make the step an issue for running a test its change does not touch or a command its text in the plan does not name.";
+export const STEP_RULE_EXEMPTION = "A test or command selected by the selection rule written in the step's own text (for example \"every script test that names a changed file\") does not make the step an issue for running a test its change does not touch or a command its text in the plan does not name.";
+export const EXEMPTED_CHECKS_TIMED = `An exempted test or command still counts toward the step's total, and a step whose total took longer than ${STEP_CHECK_LIMIT_MS / 60_000} minutes is still an issue.`;
+/**
  * Issue #162 (requirements Q4, P1-R1-1): the work review's criterion on a step's reported checks, judged by the step's
  * total across the phase's calls, with the step's id as the issue's location.
  */
-/**
- * Issue #183, decision Q1: a test or command that the project's own instruction files required is not a point against a
- * step under the work review's check criterion. The two-minute total still applies.
- */
-export const PROJECT_RULE_EXEMPTION = "A test or command that the project's own instruction files (its CLAUDE.md, AGENTS.md or similar) required is not an issue under this criterion, even where it does not exercise the step's change and the step's text in the plan does not name it.";
-/** Issue #183, decision Q1: the same for a test or command the selection rule written in the step's own text selected. */
-export const STEP_RULE_EXEMPTION = "A test or command selected by the selection rule written in the step's own text (for example \"every script test that names a changed file\") is not an issue under this criterion either, even where it does not exercise the step's change.";
-export const WORK_CHECK_CRITERION = `Raise an issue for a step whose reported checks ran tests its change does not touch, ran a command its text in the plan does not name, or together took longer than ${STEP_CHECK_LIMIT_MS / 60_000} minutes (the step's total, not any single command). ${PROJECT_RULE_EXEMPTION} ${STEP_RULE_EXEMPTION} For an issue under this criterion, put the step's id, not a file path, in the location field.`;
+export const WORK_CHECK_CRITERION = `Raise an issue for a step whose reported checks ran tests its change does not touch, ran a command its text in the plan does not name, or together took longer than ${STEP_CHECK_LIMIT_MS / 60_000} minutes (the step's total, not any single command). ${PROJECT_RULE_EXEMPTION} ${STEP_RULE_EXEMPTION} ${EXEMPTED_CHECKS_TIMED} For an issue under this criterion, put the step's id, not a file path, in the location field.`;
 /** The checks an execution phase reported, per step with each command's seconds and the step's total (issue #162). */
 export const reportedChecksText = (execution: WorkExecution): string => {
   const totals = checkTotals(execution.outcome.checks);
