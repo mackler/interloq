@@ -4,7 +4,7 @@ import { describe, expect, test } from "vitest";
 import { Result } from "effect";
 import { chainSettingsOf, type ChainFrameSettings } from "../../src/protocol.ts";
 import type { ChainSettings } from "../../src/chain.ts";
-import { acknowledged, effective, matches, NO_IN_FLIGHT, sent, type InFlight } from "./chainPending.ts";
+import { acknowledged, differingFields, effective, matches, NO_IN_FLIGHT, sameSettings, sent, withdrawn, type InFlight } from "./chainPending.ts";
 
 // The server's settings after it applied a frame: derived from the frame by the server's own decoding, one source.
 const applied = (frame: ChainFrameSettings): ChainSettings => Result.getOrThrow(chainSettingsOf(frame));
@@ -92,6 +92,41 @@ describe("frames not yet acknowledged", () => {
         expect(effective(inFlight, server)).toEqual(effective(NO_IN_FLIGHT, applied(last)));
       }),
       { numRuns: 300 },
+    );
+  });
+});
+
+// The page's list (S29): a frame withdrawn, settings compared, the fields two frames differ on.
+describe("the page's list of frames", () => {
+  const a: ChainFrameSettings = { enabled: true, runs: 3, cutoff: null };
+  const b: ChainFrameSettings = { enabled: true, runs: null, cutoff: CUTOFF };
+  test("withdrawn removes the first equal frame alone, and leaves a list without it unchanged", () => {
+    expect(withdrawn([a, b, { ...a }], { ...a })).toEqual([b, a]);
+    expect(withdrawn([b], a)).toEqual([b]);
+  });
+  test("sameSettings: equal, and each field differing", () => {
+    const s = applied(a);
+    expect(sameSettings(s, applied({ ...a }))).toBe(true);
+    expect(sameSettings(s, applied({ ...a, enabled: false }))).toBe(false);
+    expect(sameSettings(s, applied({ ...a, runs: 4 }))).toBe(false);
+    expect(sameSettings(s, applied({ ...a, cutoff: CUTOFF }))).toBe(false);
+  });
+  test("differingFields: each field, none, and the cutoff as an instant", () => {
+    expect(differingFields(a, { ...a })).toEqual([]);
+    expect(differingFields(a, { ...a, runs: null })).toEqual(["runs"]);
+    expect(differingFields(a, { ...a, cutoff: CUTOFF })).toEqual(["cutoff"]);
+    expect(differingFields(a, b)).toEqual(["runs", "cutoff"]);
+    expect(differingFields(b, { ...b, cutoff: "2026-10-21T09:00:00+02:00" })).toEqual([]);
+    expect(differingFields(a, { ...a, enabled: false })).toEqual([]);
+  });
+  test("property: a frame sent and withdrawn leaves the list as it was", () => {
+    const frame = fc.record({ enabled: fc.boolean(), runs: fc.option(fc.integer({ min: 1, max: 9 })), cutoff: fc.option(fc.constantFrom(CUTOFF, "2026-10-22T07:00:00.000Z")) });
+    fc.assert(
+      fc.property(fc.array(frame, { maxLength: 6 }), frame, (list, f) => {
+        const others = list.filter((x) => !(x.enabled === f.enabled && x.runs === f.runs && x.cutoff === f.cutoff));
+        expect(withdrawn(sent(others, f), f)).toEqual(others);
+      }),
+      { numRuns: 200 },
     );
   });
 });

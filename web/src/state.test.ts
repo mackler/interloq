@@ -2,7 +2,7 @@ import fc from "fast-check";
 import { shownOf } from "./test-setup.ts";
 import { describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
-import { decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
+import { chainSettingsOf, decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
 import { foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 /** The phases of a run of Gather Requirements followed by planning, as runs had them before issue #120 separated the modes. */
 const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [...(questions ? foreseenPhases("refinement", iterationsOf(1)) : []), ...foreseenPhases("implementation", iterationsOf(iterations))];
@@ -13,7 +13,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { chainShown, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -2246,11 +2246,86 @@ describe("chainShown", () => {
   });
   test("each chain gives its status, and an ended chain its reason and its runs", () => {
     const running = begun(helloChain, 4, "7" as ItemId, "seven");
-    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, status: prompts.chainStatusText(running), ended: null, runs: [] });
+    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, effective: { enabled: running.settings.enabled, runs: running.settings.limits.runs, cutoff: null }, reset: { version: 0, fields: [] }, status: prompts.chainStatusText(running), ended: null, runs: [] });
     const [stopped] = ended(running, 4, { code: 130, root: null });
     const shown = chainShown(withChain(stopped), time);
     expect(shown?.ended).toBe(prompts.chainEndedText({ _tag: "StoppedByDeveloper", item: "7" as ItemId }, time));
     expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped" } })]);
     expect(chainShown(withChain(helloChain), time)?.ended).toBeNull();
+  });
+});
+
+// Issue #147, the work review of 21 Oct 2026 (W1-R1-1), S29: the frames not yet acknowledged held by the page.
+describe("chain pending", () => {
+  const CUTOFF = "2026-10-21T07:00:00.000Z";
+  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+  const open = reduce(initialState, helloOf("a"));
+  const shownOf = (view: ViewState) => chainShown(view, (iso) => iso)!;
+  const server = helloChain.settings;
+  const runs3 = { ...shownOf(open).effective, runs: 3 };
+  // The server's settings for a run limit, by the server's own decoding of a frame.
+  const withSettings = (runs: number | null): ChainState => configured(helloChain, Result.getOrThrow(chainSettingsOf({ enabled: server.enabled, runs, cutoff: null })), null);
+
+  test("chain pending: chainSent appends, counting a queued frame", () => {
+    const one = chainSent(open, runs3, false);
+    expect(one.chainPending).toEqual([runs3]);
+    expect(one.chainQueued).toBe(0);
+    const two = chainSent(one, { ...runs3, runs: 4 }, true);
+    expect(two.chainPending).toEqual([runs3, { ...runs3, runs: 4 }]);
+    expect(two.chainQueued).toBe(1);
+  });
+  test("chain pending: a chain frame of equal settings keeps the list, as does a run event", () => {
+    const one = chainSent(open, runs3, false);
+    expect(reduce(one, { type: "chain", state: helloChain }).chainPending).toEqual([runs3]);
+    expect(reduce(one, { type: "chain", state: begun(helloChain, 4, "7" as ItemId, "seven") }).chainPending).toEqual([runs3]);
+  });
+  test("chain pending: the first of two frames acknowledged leaves the second, effective carrying both", () => {
+    const second = { ...runs3, cutoff: CUTOFF };
+    const two = chainSent(chainSent(open, runs3, false), second, false);
+    const acked = reduce(two, { type: "chain", state: withSettings(3) });
+    expect(acked.chainPending).toEqual([second]);
+    expect(shownOf(acked).effective).toEqual({ enabled: true, runs: 3, cutoff: CUTOFF });
+  });
+  test("chain pending: another tab's change empties the list, and effective is the server's", () => {
+    const acked = reduce(chainSent(open, runs3, false), { type: "chain", state: withSettings(7) });
+    expect(acked.chainPending).toEqual([]);
+    expect(shownOf(acked).effective).toEqual({ enabled: true, runs: 7, cutoff: null });
+  });
+  test("chain pending: a hello of the same incarnation with unchanged settings keeps the list", () => {
+    expect(reduce(chainSent(open, runs3, false), helloOf("a")).chainPending).toEqual([runs3]);
+  });
+  test("chain pending: a hello of another incarnation drops the frames sent and keeps the queued ones", () => {
+    const queued = { ...runs3, runs: 5 };
+    const s = reduce(chainSent(chainSent(open, runs3, false), queued, true), helloOf("b"));
+    expect(s.chainPending).toEqual([queued]);
+    expect(s.chainQueued).toBe(0);
+  });
+  test("chain pending: a run limit queued while disconnected survives a restart, and the next frame carries it", () => {
+    const disconnected = reduce(open, { type: "closing" });
+    const s = reduce(chainSent(disconnected, runs3, true), helloOf("b"));
+    expect(shownOf(s).effective.runs).toBe(3);
+    expect(s.chainQueued).toBe(0);
+    expect({ ...shownOf(s).effective, cutoff: CUTOFF }).toEqual({ enabled: true, runs: 3, cutoff: CUTOFF });
+  });
+  test("chain pending: a run limit sent, then a restart without it: dropped, and the runs field reset", () => {
+    const s = reduce(chainSent(open, runs3, false), helloOf("b"));
+    expect(s.chainPending).toEqual([]);
+    expect(shownOf(s).effective.runs).toBeNull();
+    expect(s.chainReset).toEqual({ version: 1, fields: ["runs"] });
+  });
+  test("chain pending: a hello of the same incarnation carrying another tab's change keeps a queued frame", () => {
+    const s = reduce(chainSent(open, runs3, true), helloOf("a", withSettings(7)));
+    expect(s.chainPending).toEqual([runs3]);
+    expect(s.chainQueued).toBe(0);
+  });
+  test("chain pending: chainUnsent withdraws the frame and resets its fields, and counts a frame never recorded", () => {
+    const s = chainUnsent(chainSent(open, runs3, true), runs3);
+    expect(s.chainPending).toEqual([]);
+    expect(s.chainQueued).toBe(0);
+    expect(s.chainReset).toEqual({ version: 1, fields: ["runs"] });
+    const never = chainUnsent(open, runs3);
+    expect(never.chainPending).toEqual([]);
+    expect(never.chainReset.version).toBe(1);
+    expect(never.chainReset.fields).toEqual(["runs"]);
   });
 });

@@ -2,7 +2,7 @@
 // prompt with its widget, the activity line and the timeline rail. Replay and live events use the same fold.
 
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, ChainFrameSettings, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
@@ -17,6 +17,7 @@ import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
 import type { ChainSettings, ChainState } from "../../src/chain.ts";
+import { acknowledged, type ChainField, differingFields, effective, type InFlight, NO_IN_FLIGHT, sameFrame, sameSettings, sent, withdrawn } from "./chainPending.ts";
 
 export type Author = "program" | "user" | "codex" | "claude";
 /**
@@ -211,7 +212,19 @@ export type ViewState = Readonly<{
   termsChoice: TermsMode | null;
   /** The chain's state from the last hello or chain frame (issue #147); null before the first hello. */
   chain: ChainState | null;
+  /**
+   * The chain frames this page sent or queued and the server has not acknowledged, oldest first (issue #147): held here,
+   * for the page's whole life, so they survive every remount of the chain's control.
+   */
+  chainPending: InFlight;
+  /** How many of `chainPending`'s last frames are still in the socket's queue, sent to no server yet. */
+  chainQueued: number;
+  /** A change of what the control shows that leaves the server's settings equal, which the control cannot see. */
+  chainReset: ChainReset;
 }>;
+
+/** A reset of the chain control's fields the page signals: its version increases with each, naming the fields changed. */
+export type ChainReset = Readonly<{ version: number; fields: readonly ChainField[] }>;
 
 export const initialState: ViewState = {
   connection: "connecting",
@@ -226,6 +239,9 @@ export const initialState: ViewState = {
   unsent: [],
   termsChoice: null,
   chain: null,
+  chainPending: NO_IN_FLIGHT,
+  chainQueued: 0,
+  chainReset: { version: 0, fields: [] },
 };
 
 /** The state with one mode's tab changed. */
@@ -783,6 +799,41 @@ export const notice = (state: ViewState, text: string): ViewState => ({ ...state
 /** A frame of the server the page could not read, the count-th in a row: one notice for a run of them (decision Q2). */
 export const protocolError = (state: ViewState, reason: string, count: number): ViewState => (count === 1 ? notice(state, protocolErrorNotice(reason)) : state);
 /** An answer not sent that could not go back to its field, kept for the user to copy (P1-R1-2). */
+/** A chain frame sent, or queued where `queued`, recorded until the server acknowledges it (issue #147). */
+export const chainSent = (state: ViewState, frame: ChainFrameSettings, queued: boolean): ViewState => ({
+  ...state,
+  chainPending: sent(state.chainPending, frame),
+  chainQueued: queued ? state.chainQueued + 1 : state.chainQueued,
+});
+/** A chain frame the failed page handed back: withdrawn, and the fields it changed reset (issue #147). */
+export const chainUnsent = (state: ViewState, frame: ChainFrameSettings): ViewState => {
+  const at = state.chainPending.findIndex((f) => sameFrame(f, frame));
+  const chainPending = withdrawn(state.chainPending, frame);
+  // The queued frames are the list's last `chainQueued`.
+  const wasQueued = at !== -1 && at >= state.chainPending.length - state.chainQueued;
+  const fields = state.chain === null ? [] : differingFields(frame, effective(chainPending, state.chain.settings));
+  return { ...state, chainPending, chainQueued: wasQueued ? Math.max(0, state.chainQueued - 1) : state.chainQueued, chainReset: { version: state.chainReset.version + 1, fields } };
+};
+
+/**
+ * The frames not yet acknowledged after a hello (issue #147): the frames still in the socket's queue, the list's last
+ * `chainQueued`, were received by no server and are kept, since the socket sends them right after the hello; those
+ * already sent are dropped for another incarnation, whose settings hold whatever it applied, and acknowledged for the same
+ * one where its settings changed. Where what the control shows changes while the server's settings stay equal, the
+ * control is told which fields to reset, since it follows only the server's settings.
+ */
+const chainAfterHello = (state: ViewState, chain: ChainState, restarted: boolean): Pick<ViewState, "chainPending" | "chainQueued" | "chainReset"> => {
+  const split = state.chainPending.length - state.chainQueued;
+  const transmitted = state.chainPending.slice(0, split);
+  const queued = state.chainPending.slice(split);
+  const previous = state.chain?.settings ?? null;
+  const unchanged = previous !== null && sameSettings(previous, chain.settings);
+  const kept = restarted ? NO_IN_FLIGHT : unchanged ? transmitted : acknowledged(transmitted, chain.settings);
+  const chainPending = [...kept, ...queued];
+  const fields = previous !== null && unchanged ? differingFields(effective(state.chainPending, previous), effective(chainPending, chain.settings)) : [];
+  return { chainPending, chainQueued: 0, chainReset: fields.length === 0 ? state.chainReset : { version: state.chainReset.version + 1, fields } };
+};
+
 export const keepUnsent = (state: ViewState, text: string): ViewState => ({ ...state, unsent: [...state.unsent, text] });
 /** The user dismisses one kept answer; the others stay. */
 export const dismissUnsent = (state: ViewState, index: number): ViewState => ({ ...state, unsent: state.unsent.filter((_, i) => i !== index) });
@@ -816,7 +867,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(message.current[m]) : reconnectedMode(state.modes[m], message.current[m])])) as Record<RunMode, ModeView>;
-      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain };
+      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, ...chainAfterHello(state, message.chain, restarted) };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the
@@ -842,8 +893,9 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       return mode === undefined ? state : withMode(state, mode, (m) => ({ ...m, run: apply(m.run), last: apply(m.last) }));
     }
     case "chain":
-      // Issue #147: every frame carries the chain's whole state.
-      return { ...state, chain: message.state };
+      // Issue #147: every frame carries the chain's whole state. A change of the settings acknowledges the frames it
+      // answers; equal settings (a status change, a run event) leave the list as it is.
+      return { ...state, chain: message.state, chainPending: state.chain !== null && sameSettings(state.chain.settings, message.state.settings) ? state.chainPending : acknowledged(state.chainPending, message.state.settings) };
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.
@@ -927,9 +979,9 @@ export const countdownView = (wait: Countdown, nowMs: number): Readonly<{ percen
  * the last chain ended where it did, and one line per run of the chain; null before the first hello. The cutoff is
  * formatted by `time`, the page's own formatter of an instant.
  */
-export type ChainShown = Readonly<{ settings: ChainSettings; status: string; ended: string | null; runs: readonly string[] }>;
+export type ChainShown = Readonly<{ settings: ChainSettings; effective: ChainFrameSettings; reset: ChainReset; status: string; ended: string | null; runs: readonly string[] }>;
 export const chainShown = (view: ViewState, time: TimeText): ChainShown | null => {
   if (view.chain === null) return null;
   const chain = view.chain.chain;
-  return { settings: view.chain.settings, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText) };
+  return { settings: view.chain.settings, effective: effective(view.chainPending, view.chain.settings), reset: view.chainReset, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText) };
 };

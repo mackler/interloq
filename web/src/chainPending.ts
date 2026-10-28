@@ -40,3 +40,26 @@ export const effective = (inFlight: InFlight, settings: ChainSettings): ChainFra
     runs: settings.limits.runs,
     cutoff: settings.limits.cutoff === null ? null : new Date(settings.limits.cutoff).toISOString(),
   };
+
+/** A field of the chain's control that holds a draft (issue #147, the page's list of frames). */
+export type ChainField = "runs" | "cutoff";
+
+/** Whether two settings are equal: enabled, the run limit and the cutoff. */
+export const sameSettings = (a: ChainSettings, b: ChainSettings): boolean =>
+  a.enabled === b.enabled && a.limits.runs === b.limits.runs && a.limits.cutoff === b.limits.cutoff;
+
+/** Whether two frames are equal field by field. */
+export const sameFrame = (a: ChainFrameSettings, b: ChainFrameSettings): boolean => a.enabled === b.enabled && a.runs === b.runs && a.cutoff === b.cutoff;
+
+/** The list without the first frame equal to `frame` field by field; unchanged where none is. */
+export const withdrawn = (inFlight: InFlight, frame: ChainFrameSettings): InFlight => {
+  const at = inFlight.findIndex((f) => sameFrame(f, frame));
+  return at === -1 ? inFlight : [...inFlight.slice(0, at), ...inFlight.slice(at + 1)];
+};
+
+/** The fields on which two frames differ: the run limit as a number or null, the cutoff as an instant. */
+const instantOf = (cutoff: string | null): number | null => (cutoff === null ? null : Date.parse(cutoff));
+export const differingFields = (a: ChainFrameSettings, b: ChainFrameSettings): readonly ChainField[] => [
+  ...(a.runs === b.runs ? [] : (["runs"] as const)),
+  ...(instantOf(a.cutoff) === instantOf(b.cutoff) ? [] : (["cutoff"] as const)),
+];
