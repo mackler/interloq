@@ -2898,8 +2898,25 @@ export function sessionTooLongText(message: string): string {
 export function serverFaultText(message: string): string {
   return `the server met an error it could not trace to one run (${message}). Every run in progress was halted and the server is ending; start it again with bin/ilcli web.`;
 }
+/**
+ * Issue #193: how every halt-like ending reads in conversation.md: its word (`endedOutcome`, the source the page uses)
+ * and its exit code in bold, then its text. Only the label is bold, since a halt's text can span several lines.
+ */
+function endingRecord(code: number, text: string): string {
+  const word = endedOutcome(code);
+  return `**${word.charAt(0).toUpperCase()}${word.slice(1)} (exit code ${code}):** ${text}\n`;
+}
+/** Issue #158: the server fault's record; since issue #193 in the form every halt's record has. */
 export function serverFaultRecord(message: string): string {
-  return `**Halted: the server met an error it could not trace to one run (${message}), halted every run in progress and ended.**\n`;
+  return endingRecord(1, `the server met an error it could not trace to one run (${message}), halted every run in progress and ended.`);
+}
+/** Issue #193: a halt's record in conversation.md; `reason` is the text the page shows after `HALTED: `. */
+export function haltRecord(reason: string): string {
+  return endingRecord(1, reason);
+}
+/** Issue #193 (requirements Q2): the record of a run ended by a defect, an error of Interloq that is not a typed error. */
+export function defectRecord(message: string): string {
+  return endingRecord(1, `an internal error of Interloq ended the run (${message}).`);
 }
 export const serverEndingText = "the server is ending after an error it could not trace to one run; start it again with bin/ilcli web";
 export function unrecordedHaltLine(ids: readonly number[]): string {

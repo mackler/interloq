@@ -297,7 +297,7 @@ export const questionEntry = (id: string, question: string, answers: readonly (r
  * `callFailed` fails it with ClaudeCallFailed, as the adapter fails a usage limit without one; `sessionTooLong` fails it
  * with ClaudeSessionTooLong, as the adapter fails a request refused because its session is too long (issue #122).
  */
-export type PlanningStep = { /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
+export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effect.die(new Error(defect))`, an error of Interloq that is not a typed error. */ defect?: string; /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
 
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
@@ -458,6 +458,7 @@ export class ScriptedPlanner implements PlannerShape {
       if (step.usage) this.recordUsage();
       if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
       if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
+      if (step.defect !== undefined) return Effect.die(new Error(step.defect));
       if (step.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
       if (step.failure !== undefined) return Effect.fail(callFailure(step.failure.message, step.failure.facts));
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
@@ -769,6 +770,17 @@ export async function runFails(layer: Layer.Layer<Services>, tag: RunError["_tag
   for (const text of texts) assert.match(describe(error.value), text);
   return error.value;
 }
+
+/**
+ * Issue #193: the reason of a halt as the page said it, the text between `HALTED: ` and `State is preserved in`, which a
+ * halt's record in conversation.md carries (haltRecord); null where the page said no halt.
+ */
+export const haltReasonOf = (said: string): string | null => /\nHALTED: ([^]*?)\nState is preserved in /.exec(said)?.[1] ?? null;
+/** Issue #193: the conversation.md of the directory the page named after `State is preserved in`. */
+export const haltConversationOf = (said: string): string => {
+  const dir = /State is preserved in (.*)\.(?:\n|$)/.exec(said)?.[1] ?? assert.fail(`no directory named: ${said}`);
+  return fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
+};
 
 /** What a program test inspects: the scripted implementations, the paths and the tracker. */
 export type WiringProbe = { ui: ScriptedUi; planner: ScriptedPlanner; reviewer: ScriptedReviewer; project: string; dir: string; tracker: FakeTracker | null; suite: ScriptedSuite };

@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped } from "./errors.ts";
 import { heldTrackerEnv, readWithRetry } from "./trackerRetry.ts";
-import { blankItemText, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { blankItemText, defectRecord, haltRecord, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, Ui, type UiShape } from "./services.ts";
@@ -80,7 +80,12 @@ export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md
 /** How a run ended when it finished: a refinement run, or an implementation run with its number of execution phases. */
 type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implementation"; phases: number }>;
 /** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
-type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, string>, UserStopped> }>;
+type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, Unready>, UserStopped> }>;
+/**
+ * Why a run could not read its task (issue #193): the halt's reason, and the records of the first read's repeats
+ * (issue #171) collected before it, written to conversation.md before the halt's record.
+ */
+type Unready = Readonly<{ reason: string; held: readonly string[] }>;
 /**
  * The mode of a started run with what only that mode carries (issue #142): a refinement run's choice of how the agreed
  * questions' terms are explained; an implementation run has no question phase, so it carries no choice.
@@ -125,7 +130,7 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, a
       task: (config, ui) =>
         Effect.gen(function* () {
           const layer = wiring.tracker(config);
-          if (Result.isFailure(layer)) return Result.fail(trackerFailureText(layer.failure));
+          if (Result.isFailure(layer)) return Result.fail({ reason: trackerFailureText(layer.failure), held: [] });
           // Issue #171 (requirements Q3): the first read is repeated like every tracker request; its records are held
           // until conversation.md exists, and its question carries no Help me decide (the developer's decision of 15 Oct 2026).
           const held = yield* Ref.make<readonly string[]>([]);
@@ -135,16 +140,16 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, a
             if (Option.isNone(error)) return yield* Effect.die(Cause.squash(read.cause));
             const failure = error.value;
             if (failure._tag === "UserStopped") return yield* Effect.fail(failure);
-            return Result.fail(isTrackerError(failure) ? trackerFailureText(failure) : describe(failure));
+            return Result.fail({ reason: isTrackerError(failure) ? trackerFailureText(failure) : describe(failure), held: yield* Ref.get(held) });
           }
           const item = read.value;
           const heldRecords = yield* Ref.get(held);
           yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
           // An implementation run's requirements are the item's section, where it has one (S7).
           const section = readRefinement(item.body);
-          if (Result.isFailure(section)) return Result.fail(sectionMalformedText(item.id, section.failure.reason));
+          if (Result.isFailure(section)) return Result.fail({ reason: sectionMalformedText(item.id, section.failure.reason), held: heldRecords });
           return Result.mapBoth(taskTextOf(start.mode, item), {
-            onFailure: (e) => (e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason)),
+            onFailure: (e): Unready => ({ reason: e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason), held: heldRecords }),
             onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success), held: heldRecords }),
           });
         }),
@@ -156,7 +161,7 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, a
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
-  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed({ task: start.task, tracker: null, requirements: null, held: [] })) }, wiring);
+  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed<Readied>({ task: start.task, tracker: null, requirements: null, held: [] })) }, wiring);
 
 /**
  * The signal's fault fails when the server meets an error it cannot trace to one run (issue #158): every stage of the
@@ -171,7 +176,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     const mode = start.kind.mode;
     const ui = yield* wiring.ui;
     // Issue #120: the run's records directory, named by its start time, mode and item; allocated after the configuration
-    // is read, so that a run refused by its configuration leaves no directory.
+    // and the item are read. Issue #193: a halt before that allocates it to record the halt there (haltedBeforeRecords).
     const planned = runRootOf(mode, start.item, new Date(yield* Clock.currentTimeMillis).toISOString());
     const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.provide(wiring.platform));
 
@@ -182,11 +187,45 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
         const usage = yield* records.usageLines().pipe(Effect.map(summarizeUsage), Effect.map((s) => renderUsage(s, recordPath(records.root, { kind: "usage" }))), Effect.catch((e) => Effect.succeed(`unavailable: ${describe(e)}`)));
         yield* ui.say(`Usage: ${usage}`);
       });
-    const halted = (reason: string, sessionId: string | null, records: StoreShape) =>
+    /** What the page is told of a halt: HALTED, its reason and the records' directory, then the last two lines. */
+    const sayHalt = (reason: string, sessionId: string | null, records: StoreShape) =>
       Effect.gen(function* () {
         yield* ui.say(`\nHALTED: ${reason}\nState is preserved in ${records.dir}.`);
         yield* tail(sessionId, records);
         return 1;
+      });
+    /**
+     * Issue #193: a halt of a run whose records exist: its record in conversation.md first, so that it is on disk when the
+     * run's end is published, then what the page is told. A write that fails is ignored, so a halt never becomes a defect.
+     */
+    const halted = (reason: string, sessionId: string | null, records: StoreShape) =>
+      records.converse(haltRecord(reason)).pipe(Effect.ignore, Effect.andThen(sayHalt(reason, sessionId, records)));
+
+    /**
+     * Issue #193: any directory this run allocated, the setup's (which rootRef names too) or one allocated for a halt
+     * before the records exist (which rootRef does not, so that the chain treats that run as one that halted before setup).
+     */
+    const recordsRoot = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
+    /**
+     * Issue #193: a halt before the run's records exist. The run's directory is allocated (in one uninterruptible step with
+     * recordsRoot, so a server fault racing it finds the same directory), the first read's held records and the halt's
+     * record are written there, and the page is told; where the allocation fails, the page alone.
+     */
+    const haltedBeforeRecords = (reason: string, held: readonly string[] = []) =>
+      Effect.gen(function* () {
+        const root = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const known = yield* Ref.get(recordsRoot);
+            if (Option.isSome(known)) return Exit.succeed(known.value);
+            const made = yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
+            if (Exit.isSuccess(made)) yield* Ref.set(recordsRoot, Option.some(made.value));
+            return made;
+          }),
+        );
+        if (Exit.isFailure(root)) return yield* sayHalt(reason, null, yield* store(planned, []));
+        const records = yield* store(root.value, []);
+        yield* Effect.forEach(held, (markdown) => records.converse(markdown), { discard: true }).pipe(Effect.ignore);
+        return yield* halted(reason, null, records);
       });
 
     /**
@@ -200,7 +239,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Exit.isFailure(configExit)) {
         const error = Cause.findErrorOption(configExit.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(configExit.cause));
-        return yield* halted(describe(error.value), null, yield* store(planned, []));
+        return yield* haltedBeforeRecords(describe(error.value));
       }
       const sourced = configExit.value;
       const config = sourced.config;
@@ -216,7 +255,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Exit.isFailure(formatExit)) {
         const error = Cause.findErrorOption(formatExit.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(formatExit.cause));
-        return yield* halted(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), null, yield* store(planned, []));
+        return yield* haltedBeforeRecords(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })));
       }
       const decisionFormat = formatExit.value;
 
@@ -231,7 +270,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
         return 130;
       }
       const taskRead = taskExit.value;
-      if (Result.isFailure(taskRead)) return yield* halted(taskRead.failure, null, yield* store(planned, []));
+      if (Result.isFailure(taskRead)) return yield* haltedBeforeRecords(taskRead.failure.reason, taskRead.failure.held);
       const { task, tracker, requirements, held } = taskRead.success;
 
       // Issue #162: an implementation run decodes its check commands and checks their npm scripts against the project's
@@ -241,7 +280,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Result.isFailure(checks)) {
         const { key, path: inside, message } = checks.failure;
         const invalid = new ConfigInvalid({ file: fileOf(sourced, key) ?? "the default configuration", path: `${key}${inside}`, message });
-        return yield* halted(describe(invalid), null, yield* store(planned, []));
+        return yield* haltedBeforeRecords(describe(invalid));
       }
       const manifest = yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -251,10 +290,10 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Exit.isFailure(manifest)) {
         const error = Cause.findErrorOption(manifest.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(manifest.cause));
-        return yield* halted(describe(new FileSystemError({ operation: "read", path: path.join(project, "package.json"), message: error.value.message })), null, yield* store(planned, []));
+        return yield* haltedBeforeRecords(describe(new FileSystemError({ operation: "read", path: path.join(project, "package.json"), message: error.value.message })));
       }
       const problems = manifestProblems(listedCommands(checks.success), manifest.value);
-      if (problems.length > 0) return yield* halted(describe(new CheckCommandInvalid({ problems })), null, yield* store(planned, []));
+      if (problems.length > 0) return yield* haltedBeforeRecords(describe(new CheckCommandInvalid({ problems })));
       return { config, decisionFormat, task, tracker, requirements, held, checks: checks.success } as const;
     });
     // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
@@ -272,17 +311,26 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
      */
     const faultHalted = (error: ServerFault, ignorePaths: readonly string[]) =>
       Effect.gen(function* () {
-        const known = yield* Ref.get(rootRef);
+        const known = yield* Ref.get(recordsRoot);
         const root = Option.isSome(known) ? Exit.succeed(known.value) : yield* Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform)));
         const faultRecords = yield* store(Exit.isSuccess(root) ? root.value : planned, ignorePaths);
         if (Exit.isSuccess(root)) yield* recordFault(faultRecords, error.message);
-        return yield* halted(describe(error), null, faultRecords);
+        return yield* sayHalt(describe(error), null, faultRecords);
       });
-    /** The fault's halt, or the defect, from a stage's failed exit. */
+    /**
+     * The fault's halt, or the defect, from a stage's failed exit. Issue #193 (Q2): a defect is recorded in the directory
+     * this run allocated, where there is one, before the fiber dies with it.
+     */
     const stageFailed = (cause: Cause.Cause<ServerFault>, ignorePaths: readonly string[]) =>
       Effect.gen(function* () {
         const error = Cause.findErrorOption(cause);
-        if (Option.isNone(error)) return yield* Effect.die(Cause.squash(cause));
+        if (Option.isNone(error)) {
+          const known = yield* Ref.get(recordsRoot);
+          if (Option.isSome(known) && !Cause.hasInterruptsOnly(cause)) {
+            yield* store(known.value, ignorePaths).pipe(Effect.flatMap((records) => records.converse(defectRecord(defectMessage(Cause.squash(cause))))), Effect.ignore);
+          }
+          return yield* Effect.die(Cause.squash(cause));
+        }
         return yield* faultHalted(error.value, ignorePaths);
       });
 
@@ -309,13 +357,13 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     const setup = Effect.gen(function* () {
       const allocated = yield* Effect.uninterruptible(
         Effect.exit(allocateRunRoot(project, planned).pipe(Effect.provide(wiring.platform))).pipe(
-          Effect.tap((exit) => (Exit.isSuccess(exit) ? Ref.set(rootRef, Option.some(exit.value)) : Effect.void)),
+          Effect.tap((exit) => (Exit.isSuccess(exit) ? Ref.set(rootRef, Option.some(exit.value)).pipe(Effect.andThen(Ref.set(recordsRoot, Option.some(exit.value)))) : Effect.void)),
         ),
       );
       if (Exit.isFailure(allocated)) {
         const error = Cause.findErrorOption(allocated.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(allocated.cause));
-        return yield* halted(describe(error.value), null, yield* store(planned, []));
+        return yield* sayHalt(describe(error.value), null, yield* store(planned, []));
       }
       const records = yield* store(allocated.value, config.ignorePaths);
       const base = Layer.mergeAll(Layer.succeed(Store, records), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite));
@@ -339,7 +387,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     const bodyFaulted = (error: ServerFault) =>
       Effect.gen(function* () {
         yield* recordFault(records, error.message);
-        return yield* halted(describe(error), yield* sessionId, records);
+        return yield* sayHalt(describe(error), yield* sessionId, records);
       });
     /**
      * An interruption of the whole run from outside: the server's fault's halt if the fault has come (W1-S1-1 of issue
@@ -370,7 +418,11 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       return 0;
     }
     const error = Cause.findErrorOption(exit.cause);
-    if (Option.isNone(error)) return yield* Effect.die(Cause.squash(exit.cause));
+    if (Option.isNone(error)) {
+      // Issue #193 (Q2): a defect of the run is recorded before the fiber dies with it; an interruption is not a defect.
+      if (!Cause.hasInterruptsOnly(exit.cause)) yield* records.converse(defectRecord(defectMessage(Cause.squash(exit.cause)))).pipe(Effect.ignore);
+      return yield* Effect.die(Cause.squash(exit.cause));
+    }
     // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
     if (error.value._tag === "UserStopped") {
       yield* interrupted;
@@ -379,6 +431,9 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value);
     return yield* halted(describe(error.value), yield* sessionId, records);
   });
+
+/** Issue #193 (Q2): the message of a defect, an error of Interloq that is not a typed error, for its record. */
+export const defectMessage = (defect: unknown): string => (defect instanceof Error ? defect.message : String(defect));
 
 /**
  * The code a run ends with, from the exit of its fiber: the program's own code, 130 when it was interrupted, 1 for

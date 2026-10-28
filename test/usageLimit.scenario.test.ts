@@ -7,7 +7,7 @@ import { Checkpoint } from "../src/records.ts";
 import { program } from "../src/program.ts";
 import * as prompts from "../src/prompts.ts";
 import { USAGE_LIMIT_MARGIN_SECONDS } from "../src/retry.ts";
-import { finished, type PlanningStep, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring } from "./helpers.ts";
+import { finished, haltConversationOf, haltReasonOf, type PlanningStep, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring } from "./helpers.ts";
 import { USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import type { ClaudeFailure } from "../src/transport.ts";
 
@@ -97,6 +97,11 @@ test("a genuine permanent failure of the call still halts, with no wait", async 
   assert.deepEqual(sleeps, []);
   assert.match(probe.ui.said.join("\n"), /HALTED: .*billing error/);
   assert.ok(!probe.ui.notified.some((e) => e._tag === "UsageLimitWaiting"));
+  // Issue #193: the halt's reason, as the page said it, ends the run's conversation.md.
+  const said = probe.ui.said.join("\n");
+  const reason = haltReasonOf(said);
+  assert.ok(reason !== null, said);
+  assert.ok(haltConversationOf(said).endsWith(prompts.haltRecord(reason)));
 });
 
 // Issue #170: a refusal whose reset is named only in the error result's text, as on 15 Oct 2026, classified by the

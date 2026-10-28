@@ -3,16 +3,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, test } from "node:test";
-import { Clock, Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect";
+import { Clock, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result } from "effect";
 import { ServerFault, TrackerAuthRefused, TrackerUnreachable } from "../src/errors.ts";
-import { Reviewer, Tracker } from "../src/services.ts";
+import { Planner, Reviewer, Tracker } from "../src/services.ts";
 import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
-import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
-import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf } from "./helpers.ts";
+import { defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
+import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { checkCommandInvalidText, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { checkCommandInvalidText, defectRecord, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
@@ -20,6 +20,30 @@ import { phaseName } from "../src/uiEvents.ts";
 const noQuestions = { questions_for_user: [] };
 const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)));
 const said = (probe: WiringProbe): string => probe.ui.said.join("\n");
+
+/**
+ * Issue #193: the run's conversation.md, in the directory the page named, ends with the halt's record, whose text is the
+ * one the page said after HALTED: (the seam: both from the one describe, neither compared with a literal of its own).
+ */
+const assertHaltRecorded = (probe: WiringProbe): void => {
+  const reason = haltReasonOf(said(probe));
+  assert.ok(reason !== null, `no halt said: ${said(probe)}`);
+  const record = haltConversationOf(said(probe));
+  assert.ok(record.endsWith(haltRecord(reason)), record.slice(-600));
+};
+
+/**
+ * Issue #193: a halt before the run's records existed allocated exactly one directory under plan-review/runs/, the one
+ * the page named, and recorded the halt there; returns that directory's conversation.md.
+ */
+const assertHaltedBeforeRecords = (probe: WiringProbe): string => {
+  const runs = path.join(probe.project, "plan-review", "runs");
+  const dirs = fs.existsSync(runs) ? fs.readdirSync(runs) : [];
+  assert.equal(dirs.length, 1, `one records directory expected: ${dirs.join(", ")}`);
+  assert.ok(said(probe).includes(`State is preserved in ${path.join(runs, dirs[0])}.`), said(probe));
+  assertHaltRecorded(probe);
+  return fs.readFileSync(path.join(runs, dirs[0], "conversation.md"), "utf8");
+};
 
 /** The run's root, as the program allocated it (issue #120): its records directory relative to plan-review/. */
 const rootOf = (probe: WiringProbe): RunRoot => path.relative(path.join(probe.project, "plan-review"), probe.dir).split(path.sep).join("/") as RunRoot;
@@ -49,6 +73,7 @@ test("a halt prints HALTED and the reason, the session id and the usage, and exi
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: the reply of Claude Code does not match its schema: [^]*\nState is preserved in .*plan-review\/runs\/[^/\s]+\./);
   assertTail(probe);
+  assertHaltRecorded(probe);
 });
 
 test("the project directory of the start is used, and the config of that project applies", async () => {
@@ -64,37 +89,36 @@ test("the project directory of the start is used, and the config of that project
   assert.match(said(probe), /finished after 1 implementation phase\(s\)\./);
 });
 
-test("an invalid config prints HALTED with the file and field and exits 1, before any agent call and without records", async () => {
+test("an invalid config prints HALTED with the file and field and exits 1, before any agent call, its halt recorded in a directory of its own", async () => {
   const repo = tempRepo();
   const { wiring, probe } = testWiring(repo, { steps: [{ output: noQuestions, plan: "v1" }] });
   fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ maxRounds: "5" }));
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: Expected number \(at maxRounds\)/);
-  assert.ok(probe.ui.said.flatMap((t) => t.split("\n")).some(noSession));
   assertTail(probe);
   assert.deepEqual(probe.planner.prompts, []);
-  assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialised");
+  assertHaltedBeforeRecords(probe);
 });
 
 // Issue #142: an unknown value of terms halts before any agent call and before the records are initialized (behavior 9).
-test("a terms value other than checked, unchecked or onRequest halts with 1 before any agent call and without records", async () => {
+test("a terms value other than checked, unchecked or onRequest halts with 1 before any agent call, its halt recorded", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
   fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ terms: "sometimes" }));
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: .*\(at terms\)/);
   assert.deepEqual(probe.planner.prompts, []);
-  assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialized");
+  assertHaltedBeforeRecords(probe);
 });
 
 // Decision support, plan step 2.1 (D7): the representation's format is read from the program's own directory.
-test("an unreadable decision-making format prints HALTED with the file and exits 1, before any agent call and without records", async () => {
+test("an unreadable decision-making format prints HALTED with the file and exits 1, before any agent call, its halt recorded", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }] });
   const missing = path.join(probe.dir, "no-such-format.md");
   assert.equal(await runProgram(probe, { ...wiring, decisionFormat: missing }), 1);
   assert.match(said(probe), new RegExp(`HALTED: the decision-making format ${missing} could not be read`));
   assertTail(probe);
   assert.deepEqual(probe.planner.prompts, []);
-  assert.ok(!fs.existsSync(path.join(probe.dir, "conversation.md")), "the records were initialized");
+  assertHaltedBeforeRecords(probe);
 });
 
 /** Runs the program in a fiber, waits for the double to be reached, interrupts it, and returns its exit. */
@@ -182,6 +206,7 @@ test("Stop at the cycle limit, confirmed, stays a halt with exit code 1; decline
   assert.equal(code, 1);
   assert.equal(code, statedCode(prompts.confirmEndText("limitStop")));
   assert.match(said(halted.probe), /HALTED: stopped by the user at the cycle limit/);
+  assertHaltRecorded(halted.probe);
   const declined = limited(["0", "n", "0", "y"]);
   assert.equal(await runProgram(declined.probe, declined.wiring), 1);
   assert.equal(declined.probe.ui.asked.filter((a) => a === prompts.confirmEndText("limitStop")).length, 2);
@@ -261,13 +286,13 @@ for (const mode of ["refinement", "implementation"] as const) {
   });
 }
 
-test("an item the tracker does not hold halts the run with 1 before any agent call and without records", async () => {
+test("an item the tracker does not hold halts the run with 1 before any agent call, its halt recorded", async () => {
   const { wiring, probe } = testWiring(tempRepo(), converging);
   const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "implementation", Result.getOrThrow(itemIdOf("999"))), wiring)));
   assert.equal(code, 1);
   assert.match(said(probe), /HALTED: the issue tracker has no item 999/);
   assert.deepEqual(probe.planner.prompts, []);
-  assert.ok(!fs.existsSync(path.join(probe.project, "plan-review", "runs")), "a records directory was created");
+  assertHaltedBeforeRecords(probe);
 });
 
 test("a project without a configured tracker halts the run with 1 before any agent call, naming the config files", async () => {
@@ -275,6 +300,7 @@ test("a project without a configured tracker halts the run with 1 before any age
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: no issue tracker is configured: set the key tracker in the shared config\.json of Interloq or in plan-review\/config\.json/);
   assert.deepEqual(probe.planner.prompts, []);
+  assertHaltedBeforeRecords(probe);
 });
 
 // Issue #122: a Claude Code request refused because its session is too long halts with 1 and names the cause.
@@ -284,6 +310,7 @@ test("a plan write refused because the session is too long halts with 1, naming 
   assert.ok(said(probe).includes(`HALTED: ${sessionTooLongText("Prompt is too long")}`), said(probe));
   assert.doesNotMatch(said(probe), /Claude Code planning call failed/);
   assertTail(probe);
+  assertHaltRecorded(probe);
 });
 
 test("an execution refused because the session is too long halts with 1, with no work review and no question", async () => {
@@ -292,6 +319,74 @@ test("an execution refused because the session is too long halts with 1, with no
   assert.ok(said(probe).includes(`HALTED: ${sessionTooLongText("Prompt is too long")}`), said(probe));
   assert.equal(fs.existsSync(path.join(probe.dir, "work-review-1")), false);
   assert.deepEqual(probe.ui.asked, []);
+  assertHaltRecorded(probe);
+});
+
+// Issue #193 and issue #147: a halt before the records directory is recorded in one, which the run manager is not given,
+// so the chain treats the run as one that halted before its setup.
+test("issue #193: a halt before the records leaves the run manager's allocated directory unset", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [] });
+  fs.writeFileSync(path.join(probe.dir, "config.json"), JSON.stringify({ maxRounds: "5" }));
+  const allocated = Effect.runSync(Ref.make<Option.Option<RunRoot>>(Option.none()));
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring, undefined, allocated))), 1);
+  assert.ok(Option.isNone(Effect.runSync(Ref.get(allocated))));
+  assertHaltedBeforeRecords(probe);
+});
+
+// Issue #193: every halt writes its reason to conversation.md, as the run ends, with the code and its word.
+test("issue #193: a tracker step refused at the start (TrackerStepFailed) halts with 1 and its record in conversation.md", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  await Effect.runPromise(tracker.failNext("setState", new TrackerAuthRefused({ tracker: "GitHub", status: 401 })));
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.match(said(probe), /HALTED: [^]*refused the credential/);
+  assertHaltRecorded(probe);
+});
+
+test("issue #193: a halt whose record cannot be written still ends with 1 and says HALTED", async () => {
+  let records = (): string => assert.fail("the records directory is not known");
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [
+      {
+        sessionTooLong: "Prompt is too long",
+        onCall: () => {
+          const file = path.join(records(), "conversation.md");
+          fs.rmSync(file, { force: true });
+          fs.mkdirSync(file);
+        },
+      },
+    ],
+  });
+  records = () => probe.dir;
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.ok(said(probe).includes(`HALTED: ${sessionTooLongText("Prompt is too long")}`), said(probe));
+  assertTail(probe);
+});
+
+test("issue #193 (Q2): a defect in the run records an internal error in conversation.md, and the run ends with 1", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ defect: "boom" }] });
+  const exit = await Effect.runPromiseExit(Effect.scoped(program(scriptedStart(probe.project), wiring)));
+  assert.equal(exitCodeOf(exit), 1);
+  const record = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+  assert.ok(record.endsWith(defectRecord("boom")), record.slice(-400));
+});
+
+test("issue #193 (Q2): a defect while the run's services are built records it in the directory allocated", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [] });
+  const agents = Layer.merge(Layer.effect(Planner, Effect.die(new Error("layer"))), Layer.succeed(Reviewer, probe.reviewer));
+  const exit = await Effect.runPromiseExit(Effect.scoped(program(scriptedStart(probe.project), { ...wiring, agents })));
+  assert.equal(exitCodeOf(exit), 1);
+  const runs = path.join(probe.project, "plan-review", "runs");
+  const dirs = fs.existsSync(runs) ? fs.readdirSync(runs) : [];
+  assert.equal(dirs.length, 1, `one records directory expected: ${dirs.join(", ")}`);
+  const record = fs.readFileSync(path.join(runs, dirs[0], "conversation.md"), "utf8");
+  assert.ok(record.endsWith(defectRecord("layer")), record);
+});
+
+test("issue #193: a defect's message is an Error's message, any other value's String", () => {
+  assert.equal(defectMessage(new Error("boom")), "boom");
+  assert.equal(defectMessage("plain"), "plain");
+  assert.equal(defectMessage(42), "42");
 });
 
 // Issue #158 (the user's decision Q1): an error the server cannot trace to one run halts every run in progress with
@@ -426,6 +521,7 @@ test("issue #162: a listed npm command naming a script package.json lacks halts 
   assert.ok(said(probe).includes(checkCommandInvalidText([{ _tag: "MissingScript", command: "npm run test:missing" as CommandLine, script: "test:missing" }])), said(probe));
   assert.match(said(probe), /HALTED: .*npm run test:missing.*test:missing/su);
   assert.deepEqual(probe.planner.prompts, []);
+  assertHaltedBeforeRecords(probe);
   assert.equal(await heldState(tracker), scriptedItem.state, "the item was moved");
 });
 
@@ -445,6 +541,7 @@ test("issue #162 (P1-R1-2): malformed settings halt an implementation run with C
   assert.equal(await runProgram(probe, wiring), 1);
   assert.match(said(probe), /HALTED: .*plan-review\/config\.json is not a valid configuration: .*\(at checkCommands\[0\]\.command\)/u);
   assert.deepEqual(probe.planner.prompts, []);
+  assertHaltedBeforeRecords(probe);
   assert.equal(await heldState(tracker), scriptedItem.state);
 });
 
@@ -458,6 +555,7 @@ test("issue #162: an npm command in a project with no package.json halts, naming
   assert.equal(await runProgram(probe, wiring), 1);
   assert.ok(said(probe).includes(checkCommandInvalidText([{ _tag: "NoManifest", command: "npm test" as CommandLine }])), said(probe));
   assert.deepEqual(probe.planner.prompts, []);
+  assertHaltedBeforeRecords(probe);
 });
 
 // Issue #171 (S11, requirements Q3, the developer's decision of 15 Oct 2026): the run's first read of its item is
@@ -484,7 +582,7 @@ describe("the first read of the item, repeated", () => {
     assert.ok(first >= 0 && second > first && started > second, conversation);
   });
 
-  test("a first read whose repeats run out asks without Help me decide, and Stop halts with 1, the failure named, and no records directory", async () => {
+  test("a first read whose repeats run out asks without Help me decide, and Stop halts with 1, the failure named, its repeats and halt recorded", async () => {
     const tracker = fakeTrackerOf([scriptedItem]);
     await failReads(tracker, 3);
     const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: FAST, answers: ["s"] });
@@ -492,7 +590,13 @@ describe("the first read of the item, repeated", () => {
     assert.deepEqual(probe.ui.asked, [transportPrompt]);
     assert.match(said(probe), /HALTED: the GitHub issue tracker could not be reached: reached no answer from GitHub/);
     assert.deepEqual(probe.planner.prompts, []);
-    assert.ok(!fs.existsSync(path.join(probe.project, "plan-review", "runs")), "a records directory was created");
+    // Issue #193: the held records of the first read come before the halt's record.
+    const conversation = assertHaltedBeforeRecords(probe);
+    const retry = conversation.indexOf(readLine(1, 0.01));
+    const question = conversation.indexOf(trackerExhaustedQuestion("GitHub", "reading item 1"));
+    const decision = conversation.indexOf(trackerDecisionLine("stop", "GitHub", "reading item 1"));
+    const record = conversation.indexOf(haltRecord(haltReasonOf(said(probe)) ?? ""));
+    assert.ok(retry >= 0 && question > retry && decision > question && record > decision, conversation);
   });
 
   test("Retry again, then a read that succeeds: the run goes on, the question and the decision in conversation.md", async () => {
@@ -512,6 +616,7 @@ describe("the first read of the item, repeated", () => {
     assert.equal(await runProgram(probe, wiring), 1);
     assert.deepEqual(probe.ui.asked, []);
     assert.match(said(probe), /HALTED: the GitHub issue tracker refused the credential \(HTTP status 401\)/);
+    assertHaltedBeforeRecords(probe);
   });
 
   test("End the run at the first read's question ends the run with 130", async () => {
