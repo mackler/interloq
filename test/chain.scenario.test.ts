@@ -459,7 +459,7 @@ test("a failed save before the parking abandons it: nothing parked, the chain en
   const h = await harness([halting((r) => (leftOnly(r), (failing = true))), converging], { repo, persistence: flagged(repo, () => failing) });
   const start = git(repo, "rev-parse", "HEAD");
   await begin(h, "1");
-  await until("the chain to end", async () => (await chainOf(h)).chain._tag === "Idle" && (await run(h.manager.current)).implementation === null, 5_000);
+  await until("the chain to end", async () => (await chainOf(h)).chain._tag === "Idle" && (await run(h.manager.current)).implementation === null);
   assert.equal(await endedReason(h), "SaveFailed");
   assert.deepEqual(haltedBranches(repo), []);
   assert.equal(git(repo, "rev-parse", "HEAD"), start);
