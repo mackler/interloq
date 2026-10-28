@@ -522,12 +522,18 @@ export const makeRunManager = (
       listItems,
       haltAll,
       chain: Ref.get(state).pipe(Effect.map((s) => s.chain)),
+      // The change and its save are one uninterruptible region (work review 1 of 28 Oct 2026, W1-R1-2), as start's
+      // reservation, persist of Running and gate release are: the server forks setChain in the tab's scope, and a tab
+      // closed meanwhile must not leave settings applied and broadcast but missing from plan-review/chain.json. persist
+      // never fails, so the region always ends, and an interruption waits for at most one save of a small file.
       setChain: (settings) =>
-        Effect.gen(function* () {
-          yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current?.item ?? null), null]);
-          yield* persist;
-          return (yield* Ref.get(state)).chain;
-        }),
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current?.item ?? null), null]);
+            yield* persist;
+            return (yield* Ref.get(state)).chain;
+          }),
+        ),
       stop: (of, id) =>
         currentRun(id).pipe(
           Effect.flatMap((found) => {

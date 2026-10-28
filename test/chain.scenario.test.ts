@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Effect, Layer, Result, Scope } from "effect";
+import { Deferred, Effect, Fiber, Layer, Result, Scope } from "effect";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { runRootOf } from "../src/artifacts.ts";
@@ -551,4 +551,75 @@ test("turning the mode off while the next item's read is held starts nothing and
   assert.equal(startedRuns(h).length, 1);
   const chain = (await chainOf(h)).chain;
   assert.deepEqual(chain._tag === "Idle" && chain.ended, { _tag: "TurnedOff", running: null });
+});
+
+/**
+ * A persistence whose saves, once armed, signal `entered` and then wait for `gate` before writing (work review 1 of the
+ * run of 28 Oct 2026, W1-R1-2): a test interrupts a fiber while its save is held.
+ */
+const gatedPersistence = (repo: string) =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+    let armed = false;
+    const persistence: ChainPersistence = {
+      save: (state) =>
+        Effect.suspend(() => (armed ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(gate))) : Effect.void)).pipe(
+          Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+        ),
+      remove: Effect.void,
+    };
+    return { entered, gate, persistence, arm: () => void (armed = true) };
+  });
+/**
+ * Interrupts `fiber`, which the test has seen inside an uninterruptible region, in the order the plan requires: the
+ * interrupter started at once, shown still waiting while the save is held, then the gate released and the interrupter
+ * awaited.
+ */
+const interruptHeld = <A, E>(fiber: Fiber.Fiber<A, E>, gate: Deferred.Deferred<void>) =>
+  Effect.gen(function* () {
+    const interrupter = yield* Effect.forkDetach(Fiber.interrupt(fiber), { startImmediately: true });
+    assert.equal(yield* Effect.sync(() => interrupter.pollUnsafe()), undefined, "the interruption ended before the held save was released");
+    yield* Deferred.succeed(gate, undefined);
+    yield* Fiber.await(interrupter);
+  });
+const runsOnDisk = (repo: string) => run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer))).then((s) => s.settings.limits.runs);
+const runsRestored = async (repo: string) => {
+  const next = await harness([converging], { repo });
+  return (await chainOf(next)).settings.limits.runs;
+};
+
+test("setChain interrupted during its save: the settings it applied are in chain.json and a restart restores them", async () => {
+  const repo = identified();
+  const gated = await run(gatedPersistence(repo));
+  const h = await harness([converging], { repo, persistence: gated.persistence });
+  gated.arm();
+  await run(
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkDetach(h.manager.setChain(settings(4)), { startImmediately: true });
+      yield* Deferred.await(gated.entered);
+      yield* interruptHeld(fiber, gated.gate);
+    }),
+  );
+  assert.equal(await runsOnDisk(repo), 4, "chain.json lacks the settings the interrupted change applied");
+  assert.equal(await runsRestored(repo), 4);
+});
+
+test("setChain interrupted while waiting on the write permit: its settings are in chain.json and a restart restores them", async () => {
+  const repo = identified();
+  const gated = await run(gatedPersistence(repo));
+  const h = await harness([converging], { repo, persistence: gated.persistence });
+  gated.arm();
+  await run(
+    Effect.gen(function* () {
+      const first = yield* Effect.forkDetach(h.manager.setChain(settings(4)), { startImmediately: true });
+      yield* Deferred.await(gated.entered);
+      const second = yield* Effect.forkDetach(h.manager.setChain(settings(6)), { startImmediately: true });
+      yield* Effect.promise(() => until("the second change applied", async () => (await chainOf(h)).settings.limits.runs === 6, 500));
+      yield* interruptHeld(second, gated.gate);
+      yield* Fiber.await(first);
+    }),
+  );
+  assert.equal(await runsOnDisk(repo), 6, "chain.json lacks the settings the interrupted change applied");
+  assert.equal(await runsRestored(repo), 6);
 });
