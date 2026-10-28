@@ -623,3 +623,29 @@ test("setChain interrupted while waiting on the write permit: its settings are i
   assert.equal(await runsOnDisk(repo), 6, "chain.json lacks the settings the interrupted change applied");
   assert.equal(await runsRestored(repo), 6);
 });
+
+test("start interrupted during its Running save: the run is reserved, started and, once ended, holds no slot", async () => {
+  const repo = identified();
+  const gated = await run(gatedPersistence(repo));
+  let releaseRun = () => {};
+  const runHeld = new Promise<void>((r) => (releaseRun = r));
+  const h = await harness([{ ...converging, steps: [{ output: noQuestions, plan: "v1", gate: () => runHeld }] }], { repo, persistence: gated.persistence, settings: settings(1) });
+  const item = (await refinedOrder(h.tracker))[0]!;
+  gated.arm();
+  await run(
+    Effect.gen(function* () {
+      const fiber = yield* Effect.forkDetach(h.manager.start(startOf("implementation", item)), { startImmediately: true });
+      yield* Deferred.await(gated.entered);
+      yield* interruptHeld(fiber, gated.gate);
+    }),
+  );
+  const id = (await run(h.manager.current)).implementation;
+  assert.equal(typeof id, "number", "no implementation run is reserved");
+  assert.deepEqual(startedRuns(h), [{ run: id, item }]);
+  const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
+  assert.equal(onDisk.chain._tag === "Running" && onDisk.chain.item, item);
+  releaseRun();
+  await until("the run's end", () => endCode(h, id!) !== undefined);
+  await until("no slot holding the run", async () => (await run(h.manager.current)).implementation !== id);
+  assert.equal(endCode(h, id!), 0);
+});
