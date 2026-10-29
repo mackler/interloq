@@ -83,7 +83,7 @@ describe("socket", () => {
     vi.advanceTimersByTime(1);
     expect(sockets.length).toBe(3);
     sockets[2].open();
-    sockets[2].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: null }, incarnation: "a" });
+    sockets[2].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: null }, incarnation: "a" });
     expect(h.states.at(-1)).toBe("open");
     // A hello alone does not reset the backoff (Q1): the replay that follows it may be the frame that cannot be read.
     sockets[2].drop();
@@ -91,7 +91,7 @@ describe("socket", () => {
     expect(sockets.length).toBe(3);
     vi.advanceTimersByTime(1);
     expect(sockets.length).toBe(4);
-    sockets[3].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: null }, incarnation: "a" });
+    sockets[3].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: null }, incarnation: "a" });
     sockets[3].receive({ type: "replay", ui: [], runs: [] });
     sockets[3].drop();
     vi.advanceTimersByTime(1000);
@@ -104,7 +104,7 @@ describe("socket", () => {
     sockets[0].drop();
     vi.advanceTimersByTime(1000);
     sockets[1].open();
-    sockets[1].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "a" });
+    sockets[1].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "a" });
     sockets[1].receive({ type: "replay", ui: [], runs: [{ id: 1, events: [] }] });
     expect(h.messages.map((m) => m.type)).toEqual(["hello", "replay"]);
   });
@@ -116,23 +116,34 @@ describe("socket", () => {
     expect(sockets[0].sent).toEqual([]);
     sockets[0].open();
     expect(sockets[0].sent, "flushed before the hello").toEqual([]);
-    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "a" });
+    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "a" });
     expect(sockets[0].sent.map((s) => JSON.parse(s))).toEqual([{ type: "answer", incarnation: "a", run: 1, prompt: 3, text: "y" }]);
     c.send({ type: "items", mode: "refinement" });
     expect(sockets[0].sent.length).toBe(2);
+  });
+
+  test("an answer queued for a refinement run in progress is sent; one for a run in neither list is discarded (issue #191)", () => {
+    const h = handlers();
+    const c = connect("ws://x/ws", wire(h), env());
+    c.send({ type: "answer", incarnation: "a", run: 5, prompt: 1, text: "x" });
+    c.send({ type: "answer", incarnation: "a", run: 7, prompt: 1, text: "y" });
+    sockets[0].open();
+    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [3, 5], implementation: 4 }, incarnation: "a" });
+    expect(sockets[0].sent.map((s) => JSON.parse(s))).toEqual([{ type: "answer", incarnation: "a", run: 5, prompt: 1, text: "x" }]);
+    expect(h.notices.length).toBe(1);
   });
 
   test("a stop queued for a run that has ended by the reconnection is discarded with a notice", () => {
     const h = handlers();
     const c = connect("ws://x/ws", wire(h), env());
     sockets[0].open();
-    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "a" });
+    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "a" });
     sockets[0].drop();
     c.send({ type: "stop", incarnation: "a", run: 1 });
     c.send({ type: "start", mode: "implementation", item: "1" });
     vi.advanceTimersByTime(1000);
     sockets[1].open();
-    sockets[1].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: null }, incarnation: "a" });
+    sockets[1].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: null }, incarnation: "a" });
     expect(sockets[1].sent.map((s) => JSON.parse(s).type)).toEqual(["start"]);
     expect(h.notices).toEqual([prompts.notSentNotice("stop", "ended")]);
   });
@@ -144,12 +155,12 @@ describe("socket across a server restart", () => {
   test("a stop and an answer queued for run 1, prompt 1 of incarnation a are discarded when the hello is incarnation b with current 1", () => {
     const h = handlers();
     const c = connect("ws://x/ws", wire(h), env());
-    sockets[0].receive({ type: "hello", chain: helloChain, location: "/w", current: { refinement: null, implementation: 1 }, incarnation: "a" });
+    sockets[0].receive({ type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 1 }, incarnation: "a" });
     sockets[0].drop();
     c.send({ type: "stop", incarnation: "a", run: 1 });
     c.send({ type: "answer", incarnation: "a", run: 1, prompt: 1, text: "yes" });
     vi.advanceTimersByTime(1000);
-    sockets[1].receive({ type: "hello", chain: helloChain, location: "/w", current: { refinement: null, implementation: 1 }, incarnation: "b" });
+    sockets[1].receive({ type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 1 }, incarnation: "b" });
     expect(sockets[1].sent).toEqual([]);
     expect(h.notices).toEqual([prompts.notSentNotice("stop", "restarted"), prompts.notSentNotice("answer", "restarted")]);
   });
@@ -159,7 +170,7 @@ describe("socket across a server restart", () => {
 // logged, reported with its reason, and the page reconnects with backoff (Q1); after three in a row the page stops
 // reconnecting (Q5), and no action is queued or sent any more: each is handed back to the page (G-R1-1).
 describe("socket and a frame that does not decode", () => {
-  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "a" };
+  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "a" };
   const failOnce = (i: number) => {
     sockets[i].receive(hello);
     sockets[i].receiveRaw("{\"type\":\"replay\",\"runs\":7}");
@@ -263,7 +274,7 @@ describe("socket and a frame that does not decode", () => {
 // W1-R1-1: a browser's close event arrives after close() returns; in that interval the page must not send to the
 // closing socket, which would discard the answer in silence.
 describe("socket while a protocol error's close is pending", () => {
-  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "a" };
+  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "a" };
   const answer: ClientMessage = { type: "answer", incarnation: "a", run: 1, prompt: 2, text: "A" };
 
   test("after a frame that does not decode, an action is queued, not sent to the closing socket", () => {
@@ -310,18 +321,18 @@ describe("socket and the shared state's action", () => {
     const c = connect("ws://x/ws", wire(h), env());
     c.send({ type: "ui", incarnation: "a", run: 1, flag });
     sockets[0].open();
-    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: null }, incarnation: "a" });
+    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: null }, incarnation: "a" });
     expect(sockets[0].sent.map((s) => JSON.parse(s))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag }]);
     expect(h.notices).toEqual([]);
   });
   test("a ui action of an earlier incarnation is discarded with a notice", () => {
     const h = handlers();
     const c = connect("ws://x/ws", wire(h), env());
-    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "a" });
+    sockets[0].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "a" });
     sockets[0].drop();
     c.send({ type: "ui", incarnation: "a", run: 1, flag });
     vi.advanceTimersByTime(1000);
-    sockets[1].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: 1 }, incarnation: "b" });
+    sockets[1].receive({ type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: 1 }, incarnation: "b" });
     expect(sockets[1].sent).toEqual([]);
     expect(h.notices).toEqual([prompts.notSentNotice("ui", "restarted")]);
   });
@@ -329,7 +340,7 @@ describe("socket and the shared state's action", () => {
 
 // Issue #147, S30 (P1-R1-2): what became of a frame, which the page records for the chain's control.
 describe("socket delivery", () => {
-  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: null, implementation: null }, incarnation: "a" };
+  const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/", current: { refinement: [], implementation: null }, incarnation: "a" };
   const frame: ClientMessage = { type: "chain", settings: { enabled: true, runs: 3, cutoff: null } };
   test("delivery: a frame sent after the hello is sent", () => {
     const c = connect("ws://x/ws", wire(handlers()), env());

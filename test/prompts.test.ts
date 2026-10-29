@@ -880,6 +880,10 @@ test("issue #117: workRespondPrompt carries the execution's report and the plan,
   assert.doesNotMatch(text, /in your context/);
 });
 
+test("refinementInProgressText names the item and how to go on (issue #191)", () => {
+  assert.equal(prompts.refinementInProgressText("131"), "item 131 is already being refined; open its run's tab or wait for its end");
+});
+
 test("runInProgressText: the article follows the mode (issue #120, S18)", () => {
   assert.equal(prompts.runInProgressText("implementation"), "an implementation run is in progress; stop it or wait for its end");
   assert.equal(prompts.runInProgressText("refinement"), "a refinement run is in progress; stop it or wait for its end");
@@ -1078,4 +1082,17 @@ test("issue #180: the lines of a taken plan and of one set aside name the earlie
   for (const line of [prompts.earlierPlanTakenLine(EARLIER_ROOT), prompts.earlierPlanSetAsideLine(EARLIER_ROOT)]) assert.ok(line.includes(`plan-review/${EARLIER_ROOT}`), line);
   assert.notEqual(prompts.earlierPlanTakenLine(EARLIER_ROOT), prompts.earlierPlanSetAsideLine(EARLIER_ROOT));
   assert.match(prompts.earlierPlanSetAsideLine(EARLIER_ROOT), /from nothing/);
+});
+
+// Issue #191: the Refinement tab's second row.
+test("the second row's texts: the items' tab, its name, a run's tab named by its item, the in-progress mark and Close", () => {
+  assert.equal(prompts.REFINEMENT_LIST_TAB, "Items");
+  assert.equal(prompts.RUN_TABS_LABEL, "Refinement runs");
+  assert.equal(prompts.ITEM_IN_PROGRESS, "being refined");
+  assert.equal(prompts.CLOSE_RUN_TAB, "Close this run");
+  assert.equal(prompts.runTabName({ id: "131", title: "short" }), prompts.itemHeadline("131", "short"));
+  const long = prompts.runTabName({ id: "131", title: "a title much longer than any tab label should be" });
+  assert.equal(long.length, prompts.RUN_TAB_NAME_LENGTH);
+  assert.ok(long.endsWith("…"));
+  assert.ok(prompts.itemHeadline("131", "a title much longer than any tab label should be").startsWith(long.slice(0, -1)));
 });

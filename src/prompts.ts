@@ -1475,6 +1475,20 @@ export const ITEMS_LOADING = "Asking the issue tracker for the items …";
 export const BACK_TO_LIST = "Back to the list";
 /** An item's headline in a tab: its id and its title. */
 export const itemHeadline = (id: string, title: string): string => `#${id} ${title}`;
+/** Issue #191: the Refinement tab's second row (M3 secondary tabs): its accessible name and its items' tab. */
+export const RUN_TABS_LABEL = "Refinement runs";
+export const REFINEMENT_LIST_TAB = "Items";
+/** The longest name of a run's tab; the dashboard shows the whole headline. */
+export const RUN_TAB_NAME_LENGTH = 32;
+/** A run's tab, named by its item, cut to RUN_TAB_NAME_LENGTH with an ellipsis. */
+export const runTabName = (item: Readonly<{ id: string; title: string }>): string => {
+  const whole = itemHeadline(item.id, item.title);
+  return whole.length <= RUN_TAB_NAME_LENGTH ? whole : `${whole.slice(0, RUN_TAB_NAME_LENGTH - 1)}…`;
+};
+/** Beside a listed item whose refinement is in progress, whose start is disabled. */
+export const ITEM_IN_PROGRESS = "being refined";
+/** The button that removes an ended run's tab from the second row in this page. */
+export const CLOSE_RUN_TAB = "Close this run";
 
 /** Why the run manager refuses to start a run (issue #120): no item id, a run of the mode in progress, an item that moved on. */
 export const ITEM_ID_EMPTY = "no item was chosen";
@@ -1484,6 +1498,10 @@ const RUN_OF_MODE: Readonly<Record<"refinement" | "implementation", string>> = {
 };
 export function runInProgressText(mode: "refinement" | "implementation"): string {
   return `${RUN_OF_MODE[mode]} is in progress; stop it or wait for its end`;
+}
+/** Issue #191: a refinement of an item already being refined is refused; the other refinements go on. */
+export function refinementInProgressText(item: string): string {
+  return `item ${item} is already being refined; open its run's tab or wait for its end`;
 }
 export function itemMovedText(id: string, expected: string, state: string): string {
   return `item ${id} is no longer ${expected}: it is ${state}; refresh the list`;

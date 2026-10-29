@@ -5,10 +5,10 @@
 // timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, ChainFrameSettings, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { REFINEMENT_LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isTermsRequest } from "../../src/input.ts";
@@ -214,12 +214,20 @@ export type RunView = Readonly<{
 /** A tab's items: not asked, loading, or the server's answer; the Refinement tab's listing carries the configured choice of terms (issue #142). */
 export type ItemsView = Readonly<{ _tag: "Unasked" }> | Readonly<{ _tag: "Loading" }> | ItemsResult | RefinementItemsResult;
 /**
- * What the page holds of one mode, the content of its tab (issue #120): the id of its run in progress on the server, its
- * newest run (in progress or ended) and the one before it, its items, and the refusal of its last action, which its next
- * items frame or Started clears.
+ * What the Refinement tab's second row shows (issue #191, requirements Q1): its items, or one of its runs. The
+ * implementation tab ignores it.
  */
-export type ModeView = Readonly<{ current: number | null; run: RunView | null; last: RunView | null; items: ItemsView; refusal: string | null }>;
-const emptyMode: ModeView = { current: null, run: null, last: null, items: { _tag: "Unasked" }, refusal: null };
+export type Focus = Readonly<{ _tag: "List" }> | Readonly<{ _tag: "Run"; run: number }>;
+const LIST: Focus = { _tag: "List" };
+/**
+ * What the page holds of one mode, the content of its tab (issue #120): the ids of its runs in progress on the server;
+ * every run the page holds of it, ascending by id (issue #191: for the implementation tab at most its two newest, for the
+ * Refinement tab every run replayed or started less those closed in this page); what the Refinement tab shows; the item
+ * whose start this page asked for, until its Started or refusal; its items; and the refusal of its last action, which its
+ * next items frame or Started clears.
+ */
+export type ModeView = Readonly<{ current: readonly number[]; runs: readonly RunView[]; focus: Focus; starting: string | null; items: ItemsView; refusal: string | null }>;
+const emptyMode: ModeView = { current: [], runs: [], focus: LIST, starting: null, items: { _tag: "Unasked" }, refusal: null };
 export type ViewState = Readonly<{
   connection: "connecting" | "open" | "reconnecting" | "failed";
   /** The identification of the server's working directory, the one project, from the last hello (issue #29); null before the first. */
@@ -232,6 +240,8 @@ export type ViewState = Readonly<{
   selected: RunMode;
   /** Whether the user has chosen the tab; until then a replay shows the tab of a run in progress (issue #120). */
   chosen: boolean;
+  /** The refinement runs this page closed (issue #191): never held again until the server restarts. */
+  closed: readonly number[];
   /** The mode of every run the page has seen, from its Started (issue #120): where a later event of the run belongs. */
   runModes: Readonly<Record<number, RunMode>>;
   /** A seq that did not follow: the page must reconnect to receive the replay. */
@@ -268,6 +278,7 @@ export const initialState: ViewState = {
   modes: { refinement: emptyMode, implementation: emptyMode },
   selected: "refinement",
   chosen: false,
+  closed: [],
   runModes: {},
   needsReconnect: false,
   notices: [],
@@ -295,17 +306,74 @@ export const selectMode = (state: ViewState, mode: RunMode): ViewState => ({ ...
  * The tab a page shows before the user has chosen one [visibility of system status]: the tab whose run waits for an
  * answer, else the tab of a run in progress, else the tab shown; once the user has chosen, his choice stands.
  */
+const waits = (r: RunView): boolean => r.pending !== null && r.ended === null;
 const unchosenTab = (state: ViewState): RunMode => {
   if (state.chosen) return state.selected;
-  const waiting = RUN_MODES.find((m) => state.modes[m].run?.pending != null && state.modes[m].run?.ended === null);
-  const running = RUN_MODES.find((m) => state.modes[m].run !== null && state.modes[m].run?.ended === null);
+  const held = (m: RunMode) => (m === "implementation" ? state.modes[m].runs.slice(-1) : state.modes[m].runs);
+  const waiting = RUN_MODES.find((m) => held(m).some(waits));
+  const running = RUN_MODES.find((m) => held(m).some((r) => r.ended === null));
   return waiting ?? running ?? state.selected;
 };
+/**
+ * The Refinement tab's focus after a replay (issue #191): before the user has chosen, the run that waits, else one in
+ * progress, else the newest held, else the list ("until the developer chooses a tab, the page shows a waiting run");
+ * once he has, his focus while it names a run still held, else the list.
+ */
+const replayedFocus = (state: ViewState, mode: ModeView): Focus => {
+  const named = (id: number | undefined): Focus => (id === undefined ? LIST : { _tag: "Run", run: id });
+  if (state.chosen) return mode.focus._tag === "Run" && mode.runs.some((r) => r.id === (mode.focus as Extract<Focus, { _tag: "Run" }>).run) ? mode.focus : LIST;
+  return named((mode.runs.find(waits) ?? mode.runs.find((r) => r.ended === null) ?? mode.runs.at(-1))?.id);
+};
+/** The Refinement tab shows one of its runs, the user's choice [user control and freedom]. */
+export const focusRun = (state: ViewState, run: number): ViewState => ({ ...withMode(state, "refinement", (m) => ({ ...m, focus: { _tag: "Run", run } })), chosen: true });
+/** The Refinement tab shows its items, the user's choice. */
+export const focusList = (state: ViewState): ViewState => ({ ...withMode(state, "refinement", (m) => ({ ...m, focus: LIST })), chosen: true });
+/** An ended refinement run closed in this page: its tab leaves the second row and the items are shown; any other run, unchanged. */
+export const closeRun = (state: ViewState, run: number): ViewState => {
+  const held = state.modes.refinement.runs.find((r) => r.id === run);
+  if (held === undefined || held.ended === null) return state;
+  return { ...withMode(state, "refinement", (m) => ({ ...m, runs: m.runs.filter((r) => r.id !== run), focus: LIST })), closed: [...state.closed, run] };
+};
+/** This page asked to start the item: its run is shown when its Started arrives. */
+export const startRequested = (state: ViewState, mode: RunMode, item: string): ViewState => withMode(state, mode, (m) => ({ ...m, starting: item }));
+/** The items of the refinement runs in progress, which the list shows as being refined (issue #191). */
+export const refinementInProgress = (state: ViewState): readonly string[] => state.modes.refinement.runs.flatMap((r) => (r.ended === null && r.item !== null ? [r.item.id] : []));
 /** A tab's items asked for: loading until the server's items frame. */
 export const itemsRequested = (state: ViewState, mode: RunMode): ViewState => withMode(state, mode, (m) => ({ ...m, items: { _tag: "Loading" } }));
 /** The run a mode's tab shows, its newest, and the server's incarnation: what the draft and the notifications key by. */
 export type Shown = Readonly<{ incarnation: string | null; run: RunView | null }>;
-export const shownRun = (state: ViewState, mode: RunMode = state.selected): Shown => ({ incarnation: state.incarnation, run: state.modes[mode].run });
+export const shownRun = (state: ViewState, mode: RunMode = state.selected): Shown => {
+  const m = state.modes[mode];
+  if (mode === "implementation") return { incarnation: state.incarnation, run: m.runs.at(-1) ?? null };
+  const focus = m.focus;
+  return { incarnation: state.incarnation, run: focus._tag === "Run" ? (m.runs.find((r) => r.id === focus.run) ?? null) : null };
+};
+/**
+ * A run App presents, with the key its draft and its notification state are kept by (issue #191): the implementation
+ * tab's shown run under one key, and each refinement run the page holds under its own, in start order.
+ */
+export type Presented = Readonly<{ key: string; mode: RunMode; shown: Shown }>;
+export const presented = (state: ViewState): readonly Presented[] => [
+  { key: "implementation", mode: "implementation", shown: shownRun(state, "implementation") },
+  ...state.modes.refinement.runs.map((run): Presented => ({ key: `refinement-${run.id}`, mode: "refinement", shown: { incarnation: state.incarnation, run } })),
+];
+/** Whether a mode's tab carries the waiting mark: the implementation tab's shown run waits, or any refinement run does. */
+export const modeWaiting = (state: ViewState, mode: RunMode): boolean => {
+  const runs = mode === "implementation" ? [shownRun(state, mode).run].flatMap((r) => (r === null ? [] : [r])) : state.modes.refinement.runs;
+  return runs.some(waits);
+};
+/** The Refinement tab's second row: the items first, then one tab per run in start order, a waiting run's name marked. */
+export const runTabs = (state: ViewState): readonly Readonly<{ value: string; name: string }>[] => [
+  { value: "list", name: REFINEMENT_LIST_TAB },
+  ...state.modes.refinement.runs.map((r) => {
+    const name = runTabName(r.item ?? { id: `${r.id}`, title: "" });
+    return { value: `run-${r.id}`, name: waits(r) ? waitingTabName(name) : name };
+  }),
+];
+/** Which listed items can be started (issue #191): none, or every item except those named. */
+export type StartableItems = Readonly<{ _tag: "None" }> | Readonly<{ _tag: "Except"; items: readonly string[] }>;
+export const startableOf = (state: ViewState, mode: RunMode): StartableItems =>
+  mode === "implementation" ? (state.modes.implementation.current.length > 0 ? { _tag: "None" } : { _tag: "Except", items: [] }) : { _tag: "Except", items: refinementInProgress(state) };
 /** The mode of a run's view, from its Started; null before it. */
 const modeOfRun = (run: RunView): RunMode | null => run.mode;
 
@@ -894,9 +962,16 @@ const afterHello = (items: ItemsView): ItemsView => (items._tag === "Loading" ? 
  * its items, notice or refusal, because a tracker id of one server names nothing in another, which may serve another
  * project (W3-R1-1).
  */
-const restartedMode = (current: number | null): ModeView => ({ ...emptyMode, current });
+const restartedMode = (current: readonly number[]): ModeView => ({ ...emptyMode, current });
 /** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
-const reconnectedMode = (mode: ModeView, current: number | null): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
+const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
+/** A mode's runs in progress as a hello gives them (issue #191). */
+const currentOf = (current: CurrentRuns, mode: RunMode): readonly number[] => (mode === "refinement" ? current.refinement : current.implementation === null ? [] : [current.implementation]);
+/** The runs a mode holds after one is added, ascending by id: the implementation tab keeps its two newest. */
+const held = (mode: RunMode, runs: readonly RunView[]): readonly RunView[] => {
+  const sorted = [...runs].sort((a, b) => a.id - b.id);
+  return mode === "implementation" ? sorted.slice(-2) : sorted;
+};
 
 /**
  * Whether a run is a refinement the page did not know before (issue #142): its start used the choice of terms, so the
@@ -911,31 +986,32 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // Another start of the server: its run numbers restart and its tracker may be another project's, so each mode becomes
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
-      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(message.current[m]) : reconnectedMode(state.modes[m], message.current[m])])) as Record<RunMode, ModeView>;
-      return { ...state, modes, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, ...chainAfterHello(state, message.chain, restarted) };
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(currentOf(message.current, m)) : reconnectedMode(state.modes[m], currentOf(message.current, m))])) as Record<RunMode, ModeView>;
+      return { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, ...chainAfterHello(state, message.chain, restarted) };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the
       // mode its Started named, the newest of a mode its run and the one before it its last.
-      const views = message.runs.map((r) => ({ ...foldRun(r.id, r.events), ui: message.ui.find((u) => u.run === r.id)?.state ?? emptyUiState })).sort((a, b) => a.id - b.id);
+      // Issue #191: every refinement run replayed and not closed in this page; the implementation tab its two newest.
+      const views = message.runs.filter((r) => !state.closed.includes(r.id)).map((r) => ({ ...foldRun(r.id, r.events), ui: message.ui.find((u) => u.run === r.id)?.state ?? emptyUiState })).sort((a, b) => a.id - b.id);
       const of = (mode: RunMode) => views.filter((v) => modeOfRun(v) === mode);
-      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], run: of(m).at(-1) ?? null, last: of(m).at(-2) ?? null }])) as Record<RunMode, ModeView>;
+      const modes = Object.fromEntries(RUN_MODES.map((m) => [m, { ...state.modes[m], runs: held(m, of(m)) }])) as Record<RunMode, ModeView>;
       const runModes = { ...state.runModes, ...Object.fromEntries(views.flatMap((v) => (v.mode === null ? [] : [[v.id, v.mode]]))) };
       // Issue #142 (W1-R1-2): a refinement first seen in a replay used the choice, as one whose Started arrives live does.
       const termsChoice = views.some((v) => v.mode !== null && startsRefinement(state, v.id, v.mode)) ? null : state.termsChoice;
       const replayed: ViewState = { ...state, modes, runModes, termsChoice };
-      return { ...replayed, selected: unchosenTab(replayed) };
+      const focused = withMode(replayed, "refinement", (m) => ({ ...m, focus: replayedFocus(replayed, m) }));
+      return { ...focused, selected: unchosenTab(focused) };
     }
     case "items":
       return withMode(state, message.mode, (m) => ({ ...m, items: message.result, refusal: null }));
     case "refused":
       // Issue #120: a refusal goes to the tab whose action it was, whichever tab is shown; one of no mode is a notice.
-      return message.mode === null ? notice(state, message.reason) : withMode(state, message.mode, (m) => ({ ...m, refusal: message.reason }));
+      return message.mode === null ? notice(state, message.reason) : withMode(state, message.mode, (m) => ({ ...m, refusal: message.reason, starting: null }));
     case "ui": {
       // Issue #87: the run's whole shared state; of two, the higher version stands, whatever their order of arrival.
-      const apply = (view: RunView | null): RunView | null => (view !== null && view.id === message.run ? { ...view, ui: newer(view.ui, message.state) } : view);
       const mode = state.runModes[message.run];
-      return mode === undefined ? state : withMode(state, mode, (m) => ({ ...m, run: apply(m.run), last: apply(m.last) }));
+      return mode === undefined ? state : withMode(state, mode, (m) => ({ ...m, runs: m.runs.map((view) => (view.id === message.run ? { ...view, ui: newer(view.ui, message.state) } : view)) }));
     }
     case "chain":
       // Issue #147: every frame carries the chain's whole state. A change of the settings acknowledges the frames it
@@ -950,21 +1026,29 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const mode = message.event._tag === "Started" ? message.event.mode : state.runModes[message.run];
       if (mode === undefined) return message.seq === 0 ? state : { ...state, needsReconnect: true };
       const tab = state.modes[mode];
-      const current = message.event._tag === "Started" ? message.run : message.event._tag === "Ended" ? (tab.current === message.run ? null : tab.current) : tab.current;
+      const current = message.event._tag === "Started" ? [...tab.current.filter((id) => id !== message.run), message.run] : message.event._tag === "Ended" ? tab.current.filter((id) => id !== message.run) : tab.current;
       const runModes = message.event._tag === "Started" ? { ...state.runModes, [message.run]: mode } : state.runModes;
       // Issue #142: a refinement's start used the choice; the next shows the configured value again.
       const termsChoice = message.event._tag === "Started" && startsRefinement(state, message.run, mode) ? null : state.termsChoice;
       const stamped = { time: message.time, event: message.event };
-      if (tab.run !== null && message.run === tab.run.id) {
-        if (message.seq !== tab.run.nextSeq) return { ...state, needsReconnect: true };
-        return withMode({ ...state, runModes, termsChoice }, mode, (m) => ({ ...m, current, run: foldEvent(m.run!, stamped) }));
+      const known = tab.runs.find((r) => r.id === message.run);
+      if (known !== undefined) {
+        if (message.seq !== known.nextSeq) return { ...state, needsReconnect: true };
+        return withMode({ ...state, runModes, termsChoice }, mode, (m) => ({ ...m, current, runs: m.runs.map((r) => (r.id === message.run ? foldEvent(r, stamped) : r)) }));
       }
-      if (tab.run === null || message.run > tab.run.id) {
-        if (message.seq !== 0) return { ...state, needsReconnect: true };
-        // A run's Started clears its tab's refusal: the action it answers has succeeded.
-        return withMode({ ...state, runModes, termsChoice }, mode, (m) => ({ ...m, current, last: m.run, run: foldEvent(emptyRun(message.run), stamped), refusal: message.event._tag === "Started" ? null : m.refusal }));
-      }
-      return state;
+      if (state.closed.includes(message.run)) return state;
+      if (message.seq !== 0) return tab.runs.every((r) => r.id < message.run) ? { ...state, needsReconnect: true } : state;
+      // A run's Started clears its tab's refusal: the action it answers has succeeded. Issue #191: a new refinement drops
+      // the held ended run of its item, as the server does, and is shown only where this page asked for it, or where the
+      // tab shows its list and holds no other run, so a page viewing a run never switches away from it (Q1).
+      const item = message.event._tag === "Started" ? message.event.item.id : null;
+      const run = foldEvent(emptyRun(message.run), stamped);
+      return withMode({ ...state, runModes, termsChoice }, mode, (m) => {
+        const kept = mode === "refinement" && item !== null ? m.runs.filter((r) => r.ended === null || r.item?.id !== item) : m.runs;
+        const asked = item !== null && m.starting === item;
+        const focus: Focus = mode === "refinement" && (asked || (m.focus._tag === "List" && m.runs.length === 0)) ? { _tag: "Run", run: message.run } : m.focus;
+        return { ...m, current, runs: held(mode, [...kept, run]), focus, starting: asked ? null : m.starting, refusal: message.event._tag === "Started" ? null : m.refusal };
+      });
     }
   }
 };

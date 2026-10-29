@@ -2,9 +2,8 @@
 // (1 s to 30 s), and a queue of the page's actions while it is not connected. This module is an edge of the page:
 // it holds the socket and the timers; what the messages mean is the reducer's (state.ts).
 
-import type { RunMode } from "../../src/runMode.ts";
 import { notSentNotice } from "../../src/prompts.ts";
-import { type ClientMessage, decodeServer, type ServerMessage } from "../../src/protocol.ts";
+import { type ClientMessage, type CurrentRuns, currentIds, decodeServer, type ServerMessage } from "../../src/protocol.ts";
 
 /** The part of the browser's WebSocket this module uses; a test injects a fake. */
 export type SocketLike = {
@@ -68,13 +67,13 @@ export const connect = (url: string, handlers: Handlers, env: Environment = brow
    * incarnation is discarded with a notice (finding 12), and so is an answer or a stop of an ended run; a change of the
    * shared state of an ended run is sent, because the server keeps the last run's state too.
    */
-  const flush = (hello: Readonly<{ current: Readonly<Record<RunMode, number | null>>; incarnation: string }>) => {
+  const flush = (hello: Readonly<{ current: CurrentRuns; incarnation: string }>) => {
     const pending = queue;
     queue = [];
     for (const m of pending) {
       if ((m.type === "answer" || m.type === "stop" || m.type === "ui") && m.incarnation !== hello.incarnation) handlers.onNotice(notSentNotice(m.type, "restarted"));
-      // Issue #120: a run in progress is the current run of either mode.
-      else if ((m.type === "answer" || m.type === "stop") && !Object.values(hello.current).includes(m.run)) handlers.onNotice(notSentNotice(m.type, "ended"));
+      // Issue #191: a run in progress is any refinement run in progress or the implementation run.
+      else if ((m.type === "answer" || m.type === "stop") && !currentIds(hello.current).includes(m.run)) handlers.onNotice(notSentNotice(m.type, "ended"));
       else socket?.send(JSON.stringify(m));
     }
   };

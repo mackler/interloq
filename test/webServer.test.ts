@@ -111,7 +111,7 @@ test("on connect: hello and an empty replay", async () => {
   await serve(await managerOf(repo, []), dist(), async (port) => {
     const c = await connect(port);
     await until("two messages", () => c.messages.length >= 2);
-    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", chain: initialChain(OFF_SETTINGS), location: repo, current: { refinement: null, implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
+    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", chain: initialChain(OFF_SETTINGS), location: repo, current: { refinement: [], implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
     c.close();
   });
 });
@@ -487,7 +487,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     incarnation: "test",
     subscribe: (listener) => Effect.acquireRelease(Effect.sync(() => void listeners.push(listener)), () => Effect.sync(() => void listeners.splice(listeners.indexOf(listener), 1))).pipe(Effect.asVoid),
     replay: Effect.succeed({ runs: [{ id: 1, events }], ui: [] }),
-    current: Effect.succeed({ refinement: null, implementation: 1 }),
+    current: Effect.succeed({ refinement: [], implementation: 1 }),
     start: () => Effect.succeed({ refused: "not in this test", mode: null }),
     listItems: () => Effect.succeed({ mode: "implementation", result: { _tag: "Unavailable", notice: "not in this test" } }),
     stop: () => Effect.succeed(null),
@@ -538,7 +538,7 @@ test("tabs of one run agree on the open entries, live and from the replay, keyed
     a.send(startFrame());
     await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
     const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
-    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.run;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.runs.at(-1) ?? null;
     const e1 = (decision: number) => ({ _tag: "DecisionEntry" as const, decision, entry: "e1" });
     a.send({ type: "ui", incarnation, run: 1, flag: { scope: e1(1), open: true } });
     await until("the state in both tabs", () => view(a)?.ui.version === 1 && view(b)?.ui.version === 1);
@@ -573,7 +573,7 @@ test("tabs of one run agree that a rail phase is closed, live and from the repla
     a.send(startFrame());
     await until("the run's start in both tabs", () => (perRun(a).get(1)?.length ?? 0) > 1 && (perRun(b).get(1)?.length ?? 0) > 1);
     const incarnation = (a.messages[0] as Extract<ServerMessage, { type: "hello" }>).incarnation;
-    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.run;
+    const view = (c: Client) => c.messages.reduce(reduce, initialState).modes.implementation.runs.at(-1) ?? null;
     const phase = { _tag: "RailPhase" as const, phase: "planning-1" };
     const entry = { _tag: "DecisionEntry" as const, decision: 1, entry: "e1" };
     a.send({ type: "ui", incarnation, run: 1, flag: { scope: phase, open: false } });
@@ -651,7 +651,7 @@ test("two real decisions sharing entry e1: interleaved with run events, every ta
     await until("the last state in both tabs", () => [a, b].every((c) => c.messages.some((m) => m.type === "ui" && m.state.version === 3)));
     const c = await connect(port);
     await until("the third tab's replay", () => c.messages.some((m) => m.type === "replay"));
-    const view = (x: Client) => x.messages.reduce(reduce, initialState).modes.implementation.run;
+    const view = (x: Client) => x.messages.reduce(reduce, initialState).modes.implementation.runs.at(-1) ?? null;
     const [va, vb, vc] = [view(a), view(b), view(c)];
     assert.deepEqual(vb, va, "tab B's view differs from tab A's");
     assert.deepEqual(vc, va, "the late tab's view differs from tab A's");
@@ -680,8 +680,8 @@ test("the identification the server sends in hello and on Started, decoded and f
     const state = decoded.reduce(reduce, initialState);
     assert.equal(state.location, manager.location);
     assert.equal(state.location, identify(mounts, repo));
-    assert.equal(state.modes.implementation.run?.location, identify(mounts, repo));
-    assert.equal(state.modes.implementation.run?.project, repo);
+    assert.equal(state.modes.implementation.runs.at(-1)?.location, identify(mounts, repo));
+    assert.equal(state.modes.implementation.runs.at(-1)?.project, repo);
     c.close();
   });
 });
@@ -772,6 +772,29 @@ test("the chain frame the page builds changes the manager's chain, and every tab
     assert.deepEqual(state.settings, { enabled: true, limits: { runs: 3, cutoff: Date.parse(cutoff) } });
     assert.deepEqual(chainOf(a), state);
     assert.deepEqual(chainOf(b), state);
+    a.close();
+    b.close();
+  });
+});
+
+// Issue #191: two refinements started from one tab both run; a second tab's hello lists both.
+test("two refinement start frames of two unrefined items both start, with distinct run ids, and a later hello lists both", async () => {
+  const repo = tempRepo();
+  await serve(await managerOf(repo, [{ steps: [{ hang: true }] }, { steps: [{ hang: true }] }]), dist(), async (port) => {
+    const a = await connect(port);
+    await until("the replay", () => a.messages.some((m) => m.type === "replay"));
+    a.send({ type: "start", mode: "refinement", item: "11", terms: "checked" });
+    a.send({ type: "start", mode: "refinement", item: "12", terms: "checked" });
+    const startedRuns = () => a.messages.flatMap((m) => (m.type === "event" && m.event._tag === "Started" ? [m.run] : []));
+    await until("two Started events", () => startedRuns().length === 2);
+    assert.equal(new Set(startedRuns()).size, 2);
+    assert.deepEqual(refusals(a), []);
+    const b = await connect(port);
+    await until("the hello", () => b.messages.some((m) => m.type === "hello"));
+    const hello = b.messages.find((m) => m.type === "hello");
+    assert.deepEqual(hello?.type === "hello" ? [...hello.current.refinement].sort() : [], [...startedRuns()].sort());
+    for (const r of startedRuns()) a.send({ type: "stop", incarnation: "test", run: r });
+    await until("both ends", () => startedRuns().every((r) => hasEnded(a, r)));
     a.close();
     b.close();
   });

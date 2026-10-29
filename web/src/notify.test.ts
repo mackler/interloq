@@ -150,7 +150,7 @@ const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task
 const TIME = "2026-10-08T10:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
 const asked: RunEvent = { _tag: "Asked", prompt: 1, ...promptOf(prompts.decisionPrompt) };
-const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: 1 }, incarnation: "a" };
+const hello: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: 1 }, incarnation: "a" };
 const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked]) }] };
 
 describe("decide: examples", () => {

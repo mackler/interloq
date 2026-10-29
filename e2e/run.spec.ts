@@ -1,10 +1,10 @@
 import type { Locator, Page, WebSocketRoute } from "@playwright/test";
-import { dashboard, expect, listOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
+import { dashboard, expect, listOf, listTabOf, runTabOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
 import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -822,6 +822,51 @@ test.describe("the tests of the twoModes server, in order", () => {
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
     await toHaveEnded(page, 130);
+  });
+
+  // Issue #191 (requirements Q1 and Q2): two refinements at once, each waiting in its own tab of the second row.
+  test("(32) two refinements at once: each waits on its question in its own tab, each answered there", async ({ page }) => {
+    await page.goto(url("twoModes"));
+    await expect(page.getByText("connected", { exact: true })).toBeVisible();
+    await toTheList(page, "refinement");
+    const startNext = async (): Promise<string> => {
+      const start = listOf(page).locator("button[name=start]:not([disabled])").first();
+      await expect(start).toBeVisible();
+      const id = (await start.getAttribute("data-item")) ?? "";
+      await start.click();
+      return id;
+    };
+    const first = await startNext();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await listTabOf(page).click();
+    const firstRow = listOf(page).locator("li", { has: page.locator(`button[name=start][data-item="${first}"]`) });
+    await expect(firstRow).toContainText(ITEM_IN_PROGRESS);
+    await expect(firstRow.locator("button[name=start]")).toBeDisabled();
+    const second = await startNext();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await expect(runTabOf(page, first)).toHaveText(new RegExp(`^\\s*${waitingTabName("")}`));
+    await expect(runTabOf(page, second)).toHaveText(new RegExp(`^\\s*${waitingTabName("")}`));
+    await expect(tabOf(page, "refinement")).toHaveText(waitingTabName(TAB_TEXTS.refinement.tab));
+    // The second run, shown, is answered; the first still waits.
+    await option(page, /PostgreSQL/).click();
+    await openSection(page, CONTEXT_HEADING);
+    await expect(pane(page).getByText("Anything else?")).toBeVisible();
+    await expect(runTabOf(page, first)).toHaveText(new RegExp(`^\\s*${waitingTabName("")}`));
+    await runTabOf(page, first).click();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await option(page, /PostgreSQL/).click();
+    await openSection(page, CONTEXT_HEADING);
+    await expect(pane(page).getByText("Anything else?")).toBeVisible();
+    for (const item of [first, second]) {
+      await runTabOf(page, item).click();
+      await page.locator("button[name=stop]").click();
+      await confirmEnd(page);
+      await toHaveEnded(page, 130);
+    }
+    await page.getByRole("button", { name: CLOSE_RUN_TAB }).click();
+    await expect(listOf(page)).toBeVisible();
+    await expect(runTabOf(page, second)).toHaveCount(0);
+    await expect(runTabOf(page, first)).toHaveCount(1);
   });
 });
 

@@ -31,7 +31,9 @@ import ChatPanel from "./components/ChatPanel.svelte";
 import { clockTime, fullTime, TOOLTIP_GRACE_MS } from "./time.ts";
 import { type Disclosure, disclosureStateOf, railView, type RailView } from "./rail.ts";
 import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
-import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type Status, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
+import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type RunView, shownRun, type Status, type TimelineEntry, type TimelineStep, type ViewState, type Widget } from "./state.ts";
+/** The run a mode's tab shows (issue #191). */
+const runOf = (s: ViewState, mode: RunMode): RunView | null => shownRun(s, mode).run;
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { tabTitle } from "./title.ts";
 import { ownName } from "../../src/hostDir.ts";
@@ -122,11 +124,11 @@ describe("Claude's messages", () => {
   test("the dashboard shows Claude's prose from the reducer as Claude's latest message, without the prefix (issue #22)", () => {
     const time = "2026-09-27T14:00:00.000Z";
     const state = [
-      { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+      { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } },
     ].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
-    const run = state.modes.refinement.run;
+    const run = runOf(state, "refinement");
     if (run === null) throw new Error("no run");
     const root = show(Dashboard, { run, answersOpen: false, onAnswers: () => undefined });
     const region = one(root, "[data-claude]");
@@ -152,7 +154,7 @@ describe("ItemList", () => {
     { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120" },
     { id: "121", title: "No address", excerpt: "", url: null },
   ];
-  const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, running: false, onStart: () => undefined, onRefresh: () => undefined, ...props });
+  const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined, ...props });
 
   test("each item shows its id and title and its excerpt, and its button starts the tab's run with that item", () => {
     const started: unknown[] = [];
@@ -221,20 +223,30 @@ describe("ItemList", () => {
       const sent: ServerMessage = { type: "items", mode: "implementation", result: { _tag: "Listed", items: [listedItemOf(itemFrom())] } };
       const received = Result.getOrThrow(decodeServer(JSON.stringify(sent)));
       if (received.type !== "items" || received.result._tag !== "Listed") throw new Error("not a listing");
-      const root = show(ItemList, { mode: "implementation", items: received.result, running: false, onStart: () => undefined, onRefresh: () => undefined });
+      const root = show(ItemList, { mode: "implementation", items: received.result, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined });
       expect(one(root, "ul > li a").getAttribute("href")).toBe(address);
     });
   }
 
   test("while the mode's run is in progress, or offline, no item can be started", () => {
-    for (const props of [{ running: true }, { offline: true }]) expect([...listed(props).querySelectorAll<HTMLButtonElement>("button[name=start]")].every((b) => b.disabled)).toBe(true);
+    for (const props of [{ startable: { _tag: "None" } }, { offline: true }]) expect([...listed(props).querySelectorAll<HTMLButtonElement>("button[name=start]")].every((b) => b.disabled)).toBe(true);
+  });
+
+  // Issue #191: an item whose refinement is in progress says so and cannot be started again; every other item can.
+  test("an item being refined shows it and its start is disabled; another item's start is enabled", () => {
+    const root = listed({ startable: { _tag: "Except", items: ["120"] } });
+    const [first, second] = [...root.querySelectorAll("ul > li")];
+    expect(first!.textContent).toContain(prompts.ITEM_IN_PROGRESS);
+    expect(first!.querySelector<HTMLButtonElement>("button[name=start]")!.disabled).toBe(true);
+    expect(second!.textContent).not.toContain(prompts.ITEM_IN_PROGRESS);
+    expect(second!.querySelector<HTMLButtonElement>("button[name=start]")!.disabled).toBe(false);
   });
 
   test("the empty state, the loading status, and the unavailable notice with Try again", () => {
-    expect(show(ItemList, { mode: "implementation", items: { _tag: "Listed", items: [] }, running: false, onStart: () => undefined, onRefresh: () => undefined }).textContent).toContain(prompts.TAB_TEXTS.implementation.empty);
-    expect(one(show(ItemList, { mode: "implementation", items: { _tag: "Loading" }, running: false, onStart: () => undefined, onRefresh: () => undefined }), "[role=status]").textContent).toContain(prompts.ITEMS_LOADING);
+    expect(show(ItemList, { mode: "implementation", items: { _tag: "Listed", items: [] }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined }).textContent).toContain(prompts.TAB_TEXTS.implementation.empty);
+    expect(one(show(ItemList, { mode: "implementation", items: { _tag: "Loading" }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined }), "[role=status]").textContent).toContain(prompts.ITEMS_LOADING);
     const refreshed: string[] = [];
-    const unavailable = show(ItemList, { mode: "refinement", items: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached" }, running: false, onStart: () => undefined, onRefresh: () => void refreshed.push("again") });
+    const unavailable = show(ItemList, { mode: "refinement", items: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached" }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => void refreshed.push("again") });
     expect(one(unavailable, "[role=alert]").textContent).toContain("could not be reached");
     one(unavailable, "button[name=retry]").click();
     expect(refreshed).toEqual(["again"]);
@@ -487,13 +499,13 @@ describe("TimelineRail", () => {
     ];
     const time = "2026-09-29T00:00:00Z";
     const messages: ServerMessage[] = [
-      { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+      { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
     ];
     const s = messages.reduce(reduce, initialState);
-    const root = showRail({ busy: false, timeline: s.modes.refinement.run?.timeline ?? [] });
+    const root = showRail({ busy: false, timeline: runOf(s, "refinement")?.timeline ?? [] });
     expect(stepRows(root)).toEqual([`done:${prompts.stepLabel("formulate")}:-`, `done:${prompts.stepLabel("clarification")}:-`]);
     expect([...root.querySelectorAll("[data-count]")].map((e) => e.textContent?.trim())).toEqual([prompts.clarificationProgress(10, 10)]);
     expect([...root.querySelectorAll("[data-step] [data-summary]")].map((e) => e.textContent?.trim())).toEqual([prompts.loopSummary(2, 0, "converged")]);
@@ -614,7 +626,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
     return { root, ws };
   };
 
@@ -624,7 +636,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", chain: helloChain, location: "/host/c", current: { refinement: null, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", chain: helloChain, location: "/host/c", current: { refinement: [], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [] });
     expect(root.querySelector("section.items")).not.toBe(null);
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
@@ -667,7 +679,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", chain: helloChain, location: "/host/server", current: { refinement: null, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", chain: helloChain, location: "/host/server", current: { refinement: [], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t", mode: "refinement", item: { id: "11", title: "t" } }, { _tag: "Ended", code: 0 }]) }] });
     expect(one(root, "button[name=new]").textContent?.trim()).toBe(prompts.BACK_TO_LIST);
     one(root, "button[name=new]").click();
@@ -692,7 +704,7 @@ describe("App and the draft", () => {
       const root = show(App, {});
       const ws = FakeWebSocket.last!;
       ws.onopen?.({});
-      ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation: "a" });
+      ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
       ws.receive({ type: "replay", ui: [], runs: [] });
       return { root, ws };
     };
@@ -726,7 +738,7 @@ describe("App and the draft", () => {
       const next = FakeWebSocket.last!;
       expect(next).not.toBe(ws);
       next.onopen?.({});
-      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation: "a" });
+      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
       expect(sentOf(next)).toEqual([{ type: "items", mode: "refinement" }]);
     });
 
@@ -817,7 +829,7 @@ describe("App and the draft", () => {
       const next = FakeWebSocket.last!;
       expect(next).not.toBe(ws);
       next.onopen?.({});
-      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation: "b" });
+      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
       commitField(root, "chain-cutoff", "07:00");
       expect(chainFrames(next)).toEqual([{ enabled: true, runs: 3, cutoff: null }, { enabled: true, runs: 3, cutoff: hourIso() }]);
     });
@@ -946,7 +958,7 @@ describe("App and the draft", () => {
       expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.pauseNotificationTitle(name)]);
       expect(document.title).toBe(tabTitle("/p", WAITING));
       expect(icon()).toBe(faviconHref(WAITING, schemeColors()));
-      ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
+      ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
       expect(NotificationStub.calls).toHaveLength(1);
       ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
@@ -1080,7 +1092,7 @@ describe("App and the draft", () => {
         const { ws } = await openPage();
         pending(ws);
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
-        ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
+        ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
         pending(ws);
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
       });
@@ -1191,7 +1203,7 @@ describe("App and the draft", () => {
     one(root, "button[name=conversation]").click();
     flushSync();
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: 2, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [2], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
   });
@@ -1389,7 +1401,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     type(field(root), "draft for question one");
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
     expect(field(root).value).toBe("");
     expect(root.textContent).toMatch(/your unsent text was discarded: «draft for question one»/);
@@ -1459,6 +1471,146 @@ describe("App and the draft", () => {
     (root.querySelectorAll(".unsent button[name=dismiss]")[0] as HTMLButtonElement).click();
     flushSync();
     expect(kept()).toEqual(["answer C"]);
+  });
+});
+
+// Issue #191 (requirements Q1): under the Refinement tab, a second row of tabs, one per refinement run and one for the items.
+describe("App: several refinement runs", () => {
+  class Ws {
+    static last: Ws | null = null;
+    sent: string[] = [];
+    onopen: ((e: unknown) => void) | null = null;
+    onmessage: ((e: { data: unknown }) => void) | null = null;
+    onclose: ((e: unknown) => void) | null = null;
+    onerror: ((e: unknown) => void) | null = null;
+    constructor(_url: string) {
+      Ws.last = this;
+    }
+    send(data: string) {
+      this.sent.push(data);
+    }
+    close() {
+      this.onclose?.({});
+    }
+    receive(m: unknown) {
+      this.onmessage?.({ data: JSON.stringify(m) });
+      flushSync();
+    }
+  }
+  const TIME = "2026-09-27T14:00:00.000Z";
+  const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
+  const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id, title: `title ${id}` } });
+  const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
+  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt) });
+  const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.RUN_TABS_LABEL}"]`);
+  const runTabNames = (root: HTMLElement) => [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => l.textContent?.trim());
+  const clickRunTab = (root: HTMLElement, value: string) => {
+    (one(secondRow(root)!, `input[type=radio][value="${value}"]`) as HTMLInputElement).click();
+    flushSync();
+  };
+  const headline = (root: HTMLElement) => root.querySelector("h2.header")?.textContent?.trim();
+  const field = (root: HTMLElement) => one(root, "[name=answer]") as HTMLTextAreaElement;
+  const open = async (current: readonly number[] = [1, 2]) => {
+    vi.stubGlobal("WebSocket", Ws);
+    const { default: App } = await import("./components/App.svelte");
+    const root = show(App, {});
+    const ws = Ws.last!;
+    ws.onopen?.({});
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: current, implementation: null }, incarnation: "a" });
+    return { root, ws };
+  };
+  /** Two refinement runs, the first running, the second waiting on its question. */
+  const twoRuns = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }, { id: 2, events: stamp([startedOf("12"), question("Second?"), askedOf(1)]) }] };
+
+  test("the second row shows the items and each run in start order; a waiting run's tab and the Refinement tab are marked", async () => {
+    const { root, ws } = await open();
+    ws.receive(twoRuns);
+    expect(runTabNames(root)).toEqual([prompts.REFINEMENT_LIST_TAB, prompts.runTabName({ id: "11", title: "title 11" }), prompts.waitingTabName(prompts.runTabName({ id: "12", title: "title 12" }))]);
+    expect([...root.querySelectorAll("nav.tabs label")].map((l) => l.textContent?.trim())[0]).toBe(prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab));
+    expect(headline(root)).toBe(prompts.itemHeadline("12", "title 12"));
+  });
+
+  test("clicking a run's tab shows that run; a prompt arriving in the other run changes neither the shown run nor the tab", async () => {
+    const { root, ws } = await open();
+    ws.receive(twoRuns);
+    clickRunTab(root, "run-1");
+    expect(headline(root)).toBe(prompts.itemHeadline("11", "title 11"));
+    ws.receive({ type: "event", run: 2, seq: 3, time: TIME, event: { _tag: "Answered", prompt: 1, text: "x" } });
+    ws.receive({ type: "event", run: 2, seq: 4, time: TIME, event: askedOf(2) });
+    expect(headline(root)).toBe(prompts.itemHeadline("11", "title 11"));
+    clickRunTab(root, "run-2");
+    expect(root.textContent).toContain("Second?");
+  });
+
+  test("text typed in one run's answer field survives showing the other run and coming back", async () => {
+    const { root, ws } = await open();
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), question("First?"), askedOf(1)]) }, { id: 2, events: stamp([startedOf("12"), question("Second?"), askedOf(1)]) }] });
+    clickRunTab(root, "run-1");
+    field(root).value = "half of the first";
+    field(root).dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    clickRunTab(root, "run-2");
+    expect(field(root).value).toBe("");
+    clickRunTab(root, "run-1");
+    expect(field(root).value).toBe("half of the first");
+  });
+
+  test("the item list shows the running refinement's item as being refined, its start disabled, another's enabled", async () => {
+    const { root, ws } = await open([1]);
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
+    clickRunTab(root, "list");
+    ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null }, { id: "12", title: "b", excerpt: "", url: null }], terms: "checked" } });
+    expect((one(root, 'button[name=start][data-item="11"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((one(root, 'button[name=start][data-item="12"]') as HTMLButtonElement).disabled).toBe(false);
+    expect(root.querySelector("section.items")?.textContent).toContain(prompts.ITEM_IN_PROGRESS);
+  });
+
+  test("on an ended run, Back to the list keeps its tab, and Close removes it; both show the items", async () => {
+    const { root, ws } = await open([]);
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), { _tag: "Ended", code: 130 }]) }] });
+    one(root, "button[name=new]").click();
+    flushSync();
+    expect(root.querySelector("section.items")).not.toBe(null);
+    expect(runTabNames(root)).toHaveLength(2);
+    clickRunTab(root, "run-1");
+    one(root, "button[name=close]").click();
+    flushSync();
+    expect(root.querySelector("section.items")).not.toBe(null);
+    expect(secondRow(root)).toBe(null);
+  });
+
+  describe("notifications per run", () => {
+    let visibility: DocumentVisibilityState = "visible";
+    const begin = (v: DocumentVisibilityState) => {
+      visibility = v;
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+      writePreferences({ desktop: "on", sound: "off" });
+      NotificationStub.permission = "granted";
+    };
+    afterEach(() => {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+      NotificationStub.reset();
+    });
+
+    test("both runs waiting at a hidden tab: one notification per run", async () => {
+      begin("hidden");
+      const { ws } = await open();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), askedOf(1)]) }, { id: 2, events: stamp([startedOf("12"), askedOf(1)]) }] });
+      expect(NotificationStub.calls).toHaveLength(2);
+    });
+
+    test("at a visible page, a prompt of the run not on screen notifies; the shown run's fresh prompt, its question shown, does not", async () => {
+      begin("visible");
+      const { root, ws } = await open([1, 2]);
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), question("First?"), askedOf(1)]) }, { id: 2, events: stamp([startedOf("12")]) }] });
+      expect(headline(root)).toBe(prompts.itemHeadline("11", "title 11"));
+      expect(NotificationStub.calls).toHaveLength(0);
+      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: askedOf(1) });
+      expect(NotificationStub.calls).toHaveLength(1);
+      ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: { _tag: "Answered", prompt: 1, text: "x" } });
+      ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: askedOf(2) });
+      expect(NotificationStub.calls).toHaveLength(1);
+    });
   });
 });
 
@@ -1924,13 +2076,13 @@ test("the activity line shows retry 2 of 3", () => {
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
-    { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+    { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
     { type: "replay", ui: [], runs: [] },
     { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
     ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
   ];
   const s = messages.reduce(reduce, initialState);
-  const root = show(StatusLine, { status: s.modes.refinement.run?.dashboard.status ?? { _tag: "Idle" } });
+  const root = show(StatusLine, { status: runOf(s, "refinement")?.dashboard.status ?? { _tag: "Idle" } });
   expect(one(root, "[data-status]").textContent).toContain("retry 2 of 3");
 });
 
@@ -1966,12 +2118,12 @@ test("the activity line counts down the wait before a tracker request's repeat, 
     const time = "2026-10-15T12:00:00Z";
     const event: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 1, of: 5, delaySeconds: 15, fault: "no answer", fromMs: now - 3000, untilMs: now + 12_000 };
     const messages: ServerMessage[] = [
-      { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+      { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "155", title: "t" } } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event } },
     ];
-    const run = messages.reduce(reduce, initialState).modes.refinement.run;
+    const run = runOf(messages.reduce(reduce, initialState), "refinement");
     const root = show(StatusLine, { status: run?.dashboard.status ?? { _tag: "Idle" }, retry: run?.retry?.wait ?? null });
     expect(one(root, "[data-status]").textContent).toContain("GitHub");
     const bar = one(root, "[role=progressbar]");
@@ -2178,12 +2330,12 @@ describe("TimelineRail: where the indicator is", () => {
     const resumed = report("S1", prompts.REPORT_STEP_STATUSES[0], plan("started", "done"));
     const rail = (list: UiEvent[]) => {
       const messages: ServerMessage[] = [
-        { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
+        { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
         { type: "replay", ui: [], runs: [] },
         { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
         ...list.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time: CALL, event: { _tag: "Notified", event } })),
       ];
-      const run = messages.reduce(reduce, initialState).modes.refinement.run!;
+      const run = runOf(messages.reduce(reduce, initialState), "refinement")!;
       return showRail({ timeline: run.timeline, busy: run.busy, executing: executing(run), callStartedAt: callStartedAt(run) });
     };
     const where = (root: HTMLElement) => one(root, "[role=progressbar]").closest("[data-plan-step], .entry")?.querySelector("[data-plan-step-label], [data-label]")?.textContent?.trim();
@@ -2589,11 +2741,11 @@ test("the seam of the phase names: the rail and the bands show phaseName's names
     { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },
     ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Notified", event: { _tag: "ReviewReceived", subject: { plan: i + 1 }, round: 1, review: { issues: [] }, counted: 0 } }]),
   ];
-  const state = [{ type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
+  const state = [{ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
   const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
-  const rail = showRail({ busy: false, timeline: state.modes.refinement.run?.timeline ?? [] });
+  const rail = showRail({ busy: false, timeline: runOf(state, "refinement")?.timeline ?? [] });
   expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);
-  const panel = show(ChatPanel, { title: "Claude and Codex", messages: state.modes.refinement.run?.right ?? [], empty: "none" });
+  const panel = show(ChatPanel, { title: "Claude and Codex", messages: runOf(state, "refinement")?.right ?? [], empty: "none" });
   expect([...panel.querySelectorAll(".phase-label")].map((e) => e.textContent?.trim())).toEqual(names.map((n) => prompts.phaseBandLabel(n, clockTime(time))));
 });
 

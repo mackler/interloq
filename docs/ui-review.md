@@ -336,6 +336,28 @@ Q1 in the interview of 9 Oct 2026).
   #133 the decision page holds its question and option cards at its top, so they are in view when it appears, and the
   run area scrolls to what lies below them in a low window (his decision of 12 Oct 2026).
 
+
+### Several refinement runs: a second row of tabs (issue #191, 29 Oct 2026)
+
+Any number of refinement runs may be in progress at once, each of a different item (requirements Q2: no limit), and the
+Refinement tab holds a second row of tabs: the items first, then one tab per run in the order the runs started
+(requirements Q1).
+
+- **The control.** M3's secondary tabs (m3-svelte's `Tabs` with `secondary`), under the primary tabs. The runs and the
+  items are peer destinations within the Refinement destination, which M3 specifies secondary tabs for. The row is shown
+  only while the tab holds a run, so a Refinement tab with none looks as before.
+- **The waiting mark on a run's tab.** A run's tab is named by its item (`runTabName`, cut to 32 characters, since the
+  dashboard shows the whole headline) and carries the waiting mark (●) while that run waits for an answer. It asserts
+  that that run waits, and nothing more. The primary Refinement tab carries the mark while any of its runs waits, so
+  every run's mark is visible from anywhere in the tab [visibility of system status].
+- **No switch away.** Moving between two runs, or between a run and the items, takes one click, and a prompt arriving in
+  another run never changes the run shown [user control and freedom]. Before the user has chosen, the page shows a
+  waiting run.
+- **An item being refined.** The list marks it "being refined" and disables its start; every other item's start stays
+  enabled [error prevention without a confirmation].
+- **An ended run's tab.** It stays until the developer closes it in that page ("Close this run") or the server restarts;
+  "Back to the list" shows the items and keeps the tab.
+
 ## The chain's control (issue #147, 20 Oct 2026)
 
 The Implementation tab carries the control of the mode that starts the next refined item when an implementation run

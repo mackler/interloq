@@ -90,13 +90,17 @@ export type Unavailable = Readonly<{ _tag: "Unavailable"; notice: string }>;
 export type RefinementItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[]; terms: S.TermsMode }> | Unavailable;
 /** A tab's answer to its items frame, by its mode. */
 export type ItemsAnswer = Readonly<{ mode: "refinement"; result: RefinementItemsResult }> | Readonly<{ mode: "implementation"; result: ItemsResult }>;
+/** The runs in progress (issue #191): any number of refinement runs, at most one implementation run. */
+export type CurrentRuns = Readonly<{ refinement: readonly number[]; implementation: number | null }>;
+/** Every id in progress, the refinement runs' first. */
+export const currentIds = (current: CurrentRuns): readonly number[] => [...current.refinement, ...(current.implementation === null ? [] : [current.implementation])];
 export type ServerMessage =
   | Readonly<{
       type: "hello";
       /** The identification of the server's working directory (issue #29), computed once when the server starts: the one project. */
       location: string;
-      /** The run in progress of each mode, or null (issue #120: one run per mode). */
-      current: Readonly<Record<RunMode, number | null>>;
+      /** The runs in progress (issue #191): every refinement run's id, and the implementation run's or null. */
+      current: CurrentRuns;
       incarnation: string;
       /** The chain's state (issue #147). */
       chain: ChainState;
@@ -253,8 +257,9 @@ export const ClientMessageSchema = Schema.Union([
     }),
   }),
 ]);
+const CurrentRunsSchema = Schema.Struct({ refinement: Schema.Array(Int), implementation: Schema.NullOr(Int) });
 export const ServerMessageSchema = Schema.Union([
-  typed("hello", { location: Str, current: Schema.Struct({ refinement: Schema.NullOr(Int), implementation: Schema.NullOr(Int) }), incarnation: Str, chain: ChainStateSchema }),
+  typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),

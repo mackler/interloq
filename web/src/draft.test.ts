@@ -16,7 +16,7 @@ const TIME = "2026-09-27T14:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
 const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt) });
 const answered = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "" });
-const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: current }, incarnation });
+const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation });
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
 const liveState = (events: readonly RunEvent[]): ViewState => fold([hello(), { type: "replay", ui: [], runs: [] }, ...events.map((event, seq): ServerMessage => ({ type: "event", run: 1, seq, time: TIME, event }))]);
 /** The implementation tab's run, as the page keys its draft by (issue #120). */

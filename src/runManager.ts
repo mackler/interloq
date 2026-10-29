@@ -1,6 +1,9 @@
-// The run manager of the web GUI (plan step 3.3): one run per mode at a time (issue #120), each started from an item of the
-// project's tracker, answered and stopped from the page on its own; the events of each mode's current run and of its last
-// finished one, broadcast to every connected tab.
+// The run manager of the web GUI (plan step 3.3): one implementation run at a time and any number of refinement runs,
+// each of a different item (issue #191; one run per mode since issue #120), each started from an item of the project's
+// tracker, answered and stopped from the page on its own; the events of the runs in progress and of the ended ones kept
+// for the replay, broadcast to every connected tab. Several refinement runs are safe beside each other and beside the
+// implementation run: a refinement run builds no temporary git index (no baseline tree, no work-review diff) and compares
+// no project snapshot (behavior 3), and each run has its own records directory, allocated exclusively.
 
 import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -10,19 +13,20 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, runInProgressText, serverEndingText } from "./prompts.ts";
+import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
 import { type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
 import { type ItemId, itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
-import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
+import type { CurrentRuns, ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
 import {
   begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
 import { makeStore } from "./store.ts";
+import { EMPTY_SLOT, endedIn, refusalOf, reserved, runsOf, type Slot as RunSlot } from "./runSlots.ts";
 import { parkHalted } from "./parking.ts";
 import type { RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
@@ -52,8 +56,8 @@ export type RunManager = Readonly<{
   subscribe: (listener: (event: Broadcast) => Effect.Effect<void>) => Effect.Effect<void, never, Scope.Scope>;
   /** Each mode's last finished run and current one, as far as they exist, in the order of their ids, with all their events and their shared states, read in one step. */
   replay: Effect.Effect<Replay>;
-  /** The id of each mode's run in progress, or null. */
-  current: Effect.Effect<Readonly<Record<RunMode, number | null>>>;
+  /** The runs in progress: every refinement run's id, and the implementation run's or null (issue #191). */
+  current: Effect.Effect<CurrentRuns>;
   /** Starts a run of the mode in the project from the item with that id (issue #120); its id, or why not. */
   start: (request: StartRequest) => Effect.Effect<number | Refusal>;
   /** The items a mode's tab lists, or the notice of why the tracker cannot list them (issue #120). */
@@ -135,8 +139,8 @@ export const makeStepper = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readonly
 
 /** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
 type Run = Readonly<{ id: number; item: ItemId; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal }>;
-/** A mode's run in progress, and its last finished run (issue #120: one run per mode). */
-type Slot = Readonly<{ current: Run | null; last: Run | null }>;
+/** A mode's runs in progress and its ended runs kept for the replay (issue #191, src/runSlots.ts). */
+type Slot = RunSlot<Run>;
 /**
  * The next id (one sequence for the server, so that an id names one run in either mode), each mode's slot, and whether
  * the server is ending after an error it could not trace to one run (issue #158), when no run is started.
@@ -150,15 +154,23 @@ const chainChange = (before: ChainState, after: ChainState): readonly ChainBroad
 /** What a save of the chain's state came to: saved; failed and the file removed; or failed and not removed either. */
 type Saved = "saved" | "removed" | "lost";
 const record = (r: Run): RunRecord => ({ id: r.id, events: r.events });
-const EMPTY: Slot = { current: null, last: null };
+const EMPTY: Slot = EMPTY_SLOT;
 /** The mode whose slot holds the run with that id as `which`, or null. */
-const modeOf = (s: State, id: number, which: readonly ("current" | "last")[]): RunMode | null => RUN_MODES.find((m) => which.some((w) => s.runs[m][w]?.id === id)) ?? null;
+const modeOf = (s: State, id: number, which: readonly ("current" | "last")[]): RunMode | null => RUN_MODES.find((m) => which.some((w) => s.runs[m][w].some((r) => r.id === id))) ?? null;
+/** The run with that id held as `which` in that mode's slot, or null. */
+const runIn = (s: State, mode: RunMode, id: number, which: "current" | "last"): Run | null => s.runs[mode][which].find((r) => r.id === id) ?? null;
+/** The slot with the run of that id, wherever it is held, changed. */
+const changedIn = (slot: Slot, id: number, change: (r: Run) => Run): Slot => {
+  const each = (runs: readonly Run[]) => runs.map((r) => (r.id === id ? change(r) : r));
+  return { current: each(slot.current), last: each(slot.last) };
+};
 const withSlot = (s: State, mode: RunMode, slot: Slot): State => ({ ...s, runs: { ...s.runs, [mode]: slot } });
 
 /**
  * The manager over a wiring per run (the live one of src/web.ts with the run's web Ui; the run's mode, so that a test may script each mode). The state is one Ref: the
- * next id (never reused while the process lives) and, per mode, the run in progress and the last finished one
- * (issue #120). An event is appended in one step with its seq and then broadcast, so a listener registered before a
+ * next id (never reused while the process lives) and, per mode, its slot (src/runSlots.ts): the implementation run in
+ * progress and the last finished one (issue #120), the refinement runs in progress and the ended one of each item
+ * (issue #191). An event is appended in one step with its seq and then broadcast, so a listener registered before a
  * snapshot sees every event that the snapshot does not hold (P1-R1-2). The time of an event (issue #1) is read from the
  * Clock before that step, because the record function stays pure; so events published concurrently may carry times in a
  * slightly different order than their seq, and seq is the order.
@@ -210,9 +222,9 @@ export const makeRunManager = (
         Effect.flatMap((time) =>
           publish((s): readonly [Broadcast | null, State] => {
             const mode = modeOf(s, id, ["current"]);
-            const run = mode === null ? null : s.runs[mode].current;
+            const run = mode === null ? null : runIn(s, mode, id, "current");
             if (mode === null || run === null) return [null, s];
-            return [{ _tag: "event", run: id, seq: run.events.length, time, event }, withSlot(s, mode, { ...s.runs[mode], current: { ...run, events: [...run.events, { time, event }] } })];
+            return [{ _tag: "event", run: id, seq: run.events.length, time, event }, withSlot(s, mode, changedIn(s.runs[mode], id, (r) => ({ ...r, events: [...r.events, { time, event }] })))];
           }),
         ),
         Effect.asVoid,
@@ -227,10 +239,10 @@ export const makeRunManager = (
         Effect.flatMap((time) =>
           step((s): readonly [Readonly<{ changed: boolean; command: ChainCommand | null }>, readonly Broadcast[], State] => {
             const mode = modeOf(s, id, ["current"]);
-            const run = mode === null ? null : s.runs[mode].current;
+            const run = mode === null ? null : runIn(s, mode, id, "current");
             if (mode === null || run === null) return [{ changed: false, command: null }, [], s];
             const event: RunEvent = { _tag: "Ended", code };
-            const moved = withSlot(s, mode, { current: null, last: { ...run, events: [...run.events, { time, event }] } });
+            const moved = withSlot(s, mode, endedIn(mode, s.runs[mode], id, (r) => ({ ...r, events: [...r.events, { time, event }] })));
             const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root });
             return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
           }).pipe(Effect.flatMap(({ changed, command }) => (changed ? settle(command) : Effect.void))),
@@ -434,7 +446,8 @@ export const makeRunManager = (
       Ref.get(state).pipe(
         Effect.map((s) => {
           const mode = modeOf(s, id, ["current"]);
-          return mode === null ? null : { mode, run: s.runs[mode].current as Run };
+          const run = mode === null ? null : runIn(s, mode, id, "current");
+          return mode === null || run === null ? null : { mode, run };
         }),
       );
 
@@ -449,7 +462,9 @@ export const makeRunManager = (
         if (invalid !== null) return refused(invalid);
         const before = yield* Ref.get(state);
         if (before.closing) return refused(serverEndingText);
-        if (before.runs[mode].current !== null) return refused(runInProgressText(mode));
+        // Issue #191: before the tracker is read, so a refused start contacts no tracker; repeated in the reservation.
+        const busy = refusalOf(mode, before.runs[mode], id.success);
+        if (busy !== null) return refused(busy);
         const read = yield* withTracker((t) => t.read(id.success));
         if (Result.isFailure(read)) return refused(read.failure);
         const item = read.success;
@@ -501,9 +516,11 @@ export const makeRunManager = (
             // the Clock read just before), and the chain learns of the start, so it is Running with the run's id before
             // the gate exists to release (P1-R3-2).
             const nowMs = yield* Clock.currentTimeMillis;
-            const reserved = yield* step((s): readonly [number | string | null, readonly Broadcast[], State] => {
+            const reservation = yield* step((s): readonly [number | string, readonly Broadcast[], State] => {
               if (s.closing) return [serverEndingText, [], s];
-              if (s.runs[mode].current !== null) return [null, [], s];
+              // Issue #191: the same check as before the read, in the one atomic step, so two starts of one item cannot both succeed.
+              const busy = refusalOf(mode, s.runs[mode], item.id);
+              if (busy !== null) return [busy, [], s];
               if (mode === "implementation" && blocksImplementationStart(s.chain)) return [chainParkingText(s.chain.chain._tag === "Parking" ? s.chain.chain.item : item.id), [], s];
               const guard = origin._tag === "chain" ? startGuard(s.chain, origin.generation, item.id, nowMs) : null;
               if (guard !== null) {
@@ -512,29 +529,30 @@ export const makeRunManager = (
               }
               const id = s.nextId;
               const chain = mode !== "implementation" ? s.chain : origin._tag === "chain" ? chainStarted(s.chain, origin.generation, id, item.id, item.title) : begun(s.chain, id, item.id, item.title);
-              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, { ...s.runs[mode], current: { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal } });
+              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, reserved(mode, s.runs[mode], { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal }));
               return [id, chainChange(s.chain, chain), next];
             });
-            if (typeof reserved !== "number") {
+            if (typeof reservation !== "number") {
               yield* Fiber.interrupt(fiber);
-              return refused(reserved ?? runInProgressText(mode));
+              return refused(reservation);
             }
+            const runId = reservation;
             // The chain's Running is saved before the run's gate is released (P1-R1-5), so a server that ends during the
             // run finds it cut off after the restart and starts nothing. Where neither the save nor the removal of the old
             // file succeeded, the run is not started: its slot is freed in one step and its fiber, whose id is still 0, interrupted.
             const chainOf = (yield* Ref.get(state)).chain.chain;
-            if (mode === "implementation" && chainOf._tag === "Running" && chainOf.run === reserved) {
+            if (mode === "implementation" && chainOf._tag === "Running" && chainOf.run === runId) {
               const saved = yield* persist;
               if (saved === "lost") {
-                yield* step((s) => [null, [], withSlot(s, mode, { ...s.runs[mode], current: null })] as const);
+                yield* step((s) => [null, [], withSlot(s, mode, { ...s.runs[mode], current: s.runs[mode].current.filter((r) => r.id !== runId) })] as const);
                 yield* Fiber.interrupt(fiber);
                 return refused(chainSaveRefusedText("the file system refused both"));
               }
             }
-            yield* Ref.set(idRef, reserved);
-            yield* append(reserved, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item), () => item.title), mode, item: { id: item.id, title: item.title } });
+            yield* Ref.set(idRef, runId);
+            yield* append(runId, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item), () => item.title), mode, item: { id: item.id, title: item.title } });
             yield* Deferred.succeed(gate, undefined);
-            return reserved;
+            return runId;
           }),
         );
       });
@@ -550,7 +568,7 @@ export const makeRunManager = (
      */
     const haltAll = (message: string): Effect.Effect<HaltReport> =>
       Effect.gen(function* () {
-        const runs = yield* Ref.modify(state, (s): readonly [readonly Run[], State] => [RUN_MODES.flatMap((m) => (s.runs[m].current === null ? [] : [s.runs[m].current])), { ...s, closing: true }]);
+        const runs = yield* Ref.modify(state, (s): readonly [readonly Run[], State] => [RUN_MODES.flatMap((m) => s.runs[m].current), { ...s, closing: true }]);
         yield* Effect.forEach(runs, (r) => Deferred.fail(r.signal.fault, new ServerFault({ message })), { discard: true });
         const within = (ms: number) => (r: Run) => Fiber.await(r.fiber).pipe(Effect.timeoutOption(`${ms} millis`), Effect.map(Option.isSome));
         const graced = yield* Effect.forEach(runs, within(bounds.graceMs), { concurrency: "unbounded" });
@@ -582,11 +600,11 @@ export const makeRunManager = (
         ).pipe(Effect.asVoid),
       replay: Ref.get(state).pipe(
         Effect.map((s) => {
-          const runs = RUN_MODES.flatMap((m) => [s.runs[m].last, s.runs[m].current]).flatMap((r) => (r === null ? [] : [r])).sort((a, b) => a.id - b.id);
+          const runs = RUN_MODES.flatMap((m) => runsOf(s.runs[m])).sort((a, b) => a.id - b.id);
           return { runs: runs.map(record), ui: runs.map((r) => ({ run: r.id, state: r.shared })) };
         }),
       ),
-      current: Ref.get(state).pipe(Effect.map((s) => ({ refinement: s.runs.refinement.current?.id ?? null, implementation: s.runs.implementation.current?.id ?? null }))),
+      current: Ref.get(state).pipe(Effect.map((s): CurrentRuns => ({ refinement: s.runs.refinement.current.map((r) => r.id), implementation: s.runs.implementation.current[0]?.id ?? null }))),
       start: (request) => start(request),
       listItems,
       haltAll,
@@ -598,7 +616,7 @@ export const makeRunManager = (
       setChain: (settings) =>
         Effect.uninterruptible(
           Effect.gen(function* () {
-            yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current?.item ?? null), null]);
+            yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current[0]?.item ?? null), null]);
             yield* persist;
             return (yield* Ref.get(state)).chain;
           }),
@@ -627,11 +645,9 @@ export const makeRunManager = (
           : publish((s): readonly [Broadcast | null, State] => {
               const mode = modeOf(s, id, ["current", "last"]);
               if (mode === null) return [null, s];
-              const slot = s.runs[mode];
-              const change = (r: Run | null): Run | null => (r !== null && r.id === id ? { ...r, shared: withFlag(r.shared, flag) } : r);
-              const [current, last] = [change(slot.current), change(slot.last)];
-              const changed = current !== slot.current ? current : last;
-              return changed === null ? [null, s] : [{ _tag: "ui", run: id, state: changed.shared }, withSlot(s, mode, { current, last })];
+              const slot = changedIn(s.runs[mode], id, (r) => ({ ...r, shared: withFlag(r.shared, flag) }));
+              const changed = slot.current.find((r) => r.id === id) ?? slot.last.find((r) => r.id === id);
+              return changed === undefined ? [null, s] : [{ _tag: "ui", run: id, state: changed.shared }, withSlot(s, mode, slot)];
             }).pipe(Effect.map((b) => (b === null ? ended : null))),
     };
   });

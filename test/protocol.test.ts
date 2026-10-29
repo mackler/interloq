@@ -7,7 +7,7 @@ import fc from "fast-check";
 import { Schema } from "effect";
 import { excerptOf, RUN_MODES } from "../src/runMode.ts";
 import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
-import { chainSettingsOf, type ClientMessage, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import { chainSettingsOf, type ClientMessage, currentIds, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, WorkResponse } from "../src/schema.ts";
@@ -191,7 +191,7 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
 const httpsUrl = fc.tuple(fc.stringMatching(/^[a-z0-9]{1,10}$/u), fc.stringMatching(/^[a-z0-9/]{0,12}$/u)).map(([host, path]) => `https://${host}.example/${path}`);
 const listedItem = fc.record({ id: text, title: text, excerpt: text, url: fc.option(httpsUrl, { nil: null }) });
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
-  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.option(nat, { nil: null }), implementation: fc.option(nat, { nil: null }) }), incarnation: text, chain: fc.constant(initialState(DEFAULT_SETTINGS)) }),
+  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.array(nat, { maxLength: 3 }), implementation: fc.option(nat, { nil: null }) }), incarnation: text, chain: fc.constant(initialState(DEFAULT_SETTINGS)) }),
   fc.constant({ type: "closing" as const }),
   fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
   fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
@@ -460,4 +460,14 @@ test("a ReviewReceived whose issues state their effect on the work survives the 
   const review = { issues: [{ id: "W1-R1-1", severity: "major" as const, location: "S22", problem: "p", evidence: "e", work_effect: { kind: "none" as const } }] };
   const message: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "ReviewReceived", subject: { work: 1 }, round: 1, review, counted: 1 } } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(message))), message);
+});
+
+// Issue #191: the hello carries every refinement run in progress as a list, beside the implementation run.
+test("a hello with several refinement runs decodes; the shape of one run per mode does not; currentIds lists every id", () => {
+  const chain = initialState(DEFAULT_SETTINGS);
+  const hello = { type: "hello", location: "/p", current: { refinement: [3, 5], implementation: 4 }, incarnation: "i", chain };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(hello))), hello);
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ ...hello, current: { refinement: 3, implementation: 4 } }))));
+  assert.deepEqual(currentIds({ refinement: [3, 5], implementation: 4 }), [3, 5, 4]);
+  assert.deepEqual(currentIds({ refinement: [], implementation: null }), []);
 });

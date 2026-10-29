@@ -16,16 +16,21 @@
   // The headline links to the item's page in its tracker, in a new tab, apart from the start button, so the developer
   // reads the whole issue without leaving the list [recognition rather than recall]; an item without an address shows
   // its headline as plain text.
+  // Issue #191: any number of refinement runs may be in progress; an item being refined says so and its start is
+  // disabled, while every other item's start stays enabled [visibility of system status; error prevention without a
+  // confirmation: the start the server would refuse cannot be pressed].
   import { Button, ConnectedButtons, LoadingIndicator } from "m3-svelte";
   import type { ListedItem } from "../../../src/protocol.ts";
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
-  import { ITEMS_LOADING, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
-  import type { ItemsView } from "../state.ts";
+  import { ITEM_IN_PROGRESS, ITEMS_LOADING, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
+  import type { ItemsView, StartableItems } from "../state.ts";
 
-  type Props = { mode: RunMode; items: ItemsView; running: boolean; offline?: boolean; terms?: TermsMode | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
-  let { mode, items, running, offline = false, terms = null, onTerms = () => undefined, onStart, onRefresh }: Props = $props();
+  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
+  let { mode, items, startable, offline = false, terms = null, onTerms = () => undefined, onStart, onRefresh }: Props = $props();
   const texts = $derived(TAB_TEXTS[mode]);
+  const inProgress = (id: string): boolean => startable._tag === "Except" && startable.items.includes(id);
+  const startableItem = (id: string): boolean => startable._tag === "Except" && !startable.items.includes(id);
 </script>
 
 <section class="items" aria-label={texts.list}>
@@ -66,7 +71,8 @@
             {#if item.excerpt !== ""}<p class="supporting" data-supporting>{item.excerpt}</p>{/if}
           </div>
           <div class="trailing">
-            <Button variant="text" type="button" name="start" data-item={item.id} disabled={running || offline} onclick={() => onStart(item)}>{texts.action}</Button>
+            {#if inProgress(item.id)}<span class="in-progress m3-font-label-medium">{ITEM_IN_PROGRESS}</span>{/if}
+            <Button variant="text" type="button" name="start" data-item={item.id} disabled={!startableItem(item.id) || offline} onclick={() => onStart(item)}>{texts.action}</Button>
           </div>
         </li>
       {/each}
@@ -84,7 +90,8 @@
   li { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1.5rem 0.5rem 1rem; min-height: 3.5rem; box-sizing: border-box; }
   li.two-line { min-height: 4.5rem; }
   .body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-  .trailing { flex: none; }
+  .trailing { flex: none; display: flex; align-items: center; gap: 0.5rem; }
+  .in-progress { color: var(--m3c-on-surface-variant); }
   /* Body large and body medium, set here since the m3-font classes are absent from the build. */
   .headline, .supporting { margin: 0; font-family: var(--m3-font); }
   .headline { font-size: 1rem; line-height: 1.5; font-weight: 400; color: var(--m3c-on-surface); }

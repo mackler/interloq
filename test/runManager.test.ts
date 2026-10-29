@@ -12,7 +12,7 @@ import { platformLayer } from "../src/platform.ts";
 import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
-import { runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
+import { refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
 import { Reviewer, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
@@ -84,7 +84,7 @@ const pendingAsk = async (h: Harness, id: number) => {
   });
   return asked!;
 };
-const NONE = { refinement: null, implementation: null };
+const NONE = { refinement: [], implementation: null };
 const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
 
 test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identical to a direct run of the program over the same script", async () => {
@@ -127,7 +127,7 @@ test("a second start in a mode is refused with that mode while the other mode ac
   const refusedStart = (await run(h.manager.start(startOf("implementation", nextItem(h, "implementation"))))) as Refusal;
   assert.deepEqual(refusedStart, { refused: runInProgressText("implementation"), mode: "implementation" });
   const other = await started(h, "refinement");
-  assert.deepEqual(await run(h.manager.current), { refinement: other, implementation: id });
+  assert.deepEqual(await run(h.manager.current), { refinement: [other], implementation: id });
   for (const r of [id, other]) {
     await run(h.manager.stop(h.manager.incarnation, r));
     await ended(h, r);
@@ -173,6 +173,91 @@ test("answering and stopping one run leaves the run of the other mode running, e
   await ended(h, refinement);
   assert.equal(endCode(h, refinement), 130);
   void you;
+});
+
+// Issue #191: any number of refinement runs, each of a different item; a refinement of an item already being refined is refused.
+const itemOfRun = (h: Harness, id: number): string => eventsOf(h, id).flatMap((e) => (e._tag === "Started" ? [e.item.id] : []))[0] ?? assert.fail(`run ${id} has not started`);
+const stopped = async (h: Harness, ...ids: number[]) => {
+  for (const id of ids) {
+    await run(h.manager.stop(h.manager.incarnation, id));
+    await ended(h, id);
+  }
+};
+
+test("a second refinement of a different item starts while the first waits; a refinement of the same item is refused", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [refiningAsk, refiningAsk, refiningAsk]);
+  const first = await started(h, "refinement");
+  await pendingAsk(h, first);
+  const second = await started(h, "refinement");
+  await pendingAsk(h, second);
+  assert.deepEqual(await run(h.manager.current), { refinement: [first, second], implementation: null });
+  const published = h.received.length;
+  const again = await run(h.manager.start(startOf("refinement", itemOfRun(h, first))));
+  assert.deepEqual(again, { refused: refinementInProgressText(itemOfRun(h, first)), mode: "refinement" });
+  assert.equal(h.received.length, published, "a refused start publishes nothing");
+  await stopped(h, first, second);
+});
+
+test("two refinements' events and answers are kept apart by run id", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [refiningAsk, refiningAsk]);
+  const first = await started(h, "refinement");
+  const asked = await pendingAsk(h, first);
+  const second = await started(h, "refinement");
+  await pendingAsk(h, second);
+  assert.equal(runDirsOf(repo).length, 2, "each run has its own records directory");
+  const secondBefore = eventsOf(h, second).length;
+  assert.equal(await run(h.manager.answer(h.manager.incarnation, first, asked.prompt, "1")), null);
+  await until("the first run's answer", () => eventsOf(h, first).some((e) => e._tag === "Answered"));
+  assert.equal(eventsOf(h, second).some((e) => e._tag === "Answered"), false, "the other run's prompt is still pending");
+  assert.equal(eventsOf(h, second).length, secondBefore);
+  assert.equal(await run(h.manager.setUi(h.manager.incarnation, second, { scope: { _tag: "DashboardAnswers" }, open: true })), null);
+  assert.deepEqual(h.uiReceived.map((b) => b.run), [second]);
+  const replay = await run(h.manager.replay);
+  assert.equal(replay.ui.find((u) => u.run === first)!.state.version, 0);
+  await stopped(h, first, second);
+  assert.equal(endCode(h, first), 130);
+  assert.equal(endCode(h, second), 130);
+});
+
+test("two starts of the same item at once: exactly one succeeds", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [refiningAsk, refiningAsk]);
+  const item = nextItem(h, "refinement");
+  const both = await run(Effect.all([h.manager.start(startOf("refinement", item)), h.manager.start(startOf("refinement", item))], { concurrency: "unbounded" }));
+  const ids = both.filter((r): r is number => typeof r === "number");
+  assert.equal(ids.length, 1, JSON.stringify(both));
+  assert.deepEqual(both.find((r) => typeof r !== "number"), { refused: refinementInProgressText(item), mode: "refinement" });
+  assert.deepEqual(await run(h.manager.current), { refinement: ids, implementation: null });
+  await stopped(h, ids[0]!);
+});
+
+test("a second implementation start is refused before the tracker is read", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [{ steps: [{ hang: true }] }]);
+  const id = await started(h, "implementation");
+  await until("the hanging call", () => eventsOf(h, id).some((e) => e._tag === "Said" && /^Planning: requesting the initial plan/.test(e.text)));
+  const reads = (await run(h.tracker.reads)).length;
+  await run(h.tracker.failNext("read", new TrackerUnreachable({ tracker: "fake", message: "down", status: null })));
+  const refused = await run(h.manager.start(startOf("implementation", nextItem(h, "implementation"))));
+  assert.deepEqual(refused, { refused: runInProgressText("implementation"), mode: "implementation" });
+  assert.equal((await run(h.tracker.reads)).length, reads, "no read was made");
+  await stopped(h, id);
+});
+
+test("an ended refinement stays in the replay until a newer refinement of the same item starts", async () => {
+  const repo = tempRepo();
+  const h = await harness(repo, [refiningAsk, refiningAsk, refiningAsk]);
+  const a = await started(h, "refinement");
+  await pendingAsk(h, a);
+  await stopped(h, a);
+  const b = await started(h, "refinement");
+  assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id), [a, b]);
+  const again = await run(h.manager.start(startOf("refinement", itemOfRun(h, a))));
+  assert.equal(typeof again, "number", JSON.stringify(again));
+  assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id), [b, again as number]);
+  await stopped(h, b, again as number);
 });
 
 // Issue #120: a run is started from an item. A start frame with a blank item id, which the page's buttons do not send but
@@ -349,7 +434,7 @@ test("start interrupted while Started is being delivered leaves a run that can b
   const interruption = Effect.runFork(Fiber.interrupt(starting));
   await run(Deferred.succeed(release, undefined));
   await run(Fiber.await(interruption));
-  assert.deepEqual(await run(h.manager.current), { refinement: null, implementation: 1 }, "the run was not reserved");
+  assert.deepEqual(await run(h.manager.current), { refinement: [], implementation: 1 }, "the run was not reserved");
   assert.equal(await run(h.manager.stop(h.manager.incarnation, 1)), null, "the run cannot be stopped");
   await ended(h, 1);
   const id = await started(h);
@@ -560,19 +645,21 @@ const refiningAsk: TestOptions = {
 
 test("haltAll halts the run of each mode with code 1 and its record, and returns once both ended", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [asking("Which database?"), refiningAsk], undefined, [], undefined, SHORT);
+  const h = await harness(repo, [asking("Which database?"), refiningAsk, refiningAsk], undefined, [], undefined, SHORT);
   const implementation = await started(h, "implementation");
   await pendingAsk(h, implementation);
   const refinement = await started(h, "refinement");
   await pendingAsk(h, refinement);
+  // Issue #191: a second refinement in progress is halted too.
+  const another = await started(h, "refinement");
+  await pendingAsk(h, another);
   const report = await run(h.manager.haltAll("write EPIPE"));
-  assert.deepEqual([...report.halted].sort(), [implementation, refinement].sort());
+  assert.deepEqual([...report.halted].sort(), [implementation, refinement, another].sort());
   assert.deepEqual(report.unconfirmed, []);
-  assert.equal(endCode(h, implementation), 1);
-  assert.equal(endCode(h, refinement), 1);
+  for (const id of [implementation, refinement, another]) assert.equal(endCode(h, id), 1);
   for (const dir of runDirsOf(repo)) assert.ok(withoutReturnLine(fs.readFileSync(path.join(dir, "conversation.md"), "utf8")).endsWith(serverFaultRecord("write EPIPE")), dir);
   assert.deepEqual(await run(h.manager.current), NONE);
-  assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id).sort(), [implementation, refinement].sort());
+  assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id).sort(), [implementation, refinement, another].sort());
 });
 
 test("haltAll with no run in progress returns at once with empty lists, and every later start is refused", async () => {

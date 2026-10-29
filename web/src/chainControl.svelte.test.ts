@@ -155,7 +155,7 @@ describe("ChainControl's empty runs field", () => {
 describe("ChainControl's consecutive changes", () => {
   const NOW = new Date(2026, 9, 20, 22, 0);
   const CUTOFF = new Date(2026, 9, 21, 7, 0).toISOString();
-  const helloOf = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+  const helloOf = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const shownOf = (view: ViewState) => chainShown(view, (iso) => fullTime(iso))!;
   // A harness of the page: its view, the control's props derived from it, and each frame recorded as App records it.
   const live = () => {

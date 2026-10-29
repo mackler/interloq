@@ -14,13 +14,17 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
 
 // Plan step 4.2: the page's reducer.
-const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: current }, incarnation: "a" });
+/** The run a mode's tab shows (issue #191: the implementation tab its newest run, the Refinement tab its focused run). */
+const runOf = (s: ViewState, mode: RunMode): RunView | null => shownRun(s, mode).run;
+/** The run before a mode's newest that the page holds. */
+const lastOf = (s: ViewState, mode: RunMode): RunView | null => s.modes[mode].runs.at(-2) ?? null;
+const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task", mode: "implementation", item: { id: "1", title: "the task" } };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
@@ -43,20 +47,20 @@ const replayed = (events: readonly RunEvent[], run = 1, current: number | null =
 const bare = (p: ShownPlan | null) => (p === null ? null : { stages: p.stages.map(({ key: _key, ...st }) => st) });
 /** The dashboard's status line of the implementation tab's run, as its text (issue #22). */
 const statusOf = (s: ViewState | RunView | null | undefined): string | undefined => {
-  const run = s === null || s === undefined ? undefined : "modes" in s ? s.modes.implementation.run : s;
+  const run = s === null || s === undefined ? undefined : "modes" in s ? runOf(s, "implementation") : s;
   return run === null || run === undefined ? undefined : statusText(run.dashboard.status);
 };
 /** The dashboard's latest message of Claude Code, and the last answer, of the implementation tab's run (issue #22). */
-const claudeOf = (s: ViewState) => s.modes.implementation.run?.dashboard.claude;
+const claudeOf = (s: ViewState) => runOf(s, "implementation")?.dashboard.claude;
 const lastAnswerOf = (s: ViewState) => {
-  const d = s.modes.implementation.run?.dashboard;
+  const d = runOf(s, "implementation")?.dashboard;
   return d === undefined ? undefined : lastAnswer(d);
 };
 
 describe("the dashboard (issue #22)", () => {
   test("a fresh run and a run after Started hold the empty dashboard", () => {
     expect(emptyRun(3).dashboard).toEqual(emptyDashboard);
-    expect(fold(live([started])).modes.implementation.run?.dashboard).toEqual(emptyDashboard);
+    expect(runOf(fold(live([started])), "implementation")?.dashboard).toEqual(emptyDashboard);
     expect(emptyDashboard).toEqual({ models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [] });
     expect(statusText(emptyDashboard.status)).toBe("");
     expect(lastAnswer(emptyDashboard)).toBe(null);
@@ -70,8 +74,8 @@ describe("the status line (issue #22)", () => {
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a Said sets the status and the next Said replaces it; its outer line breaks are removed", () => {
-    for (const s of both([started, said("first")])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "first" });
-    for (const s of both([started, said("first"), said("\nHALTED: second\n")])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "HALTED: second" });
+    for (const s of both([started, said("first")])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Interloq", text: "first" });
+    for (const s of both([started, said("first"), said("\nHALTED: second\n")])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Interloq", text: "HALTED: second" });
   });
 
   test("a blank Said and an absorbed one change nothing", () => {
@@ -81,17 +85,17 @@ describe("the status line (issue #22)", () => {
   });
 
   test("a tool use replaces Interloq's line, and Interloq's next line replaces the activity", () => {
-    for (const s of both([started, said("first"), call, tool])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Activity", text: "Codex — review — command: git diff" });
+    for (const s of both([started, said("first"), call, tool])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Activity", text: "Codex — review — command: git diff" });
     for (const s of both([started, call, tool, said("next")])) expect(statusOf(s)).toBe("next");
   });
 
   test("PhaseEnded keeps Interloq's line and turns an activity into Idle", () => {
-    for (const s of both([started, call, said("kept"), phaseEnded])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "kept" });
-    for (const s of both([started, said("old"), call, tool, phaseEnded])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Idle" });
+    for (const s of both([started, call, said("kept"), phaseEnded])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Interloq", text: "kept" });
+    for (const s of both([started, said("old"), call, tool, phaseEnded])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Idle" });
   });
 
   test("after Ended the run's last line of Interloq stays the status", () => {
-    for (const s of both([started, call, said("Usage: Claude Code 3 calls"), { _tag: "Ended", code: 0 }])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "Usage: Claude Code 3 calls" });
+    for (const s of both([started, call, said("Usage: Claude Code 3 calls"), { _tag: "Ended", code: 0 }])) expect(runOf(s, "implementation")?.dashboard.status).toEqual({ _tag: "Interloq", text: "Usage: Claude Code 3 calls" });
   });
 
   test("a retry's and a usage limit's wait give the status the activity line's text", () => {
@@ -133,8 +137,8 @@ describe("the status line (issue #22)", () => {
       }, { tag: "Idle", text: "", calls: 0 });
       const liveView = fold(live(events));
       expect(statusOf(liveView)).toBe(model.text);
-      expect(liveView.modes.implementation.run?.dashboard.status._tag).toBe(model.tag);
-      expect(replayed(events).modes.implementation.run?.dashboard).toEqual(liveView.modes.implementation.run?.dashboard);
+      expect(runOf(liveView, "implementation")?.dashboard.status._tag).toBe(model.tag);
+      expect(runOf(replayed(events), "implementation")?.dashboard).toEqual(runOf(liveView, "implementation")?.dashboard);
     }), { numRuns: 150 });
   });
 });
@@ -143,20 +147,20 @@ describe("ordering and the panels", () => {
   test("Interloq's line is the status, a blank say changes nothing, and an answered prompt is no longer pending", () => {
     const s = fold(live([started, said("Planning phase 1 ..."), said("\n"), asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }]));
     expect(statusOf(s)).toBe("Planning phase 1 ...");
-    expect(s.modes.implementation.run?.pending).toBe(null);
+    expect(runOf(s, "implementation")?.pending).toBe(null);
   });
 
   test("a pending prompt carries the catalog's choices; the question's options are apart (issue #12, S5)", () => {
     const decision = fold(live([started, asked(1, prompts.decisionPrompt)]));
-    expect(decision.modes.implementation.run?.pending?.choices.map((c) => c.label)).toEqual([prompts.CONTINUE_WITHOUT_DECIDING, prompts.END_RUN_LABEL]);
-    expect(decision.modes.implementation.run?.pending?.options).toEqual([]);
+    expect(runOf(decision, "implementation")?.pending?.choices.map((c) => c.label)).toEqual([prompts.CONTINUE_WITHOUT_DECIDING, prompts.END_RUN_LABEL]);
+    expect(runOf(decision, "implementation")?.pending?.options).toEqual([]);
     const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Which database?", summary: null, answered: 0, total: 1 };
     const interview = fold(live([started, notified(turn), said("\nWhich database?\n"), notified(presentedEvent("Which database?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" })), asked(1, prompts.interviewMessagePrompt)]));
-    expect(interview.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
-    expect(interview.modes.implementation.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
+    expect(runOf(interview, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
+    expect(runOf(interview, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
     const relayed = fold(live([started, notified(presentedEvent("A or B?", [{ label: "A", description: "a" }, { label: "B", description: "b" }])), asked(1, prompts.optionOrTextPrompt)]));
-    expect(relayed.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["A — a=1", "B — b=2"]);
-    expect(relayed.modes.implementation.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_RUN_LABEL}=q`]);
+    expect(runOf(relayed, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["A — a=1", "B — b=2"]);
+    expect(runOf(relayed, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_RUN_LABEL}=q`]);
   });
 
   test("an answer to an interview shows the chosen option, or the fixed choice's label (issue #12, Q2)", () => {
@@ -202,12 +206,12 @@ describe("ordering and the panels", () => {
     const review = { issues: [{ id: "A", severity: "major" as const, location: "l", problem: "p", evidence: "e" }] };
     const response = { dispositions: [{ id: "A", action: "accepted" as const, rationale: "r", duplicate_of: "", reverses: "" }], self_corrections: [], reviewer_feedback: "", questions_for_user: [] };
     const s = fold(live([started, notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 2, review, counted: 1 }), notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 2, response, resultText: "" })]));
-    expect(s.modes.implementation.run?.right.map((m) => [m.author, m.heading])).toEqual([["codex", "Planning phase 1, cycle 2"], ["claude", "Planning phase 1, cycle 2"]]);
-    expect(s.modes.implementation.run?.right[0].body).toMatch(/\*\*\[A\]\*\*/);
+    expect(runOf(s, "implementation")?.right.map((m) => [m.author, m.heading])).toEqual([["codex", "Planning phase 1, cycle 2"], ["claude", "Planning phase 1, cycle 2"]]);
+    expect(runOf(s, "implementation")?.right[0].body).toMatch(/\*\*\[A\]\*\*/);
     // The author is the message's; the body does not repeat it (aesthetic and minimalist design).
-    expect(s.modes.implementation.run?.right.map((m) => m.body)).not.toContainEqual(expect.stringMatching(/^### /));
+    expect(runOf(s, "implementation")?.right.map((m) => m.body)).not.toContainEqual(expect.stringMatching(/^### /));
     const none = fold(live([started, notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 3, review: { issues: [] }, counted: 0 })]));
-    expect(none.modes.implementation.run?.right[0].body).toBe("No issue: the review has converged.");
+    expect(runOf(none, "implementation")?.right[0].body).toBe("No issue: the review has converged.");
   });
 });
 
@@ -221,7 +225,7 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
     for (const s of both([started, claudeSaid("**done**")])) expect(claudeOf(s)).toEqual({ heading: null, body: "**done**" });
     for (const s of both([started, claudeSaid("first"), claudeSaid("second")])) expect(claudeOf(s)).toEqual({ heading: null, body: "second" });
     // Nothing of Claude Code's prose goes to the right panel.
-    for (const s of both([started, claudeSaid("first")])) expect(s.modes.implementation.run?.right).toEqual([]);
+    for (const s of both([started, claudeSaid("first")])) expect(runOf(s, "implementation")?.right).toEqual([]);
   });
 
   test("the activity line and the page's prompts say Claude", () => {
@@ -236,9 +240,9 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
     const events: RunEvent[] = [started, notified(question), asked(1, prompts.optionOrTextPrompt)];
     for (const s of both(events)) {
       // S26: while pending, the question is the widget's; no answer is recorded yet.
-      expect(s.modes.implementation.run?.dashboard.answers).toEqual([]);
-      expect(s.modes.implementation.run?.pending?.question).toEqual(presentedOf(question));
-      expect(s.modes.implementation.run?.pending?.options.map((c) => c.sends)).toEqual(["1", "2"]);
+      expect(runOf(s, "implementation")?.dashboard.answers).toEqual([]);
+      expect(runOf(s, "implementation")?.pending?.question).toEqual(presentedOf(question));
+      expect(runOf(s, "implementation")?.pending?.options.map((c) => c.sends)).toEqual(["1", "2"]);
     }
   });
 
@@ -259,21 +263,21 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
   test("the interview's help is shown from its opening until the review after it, a decision's rounds leaving it", () => {
     const opened = notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 });
     const help = prompts.interviewHelp("Interview");
-    for (const s of both([started, opened])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(help);
+    for (const s of both([started, opened])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(help);
     const decisionRound = notified({ _tag: "RoundBegan", subject: { decision: 1 }, round: 1, limit: 5 });
-    for (const s of both([started, opened, decisionRound])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(help);
+    for (const s of both([started, opened, decisionRound])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(help);
     const reviewRound = notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 });
-    for (const s of both([started, opened, reviewRound])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, reviewRound])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
     const phaseEnded = notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" });
-    for (const s of both([started, opened, phaseEnded])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(null);
-    for (const s of both([started, opened, { _tag: "Ended", code: 130 }])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, phaseEnded])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, { _tag: "Ended", code: 130 }])) expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(null);
   });
 
   test("ModelNamed sets the agent's model line, and a later model of that agent replaces it", () => {
     const named = (model: prompts.NamedModel) => notified({ _tag: "ModelNamed", model });
     const events: RunEvent[] = [started, named({ agent: "codex", name: null }), named({ agent: "claude", name: "a" }), named({ agent: "claude", name: "b" })];
     for (const s of both(events)) {
-      expect(s.modes.implementation.run?.dashboard.models).toEqual({ claude: prompts.modelLine({ agent: "claude", name: "b" }), codex: prompts.modelLine({ agent: "codex", name: null }) });
+      expect(runOf(s, "implementation")?.dashboard.models).toEqual({ claude: prompts.modelLine({ agent: "claude", name: "b" }), codex: prompts.modelLine({ agent: "codex", name: null }) });
     }
   });
 
@@ -303,11 +307,11 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
         }
       }
       const liveView = fold(live(events));
-      const answers = liveView.modes.implementation.run?.dashboard.answers ?? [];
+      const answers = runOf(liveView, "implementation")?.dashboard.answers ?? [];
       expect(answers.map((e) => e.key)).toEqual(events.flatMap((e, seq) => (e._tag === "Answered" ? [`1-${seq}`] : [])));
-      const d = liveView.modes.implementation.run?.dashboard;
+      const d = runOf(liveView, "implementation")?.dashboard;
       expect(d === undefined ? null : lastAnswer(d)).toEqual(answers.at(-1) ?? null);
-      expect(replayed(events).modes.implementation.run?.dashboard).toEqual(d);
+      expect(runOf(replayed(events), "implementation")?.dashboard).toEqual(d);
     }), { numRuns: 150 });
   });
 });
@@ -317,18 +321,18 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
 test("every prompt is shown in the page's words, without the hint's key conventions", () => {
   const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt];
   for (const text of texts) {
-    const body = fold(live([started, asked(1, text)])).modes.implementation.run?.pending?.hint ?? "";
+    const body = runOf(fold(live([started, asked(1, text)])), "implementation")?.pending?.hint ?? "";
     expect(body, text).not.toMatch(/>\s*$|\bq = quit|Enter =|= stop|p = /);
     expect(body.trim(), text).not.toBe("");
   }
-  expect(fold(live([started, asked(1, "Something new > ")])).modes.implementation.run?.pending?.hint).toBe("Something new");
+  expect(runOf(fold(live([started, asked(1, "Something new > ")])), "implementation")?.pending?.hint).toBe("Something new");
 });
 
 describe("activity and timeline", () => {
   test("the activity line shows the last agent event and is cleared at the end of a phase", () => {
     const s1 = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" }), notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" })]));
     expect(statusOf(s1)).toBe("Codex — review — command: git diff");
-    expect(s1.modes.implementation.run?.busy).toBe(true);
+    expect(runOf(s1, "implementation")?.busy).toBe(true);
     const s2 = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" }) }], s1);
     expect(statusOf(s2)).toBe("");
   });
@@ -352,19 +356,19 @@ describe("activity and timeline", () => {
       notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 }),
     ];
     const during = fold(live(events));
-    const entry = during.modes.implementation.run?.timeline[0];
+    const entry = runOf(during, "implementation")?.timeline[0];
     expect(entry?.state).toBe("active");
     expect(entry?.steps.flatMap((st) => st.groups.map((g) => [g.heading, g.done]))).toEqual([["Question review", true], ["Requirements review", false]]);
     const after = fold(live([...events, notified({ _tag: "LoopFinished", subject: "requirements", result: "converged" }), notified({ _tag: "PhaseEnded", phase: q, result: "converged" })]));
-    expect(after.modes.implementation.run?.timeline[0].state).toBe("done");
-    expect(replayed(events).modes.implementation.run?.timeline).toEqual(during.modes.implementation.run?.timeline);
+    expect(runOf(after, "implementation")?.timeline[0].state).toBe("done");
+    expect(runOf(replayed(events), "implementation")?.timeline).toEqual(runOf(during, "implementation")?.timeline);
   });
 
   test("phases appear in order with their rounds; an interrupted run stops the active phase", () => {
     const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 5 }), { _tag: "Ended", code: 130 }]));
-    expect(s.modes.implementation.run?.timeline.map((e) => [e.label, e.state])).toEqual([["Planning", "stopped"]]);
-    expect(s.modes.implementation.run?.timeline[0].groups[0].rounds.map((r) => r.round)).toEqual([1, 2]);
-    expect(s.modes.implementation.run?.ended).toBe(130);
+    expect(runOf(s, "implementation")?.timeline.map((e) => [e.label, e.state])).toEqual([["Planning", "stopped"]]);
+    expect(runOf(s, "implementation")?.timeline[0].groups[0].rounds.map((r) => r.round)).toEqual([1, 2]);
+    expect(runOf(s, "implementation")?.ended).toBe(130);
   });
 });
 
@@ -387,14 +391,14 @@ describe("the cycles of a review loop in the timeline", () => {
     }),
     notified({ _tag: "RoundBegan", subject: plan, round: 2, limit: 5 }),
   ];
-  const groupOf = (s: ViewState) => s.modes.implementation.run?.timeline[0].groups[0];
+  const groupOf = (s: ViewState) => runOf(s, "implementation")?.timeline[0].groups[0];
 
   test("a cycle carries the issues its review raised and the counted ones; a cycle without its review has none yet", () => {
     const s = fold(live(events));
     expect(groupOf(s)?.rounds.map((r) => [r.round, r.raised, r.counted])).toEqual([[1, 3, 2], [2, null, null]]);
     expect(groupOf(s)?.corrections).toBe(3);
     expect(groupOf(s)?.result).toBe(null);
-    expect(replayed(events).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
+    expect(runOf(replayed(events), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   test("LoopFinished records the loop's result; the corrections of every cycle are summed", () => {
@@ -402,7 +406,7 @@ describe("the cycles of a review loop in the timeline", () => {
     const s = fold(live(finished));
     expect(groupOf(s)?.rounds.map((r) => [r.round, r.raised, r.counted])).toEqual([[1, 3, 2], [2, 0, 0]]);
     expect([groupOf(s)?.result, groupOf(s)?.done, groupOf(s)?.corrections]).toEqual(["converged", true, 3]);
-    expect(replayed(finished).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
+    expect(runOf(replayed(finished), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   // Issue #30 (P1-R2-2): a corrective turn's reply is a second ResponseReceived of the same round; it replaces the
@@ -446,13 +450,13 @@ describe("the steps of Gather Requirements", () => {
   const opened = (stage: "clarification" | "followUp", total: number) => notified({ _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage, total });
   const round = (subject: "questions" | "requirements", n: number) => notified({ _tag: "RoundBegan", subject, round: n, limit: 5 });
   const finished = (subject: "questions" | "requirements") => notified({ _tag: "LoopFinished", subject, result: "converged" });
-  const steps = (s: ViewState) => s.modes.implementation.run?.timeline[0].steps.map((st) => [st.label, st.state, st.count === null ? null : `${st.count.answered}/${st.count.total}`, st.groups.map((g) => `${g.heading}:${g.rounds.map((c) => c.round).join(",")}`).join(";")]);
+  const steps = (s: ViewState) => runOf(s, "implementation")?.timeline[0].steps.map((st) => [st.label, st.state, st.count === null ? null : `${st.count.answered}/${st.count.total}`, st.groups.map((g) => `${g.heading}:${g.rounds.map((c) => c.round).join(",")}`).join(";")]);
   const through = [started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), opened("clarification", 7), turn(0, 7), turn(3, 7)];
 
   test("the question phase begins with its first step, which holds the question review's cycles", () => {
     const s = fold(live(through.slice(0, 3)));
     expect(steps(s)).toEqual([[prompts.stepLabel("formulate"), "active", null, "Question review:1"]]);
-    expect(s.modes.implementation.run?.timeline[0].groups).toEqual([]);
+    expect(runOf(s, "implementation")?.timeline[0].groups).toEqual([]);
   });
 
   // S17: the explanations of the terms are a step of their own, between identifying the choices and the clarification,
@@ -489,14 +493,14 @@ describe("the steps of Gather Requirements", () => {
   test("the conversation's heading and the rail's step name one activity, User Decisions", () => {
     const heading = prompts.clarificationHeading("clarification");
     const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: q }), notified({ _tag: "InterviewOpened", heading, stage: "clarification", total: 1 })]));
-    const step = s.modes.implementation.run?.timeline[0].steps.find((st) => st.kind === "clarification");
+    const step = runOf(s, "implementation")?.timeline[0].steps.find((st) => st.kind === "clarification");
     expect([heading, step?.label]).toEqual([prompts.USER_DECISIONS, prompts.USER_DECISIONS]);
   });
 
   test("InterviewOpened ends the first step and opens Clarification with its total; each turn updates the count", () => {
     const s = fold(live(through));
     expect(steps(s)).toEqual([[prompts.stepLabel("formulate"), "done", null, "Question review:1"], [prompts.stepLabel("clarification"), "active", "3/7", ""]]);
-    expect(replayed(through).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
+    expect(runOf(replayed(through), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   // Issue #184: Interloq counts the answers as they are given, between Claude Code's replies.
@@ -506,15 +510,15 @@ describe("the steps of Gather Requirements", () => {
     const before = fold(live(base));
     const s = fold(live([...base, counted(4, 7)]));
     expect(steps(s)?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "4/7", ""]);
-    expect(s.modes.implementation.run?.dashboard).toEqual(before.modes.implementation.run?.dashboard);
-    expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(1);
+    expect(runOf(s, "implementation")?.dashboard).toEqual(runOf(before, "implementation")?.dashboard);
+    expect(runOf(s, "implementation")?.pending?.asked.prompt).toBe(1);
     const followUp = [...through, turn(7, 7, "# R"), round("requirements", 1), opened("followUp", 2), counted(1, 2)];
     expect(steps(fold(live(followUp)))?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "8/9", "Requirements review:1"]);
   });
 
   test("a pending prompt survives a call that starts and ends after it (the interview's request beside a question)", () => {
     const s = fold(live([...through, asked(1, prompts.interviewMessagePrompt), notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "interview", callId: "claude-1" }), notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" })]));
-    expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(1);
+    expect(runOf(s, "implementation")?.pending?.asked.prompt).toBe(1);
   });
 
   // Issue #51 (Q4): the follow-up clarifications are one conversation with the clarification, so they fold into its
@@ -529,10 +533,10 @@ describe("the steps of Gather Requirements", () => {
       [prompts.stepLabel("formulate"), "done", null, "Question review:1"],
       [prompts.stepLabel("clarification"), "done", "9/9", "Requirements review:1,2"],
     ]);
-    expect(s.modes.implementation.run?.timeline[0].steps[1].groups.length).toBe(1);
-    expect(s.modes.implementation.run?.timeline[0].steps[1].groups[0].result).toBe("converged");
-    expect(s.modes.implementation.run?.timeline[0].state).toBe("done");
-    expect(replayed(events).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
+    expect(runOf(s, "implementation")?.timeline[0].steps[1].groups.length).toBe(1);
+    expect(runOf(s, "implementation")?.timeline[0].steps[1].groups[0].result).toBe("converged");
+    expect(runOf(s, "implementation")?.timeline[0].state).toBe("done");
+    expect(runOf(replayed(events), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   test("every further follow-up folds in the same way", () => {
@@ -540,26 +544,26 @@ describe("the steps of Gather Requirements", () => {
     const s = fold(live(events));
     expect(steps(s)?.map((st) => st[0])).toEqual([prompts.stepLabel("formulate"), prompts.stepLabel("clarification")]);
     expect(steps(s)?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "10/11", "Requirements review:1,2,3"]);
-    expect(replayed(events).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
+    expect(runOf(replayed(events), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   test("a run that ends during a clarification stops that step with its phase; the earlier steps stay done", () => {
     const events = [...through, { _tag: "Ended", code: 130 } as RunEvent];
     const s = fold(live(events));
-    expect(s.modes.implementation.run?.timeline[0].state).toBe("stopped");
+    expect(runOf(s, "implementation")?.timeline[0].state).toBe("stopped");
     expect(steps(s)?.map((st) => st[1])).toEqual(["done", "stopped"]);
-    expect(replayed(events).modes.implementation.run?.timeline).toEqual(s.modes.implementation.run?.timeline);
+    expect(runOf(replayed(events), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
   test("the other phases have no steps", () => {
     const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } })]));
-    expect(s.modes.implementation.run?.timeline[0].steps).toEqual([]);
+    expect(runOf(s, "implementation")?.timeline[0].steps).toEqual([]);
   });
 
   test("the compact progress line names the active step and its count, or its latest cycle", () => {
-    expect(progressOf(fold(live(through)).modes.implementation.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(3, 7)));
-    expect(progressOf(fold(live(through.slice(0, 3))).modes.implementation.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
-    expect(progressOf(fold(live([...through, turn(7, 7, "# R"), round("requirements", 1)])).modes.implementation.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), "cycle 1"));
+    expect(progressOf(runOf(fold(live(through)), "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(3, 7)));
+    expect(progressOf(runOf(fold(live(through.slice(0, 3))), "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
+    expect(progressOf(runOf(fold(live([...through, turn(7, 7, "# R"), round("requirements", 1)])), "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), "cycle 1"));
   });
 });
 
@@ -567,10 +571,10 @@ describe("the steps of Gather Requirements", () => {
 describe("the compact progress line", () => {
   test("the active phase and its latest cycle; none before any phase", () => {
     const planning = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 5 })]));
-    expect(progressOf(planning.modes.implementation.run!)).toBe("Progress: Planning, cycle 2");
-    expect(progressOf(fold(live([started])).modes.implementation.run!)).toBe("Progress: no phase has begun");
+    expect(progressOf(runOf(planning, "implementation")!)).toBe("Progress: Planning, cycle 2");
+    expect(progressOf(runOf(fold(live([started])), "implementation")!)).toBe("Progress: no phase has begun");
     const execution = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } })]));
-    expect(progressOf(execution.modes.implementation.run!)).toBe("Progress: Implementation");
+    expect(progressOf(runOf(execution, "implementation")!)).toBe("Progress: Implementation");
   });
 });
 
@@ -580,7 +584,7 @@ describe("runs, replay and gaps", () => {
     expect(one.needsReconnect).toBe(false);
     const two = fold([{ type: "event", run: 2, seq: 0, time: at(0), event: started }], one);
     expect(two.needsReconnect).toBe(false);
-    expect([two.modes.implementation.run?.id, two.modes.implementation.last?.id]).toEqual([2, 1]);
+    expect([runOf(two, "implementation")?.id, lastOf(two, "implementation")?.id]).toEqual([2, 1]);
     const gap = fold([{ type: "event", run: 2, seq: 5, time: at(5), event: said("x") }], two);
     expect(gap.needsReconnect).toBe(true);
     const badStart = fold([{ type: "event", run: 3, seq: 4, time: at(4), event: started }], two);
@@ -607,7 +611,7 @@ describe("runs, replay and gaps", () => {
   });
 
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
-  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location, current: { refinement: null, implementation: null }, incarnation });
+  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location, current: { refinement: [], implementation: null }, incarnation });
   const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null }];
 
   test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
@@ -688,7 +692,7 @@ describe("runs, replay and gaps", () => {
       fc.property(itemsArb, itemsArb, fc.constantFrom("a", "b"), (r, i, incarnation) => {
         const base = fold([hello(null)]);
         const state: ViewState = { ...base, modes: { refinement: { ...base.modes.refinement, items: r }, implementation: { ...base.modes.implementation, items: i } } };
-        const s = reduce(state, { type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+        const s = reduce(state, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
         expect([s.modes.refinement.items._tag, s.modes.implementation.items._tag]).not.toContain("Loading");
       }),
       { numRuns: 50 },
@@ -745,11 +749,11 @@ describe("runs, replay and gaps", () => {
         const second = timed([started, ...b], gapsB);
         const incremental = fold([hello(null), { type: "replay", ui: [], runs: [] }, ...first.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 1, seq, time, event })), ...second.map(({ time, event }, seq): ServerMessage => ({ type: "event", run: 2, seq, time, event }))]);
         const replay = fold([hello(2), { type: "replay", ui: [], runs: [{ id: 1, events: first }, { id: 2, events: second }] }]);
-        expect(replay.modes.implementation.run).toEqual(incremental.modes.implementation.run);
-        expect(replay.modes.implementation.last).toEqual(incremental.modes.implementation.last);
+        expect(runOf(replay, "implementation")).toEqual(runOf(incremental, "implementation"));
+        expect(lastOf(replay, "implementation")).toEqual(lastOf(incremental, "implementation"));
         expect(incremental.needsReconnect).toBe(false);
         // Every phase that began has ended by Ended(0), and has retired the steps it never began.
-        expect(incremental.modes.implementation.last?.timeline.filter((e) => e.state !== "ahead").flatMap((e) => e.steps.filter((st) => st.state === "ahead"))).toEqual([]);
+        expect(lastOf(incremental, "implementation")?.timeline.filter((e) => e.state !== "ahead").flatMap((e) => e.steps.filter((st) => st.state === "ahead"))).toEqual([]);
       }),
       // A phase that began and a step of it that never did, always among the cases rather than only when drawn.
       { examples: [[[notified({ _tag: "PhasesForeseen", phases: phasesOf(true, 1) }), notified({ _tag: "PhaseBegan", phase: { kind: "questions" } })], [], Array(14).fill(0), Array(14).fill(0)]] },
@@ -760,14 +764,14 @@ describe("runs, replay and gaps", () => {
 // Finding 12 of docs/gui-review.md: a hello from another incarnation clears the view of the earlier server's runs.
 describe("a server restart", () => {
   test("a hello with a new incarnation clears the old run's view; the same incarnation keeps it", () => {
-    const withRun = reduce(reduce(initialState, { type: "hello", chain: helloChain, location: "/w", current: { refinement: null, implementation: 3 }, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: started }] }] });
-    expect(withRun.modes.implementation.run?.id).toBe(3);
+    const withRun = reduce(reduce(initialState, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: started }] }] });
+    expect(runOf(withRun, "implementation")?.id).toBe(3);
     expect(withRun.incarnation).toBe("a");
-    expect(reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: null, implementation: 3 }, incarnation: "a" }).modes.implementation.run?.id).toBe(3);
-    const restarted = reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: null, implementation: null }, incarnation: "b" });
-    expect([restarted.modes.implementation.run, restarted.modes.implementation.last, restarted.incarnation]).toEqual([null, null, "b"]);
+    expect(runOf(reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), "implementation")?.id).toBe(3);
+    const restarted = reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: null }, incarnation: "b" });
+    expect([runOf(restarted, "implementation"), lastOf(restarted, "implementation"), restarted.incarnation]).toEqual([null, null, "b"]);
     const next = reduce(restarted, { type: "event", run: 1, seq: 0, time: at(0), event: { ...started, task: "u" } as RunEvent });
-    expect(next.modes.implementation.run?.id).toBe(1);
+    expect(runOf(next, "implementation")?.id).toBe(1);
   });
 });
 
@@ -784,9 +788,9 @@ describe("the server closing", () => {
 describe("answered prompts", () => {
   test("answered lists the prompts of the Answered events in order, equal between the live fold and the replay", () => {
     const events: RunEvent[] = [started, asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }, asked(2, prompts.decisionPrompt), { _tag: "Answered", prompt: 2, text: "a" }, asked(3, prompts.decisionPrompt)];
-    const liveRun = fold(live(events)).modes.implementation.run;
+    const liveRun = runOf(fold(live(events)), "implementation");
     expect(liveRun?.answered).toEqual([1, 2]);
-    expect(replayed(events).modes.implementation.run?.answered).toEqual(liveRun?.answered);
+    expect(runOf(replayed(events), "implementation")?.answered).toEqual(liveRun?.answered);
   });
 });
 
@@ -794,7 +798,7 @@ describe("answered prompts", () => {
 describe("the interview's opening help", () => {
   test("the dashboard's help names /done, /quit and Shift+Enter, and has no triple quotes", () => {
     const s = fold(live([started, notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 })]));
-    const body = s.modes.implementation.run?.dashboard.interviewHelp ?? "";
+    const body = runOf(s, "implementation")?.dashboard.interviewHelp ?? "";
     expect(body).toBe(prompts.interviewHelp("Interview"));
     expect(body).toMatch(/Shift\+Enter/);
     expect(body).toMatch(/\/done/);
@@ -864,16 +868,16 @@ describe("a replay of a question phase", () => {
       return d.success;
     });
     const s = fold(messages);
-    const right = s.modes.implementation.run?.right.map((m) => `${m.author}:${m.body}`) ?? [];
+    const right = runOf(s, "implementation")?.right.map((m) => `${m.author}:${m.body}`) ?? [];
     expect(right.length).toBe(2);
     expect(right[0]).toMatch(/^codex:.*The list does not ask for the database\./s);
     expect(right[1]).toMatch(/^claude:.*\[Q-R1-1\]\*\* accepted: Added the database question\./s);
-    expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(prompts.interviewHelp("Interview"));
+    expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(prompts.interviewHelp("Interview"));
     expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Which database should the service use?\n1. PostgreSQL\n2. SQLite" });
-    expect(s.modes.implementation.run?.dashboard.models).toEqual({ claude: null, codex: prompts.modelLine({ agent: "codex", name: null }) });
-    expect(s.modes.implementation.run?.pending?.asked.kind).toBe("interviewMessage");
-    expect(s.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
-    expect(s.modes.implementation.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
+    expect(runOf(s, "implementation")?.dashboard.models).toEqual({ claude: null, codex: prompts.modelLine({ agent: "codex", name: null }) });
+    expect(runOf(s, "implementation")?.pending?.asked.kind).toBe("interviewMessage");
+    expect(runOf(s, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
+    expect(runOf(s, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
   });
 });
 
@@ -883,12 +887,12 @@ describe("a replay of a question phase", () => {
 describe("the time of a message", () => {
   const review = notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 });
   const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
-  const shown = (s: ViewState) => s.modes.implementation.run?.right.map((m) => m.showTime) ?? [];
+  const shown = (s: ViewState) => runOf(s, "implementation")?.right.map((m) => m.showTime) ?? [];
 
   test("a message carries its event's time, live and after a replay, and the first of a panel shows it", () => {
     for (const s of [fold(live([started, review], 1, [0, 5])), replayed([started, review], 1, 1, [0, 5])]) {
-      expect(s.modes.implementation.run?.right[0]?.time).toBe(at(5));
-      expect(s.modes.implementation.run?.right[0]?.showTime).toBe(true);
+      expect(runOf(s, "implementation")?.right[0]?.time).toBe(at(5));
+      expect(runOf(s, "implementation")?.right[0]?.showTime).toBe(true);
     }
   });
 
@@ -900,7 +904,7 @@ describe("the time of a message", () => {
 
   test("another author shows the time, however close", () => {
     const s = fold(live([started, review, response, review], 1, [0, 0, 1, 2]));
-    expect(s.modes.implementation.run?.right.map((m) => m.author)).toEqual(["codex", "claude", "codex"]);
+    expect(runOf(s, "implementation")?.right.map((m) => m.author)).toEqual(["codex", "claude", "codex"]);
     expect(shown(s)).toEqual([true, true, true]);
   });
 
@@ -921,7 +925,7 @@ describe("the time of a message", () => {
     const between = fold(live([started, review, said("a"), review], 1, [0, 0, 60, 170]));
     expect(shown(between)).toEqual([true, true]);
     const ended = fold(live([started, review, { _tag: "Ended", code: 0 }], 1, [0, 0, 500]));
-    expect(ended.modes.implementation.run?.right.map((m) => [m.time, m.showTime])).toEqual([[at(0), true]]);
+    expect(runOf(ended, "implementation")?.right.map((m) => [m.time, m.showTime])).toEqual([[at(0), true]]);
   });
 
   test("a tab that joins late or reconnects folds the replay to the same messages, times and grouping as a live tab", () => {
@@ -930,8 +934,8 @@ describe("the time of a message", () => {
     const liveView = fold(live(events, 1, times));
     const late = replayed(events, 1, 1, times);
     const again = fold([hello(1), { type: "replay", ui: [], runs: [{ id: 1, events: stamp(events, times) }] }], late);
-    for (const s of [late, again]) expect(s.modes.implementation.run?.right).toEqual(liveView.modes.implementation.run?.right);
-    expect(liveView.modes.implementation.run?.right.map((m) => [m.time, m.showTime])).toEqual([[at(1), true], [at(30), false], [at(400), true]]);
+    for (const s of [late, again]) expect(runOf(s, "implementation")?.right).toEqual(runOf(liveView, "implementation")?.right);
+    expect(runOf(liveView, "implementation")?.right.map((m) => [m.time, m.showTime])).toEqual([[at(1), true], [at(30), false], [at(400), true]]);
   });
 
   test("showsTime: no message before, another author, more than 120 s since the last time shown, or a time that cannot be read", () => {
@@ -963,17 +967,17 @@ describe("phase bands", () => {
   const review = reviewOf({ plan: 1 });
   const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
   const views = (events: readonly RunEvent[], times: readonly number[]) => [fold(live(events, 1, times)), replayed(events, 1, 1, times)];
-  const shown = (s: ViewState) => s.modes.implementation.run?.right.map((m) => m.showTime) ?? [];
+  const shown = (s: ViewState) => runOf(s, "implementation")?.right.map((m) => m.showTime) ?? [];
 
   test("a message before any phase has no band and shows its time as the first of its panel", () => {
     for (const s of views([started, review], [0, 5])) {
-      expect(s.modes.implementation.run?.right.map((m) => [m.band, m.showTime])).toEqual([[null, true]]);
+      expect(runOf(s, "implementation")?.right.map((m) => [m.band, m.showTime])).toEqual([[null, true]]);
     }
   });
 
   test("the first message after a label shows no time within 2 minutes of it, although it is the first of its panel", () => {
     for (const s of views([started, planning(1), review, review, review], [0, 100, 130, 200, 260])) {
-      expect(s.modes.implementation.run?.right[0]?.band).toEqual({ key: "planning-1", kind: "planning", name: "Planning", began: at(100) });
+      expect(runOf(s, "implementation")?.right[0]?.band).toEqual({ key: "planning-1", kind: "planning", name: "Planning", began: at(100) });
       expect(shown(s)).toEqual([false, false, true]);
     }
   });
@@ -990,15 +994,15 @@ describe("phase bands", () => {
 
   test("a phase without a message in the panel makes no band there", () => {
     for (const s of views([started, planning(1), said("a"), review, execution(1), said("x")], [0, 0, 1, 300, 310, 311])) {
-      expect(s.modes.implementation.run?.right.map((m) => [m.band?.key, m.showTime])).toEqual([["planning-1", true]]);
-      expect(bandsOf(s.modes.implementation.run?.right ?? []).map((g) => g.band?.key)).toEqual(["planning-1"]);
+      expect(runOf(s, "implementation")?.right.map((m) => [m.band?.key, m.showTime])).toEqual([["planning-1", true]]);
+      expect(bandsOf(runOf(s, "implementation")?.right ?? []).map((g) => g.band?.key)).toEqual(["planning-1"]);
     }
   });
 
   test("the messages after a phase ends stay in its band until the next phase begins", () => {
     const ended = notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" });
     for (const s of views([started, planning(1), review, ended, review], [0, 0, 1, 2, 3])) {
-      expect(s.modes.implementation.run?.right.map((m) => m.band?.key)).toEqual(["planning-1", "planning-1"]);
+      expect(runOf(s, "implementation")?.right.map((m) => m.band?.key)).toEqual(["planning-1", "planning-1"]);
     }
   });
 
@@ -1006,7 +1010,7 @@ describe("phase bands", () => {
     const work = (k: number) => began({ kind: "work", n: k });
     const events = [started, review, work(1), reviewOf({ work: 1 }), planning(2), reviewOf({ plan: 2 }), reviewOf({ plan: 2 }), work(2), reviewOf({ work: 2 })];
     for (const s of views(events, events.map((_, i) => i))) {
-      const groups = bandsOf(s.modes.implementation.run?.right ?? []);
+      const groups = bandsOf(runOf(s, "implementation")?.right ?? []);
       expect(groups.map((g) => [g.band?.kind ?? null, g.messages.length])).toEqual([
         [null, 1],
         ["work", 1],
@@ -1021,8 +1025,8 @@ describe("phase bands", () => {
     const times = [0, 1, 2, 3, 4, 200, 201, 202];
     const liveView = fold(live(events, 1, times));
     const late = replayed(events, 1, 1, times);
-    expect(late.modes.implementation.run?.right).toEqual(liveView.modes.implementation.run?.right);
-    expect(liveView.modes.implementation.run?.right.map((m) => [m.band?.key, m.showTime])).toEqual([["questions", false], ["planning-1", false]]);
+    expect(runOf(late, "implementation")?.right).toEqual(runOf(liveView, "implementation")?.right);
+    expect(runOf(liveView, "implementation")?.right.map((m) => [m.band?.key, m.showTime])).toEqual([["questions", false], ["planning-1", false]]);
   });
 });
 
@@ -1035,17 +1039,17 @@ describe("decision support", () => {
 
   test("presented options become the cards of the next decision prompt; the offer is a choice", () => {
     const s = fold(live([started, notified(presented), asked(1, prompts.withOffer(prompts.decisionPrompt))]));
-    expect(s.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["Follow Codex — the issue=1", "Follow Claude — the rationale=2"]);
-    expect(s.modes.implementation.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.CONTINUE_WITHOUT_DECIDING}=`, `${prompts.HELP_ME_DECIDE}=/decide`, `${prompts.END_RUN_LABEL}=q`]);
-    expect(s.modes.implementation.run?.dashboard.answers).toEqual([]);
-    expect(s.modes.implementation.run?.pending?.hint).toBe(prompts.pagePromptText("decision", prompts.decisionPrompt));
+    expect(runOf(s, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["Follow Codex — the issue=1", "Follow Claude — the rationale=2"]);
+    expect(runOf(s, "implementation")?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.CONTINUE_WITHOUT_DECIDING}=`, `${prompts.HELP_ME_DECIDE}=/decide`, `${prompts.END_RUN_LABEL}=q`]);
+    expect(runOf(s, "implementation")?.dashboard.answers).toEqual([]);
+    expect(runOf(s, "implementation")?.pending?.hint).toBe(prompts.pagePromptText("decision", prompts.decisionPrompt));
     const helped = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: { _tag: "Answered", prompt: 1, text: "/decide" } }], s);
     expect(lastAnswerOf(helped)).toEqual({ key: "1-3", asked: { _tag: "Question", question: presentedOf(presented) }, answer: prompts.HELP_ME_DECIDE });
   });
 
   test("options never outlive their prompt: a pause without options after one with options shows no cards", () => {
     const s = fold(live([started, notified(presented), asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "1" }, asked(2, prompts.decisionPrompt)]));
-    expect(s.modes.implementation.run?.pending?.options).toEqual([]);
+    expect(runOf(s, "implementation")?.pending?.options).toEqual([]);
   });
 
   test("after a nested decision the outer question's options are presented again (P1-R1-3)", () => {
@@ -1063,7 +1067,7 @@ describe("decision support", () => {
       notified(outer),
       asked(3, prompts.withOffer(prompts.optionOrTextPrompt)),
     ]));
-    expect(s.modes.implementation.run?.pending?.options.map((c) => c.label)).toEqual(["A", "B"]);
+    expect(runOf(s, "implementation")?.pending?.options.map((c) => c.label)).toEqual(["A", "B"]);
   });
 
   // S21 (Q4): while the analysis is prepared, one plain status message, updated in place at every check.
@@ -1075,7 +1079,7 @@ describe("decision support", () => {
     const last: RunEvent[] = [...events, progress(2), line(2)];
     for (const s of [fold(live(last)), replayed(last)]) {
       expect(statusOf(s)).toBe(prompts.analysisProgressLine(1, 3, 2).trim());
-      expect(s.modes.implementation.run?.dashboard.status._tag).toBe("Interloq");
+      expect(runOf(s, "implementation")?.dashboard.status._tag).toBe("Interloq");
     }
   });
 
@@ -1087,14 +1091,14 @@ describe("decision support", () => {
     ];
     const before = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), asked(1, prompts.withOffer(prompts.decisionPrompt)), { _tag: "Answered", prompt: 1, text: "/decide" }]));
     const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), asked(1, prompts.withOffer(prompts.decisionPrompt)), { _tag: "Answered", prompt: 1, text: "/decide" }, ...loop, notified(analyzed(1)), asked(2, prompts.withOffer(prompts.decisionPrompt))]));
-    expect(s.modes.implementation.run?.timeline).toEqual(before.modes.implementation.run?.timeline);
-    expect(progressOf(s.modes.implementation.run!)).toBe(progressOf(before.modes.implementation.run!));
-    expect(s.modes.implementation.run?.analysis?.event.decision).toBe(1);
-    expect(s.modes.implementation.run?.analysis?.prompt).toBe(2);
+    expect(runOf(s, "implementation")?.timeline).toEqual(runOf(before, "implementation")?.timeline);
+    expect(progressOf(runOf(s, "implementation")!)).toBe(progressOf(runOf(before, "implementation")!));
+    expect(runOf(s, "implementation")?.analysis?.event.decision).toBe(1);
+    expect(runOf(s, "implementation")?.analysis?.prompt).toBe(2);
     const answered = fold([{ type: "event", run: 1, seq: 9, time: at(9), event: { _tag: "Answered", prompt: 2, text: "1" } }], s);
-    expect(answered.modes.implementation.run?.analysis).toBe(null);
+    expect(runOf(answered, "implementation")?.analysis).toBe(null);
     // A replay folds alike.
-    expect(replayed([started, notified(analyzed(3)), asked(1, prompts.withOffer(prompts.decisionPrompt))]).modes.implementation.run?.analysis?.event.decision).toBe(3);
+    expect(runOf(replayed([started, notified(analyzed(3)), asked(1, prompts.withOffer(prompts.decisionPrompt))]), "implementation")?.analysis?.event.decision).toBe(3);
   });
 });
 
@@ -1102,8 +1106,8 @@ describe("decision support", () => {
 test("a blank answer to a relayed question, then the question presented again: the retry keeps both cards", () => {
   const question: UiEvent = presentedEvent("A or B?", [{ label: "A", description: "a" }, { label: "B", description: "b" }]);
   const s = fold(live([started, notified(question), asked(1, prompts.withOffer(prompts.optionOrTextPrompt)), { _tag: "Answered", prompt: 1, text: "" }, notified(question), asked(2, prompts.withOffer(prompts.optionOrTextPrompt))]));
-  expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(2);
-  expect(s.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["A — a=1", "B — b=2"]);
+  expect(runOf(s, "implementation")?.pending?.asked.prompt).toBe(2);
+  expect(runOf(s, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["A — a=1", "B — b=2"]);
 });
 
 // W2-R1-1: a decision's response (with its amended analysis) folds into one Claude message; the rail is unchanged.
@@ -1114,9 +1118,9 @@ test("a decision's ResponseReceived is one Claude message in the right panel, li
   const events: RunEvent[] = [started, phase, notified({ _tag: "ResponseReceived", subject: { decision: 1 }, round: 1, response, resultText: "" })];
   const before = fold(live([started, phase]));
   for (const s of [fold(live(events)), replayed(events)]) {
-    expect(s.modes.implementation.run?.right.map((m) => m.author)).toEqual(["claude"]);
-    expect(s.modes.implementation.run?.right[0].body).toMatch(/D1-R1-1/);
-    expect(s.modes.implementation.run?.timeline).toEqual(before.modes.implementation.run?.timeline);
+    expect(runOf(s, "implementation")?.right.map((m) => m.author)).toEqual(["claude"]);
+    expect(runOf(s, "implementation")?.right[0].body).toMatch(/D1-R1-1/);
+    expect(runOf(s, "implementation")?.timeline).toEqual(runOf(before, "implementation")?.timeline);
   }
   // The message decodes from the wire as well.
   const wire: ServerMessage = { type: "event", run: 1, seq: 2, time: at(2), event: events[2] };
@@ -1137,11 +1141,11 @@ test("a rejected blank reply keeps the analysis for the retry; an accepted empty
     notified(question),
     asked(3, prompts.withOffer(prompts.optionOrTextPrompt)),
   ];
-  for (const s of [fold(live(rejected)), replayed(rejected)]) expect(s.modes.implementation.run?.analysis?.prompt).toBe(3);
+  for (const s of [fold(live(rejected)), replayed(rejected)]) expect(runOf(s, "implementation")?.analysis?.prompt).toBe(3);
   const answered = fold(live([...rejected, { _tag: "Answered", prompt: 3, text: "1" }]));
-  expect(answered.modes.implementation.run?.analysis).toBe(null);
+  expect(runOf(answered, "implementation")?.analysis).toBe(null);
   const accepted = fold(live([started, notified(analyzedEvent), asked(2, prompts.withOffer(prompts.decisionPrompt)), { _tag: "Answered", prompt: 2, text: "" }, asked(3, prompts.decisionPrompt)]));
-  expect(accepted.modes.implementation.run?.analysis).toBe(null);
+  expect(runOf(accepted, "implementation")?.analysis).toBe(null);
 });
 
 // Issue #6 (Q5, Q9): the reducer keeps the current plan with the phase that carries it out; every write replaces it.
@@ -1150,8 +1154,8 @@ describe("the plan", () => {
   test("PlanChanged keeps the latest plan and its phase, live and after a replay", () => {
     const events = [started, notified({ _tag: "PlanChanged", phase: 1, plan: planOf("S1", "pending"), step: null }), notified({ _tag: "PlanChanged", phase: 2, plan: planOf("S2", "done"), step: null })];
     const s = fold(live(events));
-    expect(s.modes.implementation.run?.plan).toEqual({ phase: 2, plan: planOf("S2", "done") });
-    expect(replayed(events).modes.implementation.run?.plan).toEqual(s.modes.implementation.run?.plan);
+    expect(runOf(s, "implementation")?.plan).toEqual({ phase: 2, plan: planOf("S2", "done") });
+    expect(runOf(replayed(events), "implementation")?.plan).toEqual(runOf(s, "implementation")?.plan);
   });
 });
 
@@ -1160,23 +1164,23 @@ describe("the plan", () => {
 describe("the whole run in the timeline", () => {
   const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: phasesOf(questions, iterations) });
   const began = (phase: Parameters<typeof phaseName>[0]) => notified({ _tag: "PhaseBegan", phase });
-  const entries = (s: ViewState) => s.modes.implementation.run?.timeline.map((e) => [e.label, e.state]) ?? [];
+  const entries = (s: ViewState) => runOf(s, "implementation")?.timeline.map((e) => [e.label, e.state]) ?? [];
   const recorded = (id: string, status: "pending" | "started" | "done" | "unfinished") => ({ stages: [{ number: 1, title: "t", steps: [{ id, number: 1, label: "l", text: "x", status }] }] });
 
   test("the entries foreseen at the start, with and without the question phase", () => {
     const withQuestions = fold(live([started, foreseen(true, 1)]));
     expect(entries(withQuestions)).toEqual([["Gather Requirements", "ahead"], ["Planning", "ahead"], ["Implementation", "ahead"], ["Code review", "ahead"]]);
-    expect(withQuestions.modes.implementation.run?.timeline[0].steps.map((st) => [st.label, st.state])).toEqual([[prompts.stepLabel("formulate"), "ahead"], [prompts.stepLabel("clarification"), "ahead"]]);
+    expect(runOf(withQuestions, "implementation")?.timeline[0].steps.map((st) => [st.label, st.state])).toEqual([[prompts.stepLabel("formulate"), "ahead"], [prompts.stepLabel("clarification"), "ahead"]]);
     expect(entries(fold(live([started, foreseen(false, 1)])))).toEqual([["Planning", "ahead"], ["Implementation", "ahead"], ["Code review", "ahead"]]);
   });
 
   test("the seam of the labels: Planning becomes Planning 1 in the rail and in its band the moment Planning 2 is foreseen", () => {
     const before = [started, foreseen(false, 1), began({ kind: "planning", n: 1 }), notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 })];
     const one = fold(live(before));
-    expect([one.modes.implementation.run?.timeline[0].label, one.modes.implementation.run?.right[0].band?.name]).toEqual([phaseName({ kind: "planning", n: 1 }, 1), phaseName({ kind: "planning", n: 1 }, 1)]);
+    expect([runOf(one, "implementation")?.timeline[0].label, runOf(one, "implementation")?.right[0].band?.name]).toEqual([phaseName({ kind: "planning", n: 1 }, 1), phaseName({ kind: "planning", n: 1 }, 1)]);
     for (const s of [fold(live([...before, foreseen(false, 2)])), replayed([...before, foreseen(false, 2)])]) {
-      expect(s.modes.implementation.run?.timeline[0].label).toBe(phaseName({ kind: "planning", n: 1 }, 2));
-      expect(s.modes.implementation.run?.right[0].band?.name).toBe(s.modes.implementation.run?.timeline[0].label);
+      expect(runOf(s, "implementation")?.timeline[0].label).toBe(phaseName({ kind: "planning", n: 1 }, 2));
+      expect(runOf(s, "implementation")?.right[0].band?.name).toBe(runOf(s, "implementation")?.timeline[0].label);
       expect(entries(s).map(([label]) => label)).toEqual(["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]);
     }
   });
@@ -1190,8 +1194,8 @@ describe("the whole run in the timeline", () => {
 
   // A foreseen step that never began is retired when its phase ends: "skipped", not "ahead", and not "notReached",
   // which a halt gives. The states are compared as strings.
-  const stepStates = (s: ViewState) => s.modes.implementation.run?.timeline.map((e) => e.steps.map((st) => [st.kind, st.state as string])) ?? [];
-  const noStepAhead = (s: ViewState) => s.modes.implementation.run?.timeline.every((e) => e.steps.every((st) => (st.state as string) !== "ahead")) ?? false;
+  const stepStates = (s: ViewState) => runOf(s, "implementation")?.timeline.map((e) => e.steps.map((st) => [st.kind, st.state as string])) ?? [];
+  const noStepAhead = (s: ViewState) => runOf(s, "implementation")?.timeline.every((e) => e.steps.every((st) => (st.state as string) !== "ahead")) ?? false;
   const q = { kind: "questions" as const };
   const phaseDone = (phase: Parameters<typeof phaseName>[0]): RunEvent[] => [began(phase), notified({ _tag: "PhaseEnded", phase, result: "converged" })];
 
@@ -1216,7 +1220,7 @@ describe("the whole run in the timeline", () => {
   test("a phase that ends while a later step of it never began retires that step; a halt still leaves it not reached", () => {
     const prefix: RunEvent[] = [started, foreseen(true, 1), began(q)];
     const ended = fold(live([...prefix, notified({ _tag: "PhaseEnded", phase: q, result: "converged" })]));
-    expect(ended.modes.implementation.run?.timeline[0].steps.every((st) => (st.state as string) !== "ahead")).toBe(true);
+    expect(runOf(ended, "implementation")?.timeline[0].steps.every((st) => (st.state as string) !== "ahead")).toBe(true);
     expect(stepStates(ended)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
     const finished = fold(live([...prefix, { _tag: "Ended", code: 0 }]));
     expect(stepStates(finished)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
@@ -1240,20 +1244,20 @@ describe("the whole run in the timeline", () => {
     ];
     for (const s of [fold(live(events)), replayed(events)]) {
       expect(entries(s)).toEqual([["Gather Requirements", "done"]]);
-      expect(s.modes.implementation.run?.timeline.some((e) => (e.state as string) === "notReached" || (e.state as string) === "ahead")).toBe(false);
+      expect(runOf(s, "implementation")?.timeline.some((e) => (e.state as string) === "notReached" || (e.state as string) === "ahead")).toBe(false);
     }
   });
 
   test("the plan hangs under the Implementation of its phase, and a revision moves it there (Q5, Q9)", () => {
     const first = [started, foreseen(false, 1), began({ kind: "planning", n: 1 }), notified({ _tag: "PlanChanged", phase: 1, plan: recorded("S1", "pending"), step: null })];
-    const plans = (x: ViewState) => x.modes.implementation.run?.timeline.map((e) => bare(e.plan));
+    const plans = (x: ViewState) => runOf(x, "implementation")?.timeline.map((e) => bare(e.plan));
     const one = fold(live(first));
     expect(plans(one)).toEqual([null, recorded("S1", "pending"), null]);
     const revised = fold(live([...first, foreseen(false, 2), notified({ _tag: "PlanChanged", phase: 2, plan: recorded("S2", "pending"), step: null })]));
     expect(plans(revised)).toEqual([null, null, null, null, recorded("S2", "pending"), null]);
     // A phase that was not foreseen (a replay of an older run) takes the plan when it begins.
     const late = fold(live([started, notified({ _tag: "PlanChanged", phase: 1, plan: recorded("S1", "pending"), step: null }), began({ kind: "execution", n: 1 })]));
-    expect(bare(late.modes.implementation.run?.timeline[0].plan ?? null)).toEqual(recorded("S1", "pending"));
+    expect(bare(runOf(late, "implementation")?.timeline[0].plan ?? null)).toEqual(recorded("S1", "pending"));
   });
 
   test("a started step is current only when it is the entry's current step, its phase is active and an execution call runs", () => {
@@ -1278,14 +1282,14 @@ describe("the whole run in the timeline", () => {
     const nested = fold(live([...prefix, call("claude", "planning"), call("codex", "review")]));
     const resumed = fold(live([...prefix, call("claude", "planning"), call("codex", "review"), end("codex"), end("claude")]));
     for (const s of [executing, nested, resumed]) {
-      expect(s.modes.implementation.run?.busy).toBe(true);
-      expect(s.modes.implementation.run?.calls.some((c) => c.purpose === "execution")).toBe(true);
+      expect(runOf(s, "implementation")?.busy).toBe(true);
+      expect(runOf(s, "implementation")?.calls.some((c) => c.purpose === "execution")).toBe(true);
     }
     expect(statusOf(nested)).toBe("Codex — review");
     expect(statusOf(resumed)).toBe(statusOf(executing));
-    expect(resumed.modes.implementation.run?.calls.at(-1)?.startedAt).toBe(executing.modes.implementation.run?.calls.at(-1)?.startedAt);
+    expect(runOf(resumed, "implementation")?.calls.at(-1)?.startedAt).toBe(runOf(executing, "implementation")?.calls.at(-1)?.startedAt);
     const ended = fold(live([...prefix, end("claude")]));
-    expect([ended.modes.implementation.run?.busy, ended.modes.implementation.run?.calls.length]).toEqual([false, 0]);
+    expect([runOf(ended, "implementation")?.busy, runOf(ended, "implementation")?.calls.length]).toEqual([false, 0]);
   });
 
   test("with the whole run foreseen, cycles and counts attach to the active phase and step, and the progress line names them", () => {
@@ -1296,16 +1300,16 @@ describe("the whole run in the timeline", () => {
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
     ];
     const formulate = fold(live(events));
-    expect(formulate.modes.implementation.run?.timeline[0].steps[0].groups[0].rounds.length).toBe(1);
-    expect(formulate.modes.implementation.run?.timeline.slice(1).every((e) => e.groups.length === 0)).toBe(true);
-    expect(progressOf(formulate.modes.implementation.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
+    expect(runOf(formulate, "implementation")?.timeline[0].steps[0].groups[0].rounds.length).toBe(1);
+    expect(runOf(formulate, "implementation")?.timeline.slice(1).every((e) => e.groups.length === 0)).toBe(true);
+    expect(progressOf(runOf(formulate, "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("formulate")), "cycle 1"));
     const interview = fold(live([...events, notified({ _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 3 }), notified({ _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Q?", summary: null, answered: 1, total: 3 })]));
-    expect(interview.modes.implementation.run?.timeline[0].steps.map((st) => [st.kind, st.state, st.count])).toEqual([["formulate", "done", null], ["clarification", "active", { answered: 1, total: 3 }]]);
-    expect(progressOf(interview.modes.implementation.run!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(1, 3)));
+    expect(runOf(interview, "implementation")?.timeline[0].steps.map((st) => [st.kind, st.state, st.count])).toEqual([["formulate", "done", null], ["clarification", "active", { answered: 1, total: 3 }]]);
+    expect(progressOf(runOf(interview, "implementation")!)).toBe(prompts.progressLine(prompts.stepOfPhase("Gather Requirements", prompts.stepLabel("clarification")), prompts.clarificationProgress(1, 3)));
     const planning = fold(live([...events, notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" }), began({ kind: "planning", n: 1 }), notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 1, limit: 5 })]));
-    expect(planning.modes.implementation.run?.timeline[1].groups[0].rounds.length).toBe(1);
-    expect(planning.modes.implementation.run?.timeline[3].groups).toEqual([]);
-    expect(progressOf(planning.modes.implementation.run!)).toBe(prompts.progressLine("Planning", "cycle 1"));
+    expect(runOf(planning, "implementation")?.timeline[1].groups[0].rounds.length).toBe(1);
+    expect(runOf(planning, "implementation")?.timeline[3].groups).toEqual([]);
+    expect(progressOf(runOf(planning, "implementation")!)).toBe(prompts.progressLine("Planning", "cycle 1"));
   });
 });
 
@@ -1313,10 +1317,10 @@ describe("the whole run in the timeline", () => {
 test("the elapsed time's start: the nested call's while it runs, the outer call's after it", () => {
   const events: RunEvent[] = [started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-1" }), notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" })];
   const nested = fold(live(events, 1, [0, 10, 70]));
-  expect(callStartedAt(nested.modes.implementation.run!)).toBe(at(70));
+  expect(callStartedAt(runOf(nested, "implementation")!)).toBe(at(70));
   const after = fold(live([...events, notified({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" })], 1, [0, 10, 70, 80]));
-  expect(callStartedAt(after.modes.implementation.run!)).toBe(at(10));
-  expect(callStartedAt(fold(live([started])).modes.implementation.run!)).toBe(null);
+  expect(callStartedAt(runOf(after, "implementation")!)).toBe(at(10));
+  expect(callStartedAt(runOf(fold(live([started])), "implementation")!)).toBe(null);
 });
 
 // Issue #26 (S21): the retry of a transport fault on the activity line, live and replayed alike.
@@ -1398,7 +1402,7 @@ describe("the retry state after the retries are exhausted", () => {
 describe("phase times", () => {
   const foreseen = (questions: boolean, iterations: number) => notified({ _tag: "PhasesForeseen", phases: phasesOf(questions, iterations) });
   const planning = { kind: "planning" as const, n: 1 };
-  const times = (s: ViewState) => s.modes.implementation.run?.timeline.map((e) => [e.label, e.began, e.ended]) ?? [];
+  const times = (s: ViewState) => runOf(s, "implementation")?.timeline.map((e) => [e.label, e.began, e.ended]) ?? [];
 
   test("PhaseBegan and PhaseEnded stamp the entry; an entry ahead has neither; live and replay agree", () => {
     const events: RunEvent[] = [started, foreseen(false, 1), notified({ _tag: "PhaseBegan", phase: planning }), notified({ _tag: "PhaseEnded", phase: planning, result: "converged" })];
@@ -1441,18 +1445,18 @@ describe("the current step of the plan", () => {
     });
   };
   const prefix: RunEvent[] = [started, foreseen, began, call()];
-  const implementation = (s: ViewState) => s.modes.implementation.run!.timeline.find((e) => e.phase.kind === "execution")!;
+  const implementation = (s: ViewState) => runOf(s, "implementation")!.timeline.find((e) => e.phase.kind === "execution")!;
   /** The state of each step as the rail derives it, in the order of the plan. */
   const states = (s: ViewState) => {
     const entry = implementation(s);
-    return (s.modes.implementation.run!.plan?.plan.stages[0].steps ?? []).map((st) => `${st.id}:${planStepState(entry, st, executing(s.modes.implementation.run!))}`);
+    return (runOf(s, "implementation")!.plan?.plan.stages[0].steps ?? []).map((st) => `${st.id}:${planStepState(entry, st, executing(runOf(s, "implementation")!))}`);
   };
   const both = (events: RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("two steps started: the later is current, the earlier unfinished; live and replay agree", () => {
     for (const s of both([...prefix, ...reports([["S1", "started"], ["S2", "started"]])])) {
       expect(states(s)).toEqual(["S1:unfinished", "S2:current", "S3:pending"]);
-      expect(currentPlanStep(implementation(s), executing(s.modes.implementation.run!))).toBe("S2");
+      expect(currentPlanStep(implementation(s), executing(runOf(s, "implementation")!))).toBe("S2");
     }
   });
 
@@ -1460,7 +1464,7 @@ describe("the current step of the plan", () => {
     const done = [...prefix, ...reports([["S1", "started"], ["S2", "started"], ["S2", "done"]])];
     for (const s of both(done)) {
       expect(states(s)).toEqual(["S1:unfinished", "S2:done", "S3:pending"]);
-      expect(currentPlanStep(implementation(s), executing(s.modes.implementation.run!))).toBe(null);
+      expect(currentPlanStep(implementation(s), executing(runOf(s, "implementation")!))).toBe(null);
     }
     const resumed = [...prefix, ...reports([["S1", "started"], ["S2", "started"], ["S2", "done"], ["S1", "started"]])];
     for (const s of both(resumed)) expect(states(s)).toEqual(["S1:current", "S2:done", "S3:pending"]);
@@ -1470,7 +1474,7 @@ describe("the current step of the plan", () => {
     const retried = [...prefix, ...reports([["S1", "started"]]), callEnded(false), call()];
     for (const s of both(retried)) {
       expect(states(s)).toEqual(["S1:unfinished", "S2:pending", "S3:pending"]);
-      expect(currentPlanStep(implementation(s), executing(s.modes.implementation.run!))).toBe(null);
+      expect(currentPlanStep(implementation(s), executing(runOf(s, "implementation")!))).toBe(null);
     }
     for (const s of both([...retried, ...reports([["S1", "started"]], { S1: "started" })])) expect(states(s)[0]).toBe("S1:current");
   });
@@ -1549,7 +1553,7 @@ describe("the steps an Implementation acted on", () => {
   const revision: RunEvent[] = [begin("work", 1), end("work", 1), notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterationsOf(2)) }), begin("planning", 2), planChanged(2, v2()), end("planning", 2)];
   const implementation2: RunEvent[] = [begin("execution", 2), call, planChanged(2, v2({ S4: "started" }), { id: "S4", status: "started" }), planChanged(2, v2({ S4: "done" }), { id: "S4", status: "done" }), callEnded, end("execution", 2, "finished")];
 
-  const entry = (s: ViewState, label: string) => s.modes.implementation.run!.timeline.find((e) => e.label === label)!;
+  const entry = (s: ViewState, label: string) => runOf(s, "implementation")!.timeline.find((e) => e.label === label)!;
   /** An entry's shown plan: per stage its key and title, per step its id, number, label, text and status. */
   const shown = (s: ViewState, label: string) => entry(s, label).plan?.stages.map((st) => [st.key, st.title, st.steps.map((x) => `${x.id} ${x.number} ${x.label} (${x.text}) ${x.status}`)]) ?? null;
   const both = (events: RunEvent[]) => [fold(live(events)), replayed(events)];
@@ -1596,7 +1600,7 @@ describe("the steps an Implementation acted on", () => {
 
   test("shownPlan of an entry that is not an Implementation is null", () => {
     const s = fold(live(implementation1));
-    expect(shownPlan(entry(s, "Planning"), s.modes.implementation.run!.plan)).toBe(null);
+    expect(shownPlan(entry(s, "Planning"), runOf(s, "implementation")!.plan)).toBe(null);
   });
 });
 
@@ -1607,30 +1611,30 @@ describe("the pending question", () => {
   const pendingEvents: RunEvent[] = [started, said("a"), notified(presented), asked(1, prompts.withOffer(prompts.optionOrTextPrompt))];
   test("while pending, neither the question nor the prompt's text is an answer on the dashboard; the widget holds both", () => {
     for (const s of [fold(live(pendingEvents)), replayed(pendingEvents)]) {
-      expect(s.modes.implementation.run?.dashboard.answers).toEqual([]);
+      expect(runOf(s, "implementation")?.dashboard.answers).toEqual([]);
       expect(statusOf(s)).toBe("a");
-      expect(s.modes.implementation.run?.pending?.question).toEqual(presentedOf(presented));
-      expect(s.modes.implementation.run?.pending?.hint).toBe(prompts.pagePromptText("optionOrText", prompts.withOffer(prompts.optionOrTextPrompt)));
+      expect(runOf(s, "implementation")?.pending?.question).toEqual(presentedOf(presented));
+      expect(runOf(s, "implementation")?.pending?.hint).toBe(prompts.pagePromptText("optionOrText", prompts.withOffer(prompts.optionOrTextPrompt)));
     }
   });
   test("when answered, the question and the answer are the dashboard's last answer", () => {
     const events: RunEvent[] = [...pendingEvents, { _tag: "Answered", prompt: 1, text: "1" }];
     for (const s of [fold(live(events)), replayed(events)]) {
       expect(lastAnswerOf(s)).toEqual({ key: "1-4", asked: { _tag: "Question", question: presentedOf(presented) }, answer: "SQLite — a file" });
-      expect(s.modes.implementation.run?.pending).toBe(null);
+      expect(runOf(s, "implementation")?.pending).toBe(null);
     }
   });
   test("a question presented again after a rejected answer is the next prompt's question", () => {
     const again = presentedEvent("Which database, again?", []);
     const s = fold(live([...pendingEvents, { _tag: "Answered", prompt: 1, text: "" }, notified({ _tag: "AnswerRejected" }), notified(again), asked(2, prompts.optionOrTextPrompt)]));
-    expect(piecesText(s.modes.implementation.run?.pending?.question?.question ?? [])).toBe("Which database, again?");
+    expect(piecesText(runOf(s, "implementation")?.pending?.question?.question ?? [])).toBe("Which database, again?");
   });
   test("property: while a prompt is pending, its question is in no answer of the dashboard", () => {
     fc.assert(
       fc.property(fc.array(fc.string({ minLength: 1, maxLength: 6 }).map((t) => said(`s ${t}`)), { maxLength: 4 }), fc.string({ minLength: 3, maxLength: 12 }), (before, text) => {
         const q = presentedEvent(`Q? ${text}`, []);
         const s = fold(live([started, ...before, notified(q), asked(1, prompts.optionOrTextPrompt)]));
-        return (s.modes.implementation.run?.dashboard.answers ?? []).length === 0 && s.modes.implementation.run?.pending?.question?.question[0]?.text === `Q? ${text}`;
+        return (runOf(s, "implementation")?.dashboard.answers ?? []).length === 0 && runOf(s, "implementation")?.pending?.question?.question[0]?.text === `Q? ${text}`;
       }),
     );
   });
@@ -1674,23 +1678,23 @@ describe("the shared state of a run's page", () => {
   const state = (version: number, ...open: ReturnType<typeof scope>[]) => ({ version, choices: open.map((sc) => ({ scope: sc, open: true })) });
   test("a ui frame applies to the run it names, and one of a lower version is ignored", () => {
     const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }]);
-    expect(s.modes.implementation.run?.ui).toEqual(state(2, scope(1, "e1")));
-    expect(fold([{ type: "ui", run: 1, state: state(1) }], s).modes.implementation.run?.ui).toEqual(state(2, scope(1, "e1")));
-    expect(fold([{ type: "ui", run: 1, state: state(3) }], s).modes.implementation.run?.ui).toEqual(state(3));
+    expect(runOf(s, "implementation")?.ui).toEqual(state(2, scope(1, "e1")));
+    expect(runOf(fold([{ type: "ui", run: 1, state: state(1) }], s), "implementation")?.ui).toEqual(state(2, scope(1, "e1")));
+    expect(runOf(fold([{ type: "ui", run: 1, state: state(3) }], s), "implementation")?.ui).toEqual(state(3));
   });
   test("the replay sets each replayed run's state", () => {
     const s = fold([hello(2), { type: "replay", runs: [{ id: 1, events: stamp([started]) }, { id: 2, events: stamp([started]) }], ui: [{ run: 1, state: state(1, scope(1, "a")) }, { run: 2, state: state(4, scope(2, "b")) }] }]);
-    expect(s.modes.implementation.last?.ui).toEqual(state(1, scope(1, "a")));
-    expect(s.modes.implementation.run?.ui).toEqual(state(4, scope(2, "b")));
+    expect(lastOf(s, "implementation")?.ui).toEqual(state(1, scope(1, "a")));
+    expect(runOf(s, "implementation")?.ui).toEqual(state(4, scope(2, "b")));
   });
   test("a ui frame for the last run applies to it", () => {
     const s = fold([hello(2), { type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }, { id: 2, events: stamp([started]) }] }, { type: "ui", run: 1, state: state(1, scope(1, "a")) }]);
-    expect(s.modes.implementation.last?.ui).toEqual(state(1, scope(1, "a")));
-    expect(s.modes.implementation.run?.ui).toEqual(state(0));
+    expect(lastOf(s, "implementation")?.ui).toEqual(state(1, scope(1, "a")));
+    expect(runOf(s, "implementation")?.ui).toEqual(state(0));
   });
   test("a hello of another incarnation drops the state with the runs", () => {
-    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation: "b" }]);
-    expect(s.modes.implementation.run).toBe(null);
+    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }]);
+    expect(runOf(s, "implementation")).toBe(null);
   });
   test("after any order of the server's states, the view holds the state of the highest version", () => {
     fc.assert(
@@ -1698,7 +1702,7 @@ describe("the shared state of a run's page", () => {
         const states = scopes.map(([d, e], i) => state(i + 1, scope(d, e)));
         const order = fc.sample(fc.shuffledSubarray(states, { minLength: states.length }), { numRuns: 1, seed })[0];
         const s = fold([...live([started]), ...order.map((st): ServerMessage => ({ type: "ui", run: 1, state: st }))]);
-        expect(s.modes.implementation.run?.ui).toEqual(states.at(-1));
+        expect(runOf(s, "implementation")?.ui).toEqual(states.at(-1));
       }),
       { numRuns: 50, seed: 20261006 },
     );
@@ -1717,7 +1721,7 @@ describe("a wait for a usage limit", () => {
 
   test("the wait sets limitWait, and the activity line names the limit and the instant it lifts", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor)])) {
-      expect(s.modes.implementation.run?.limitWait).toEqual({ agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL });
+      expect(runOf(s, "implementation")?.limitWait).toEqual({ agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL });
       expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`);
       expect(statusOf(s)).toContain("five-hour session limit");
       expect(statusOf(s)).toContain("08:03 UTC");
@@ -1733,8 +1737,8 @@ describe("a wait for a usage limit", () => {
   });
 
   test("the lift, the run's end, and the next call's start each clear it", () => {
-    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted)])) expect(s.modes.implementation.run?.limitWait).toBe(null);
-    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(s.modes.implementation.run?.limitWait).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted), notified(call)])) expect(statusOf(s)).toBe("Claude — planning");
   });
 
@@ -1789,7 +1793,7 @@ describe("the rail as a tree that collapses", () => {
   const flags = (...list: readonly UiFlag[]): ServerMessage => ({ type: "ui", run: 1, state: list.reduce(withFlag, emptyUiState) });
   const phaseScope = (phase: Phase): UiScope => ({ _tag: "RailPhase", phase: bandKey(phase) });
   const stageScope = (n: number): UiScope => ({ _tag: "RailBranch", phase: bandKey(implementation), branch: `stage:current-${n}` });
-  const viewOf = (s: ViewState) => railView(s.modes.implementation.run!, executing(s.modes.implementation.run!), s.modes.implementation.run!.busy);
+  const viewOf = (s: ViewState) => railView(runOf(s, "implementation")!, executing(runOf(s, "implementation")!), runOf(s, "implementation")!.busy);
   /** Issue #110: a row with children is a disclosure; the tests of its open state read it through this, which fails on a plain row. */
   const disclosure = (node: NodeView | undefined): Disclosure => {
     expect(node?._tag).toBe("Disclosure");
@@ -1859,7 +1863,7 @@ describe("the rail as a tree that collapses", () => {
   test("a halt after the execution call ended holds the phase and the stage of the step last reported running", () => {
     const events: RunEvent[] = [started, foreseen(false, 1), began(planning), planRound, planned, ended(planning), began(implementation), call(), ...reports([["S4", "started"], ["S4", "done"], ["S1", "started"]]), callEnded, { _tag: "Ended", code: 1 }];
     const s = fold([...live(events), flags({ scope: phaseScope(implementation), open: false }, { scope: stageScope(1), open: false }, { scope: stageScope(2), open: false })]);
-    const entry = s.modes.implementation.run!.timeline.find((e) => e.phase.kind === "execution")!;
+    const entry = runOf(s, "implementation")!.timeline.find((e) => e.phase.kind === "execution")!;
     expect(entry.currentStep).toBe(null);
     expect(entry.lastStarted).toBe("S1");
     expect(phaseNode(s, implementation)).toMatchObject({ open: true, held: true });
@@ -2008,22 +2012,22 @@ describe("the countdown of a retry's wait", () => {
   const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 1000, untilMs: 6000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
   test("a TransportRetrying sets the wait; the retried call's start and the recovery clear it", () => {
-    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(s.modes.implementation.run?.retry?.wait).toEqual({ fromMs: 1000, untilMs: 6000 });
+    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: 1000, untilMs: 6000 });
     for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call)])) {
-      expect(s.modes.implementation.run?.retry?.wait).toBe(null);
+      expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
       expect(statusOf(s)).toBe("Codex — review — connection lost, retry 1 of 3 (stream disconnected)");
     }
-    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(s.modes.implementation.run?.retry).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
   // Issue #171: a tracker request's repeat is counted down the same way, named by its tracker.
   test("a TrackerRetrying sets the wait and an activity naming the tracker; TrackerRecovered clears it", () => {
     const trackerRetrying: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 1000, untilMs: 31_000 };
     for (const s of both([started, notified(trackerRetrying)])) {
-      expect(s.modes.implementation.run?.retry).toEqual({ agent: "tracker", purpose: null, text: "connection lost, retry 2 of 5 (no answer)", wait: { fromMs: 1000, untilMs: 31_000 } });
+      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "tracker", purpose: null, text: "connection lost, retry 2 of 5 (no answer)", wait: { fromMs: 1000, untilMs: 31_000 } });
       expect(statusOf(s)).toBe("GitHub — connection lost, retry 2 of 5 (no answer)");
     }
     for (const s of both([started, notified(call), notified(trackerRetrying), notified({ _tag: "TrackerRecovered", tracker: "GitHub" })])) {
-      expect(s.modes.implementation.run?.retry).toBe(null);
+      expect(runOf(s, "implementation")?.retry).toBe(null);
       expect(statusOf(s)).toBe("Codex — review");
     }
   });
@@ -2055,7 +2059,7 @@ describe("the countdown of a retry's wait", () => {
 describe("two modes", () => {
   const startedIn = (mode: "refinement" | "implementation", id: string): RunEvent => ({ ...started, mode, item: { id, title: `item ${id}` } } as RunEvent);
   const events = (run: number, list: readonly RunEvent[]): ServerMessage[] => stamp(list).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }));
-  const helloBoth: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: 2 }, incarnation: "a" };
+  const helloBoth: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: 2 }, incarnation: "a" };
   const refinement = [startedIn("refinement", "11"), said("refining"), asked(1, prompts.interviewMessagePrompt)];
   const implementation = [startedIn("implementation", "1"), said("implementing"), notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), asked(1, prompts.decisionPrompt)];
 
@@ -2068,8 +2072,8 @@ describe("two modes", () => {
         const [qa, qb] = [[...a], [...b]];
         const merged = picks.map((first) => ((first && qa.length > 0) || qb.length === 0 ? qa.shift()! : qb.shift()!));
         const both = alone(merged);
-        expect(both.modes.refinement.run).toEqual(alone(a).modes.refinement.run);
-        expect(both.modes.implementation.run).toEqual(alone(b).modes.implementation.run);
+        expect(runOf(both, "refinement")).toEqual(runOf(alone(a), "refinement"));
+        expect(runOf(both, "implementation")).toEqual(runOf(alone(b), "implementation"));
       }),
       { numRuns: 50 },
     );
@@ -2078,20 +2082,20 @@ describe("two modes", () => {
   test("a replay of four runs places each run in its mode, the newest its run and the one before its last", () => {
     const run = (id: number, mode: "refinement" | "implementation") => ({ id, events: stamp([startedIn(mode, `${id}`), { _tag: "Ended", code: 0 } as RunEvent]) });
     const s = fold([helloBoth, { type: "replay", ui: [], runs: [run(1, "refinement"), run(2, "implementation"), run(3, "refinement"), run(4, "implementation")] }]);
-    expect([s.modes.refinement.run?.id, s.modes.refinement.last?.id, s.modes.implementation.run?.id, s.modes.implementation.last?.id]).toEqual([3, 1, 4, 2]);
-    expect(s.modes.refinement.current).toBe(1);
+    expect([runOf(s, "refinement")?.id, lastOf(s, "refinement")?.id, runOf(s, "implementation")?.id, lastOf(s, "implementation")?.id]).toEqual([3, 1, 4, 2]);
+    expect(s.modes.refinement.current).toEqual([1]);
   });
 
   test("a prompt pending in one mode leaves the other mode's prompt null", () => {
     const s = fold([helloBoth, { type: "replay", ui: [], runs: [] }, ...events(1, refinement), ...events(2, [startedIn("implementation", "1"), said("implementing")])]);
-    expect(s.modes.refinement.run?.pending?.asked.prompt).toBe(1);
-    expect(s.modes.implementation.run?.pending).toBe(null);
+    expect(runOf(s, "refinement")?.pending?.asked.prompt).toBe(1);
+    expect(runOf(s, "implementation")?.pending).toBe(null);
   });
 });
 
 describe("the tab shown before the user chooses one", () => {
   const startedIn = (mode: "refinement" | "implementation"): RunEvent => ({ ...started, mode, item: { id: "1", title: "t" } } as RunEvent);
-  const helloImpl: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: 1 }, incarnation: "a" };
+  const helloImpl: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: 1 }, incarnation: "a" };
   const replayOf = (mode: "refinement" | "implementation", more: readonly RunEvent[] = []): ServerMessage => ({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn(mode), ...more]) }] });
 
   test("a replay shows the tab of a run in progress; a choice of the user stands", () => {
@@ -2106,7 +2110,7 @@ describe("the tab shown before the user chooses one", () => {
 describe("the choice of terms", () => {
   const items = [{ id: "11", title: "t", excerpt: "e", url: null }];
   const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms } });
-  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const startedRefinement: RunEvent = { ...started, mode: "refinement", item: { id: "11", title: "t" } } as RunEvent;
 
   test("the listing's value is shown; a choice replaces it, survives a Refresh, and a refinement's Started resets it", () => {
@@ -2164,7 +2168,7 @@ describe("an analysis across the request for terms", () => {
 
   test("the analysis is held for the prompt after the request, with the explained question", () => {
     for (const s of [fold(live(upTo(explained))), replayed(upTo(explained))]) {
-      const analysis = s.modes.implementation.run?.analysis;
+      const analysis = runOf(s, "implementation")?.analysis;
       expect(analysis?.prompt).toBe(3);
       expect(analysis?.event.presented.explanations).toEqual(explained.explanations);
     }
@@ -2172,7 +2176,7 @@ describe("an analysis across the request for terms", () => {
 
   test("a QuestionExplained of another question restores nothing", () => {
     const other = { ...explained, number: 2 };
-    expect(fold(live(upTo(other))).modes.implementation.run?.analysis).toBe(null);
+    expect(runOf(fold(live(upTo(other))), "implementation")?.analysis).toBe(null);
   });
 
   // W2-R1-1 of work review 2: the request's call may ask a pause of its own (its retries exhausted) before it succeeds;
@@ -2187,7 +2191,7 @@ describe("an analysis across the request for terms", () => {
   ];
   const heldFor = (events: readonly RunEvent[], prompt: number): void => {
     for (const s of [fold(live(events)), replayed(events)]) {
-      const analysis = s.modes.implementation.run?.analysis;
+      const analysis = runOf(s, "implementation")?.analysis;
       expect(analysis?.prompt).toBe(prompt);
       expect(analysis?.event.presented.number).toBe(1);
       expect(analysis?.event.presented.explanations).toEqual(explained.explanations);
@@ -2241,21 +2245,21 @@ describe("the Full test suite phase (issue #162)", () => {
   ];
   test("a failed suite run and a passed one are two entries, numbered, each with its result and its times", () => {
     for (const s of [fold(live(events)), replayed(events)]) {
-      const suites = s.modes.implementation.run!.timeline.filter((e) => e.phase.kind === "suite");
+      const suites = runOf(s, "implementation")!.timeline.filter((e) => e.phase.kind === "suite");
       expect(suites.map((e) => [e.label, e.state, e.result])).toEqual([
         ["Full test suite 1", "done", "failed"],
         ["Full test suite 2", "done", "passed"],
       ]);
       for (const e of suites) expect(e.began !== null && e.ended !== null).toBe(true);
-      expect(s.modes.implementation.run!.timeline.filter((e) => e.phase.kind !== "suite").every((e) => e.result === null)).toBe(true);
+      expect(runOf(s, "implementation")!.timeline.filter((e) => e.phase.kind !== "suite").every((e) => e.result === null)).toBe(true);
     }
   });
   test("a suite run ahead is foreseen, and one under way is active with no result", () => {
     const s = fold(live(events.slice(0, 2 + iteration(1, 1).length)));
-    const suite = s.modes.implementation.run!.timeline.find((e) => e.phase.kind === "suite")!;
+    const suite = runOf(s, "implementation")!.timeline.find((e) => e.phase.kind === "suite")!;
     expect([suite.label, suite.state, suite.result]).toEqual(["Full test suite", "active", null]);
     const ahead = fold(live(events.slice(0, 2)));
-    expect(ahead.modes.implementation.run!.timeline.find((e) => e.phase.kind === "suite")?.state).toBe("ahead");
+    expect(runOf(ahead, "implementation")!.timeline.find((e) => e.phase.kind === "suite")?.state).toBe("ahead");
   });
 });
 
@@ -2264,23 +2268,23 @@ describe("the Full test suite phase (issue #162)", () => {
 describe("calls that overlap", () => {
   const start = (callId: string, purpose: string) => notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId });
   const end = (callId: string) => notified({ _tag: "AgentCallEnded", agent: "claude", ok: true, callId });
-  const runOf = (events: readonly RunEvent[]) => fold(live([started, ...events])).modes.implementation.run;
+  const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
   test("two overlapping calls ending in either order each leave the other running and named", () => {
-    const first = runOf([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-1")]);
+    const first = runAfter([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-1")]);
     expect(first?.calls.map((c) => c.purpose)).toEqual(["planning"]);
     expect(statusOf(first)).toBe(`Claude — ${prompts.purposeLabel("planning")}`);
-    const second = runOf([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-2")]);
+    const second = runAfter([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-2")]);
     expect(second?.calls.map((c) => c.purpose)).toEqual(["interview"]);
     expect(statusOf(second)).toBe(`Claude — ${prompts.purposeLabel("interview")}`);
   });
   test("a nested call's end restores the outer one, and an end of no running call changes nothing", () => {
-    expect(runOf([start("claude-1", "execution"), start("claude-2", "decision"), end("claude-2")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
-    expect(runOf([start("claude-1", "execution"), end("claude-9")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
+    expect(runAfter([start("claude-1", "execution"), start("claude-2", "decision"), end("claude-2")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
+    expect(runAfter([start("claude-1", "execution"), end("claude-9")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
   });
   test("only the execution call's end clears the current step", () => {
     const plan = notified({ _tag: "PlanChanged", plan: { stages: [{ number: 1, title: "S", steps: [{ id: "S1", number: 1, label: "one", text: "t", status: "started" }] }] }, phase: 1, step: { id: "S1", status: "started" } });
     const base = [notified({ _tag: "PhaseBegan", phase: { kind: "execution", n: 1 } }), start("claude-1", "execution"), plan, start("claude-2", "interview")];
-    const step = (events: readonly RunEvent[]) => runOf(events)?.timeline.find((e) => e.phase.kind === "execution")?.currentStep ?? null;
+    const step = (events: readonly RunEvent[]) => runAfter(events)?.timeline.find((e) => e.phase.kind === "execution")?.currentStep ?? null;
     expect(step([...base, end("claude-2")])).not.toBe(null);
     expect(step([...base, end("claude-1")])).toBe(null);
   });
@@ -2307,16 +2311,16 @@ describe("a wait outlives calls other than the one it waits for", () => {
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a Codex review's start and end leave a usage-limit wait, and the activity line shows the wait again", () => {
-    for (const s of both([...before, notified(limited), notified(reviewCall)])) expect(s.modes.implementation.run?.limitWait?.untilMs).toBe(UNTIL);
+    for (const s of both([...before, notified(limited), notified(reviewCall)])) expect(runOf(s, "implementation")?.limitWait?.untilMs).toBe(UNTIL);
     for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded)])) {
-      expect(s.modes.implementation.run?.limitWait?.untilMs).toBe(UNTIL);
+      expect(runOf(s, "implementation")?.limitWait?.untilMs).toBe(UNTIL);
       expect(statusOf(s)).toBe(limitText);
     }
   });
 
   test("a Codex review's start and end leave a retry's wait, and the activity line shows the retry again", () => {
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded)])) {
-      expect(s.modes.implementation.run?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
+      expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
       expect(statusOf(s)).toBe(retryText);
     }
     for (const s of both([...before, notified(retrying), notified(reviewCall)])) expect(statusOf(s)).toBe("Codex — review");
@@ -2324,27 +2328,27 @@ describe("a wait outlives calls other than the one it waits for", () => {
 
   test("a Claude call of another purpose leaves the waits too", () => {
     for (const s of both([...before, notified(limited), notified(termsCall), notified(termsEnded)])) {
-      expect(s.modes.implementation.run?.limitWait?.untilMs).toBe(UNTIL);
+      expect(runOf(s, "implementation")?.limitWait?.untilMs).toBe(UNTIL);
       expect(statusOf(s)).toBe(limitText);
     }
     for (const s of both([...before, notified(retrying), notified(termsCall), notified(termsEnded)])) {
-      expect(s.modes.implementation.run?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
+      expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
       expect(statusOf(s)).toBe(retryText);
     }
   });
 
   test("the waited call's next attempt clears the wait at its start, and its end clears the retry", () => {
-    for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) expect(s.modes.implementation.run?.limitWait).toBe(null);
+    for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) {
-      expect(s.modes.implementation.run?.retry?.wait).toBe(null);
+      expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
       expect(statusOf(s)).toBe("Claude — clarification — connection lost, retry 1 of 3 (socket hang up)");
     }
-    for (const s of both([...before, notified(retrying), notified(interviewAgain), notified(interviewAgainEnded)])) expect(s.modes.implementation.run?.retry).toBe(null);
+    for (const s of both([...before, notified(retrying), notified(interviewAgain), notified(interviewAgainEnded)])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
 
   test("the lift and the recovery still clear the waits", () => {
-    for (const s of both([...before, notified(limited), notified(reviewCall), notified({ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 600_000 })])) expect(s.modes.implementation.run?.limitWait).toBe(null);
-    for (const s of both([...before, notified(retrying), notified(reviewCall), notified({ _tag: "TransportRecovered", agent: "claude" })])) expect(s.modes.implementation.run?.retry).toBe(null);
+    for (const s of both([...before, notified(limited), notified(reviewCall), notified({ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 600_000 })])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
+    for (const s of both([...before, notified(retrying), notified(reviewCall), notified({ _tag: "TransportRecovered", agent: "claude" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
 });
 
@@ -2352,7 +2356,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
 describe("the chain", () => {
   test("the hello sets it, a chain frame replaces it, and a hello of another incarnation replaces it again", () => {
     expect(initialState.chain).toBeNull();
-    const hello = (incarnation: string, chain: ChainState): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+    const hello = (incarnation: string, chain: ChainState): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
     const first = reduce(initialState, hello("a", helloChain));
     expect(first.chain).toEqual(helloChain);
     const changed = configured(helloChain, OFF_SETTINGS, null);
@@ -2383,7 +2387,7 @@ describe("chainShown", () => {
 // Issue #147, the work review of 21 Oct 2026 (W1-R1-1), S29: the frames not yet acknowledged held by the page.
 describe("chain pending", () => {
   const CUTOFF = "2026-10-21T07:00:00.000Z";
-  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: null, implementation: null }, incarnation });
+  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const open = reduce(initialState, helloOf("a"));
   const shownOf = (view: ViewState) => chainShown(view, (iso) => iso)!;
   const server = helloChain.settings;
@@ -2452,5 +2456,139 @@ describe("chain pending", () => {
     expect(never.chainPending).toEqual([]);
     expect(never.chainReset.version).toBe(1);
     expect(never.chainReset.fields).toEqual(["runs"]);
+  });
+});
+
+// Issue #191: any number of refinement runs in the Refinement tab, a second row of tabs choosing between them.
+describe("several refinement runs", () => {
+  const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
+  const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
+  const helloOf = (refinement: readonly number[]): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement, implementation: null }, incarnation: "a" });
+  const empty = fold([helloOf([]), { type: "replay", ui: [], runs: [] }]);
+  const a = [refining("11"), said("refining 11"), asked(1, prompts.interviewMessagePrompt)];
+  const b = [refining("12"), said("refining 12"), asked(1, prompts.interviewMessagePrompt)];
+
+  test("two runs are both held, each folded by its own events, and current lists both", () => {
+    const s = fold([...eventsOf(1, a), ...eventsOf(2, b)], empty);
+    expect(s.modes.refinement.runs.map((r) => r.id)).toEqual([1, 2]);
+    expect(s.modes.refinement.current).toEqual([1, 2]);
+    expect(s.modes.refinement.runs.map((r) => r.pending?.asked.prompt)).toEqual([1, 1]);
+    expect(refinementInProgress(s)).toEqual(["11", "12"]);
+  });
+
+  test("a seq gap is checked per run", () => {
+    const s = fold([...eventsOf(1, a), ...eventsOf(2, b)], empty);
+    expect(fold(eventsOf(1, [said("x")], 3), s).needsReconnect).toBe(false);
+    expect(fold(eventsOf(2, [said("x")], 5), s).needsReconnect).toBe(true);
+  });
+
+  test("the first run's Started focuses it; a second run's Started or prompt leaves the focus on the first", () => {
+    const one = fold(eventsOf(1, a), empty);
+    expect(one.modes.refinement.focus).toEqual({ _tag: "Run", run: 1 });
+    const two = fold([...eventsOf(2, b), ...eventsOf(2, [asked(2, prompts.interviewMessagePrompt)], 3)], one);
+    expect(two.modes.refinement.focus).toEqual({ _tag: "Run", run: 1 });
+    expect(runOf(two, "refinement")?.id).toBe(1);
+  });
+
+  test("the user's choice of a run or of the list; a start this page asked for moves the focus to its run", () => {
+    const two = fold([...eventsOf(1, a), ...eventsOf(2, b)], empty);
+    expect(runOf(focusRun(two, 2), "refinement")?.id).toBe(2);
+    expect(focusRun(two, 2).chosen).toBe(true);
+    const list = focusList(two);
+    expect(list.modes.refinement.focus).toEqual({ _tag: "List" });
+    expect(runOf(list, "refinement")).toBe(null);
+    const asked3 = startRequested(focusRun(two, 1), "refinement", "13");
+    expect(asked3.modes.refinement.starting).toBe("13");
+    const third = fold(eventsOf(3, [refining("13")]), asked3);
+    expect(third.modes.refinement.focus).toEqual({ _tag: "Run", run: 3 });
+    expect(third.modes.refinement.starting).toBe(null);
+    const refused = reduce(asked3, { type: "refused", mode: "refinement", reason: "no" });
+    expect(refused.modes.refinement.starting).toBe(null);
+  });
+
+  test("closeRun removes an ended run and the list is shown; a later replay does not bring it back", () => {
+    const one = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
+    expect(closeRun(one, 2)).toBe(one);
+    const closed = closeRun(one, 1);
+    expect(closed.modes.refinement.runs.map((r) => r.id)).toEqual([2]);
+    expect(closed.modes.refinement.focus).toEqual({ _tag: "List" });
+    expect(closed.closed).toEqual([1]);
+    const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([...a, { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp(b) }] };
+    expect(reduce(closed, replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
+    expect(reduce(reduce(closed, helloOf([2])), replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
+    expect(reduce(closed, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }).closed).toEqual([]);
+  });
+
+  test("a newer refinement of the same item replaces the held ended one", () => {
+    const one = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
+    const again = fold(eventsOf(3, a), one);
+    expect(again.modes.refinement.runs.map((r) => r.id)).toEqual([2, 3]);
+  });
+
+  test("a replay before the user chooses shows the Refinement tab and focuses the waiting run", () => {
+    const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([refining("11"), said("x")]) }, { id: 2, events: stamp(b) }] };
+    const s = fold([helloOf([1, 2]), replay]);
+    expect(s.selected).toBe("refinement");
+    expect(s.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
+    const chosen = reduce(focusRun(s, 1), replay);
+    expect(chosen.modes.refinement.focus).toEqual({ _tag: "Run", run: 1 });
+  });
+
+  test("a ui frame applies to its run alone", () => {
+    const two = fold([...eventsOf(1, a), ...eventsOf(2, b)], empty);
+    const ui = withFlag(emptyUiState, { scope: { _tag: "DashboardAnswers" }, open: true });
+    const s = reduce(two, { type: "ui", run: 2, state: ui });
+    expect(s.modes.refinement.runs.map((r) => r.ui.version)).toEqual([0, 1]);
+  });
+
+  test("property: any interleaving of two runs' events folds each run as its own stream alone", () => {
+    const ea = eventsOf(1, [...a, said("more"), { _tag: "Ended", code: 0 }]);
+    const eb = eventsOf(2, [...b, said("other")]);
+    const alone = (messages: readonly ServerMessage[], id: number) => fold(messages, empty).modes.refinement.runs.find((r) => r.id === id);
+    fc.assert(
+      fc.property(fc.array(fc.boolean(), { minLength: ea.length + eb.length, maxLength: ea.length + eb.length }), (picks) => {
+        const [qa, qb] = [[...ea], [...eb]];
+        const merged = picks.map((first) => ((first && qa.length > 0) || qb.length === 0 ? qa.shift()! : qb.shift()!));
+        const both = fold(merged, empty);
+        expect(both.modes.refinement.runs.find((r) => r.id === 1)).toEqual(alone(ea, 1));
+        expect(both.modes.refinement.runs.find((r) => r.id === 2)).toEqual(alone(eb, 2));
+      }),
+      { numRuns: 50 },
+    );
+  });
+});
+
+// Issue #191: what App presents of the runs: one key per run, the waiting marks, the second row and the startable items.
+describe("the presented runs", () => {
+  const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
+  const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
+  const empty = fold([{ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }]);
+  const two = fold([...eventsOf(1, [refining("11"), said("x")]), ...eventsOf(2, [refining("12"), asked(1, prompts.interviewMessagePrompt)])], empty);
+
+  test("presented: the implementation tab's run under one key, and each refinement run under its own, in start order", () => {
+    const withImpl = fold(eventsOf(3, [started]), two);
+    expect(presented(withImpl).map((p) => [p.key, p.mode, p.shown.run?.id])).toEqual([["implementation", "implementation", 3], ["refinement-1", "refinement", 1], ["refinement-2", "refinement", 2]]);
+    expect(presented(empty).map((p) => p.key)).toEqual(["implementation"]);
+  });
+
+  test("modeWaiting: the Refinement tab is marked while any of its runs waits", () => {
+    expect(modeWaiting(two, "refinement")).toBe(true);
+    expect(modeWaiting(focusRun(two, 1), "refinement")).toBe(true);
+    expect(modeWaiting(two, "implementation")).toBe(false);
+    expect(modeWaiting(fold(eventsOf(2, [{ _tag: "Ended", code: 130 }], 2), two), "refinement")).toBe(false);
+  });
+
+  test("runTabs: the items first, then each run named by its item, a waiting run's name marked", () => {
+    expect(runTabs(two)).toEqual([
+      { value: "list", name: prompts.REFINEMENT_LIST_TAB },
+      { value: "run-1", name: prompts.runTabName({ id: "11", title: "item 11" }) },
+      { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
+    ]);
+  });
+
+  test("startableOf: implementation none while a run is in progress; refinement every item but those being refined", () => {
+    expect(startableOf(two, "refinement")).toEqual({ _tag: "Except", items: ["11", "12"] });
+    expect(startableOf(empty, "implementation")).toEqual({ _tag: "Except", items: [] });
+    expect(startableOf(fold(eventsOf(3, [started]), two), "implementation")).toEqual({ _tag: "None" });
   });
 });

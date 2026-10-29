@@ -9,9 +9,14 @@
   // Interloq", selects it]. Issue #22: the "You and Interloq" column is a dashboard, whose status line is the activity
   // line moved from under "Claude and Codex", which holds its messages alone. While a question or the decision page
   // takes the column, the dashboard's compact form (its status line and the heading of every answer) stays below it.
+  // Issue #191 (requirements Q1): under the Refinement tab, a second row of tabs (M3 secondary tabs, m3-svelte's Tabs with
+  // `secondary`) holds the items first and then one tab per refinement run in start order, each named by its item and
+  // carrying the waiting mark while its run waits [visibility of system status: every run's mark is in view from anywhere
+  // in the tab; user control and freedom: one click between runs, and the page never switches away from the run shown].
+  // Each run keeps its own draft and its own notifications, keyed by `presented` (web/src/state.ts).
   import { Button, ConnectedButtons, Tabs } from "m3-svelte";
   import { untrack } from "svelte";
-  import { BACK_TO_LIST, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { BACK_TO_LIST, CLOSE_RUN_TAB, RUN_TABS_LABEL, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
@@ -27,7 +32,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -45,15 +50,17 @@
    * it, carried to the prompt that asks the same question again with its explanations.
    */
   const answer = (target: RunView, prompt: number, text: string) => {
-    const tabMode: RunMode = view.runModes[target.id] ?? view.selected;
-    const own = drafts[tabMode];
+    const key = draftKeyOf(target.id);
+    const own = drafts[key] ?? null;
     const number = target.pending?.question?.number;
-    if (isTermsRequest(text) && own !== null && own._tag === "Held" && own.key.prompt === prompt && number !== undefined) drafts = { ...drafts, [tabMode]: carried(own, number) };
+    if (isTermsRequest(text) && own !== null && own._tag === "Held" && own.key.prompt === prompt && number !== undefined) drafts = { ...drafts, [key]: carried(own, number) };
     send({ type: "answer", incarnation: view.incarnation ?? "", run: target.id, prompt, text });
   };
   /** Issue #142: a refinement starts with the choice of terms its tab's control shows. */
   const startItem = (mode: RunMode, item: ListedItem) => {
     noticesSeen = view.notices.length;
+    // Issue #191: this page shows the run it started when its Started arrives.
+    view = startRequested(view, mode, item.id);
     if (mode === "implementation") return send(startFrame({ mode, item }));
     const terms = shownTerms(view);
     if (terms !== null) send(startFrame({ mode, item, terms }));
@@ -61,9 +68,11 @@
   let connection: Connection | null = null;
   // Issue #120: after a tab's run has ended, its list is shown again once the user asks for it.
   let listWanted = $state<Record<RunMode, boolean>>({ refinement: false, implementation: false });
-  // The unsent text of each tab's pending prompt (finding 5), reconciled with its tab's run after every message, live
-  // or replayed: an answer belongs to the run of the tab it was typed in (issue #120).
-  let drafts = $state<Record<RunMode, Draft | null>>({ refinement: null, implementation: null });
+  // The unsent text of each presented run's pending prompt (finding 5), reconciled with its run after every message, live
+  // or replayed: an answer belongs to the run it was typed in (issue #120; issue #191: one per refinement run).
+  let drafts = $state<Record<string, Draft | null>>({});
+  /** The key of a run's draft and notifications: the implementation tab's one key, or the refinement run's own. */
+  const draftKeyOf = (run: number): string => (view.runModes[run] === "refinement" ? `refinement-${run}` : "implementation");
 
   const send = (m: ClientMessage) => connection?.send(m);
   /** Asks the server for a tab's items; the server, never the page, calls the tracker. */
@@ -76,11 +85,13 @@
     connection = connect(url, {
       onMessage: (m) => {
         view = reduce(view, m);
-        for (const mode of RUN_MODES) {
-          const reconciled = reconcile(drafts[mode], shownRun(view, mode));
-          drafts = { ...drafts, [mode]: reconciled.draft };
+        const next: Record<string, Draft | null> = {};
+        for (const p of presented(view)) {
+          const reconciled = reconcile(drafts[p.key] ?? null, p.shown);
+          next[p.key] = reconciled.draft;
           if (reconciled.notice !== null) view = notice(view, reconciled.notice);
         }
+        drafts = next;
         if (m.type === "event" && m.event._tag === "Started") listWanted = { ...listWanted, [m.event.mode]: false };
         if (view.needsReconnect) connection?.reconnect();
       },
@@ -91,9 +102,10 @@
       // An action the failed page cannot send: an answer goes back to its field or is kept under "Not sent", never
       // over newer text, and the notice says which (G-R1-1, P1-R1-2).
       onUnsent: (m) => {
-        const mode: RunMode = m.type === "answer" ? (view.runModes[m.run] ?? view.selected) : view.selected;
-        const restored = restoreUnsent(drafts[mode], shownRun(view, mode), m);
-        drafts = { ...drafts, [mode]: restored.draft };
+        const key = m.type === "answer" ? draftKeyOf(m.run) : (presented(view).find((p) => p.shown.run !== null && p.shown.run.id === shownRun(view).run?.id)?.key ?? "implementation");
+        const shown = presented(view).find((p) => p.key === key)?.shown ?? shownRun(view);
+        const restored = restoreUnsent(drafts[key] ?? null, shown, m);
+        drafts = { ...drafts, [key]: restored.draft };
         const withdrawn = m.type === "chain" ? chainUnsent(view, m.settings) : view;
         const kept = restored.quoted === null ? withdrawn : keepUnsent(withdrawn, restored.quoted);
         view = notice(kept, notSentNotice(m.type, "disconnected", restored.quoted ?? undefined));
@@ -119,9 +131,10 @@
   // Issue #120: the tab shown, its run, and the run as the draft and the notifications key it.
   const mode = $derived(view.selected);
   const tab = $derived(view.modes[mode]);
-  const run = $derived(tab.run);
   const shownTab = $derived(shownRun(view));
-  const draft = $derived(drafts[mode]);
+  const run = $derived(shownTab.run);
+  const draftKey = $derived(run === null ? mode : draftKeyOf(run.id));
+  const draft = $derived(drafts[draftKey] ?? null);
   // Issue #63: a node of the rail opened or closed is a change of the run's shared state, as a decision's entry is.
   const toggleRail = (scope: UiScope, open: boolean) => {
     if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope, open } });
@@ -134,9 +147,10 @@
   const promptKey = $derived(JSON.stringify(pendingKey(shownTab)));
   const asking = $derived(run?.pending != null && conversationForPrompt !== promptKey);
   // Issue #120: a tab shows its run while one is in progress, or its ended run until the user goes back to its list.
+  // Issue #191: the Refinement tab shows its items whenever its second row's focus is the list.
   const showsList = (m: RunMode): boolean => {
-    const r = view.modes[m].run;
-    return r === null || (r.ended !== null && listWanted[m]);
+    const r = shownRun(view, m).run;
+    return r === null || (m === "implementation" && r.ended !== null && listWanted[m]);
   };
   const showList = $derived(showsList(mode));
   // Issue #147: the chain's control, on the Implementation tab alone.
@@ -162,7 +176,33 @@
     if (showList && tab.items._tag === "Unasked" && view.connection === "open") untrack(() => requestItems(mode));
   });
   /** The tabs, each name with the waiting mark while its run waits for the user [visibility of system status]. */
-  const tabItems = $derived(RUN_MODES.map((m) => ({ name: view.modes[m].run?.pending != null ? waitingTabName(TAB_TEXTS[m].tab) : TAB_TEXTS[m].tab, value: m })));
+  const tabItems = $derived(RUN_MODES.map((m) => ({ name: modeWaiting(view, m) ? waitingTabName(TAB_TEXTS[m].tab) : TAB_TEXTS[m].tab, value: m })));
+  // Issue #191: the Refinement tab's second row, shown while it holds a run; its value names what the tab shows.
+  const secondRow = $derived(mode === "refinement" && view.modes.refinement.runs.length > 0 ? [...runTabs(view)] : null);
+  const focusValue = $derived(view.modes.refinement.focus._tag === "Run" ? `run-${view.modes.refinement.focus.run}` : "list");
+  /** The items, asked for again as a revisited list is (S15). */
+  const toRefinementList = () => {
+    noticesSeen = view.notices.length;
+    view = focusList(view);
+    if (view.connection === "open") requestItems("refinement");
+  };
+  const selectRunTab = (value: string) => {
+    if (value === "list") return toRefinementList();
+    const id = Number(value.slice("run-".length));
+    if (Number.isInteger(id)) view = focusRun(view, id);
+  };
+  /** Back to the list from an ended run: the Refinement tab keeps the run's tab in its second row. */
+  const backToList = () => {
+    if (mode === "refinement") return toRefinementList();
+    listWanted = { ...listWanted, [mode]: true };
+    noticesSeen = view.notices.length;
+    requestItems(mode);
+  };
+  /** Closes an ended refinement run's tab in this page and shows the items. */
+  const closeRunTab = (id: number) => {
+    view = closeRun(view, id);
+    toRefinementList();
+  };
   // Decision support: a decision's analysis covers both chat columns until its question is answered; the user may
   // look at the conversation meanwhile and come back [user control and freedom]. The rail, the prompt and the activity
   // line stay in view [visibility of system status]. Below 390 px the analysis is not laid out (decided 28 Sep 2026).
@@ -186,7 +226,7 @@
   // badge on the icon, and is raised once as the user chose: a desktop notification, a chime [visibility of system
   // status, for a user who is not looking at the page]. decide (web/src/notify.ts) decides; this effect only fires.
   // Issue #120 (S17): one decision per tab's run, so that each prompt and each end is raised once whichever tab is shown.
-  let notifyStates = $state<Record<RunMode, NotifyState>>({ refinement: initialNotifyState, implementation: initialNotifyState });
+  let notifyStates = $state<Record<string, NotifyState>>({});
   let visible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let preferences = $state<Preferences>(((r) => (r.ok ? r.value : defaultPreferences))(readPreferences()));
   let permission = $state<Permission>(currentPermission());
@@ -199,8 +239,8 @@
     scheme.addEventListener("change", redraw);
     return () => scheme.removeEventListener("change", redraw);
   });
-  const closers: Record<RunMode, Closer | null> = { refinement: null, implementation: null };
-  const shownFor: Record<RunMode, string | null> = { refinement: null, implementation: null };
+  const closers: Record<string, Closer | null> = {};
+  const shownFor: Record<string, string | null> = {};
   $effect(() => {
     const onVisibility = () => {
       visible = document.visibilityState === "visible";
@@ -217,19 +257,21 @@
     void requestDesktopPermission().then((answer) => (permission = answer));
   };
   /**
-   * What the page shows of one tab's run, as decide observes it (issue #120, S17): its pending prompt, the run and its
-   * end; the prompt counts as shown, and the list as the form for a new task, only in the selected tab.
+   * What the page shows of one presented run, as decide observes it (issue #120, S17; issue #191: each refinement run on
+   * its own): its pending prompt, the run and its end; the prompt counts as shown only for the run on screen in the
+   * selected tab, and the list or another refinement run as the form for a new task only in that run's tab.
    */
-  const observation = (m: RunMode): Observation => {
-    const watched = view.modes[m].run;
-    const selected = m === mode;
+  const observation = (p: Presented): Observation => {
+    const watched = p.shown.run;
+    const selected = p.mode === mode;
+    const onScreen = selected && watched !== null && run !== null && watched.id === run.id;
     return {
-      pending: pendingKey(shownRun(view, m)),
+      pending: pendingKey(p.shown),
       run: watched === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: watched.id },
       ended: watched?.ended ?? null,
       visible,
-      promptShown: selected && (asking || deciding),
-      formShown: selected && showList,
+      promptShown: onScreen && (asking || deciding),
+      formShown: selected && (showList || !onScreen),
       preferences,
       permission,
     };
@@ -237,7 +279,7 @@
   /** The decision's reason as one text, the tag of its notification; null for none. */
   const reasonOf = (d: Decision): string | null => (d._tag === "Idle" ? null : JSON.stringify([d._tag, d.key]));
   /** Fires one tab's decision: closes its notification when its reason is gone, and raises a new reason once. */
-  const fire = (m: RunMode, decision: Decision) => {
+  const fire = (m: string, decision: Decision) => {
     const reason = reasonOf(decision);
     if (reason !== shownFor[m]) {
       closers[m]?.();
@@ -254,8 +296,15 @@
     if (decision.raise === "sound" || decision.raise === "desktopAndSound") playChime();
   };
   $effect(() => {
-    const decisions = RUN_MODES.map((m) => [m, decide(untrack(() => notifyStates[m]), observation(m))] as const);
-    notifyStates = Object.fromEntries(decisions.map(([m, d]) => [m, d.state])) as Record<RunMode, NotifyState>;
+    const decisions = presented(view).map((p) => [p.key, decide(untrack(() => notifyStates[p.key] ?? initialNotifyState), observation(p))] as const);
+    notifyStates = Object.fromEntries(decisions.map(([k, d]) => [k, d.state]));
+    // A run no longer presented has its notification closed.
+    for (const k of Object.keys(closers)) {
+      if (decisions.some(([key]) => key === k)) continue;
+      closers[k]?.();
+      delete closers[k];
+      delete shownFor[k];
+    }
     const mark = combinedMark(decisions.map(([, d]) => markOf(d)));
     shownMark = mark;
     document.title = tabTitle(view.location, mark);
@@ -290,6 +339,11 @@
   <nav class="tabs" aria-label={TABS_LABEL}>
     <Tabs items={tabItems} bind:tab={() => mode, (value) => selectTab(value as RunMode)} />
   </nav>
+  {#if secondRow !== null}
+    <nav class="run-tabs" aria-label={RUN_TABS_LABEL}>
+      <Tabs secondary items={secondRow} bind:tab={() => focusValue, (value) => selectRunTab(value)} />
+    </nav>
+  {/if}
   {#if tab.refusal !== null}<p class="notice refusal m3-font-body-medium" role="alert">{tab.refusal}</p>{/if}
   {#if showList}
     <main class="list">
@@ -298,7 +352,7 @@
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
       {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
-      <ItemList {mode} items={tab.items} running={tab.current !== null} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
+      <ItemList {mode} items={tab.items} startable={startableOf(view, mode)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
@@ -341,7 +395,7 @@
               identity={pendingKey(shownTab)}
               answersOnly
               {offline}
-              bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { _tag: "Held", key, text } }; }}
+              bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [draftKey]: key === null ? null : { _tag: "Held", key, text } }; }}
               onAnswer={(prompt, text) => answer(run, prompt, text)} />
           {/snippet}
           <!-- Issue #133: the answers are the decision page's own, under its heading; its open heading is the run's shared state. -->
@@ -368,7 +422,7 @@
             identity={pendingKey(shownTab)}
             onShowConversation={() => (conversationForPrompt = promptKey)}
             {offline}
-            bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { _tag: "Held", key, text } }; }}
+            bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [draftKey]: key === null ? null : { _tag: "Held", key, text } }; }}
             onAnswer={(prompt, text) => answer(run, prompt, text)} />
         {/if}
         <!-- Issue #22 (F1): the status line and every earlier answer stay reachable while the question or the decision page
@@ -380,7 +434,10 @@
         {#if run.ended !== null}
           <div class="ended">
             <span class="m3-font-body-medium">This task has ended ({endedOutcome(run.ended)}).</span>
-            <Button variant="filled" type="button" name="new" onclick={() => { listWanted = { ...listWanted, [mode]: true }; noticesSeen = view.notices.length; requestItems(mode); }}>{BACK_TO_LIST}</Button>
+            <span class="ended-actions">
+              {#if mode === "refinement"}<Button variant="text" type="button" name="close" onclick={() => closeRunTab(run.id)}>{CLOSE_RUN_TAB}</Button>{/if}
+              <Button variant="filled" type="button" name="new" onclick={backToList}>{BACK_TO_LIST}</Button>
+            </span>
           </div>
         {/if}
       </div>
@@ -396,7 +453,7 @@
 <style>
   .app { height: 100vh; display: flex; flex-direction: column; background: var(--m3c-surface); color: var(--m3c-on-surface); }
   .list { flex: 1; overflow-y: auto; }
-  .tabs { flex-shrink: 0; }
+  .tabs, .run-tabs { flex-shrink: 0; }
   .refusal { color: var(--m3c-error); margin: 0.5rem 1rem 0; }
   .run { flex: 1; min-height: 0; display: grid; grid-template-columns: 14rem 1fr 1fr; gap: 0.75rem; padding: 0.75rem; }
   .left, .right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
@@ -446,6 +503,7 @@
   .rail-column > :global(nav.rail) { flex: 1 1 auto; min-height: 0; }
   .progress :global(.rail) { max-height: 40vh; }
   .badge { font-weight: 700; }
+  .ended-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
   .ended { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem; background: var(--m3c-surface-container); }
   .notice { margin: 0; padding: 0.5rem 0.75rem; color: var(--m3c-on-error-container); background: var(--m3c-error-container); }
   .unsent { padding: 0.5rem 0.75rem; background: var(--m3c-surface-container-high); }
