@@ -7,7 +7,7 @@ import fc from "fast-check";
 import { Schema } from "effect";
 import { excerptOf, RUN_MODES } from "../src/runMode.ts";
 import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
-import { chainSettingsOf, type ClientMessage, currentIds, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import { ON_EXPIRIES, chainSettingsOf, type ClientMessage, currentIds, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, WorkResponse } from "../src/schema.ts";
@@ -159,7 +159,12 @@ const promptTexts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.permis
 const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("Started" as const), project: text, location: text, task: text, mode, item: fc.record({ id: text, title: text }) }),
   fc.record({ _tag: fc.constant("Said" as const), text }),
-  fc.tuple(nat, fc.constantFrom(...promptTexts)).map(([prompt, t]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t) })),
+  // Issue #185: a prompt may count down, with its expiry.
+  fc
+    .tuple(nat, fc.constantFrom(...promptTexts), fc.option(fc.record({ fromMs: nat, untilMs: nat, then: fc.constantFrom(...ON_EXPIRIES) }), { nil: null }))
+    .map(([prompt, t, countdown]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown })),
+  fc.record({ _tag: fc.constant("CountdownStopped" as const), prompt: nat, reason: fc.constantFrom("held" as const, "chainOff" as const) }),
+  fc.record({ _tag: fc.constant("AnswerExpired" as const), prompt: nat, seconds: nat, then: fc.constantFrom(...ON_EXPIRIES) }),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
   uiEvent.map((event) => ({ _tag: "Notified" as const, event })),
   fc.record({ _tag: fc.constant("Ended" as const), code: fc.constantFrom(0, 1, 2, 130) }),
@@ -185,6 +190,7 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
   fc.record({ type: fc.constant("items" as const), mode }),
   fc.record({ type: fc.constant("answer" as const), incarnation: text, run: nat, prompt: nat, text }),
   fc.record({ type: fc.constant("stop" as const), incarnation: text, run: nat }),
+  fc.record({ type: fc.constant("hold" as const), incarnation: text, run: nat, prompt: nat }),
   fc.record({ type: fc.constant("ui" as const), incarnation: text, run: nat, flag: fc.record({ scope: uiScope, open: fc.boolean() }) }),
 );
 /** Issue #125: an https address, as an adapter's itemUrlOf accepts. */
@@ -480,4 +486,14 @@ test("a hello with several refinement runs decodes; the shape of one run per mod
   assert.ok(Result.isFailure(decodeServer(JSON.stringify({ ...hello, current: { refinement: 3, implementation: 4 } }))));
   assert.deepEqual(currentIds({ refinement: [3, 5], implementation: 4 }), [3, 5, 4]);
   assert.deepEqual(currentIds({ refinement: [], implementation: null }), []);
+});
+
+// Issue #185: an Asked recorded before the countdown existed decodes with none; a hold names an integer prompt.
+test("an Asked without its countdown decodes with null, and a hold frame with a fractional prompt is refused", () => {
+  const asked = { _tag: "Asked", prompt: 3, ...promptOf(prompts.decisionPrompt) };
+  const frame = { type: "event", run: 1, seq: 0, time: "t", event: asked };
+  const decodedFrame = decoded(decodeServer(JSON.stringify(frame)));
+  assert.ok(decodedFrame.type === "event" && decodedFrame.event._tag === "Asked" && decodedFrame.event.countdown === null);
+  assert.ok(Result.isSuccess(decodeClient(JSON.stringify({ type: "hold", incarnation: "i", run: 1, prompt: 2 }))));
+  assert.ok(Result.isFailure(decodeClient(JSON.stringify({ type: "hold", incarnation: "i", run: 1, prompt: 2.5 }))));
 });

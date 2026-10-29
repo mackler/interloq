@@ -82,7 +82,7 @@ const type = (el: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   flushSync();
 };
 const widget = (text: string, options: Widget["options"] = []): Widget => {
-  const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text) };
+  const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text), countdown: null };
   return { asked, options, choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, text) };
 };
 
@@ -631,7 +631,7 @@ describe("App and the draft", () => {
   const started = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } };
   const TIME = "2026-09-27T14:00:00.000Z";
   const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
-  const asked = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt) });
+  const asked = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: null });
   const openPage = async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const { default: App } = await import("./components/App.svelte");
@@ -662,7 +662,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     const question = { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Which database?"), options: [{ label: plainPieces("SQLite"), description: [], answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], answer: { token: "2" } }], attached: null, decision: null };
     const explainedQuestion = { ...question, explanations: [{ id: "t", term: "database", senses: ["A program that keeps data."] }] };
-    const first = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.interviewMessagePrompt))) };
+    const first = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.interviewMessagePrompt))), countdown: null };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, first]) }] });
     const button = () => [...root.querySelectorAll<HTMLButtonElement>(".choices button")].find((b) => b.textContent?.trim() === prompts.EXPLAIN_TERMS);
     expect(button()?.classList.contains("text")).toBe(true);
@@ -677,7 +677,7 @@ describe("App and the draft", () => {
       { _tag: "Answered", prompt: 1, text: "/terms" },
       { _tag: "Notified", event: { _tag: "QuestionExplained", question: explainedQuestion } },
       { _tag: "Notified", event: { _tag: "QuestionPresented", question: explainedQuestion } },
-      { _tag: "Asked", prompt: 2, ...promptOf(prompts.withOffer(prompts.interviewMessagePrompt)) },
+      { _tag: "Asked", prompt: 2, ...promptOf(prompts.withOffer(prompts.interviewMessagePrompt)), countdown: null },
     ];
     events.forEach((event, i) => ws.receive({ type: "event", run: 1, seq: 3 + i, time: TIME, event }));
     expect(field().value).toBe("half an answer");
@@ -1512,7 +1512,7 @@ describe("App: several refinement runs", () => {
   const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
   const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id, title: `title ${id}` } });
   const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
-  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt) });
+  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null });
   const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.RUN_TABS_LABEL}"]`);
   const runTabNames = (root: HTMLElement) => [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => l.textContent?.trim());
   const clickRunTab = (root: HTMLElement, value: string) => {

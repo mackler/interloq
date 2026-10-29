@@ -28,7 +28,7 @@ const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", c
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task", mode: "implementation", item: { id: "1", title: "the task" } };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
-const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text) });
+const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text), countdown: null });
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",

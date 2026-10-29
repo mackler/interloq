@@ -33,7 +33,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>): Effec
       Effect.gen(function* () {
         const answer = yield* Deferred.make<string>();
         const asked = yield* Ref.modify(prompts, (p): readonly [Asked, Prompts] => {
-          const shown: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text) };
+          const shown: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown: null };
           return [shown, { next: p.next + 1, waiting: { asked: shown, answer } }];
         });
         yield* sink(asked);

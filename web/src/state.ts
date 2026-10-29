@@ -884,6 +884,10 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const hint = pagePromptText(event.kind, event.text);
         return { ...r, pending: { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint }, questionOptions: [], presented: null, analysis, dismissed: null };
       }
+      // Issue #185: folded in step S13 of the run of issue #185.
+      case "CountdownStopped":
+      case "AnswerExpired":
+        return r;
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
