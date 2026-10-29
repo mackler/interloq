@@ -2,7 +2,7 @@
 // the reader's time, and no cost anywhere (requirements Q2).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Chain, ChainEndReason, ChainEntry, ChainState, Cutoff, RunLimit } from "../src/chain.ts";
+import type { AbandonLabel, Chain, ChainEndReason, ChainEntry, ChainState, Cutoff, ParkNote, RunLimit } from "../src/chain.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
 import { chainEndedText, chainEntryText, chainParkingText, chainSaveRefusedText, chainStatusText, earlierRunParkedLine } from "../src/prompts.ts";
 import type { ItemId } from "../src/tracker.ts";
@@ -89,4 +89,24 @@ test("a send-back's entry names the send-back and its branch, and a stop after i
   assert.ok(!sentNothing!.includes("branch"));
   assert.ok(stoppedParked!.includes("interloq/halted/7/r") && /Stop task/.test(stoppedParked!));
   assert.equal(chainEntryText(entries[1]!), "Item #7 t: stopped with Stop task.");
+});
+
+// Issue #185: an abandoned run's entry, one text per AbandonLabel; never a label the item does not carry.
+test("each AbandonLabel of an abandoned entry says what became of the label", () => {
+  const parkedNote = { _tag: "Parked", branch: "interloq/halted/7/r", commit: "c" } as const;
+  const entry = (label: AbandonLabel, park: ParkNote | null = parkedNote): ChainEntry => ({ item, title: "t", root: null, outcome: { _tag: "Abandoned", park, label }, returned: null });
+  const set = chainEntryText(entry({ _tag: "SetRefined" }));
+  assert.ok(set.includes("interloq/halted/7/r") && set.includes("label was set to `refined`"), set);
+  const held = chainEntryText(entry({ _tag: "StillHeld", state: "implementing", cause: "GitHub answered 502" }));
+  assert.ok(held.includes("`implementing`") && held.includes("GitHub answered 502") && !held.includes("set to `refined`"), held);
+  const unconfirmed = chainEntryText(entry({ _tag: "Unconfirmed", cause: "the tracker could not be reached" }));
+  assert.ok(unconfirmed.includes("could not be confirmed as `refined`") && unconfirmed.includes("the tracker could not be reached"), unconfirmed);
+  const kept = chainEntryText(entry({ _tag: "KeptImplementing" }, { _tag: "ParkFailed", message: "git commit failed: index.lock exists" }));
+  assert.ok(kept.includes("`implementing`") && kept.includes("git commit failed: index.lock exists") && !kept.includes("`refined`"), kept);
+  const unchanged = chainEntryText(entry({ _tag: "Unchanged" }, null));
+  assert.ok(unchanged.includes("kept the label `refined`"), unchanged);
+  for (const step of ["comment", "label"] as const) {
+    const text = chainEntryText(entry({ _tag: "SendBackUnfinished", step }));
+    assert.ok(text.includes(step === "comment" ? "comment" : "`unrefined`") && text.includes("set no label"), text);
+  }
 });

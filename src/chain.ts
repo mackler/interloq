@@ -3,7 +3,8 @@
 // of it, as data and transitions, so that src/runManager.ts only executes the commands they return. No I/O, no Effect
 // services; also imported by the browser (through src/protocol.ts and web/src/cutoff.ts).
 import { type Brand, Effect, Result, Schema } from "effect";
-import type { ItemId } from "./tracker.ts";
+import { type ItemId, ItemState } from "./tracker.ts";
+import { ABANDONED_EXIT_CODE } from "./prompts.ts";
 import type { RunRoot } from "./artifacts.ts";
 import { PositiveInt } from "./schema.ts";
 
@@ -61,16 +62,42 @@ export const ParkNoteSchema = Schema.Union([
  * Issue #186: a run that sent its item back to refinement (0, its own parking), and a stopped run's own parking, if it
  * parked before the stop (null otherwise, and in a chain.json written before the field).
  */
+/**
+ * Issue #185: what became of the item's label after its run was abandoned for want of an answer, one variant per case,
+ * so the chain's history never claims a label the item does not carry: set to refined and confirmed; still carrying
+ * `state` after the last repeat, with what the tracker last reported; not read back; kept implementing because the
+ * parking failed (nothing was sent to the tracker); unchanged, abandoned at the first read; or a send-back's tracker
+ * step left undone (issue #186), after which Interloq set no label.
+ */
+export type AbandonLabel =
+  | Readonly<{ _tag: "SetRefined" }>
+  | Readonly<{ _tag: "StillHeld"; state: ItemState; cause: string }>
+  | Readonly<{ _tag: "Unconfirmed"; cause: string }>
+  | Readonly<{ _tag: "KeptImplementing" }>
+  | Readonly<{ _tag: "Unchanged" }>
+  | Readonly<{ _tag: "SendBackUnfinished"; step: "comment" | "label" }>;
+export const AbandonLabelSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("SetRefined") }),
+  Schema.Struct({ _tag: Schema.Literal("StillHeld"), state: ItemState, cause: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("Unconfirmed"), cause: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("KeptImplementing") }),
+  Schema.Struct({ _tag: Schema.Literal("Unchanged") }),
+  Schema.Struct({ _tag: Schema.Literal("SendBackUnfinished"), step: Schema.Literals(["comment", "label"]) }),
+]);
+
+/** Issue #185: a run abandoned for want of an answer (2), its parking (null where it had no records) and its label. */
 export type ChainRunOutcome =
   | Readonly<{ _tag: "Finished" }>
   | Readonly<{ _tag: "SentBack"; park: ParkNote }>
   | Readonly<{ _tag: "Stopped"; park: ParkNote | null }>
-  | Readonly<{ _tag: "Halted"; park: ParkNote }>;
+  | Readonly<{ _tag: "Halted"; park: ParkNote }>
+  | Readonly<{ _tag: "Abandoned"; park: ParkNote | null; label: AbandonLabel }>;
 const ChainRunOutcomeSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Finished") }),
   Schema.Struct({ _tag: Schema.Literal("SentBack"), park: ParkNoteSchema }),
   Schema.Struct({ _tag: Schema.Literal("Stopped"), park: Schema.NullOr(ParkNoteSchema).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))) }),
   Schema.Struct({ _tag: Schema.Literal("Halted"), park: ParkNoteSchema }),
+  Schema.Struct({ _tag: Schema.Literal("Abandoned"), park: Schema.NullOr(ParkNoteSchema), label: AbandonLabelSchema }),
 ]);
 
 /**
@@ -192,9 +219,10 @@ export type Step = readonly [ChainState, ChainCommand | null];
 
 /** What the manager knows of a run's end: its code (behavior 11) and its records directory where one was allocated. */
 /** Issue #186: `parked`, the parking the run did itself (a send-back's or a guard stop's), which the chain takes as given. */
-export type RunEnd = Readonly<{ code: number; root: RunRoot | null; parked: ParkNote | null }>;
+/** Issue #185: `abandoned`, the label of a run abandoned for want of an answer (code 2); null for every other ending. */
+export type RunEnd = Readonly<{ code: number; root: RunRoot | null; parked: ParkNote | null; abandoned: AbandonLabel | null }>;
 
-/** The first refined item of the listing, in the tracker's order. */
+/** A refined item of the listing, in the tracker's order. */
 export type Listed = Readonly<{ item: ItemId; title: string }>;
 
 export const initialState = (settings: ChainSettings): ChainState => ({ settings, chain: { _tag: "Idle", ended: null, history: [] }, generation: 0 });
@@ -224,26 +252,42 @@ export const begun = (state: ChainState, run: number, item: ItemId, title: strin
   return { ...state, generation, chain: { _tag: "Running", run, item, title, claim: UNCLAIMED, generation, count: 1, halts: [], history: [] } };
 };
 
+/**
+ * How a run ended, as the chain records it. Issue #186: a run that parked its own work (a send-back, a guard stop) is
+ * taken as parked. Issue #185: an abandonment's label as the run concluded it; with none, `Unchanged` only where no
+ * records were allocated (the first read), and otherwise never a label not confirmed.
+ */
+const outcomeOf = (end: RunEnd): ChainRunOutcome => {
+  const own = end.parked;
+  if (end.code === 0) return own === null ? { _tag: "Finished" } : { _tag: "SentBack", park: own };
+  if (end.code === 130) return { _tag: "Stopped", park: own };
+  if (end.code === ABANDONED_EXIT_CODE) {
+    const label: AbandonLabel =
+      end.abandoned ?? (end.root === null ? { _tag: "Unchanged" } : own?._tag === "ParkFailed" ? { _tag: "KeptImplementing" } : { _tag: "Unconfirmed", cause: "" });
+    return { _tag: "Abandoned", park: own, label };
+  }
+  return { _tag: "Halted", park: own ?? (end.root === null ? { _tag: "NothingParked" } : { _tag: "Pending" }) };
+};
+
+/** The items abandoned for want of an answer in the chain, a going one's or the last one's (issue #185): the chain skips them. */
+export const abandonedItems = (state: ChainState): ReadonlySet<ItemId> =>
+  new Set(state.chain.history.filter((e) => e.outcome._tag === "Abandoned").map((e) => e.item));
+
 /** The end of the run of id `run`; only the chain's own run counts, and a question inside a run never reaches here. */
 export const ended = (state: ChainState, run: number, end: RunEnd): Step => {
   const chain = state.chain;
   if (chain._tag !== "Running" || chain.run !== run) return [state, null];
   // Issue #186: a run that parked its own work (a send-back, a guard stop) is taken as parked: no Park command follows.
   const own = end.parked;
-  const outcome: ChainRunOutcome =
-    end.code === 0
-      ? own === null
-        ? { _tag: "Finished" }
-        : { _tag: "SentBack", park: own }
-      : end.code === 130
-        ? { _tag: "Stopped", park: own }
-        : { _tag: "Halted", park: own ?? (end.root === null ? { _tag: "NothingParked" } : { _tag: "Pending" }) };
+  const outcome = outcomeOf(end);
   const history = [...chain.history, { item: chain.item, title: chain.title, root: end.root, outcome, returned: null }];
   const common: Common = { ...commonOf(chain), history };
   // Issue #192: the end decided while a claimed parking kept the chain going (the mode turned off meanwhile).
   const pending = chain.claim._tag === "Claimed" ? chain.claim.then : null;
   // A send-back continues as a finished run and counts no halt, so an item sent back however many times (Q5) never ends the chain.
   if (outcome._tag === "Finished" || outcome._tag === "SentBack") return pending !== null ? [{ ...state, chain: { _tag: "Idle", ended: pending, history } }, null] : ready(state, common);
+  // Issue #185 (G-R1-1, Q6): an abandonment continues as a finished run and counts no halt, unless its parking failed.
+  if (outcome._tag === "Abandoned" && own?._tag !== "ParkFailed") return pending !== null ? [{ ...state, chain: { _tag: "Idle", ended: pending, history } }, null] : ready(state, common);
   if (outcome._tag === "Stopped") return [{ ...state, chain: { _tag: "Idle", ended: { _tag: "StoppedByDeveloper", item: chain.item }, history } }, null];
   // Issue #186 (requirements Q6): the run's own parking failed, its work where it was: the chain ends.
   if (own?._tag === "ParkFailed") return [{ ...state, chain: { _tag: "Idle", ended: { _tag: "ParkFailed", item: chain.item, message: own.message }, history } }, null];
@@ -287,11 +331,16 @@ export const due = (state: ChainState, generation: number, nowMs: number): Step 
   return reason !== null ? [idle(state, reason), null] : [state, { generation, command: { _tag: "List" } }];
 };
 
-/** The listing of refined items answered with its first item, in the tracker's order, or none. */
-export const listed = (state: ChainState, generation: number, first: Listed | null): Step => {
+/**
+ * The listing of refined items answered: its first item, in the tracker's order, that the chain has not abandoned for
+ * want of an answer (issue #185), or none.
+ */
+export const listed = (state: ChainState, generation: number, items: readonly Listed[]): Step => {
   const chain = state.chain;
   if (chain._tag !== "Ready" || chain.generation !== generation) return [state, null];
-  if (first === null) return [idle(state, { _tag: "NoItems" }), null];
+  const skipped = abandonedItems(state);
+  const first = items.find((i) => !skipped.has(i.item));
+  if (first === undefined) return [idle(state, { _tag: "NoItems" }), null];
   return [{ ...state, chain: { _tag: "Starting", item: first.item, title: first.title, ...commonOf(chain) } }, { generation, command: { _tag: "Start", item: first.item } }];
 };
 

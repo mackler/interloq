@@ -23,7 +23,7 @@ import type { CurrentRuns, ItemsAnswer, ItemsResult, RunEvent, StartRequest, Run
 import { listedItemOf } from "./protocol.ts";
 import { sentBackCount } from "./itemComments.ts";
 import {
-  begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
 import { makeStore } from "./store.ts";
@@ -236,7 +236,8 @@ export const makeRunManager = (
      * the restart finds the run cut off and starts nothing.
      */
     /** Issue #186: `parked`, the run's own parking (its Conclusion), which the chain takes as given. */
-    const end = (id: number, code: number, root: RunRoot | null = null, parked: ParkNote | null = null): Effect.Effect<void> =>
+    /** Issue #185: `abandoned`, the label of a run abandoned for want of an answer (its Conclusion). */
+    const end = (id: number, code: number, root: RunRoot | null = null, parked: ParkNote | null = null, abandoned: AbandonLabel | null = null): Effect.Effect<void> =>
       now.pipe(
         Effect.flatMap((time) =>
           step((s): readonly [Readonly<{ changed: boolean; command: ChainCommand | null }>, readonly Broadcast[], State] => {
@@ -245,7 +246,7 @@ export const makeRunManager = (
             if (mode === null || run === null) return [{ changed: false, command: null }, [], s];
             const event: RunEvent = { _tag: "Ended", code };
             const moved = withSlot(s, mode, endedIn(mode, s.runs[mode], id, (r) => ({ ...r, events: [...r.events, { time, event }] })));
-            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root, parked });
+            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root, parked, abandoned });
             return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
           }).pipe(Effect.flatMap(({ changed, command }) => (changed ? settle(command) : Effect.void))),
         ),
@@ -412,7 +413,7 @@ export const makeRunManager = (
               chainStep((s) =>
                 Result.isFailure(listed)
                   ? [chainRefused(s.chain, generation, { _tag: "ListingFailed", message: listed.failure }), null]
-                  : listedNext(s.chain, generation, listed.success[0] === undefined ? null : { item: listed.success[0].id, title: listed.success[0].title }),
+                  : listedNext(s.chain, generation, listed.success.map((i) => ({ item: i.id, title: i.title }))),
               ),
             ),
           );

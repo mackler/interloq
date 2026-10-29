@@ -2,7 +2,7 @@
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { type GitState, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
-import type { ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
+import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
@@ -3702,6 +3702,25 @@ export const chainSaveRefusedText = (message: string): string =>
   `The run was not started: the chain's state could not be saved under plan-review/, nor its old state removed, so a restart could start a run by itself. ${message}`;
 
 /** One line per run of a chain. */
+/** Issue #185: what an abandoned run's entry says of its work and of the item's label; never a label not confirmed. */
+const abandonedEntryText = (park: ParkNote | null, label: AbandonLabel): string => {
+  const work = park?._tag === "Parked" ? `its work is on the branch ${park.branch}` : "it had no work to move to a branch";
+  const waited = "stopped waiting for an answer";
+  switch (label._tag) {
+    case "SetRefined":
+      return `${waited}; ${work}; the item's label was set to \`refined\`.`;
+    case "StillHeld":
+      return `${waited}; ${work}; setting the item's label to \`refined\` failed, and it still carries the label \`${label.state}\` (the tracker last reported: ${label.cause}).`;
+    case "Unconfirmed":
+      return `${waited}; ${work}; the item's label could not be confirmed as \`refined\` (the tracker last reported: ${label.cause}).`;
+    case "KeptImplementing":
+      return `${waited}; moving its work to a branch failed (${park?._tag === "ParkFailed" ? park.message : "the parking did not complete"}), so the item keeps the label \`implementing\`.`;
+    case "Unchanged":
+      return `${waited} before its run began; nothing was committed, and the item kept the label \`refined\`.`;
+    case "SendBackUnfinished":
+      return `${waited} while sending the item back to refinement; ${work}; the send-back's ${label.step === "comment" ? "comment" : "setting of the label `unrefined`"} was left undone, and Interloq set no label after it.`;
+  }
+};
 export const chainEntryText = (entry: ChainEntry): string => {
   const outcome = chainOutcomeText(entry);
   // Issue #192: where the parking kept nothing, the manager's return of the item to refined, or why it failed.
@@ -3733,6 +3752,8 @@ const chainOutcomeText = (entry: ChainEntry): string => {
           return `${head}: halted; its work could not be kept on a branch.`;
       }
     }
+    case "Abandoned":
+      return `${head}: ${abandonedEntryText(entry.outcome.park, entry.outcome.label)}`;
   }
 };
 
