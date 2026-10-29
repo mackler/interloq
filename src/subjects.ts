@@ -143,7 +143,8 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
  * program validates it against `previous`, the plan as it stood when the phase began (G-R1-1: its done steps and its
  * statuses do not change within a planning phase), and writes plan.json and plan.md.
  */
-export function planSubject(root: RunRoot, phase: number, withRequirements: boolean, previous: RecordedPlan | null, checks: S.StepChecks): Subject<PlanResponse, PlanWrite> {
+/** `parkedBranch` (issue #186): the parked earlier run's branch the phase's plan starts from, which its review names. */
+export function planSubject(root: RunRoot, phase: number, withRequirements: boolean, previous: RecordedPlan | null, checks: S.StepChecks, parkedBranch: string | null = null): Subject<PlanResponse, PlanWrite> {
   const id = { plan: phase };
   const validate = planValidation(root, previous);
   return {
@@ -151,7 +152,7 @@ export function planSubject(root: RunRoot, phase: number, withRequirements: bool
     phase: phaseOf(id),
     heading: subjectHeading(id),
     fileLabel: prompts.PLAN_FILE_LABEL,
-    reviewPrompt: (root, round, thread) => prompts.planReviewPrompt(root, phase, round, withRequirements, checks, thread),
+    reviewPrompt: (root, round, thread) => prompts.planReviewPrompt(root, phase, round, withRequirements, checks, thread, parkedBranch),
     respond: { prompt: (root, round) => prompts.planRespondPrompt(root, phase, round, checks), schema: S.PlanResponse, after: (output) => savePlan(phase, output.plan, previous), capability: "records", validate: bothValidations(planField<PlanResponse>(validate), userQuestionsValidation<PlanResponse>()) },
     applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, checks), schema: S.PlanWrite, after: (output) => savePlan(phase, output.plan, previous), validate: bothValidations(planField<PlanWrite>(validate), userQuestionsValidation<PlanWrite>()) },
     amend: null,

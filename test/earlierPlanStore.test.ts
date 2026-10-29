@@ -105,7 +105,9 @@ test("parked: a newest run parked, or with its parking intended, gives EarlierRu
     earlier(repo, OLD, {});
     earlier(repo, NEW, {});
     parkedIn(repo, NEW, record);
-    assert.deepEqual(await run((await storeOf(repo)).earlierPlan(item("80"))), { _tag: "EarlierRunParked", root: NEW, branch: "interloq/halted/80/x" }, record._tag);
+    // Issue #186 (review P1-R2-1): Parked is a parking that completed, Intended one that did not.
+    const parking = record._tag === "Parked" ? "complete" : "incomplete";
+    assert.deepEqual(await run((await storeOf(repo)).earlierPlan(item("80"))), { _tag: "EarlierRunParked", root: NEW, branch: "interloq/halted/80/x", parking }, record._tag);
   }
 });
 

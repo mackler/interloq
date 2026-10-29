@@ -28,9 +28,11 @@ export type EarlierPlan =
   | Readonly<{ _tag: "EarlierPlanSetAside"; root: RunRoot }>
   /**
    * The newest earlier run halted and its work was parked on a branch (issue #147): its commits are off the working
-   * branch, so this run takes no plan and no baseline from it, nor from an older run, and plans from nothing.
+   * branch, so this run takes no plan and no baseline from it, nor from an older run. Issue #186 (review P1-R2-1): where
+   * the parking completed (parked.json Parked: the branch was made at the park commit), this run's plan starts from
+   * that branch; where it did not (Intended: written before any git write), the branch may be missing or unrelated.
    */
-  | Readonly<{ _tag: "EarlierRunParked"; root: RunRoot; branch: string }>;
+  | Readonly<{ _tag: "EarlierRunParked"; root: RunRoot; branch: string; parking: "complete" | "incomplete" }>;
 
 /** Whether some plan review of the run ended in agreement, as its records show. */
 export const planReviewConverged = (records: EarlierRunRecords): boolean =>

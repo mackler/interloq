@@ -13,7 +13,7 @@ import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
 import type { EarlierPlan } from "./earlierPlan.ts";
-import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -141,7 +141,10 @@ const planStartOf = (earlier: EarlierPlan): Effect.Effect<PlanStart, StoreError,
     case "EarlierPlanSetAside":
       return sayAndWrite(earlierPlanSetAsideLine(earlier.root)).pipe(Effect.as({ _tag: "Fresh" } as const));
     case "EarlierRunParked":
-      return sayAndWrite(earlierRunParkedLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "Fresh" } as const));
+      // Issue #186 (Q6, review P1-R2-1): a completed parking's branch is where the plan starts; an incomplete one's is not trusted.
+      return earlier.parking === "complete"
+        ? sayAndWrite(earlierRunParkedLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "ParkedBranch", root: earlier.root, branch: earlier.branch } as const))
+        : sayAndWrite(earlierParkingIncompleteLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "Fresh" } as const));
   }
 };
 
@@ -156,7 +159,11 @@ const sayAndWrite = (line: string): Effect.Effect<void, StoreError, Ui | Store> 
  * Where planning phase 1 starts (issue #180): from nothing, or from an earlier run's plan, its statuses carried, with
  * that run's baseline, which this run adopts (Q4).
  */
-export type PlanStart = Readonly<{ _tag: "Fresh" }> | Readonly<{ _tag: "Earlier"; root: RunRoot; plan: S.RecordedPlan; baseline: Baseline }>;
+export type PlanStart =
+  | Readonly<{ _tag: "Fresh" }>
+  | Readonly<{ _tag: "Earlier"; root: RunRoot; plan: S.RecordedPlan; baseline: Baseline }>
+  /** Issue #186 (Q6): from nothing, with this run's own baseline, the plan's first step bringing the earlier run's parked branch onto the working branch. */
+  | Readonly<{ _tag: "ParkedBranch"; root: RunRoot; branch: string }>;
 /** Why a planning phase writes or revises the plan: the first plan, a plan taken from an earlier run (issue #180), or a revision. */
 export type PlanningCause = FirstPlanCause | RevisionCause;
 /** The prompt of planning phase k for its cause. */
@@ -256,7 +263,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       Effect.flatMap(planner.fresh, (session) => Effect.provideService(body, Planner, session));
     // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120). A run that takes
     // an earlier run's plan adopts that run's baseline (issue #180, Q4) and starts from that plan (Q3).
-    if (start._tag === "Fresh") yield* store.writeBaseline();
+    if (start._tag !== "Earlier") yield* store.writeBaseline();
     else {
       yield* store.adoptBaseline(start.baseline);
       yield* store.savePlan(start.plan);
@@ -360,11 +367,11 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     /** The verdicts given so far, numbered across the run (issue #186). */
     let verdicts = 0;
     /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
-    let previous: PlanningCause = start._tag === "Fresh" ? { _tag: "FirstPlan" } : { _tag: "EarlierPlan", root: start.root };
+    let previous: PlanningCause = start._tag === "Fresh" ? { _tag: "FirstPlan" } : start._tag === "Earlier" ? { _tag: "EarlierPlan", root: start.root } : { _tag: "ParkedBranch", root: start.root, branch: start.branch };
     for (let k = 1; ; k++) {
       // The plan as this planning phase begins (issue #6, G-R1-1): its done steps and statuses do not change within the phase.
       const before = Option.getOrNull(yield* store.loadPlan());
-      const subject = planSubject(store.root, k, withRequirements, before, checks);
+      const subject = planSubject(store.root, k, withRequirements, before, checks, previous._tag === "ParkedBranch" ? previous.branch : null);
       const reviewed = yield* Effect.gen(function* () {
         // Planning phase K: write or revise the plan, then review it.
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });

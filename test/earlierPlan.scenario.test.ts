@@ -11,7 +11,7 @@ import { readRefinement } from "../src/refinement.ts";
 import { subjectHeading } from "../src/render.ts";
 import { implementationRun } from "../src/run.ts";
 import { NO_STEP_CHECKS, type RecordedPlan } from "../src/schema.ts";
-import { EARLIER_ROOT, TEST_ROOT, fakeTrackerOf, finished, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { EARLIER_ROOT, TEST_ROOT, fakeTrackerOf, finished, issue, respond, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 // Issue #180 (S5): an implementation run starts, without asking, from the plan of the newest earlier implementation run
 // of its item whose plan review ended in agreement: that plan, its done steps kept and its running steps unfinished, is
@@ -104,14 +104,54 @@ test("a qualifying run whose plan.json holds a later revision never agreed: that
   assert.deepEqual(atRevision, ["S1:done", "S9:pending"]);
 });
 
-test("an earlier run whose work was parked (issue #147, S7): the run plans from nothing and says so", async () => {
+// Issue #186 (requirements Q6, S19): a newest earlier run whose parking completed: the run takes no plan and no baseline
+// from it, and its first plan starts by bringing that run's branch onto the working branch. One whose parking did not
+// complete plans from the working branch, with no rule about the branch, and says so.
+const BRANCH = "interloq/halted/1/earlier";
+const parkedRecord = (repo: string, record: object) => fs.writeFileSync(path.join(repo, "plan-review", EARLIER_ROOT, "parked.json"), JSON.stringify(record));
+const completed = { _tag: "Parked", version: 2, branch: BRANCH, commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" };
+const intended = { _tag: "Intended", version: 2, branch: BRANCH, start_commit: "s", time: "t" };
+const baselineTime = (dir: string): string => JSON.parse(fs.readFileSync(path.join(dir, "baseline.json"), "utf8")).time;
+
+test("an earlier run whose parking completed: the first plan's prompt names its branch and the rule, and no baseline is adopted", async () => {
   const repo = tempRepo();
   earlierRun(repo, EARLIER_ROOT, {});
-  const branch = "interloq/halted/1/earlier";
-  fs.writeFileSync(path.join(repo, "plan-review", EARLIER_ROOT, "parked.json"), JSON.stringify({ _tag: "Parked", version: 2, branch, commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" }));
+  parkedRecord(repo, completed);
   const probe = await implement(repo, { steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
-  assert.ok(initialText(probe), "the run did not plan from nothing");
-  const line = prompts.earlierRunParkedLine(EARLIER_ROOT, branch);
+  const rule = prompts.parkedBranchFirstStepRule(BRANCH);
+  assert.ok(probe.planner.prompts[0]!.startsWith("Produce an implementation plan") && probe.planner.prompts[0]!.includes(rule));
+  assert.ok(probe.reviewer.prompts[0]!.includes(rule) && probe.reviewer.prompts[0]!.includes(prompts.PARKED_BRANCH_REVIEW_CRITERION));
+  assert.notEqual(baselineTime(probe.dir), "2025-12-31T00:00:00.000Z", "the earlier run's baseline was adopted");
+  const line = prompts.earlierRunParkedLine(EARLIER_ROOT, BRANCH);
   assert.ok(conversationOf(probe.dir).includes(line));
   assert.ok(probe.ui.said.includes(line));
+});
+
+test("an earlier run whose parking completed and a verdict Claude Code withdraws: the plan after it and the plan review name the branch and the rule", async () => {
+  const repo = tempRepo();
+  earlierRun(repo, EARLIER_ROOT, {});
+  parkedRecord(repo, completed);
+  const probe = await implement(repo, {
+    steps: [{ output: { reply: { kind: "notRefined", missing: "m" } } }, { output: { ...respond([["V1-R1-1", "accepted"]]), missing: "" } }, { output: {}, plan: "v1" }],
+    reviews: [{ issues: [issue("V1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  });
+  const rule = prompts.parkedBranchFirstStepRule(BRANCH);
+  const after = probe.planner.prompts.find((p) => p.startsWith("Codex's review of your verdict"));
+  assert.ok(after?.includes(rule), "the plan after the withdrawn verdict lacks the rule");
+  const planReview = probe.reviewer.prompts.find((p) => p.startsWith("Review the implementation plan"));
+  assert.ok(planReview?.includes(rule) && planReview.includes(prompts.PARKED_BRANCH_REVIEW_CRITERION));
+});
+
+test("an earlier run whose parking did not complete, with no branch or an unrelated one: no rule, no baseline adopted, and the line", async () => {
+  for (const unrelated of [false, true]) {
+    const repo = tempRepo();
+    earlierRun(repo, EARLIER_ROOT, {});
+    parkedRecord(repo, intended);
+    if (unrelated) execFileSync("git", ["-C", repo, "branch", BRANCH]);
+    const probe = await implement(repo, { steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+    for (const p of [...probe.planner.prompts, ...probe.reviewer.prompts]) assert.ok(!p.includes("parked its work on the branch"), `unrelated: ${unrelated}`);
+    assert.notEqual(baselineTime(probe.dir), "2025-12-31T00:00:00.000Z");
+    assert.ok(conversationOf(probe.dir).includes(prompts.earlierParkingIncompleteLine(EARLIER_ROOT, BRANCH)), `unrelated: ${unrelated}`);
+  }
 });

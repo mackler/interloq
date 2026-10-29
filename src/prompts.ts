@@ -961,6 +961,8 @@ export const PLAN_BUILD_RULE =
 export const PLAN_QUESTIONS_RULE =
   `${PLAN_BUILD_RULE} Put in questions_for_user only a question about what the work should achieve, where the task, the requirements and the user's decisions leave it open, and only as the rule on whether to ask allows.`;
 /** Issue #181: the plan review's criterion, the counterpart of PLAN_QUESTIONS_RULE. */
+/** Issue #186: the plan review's criterion beside parkedBranchFirstStepRule, where the run starts from a parked earlier run's branch. */
+export const PARKED_BRANCH_REVIEW_CRITERION = "Raise an issue where the plan's first remaining step does not bring that branch's commits onto the working branch as the rule says, or where a later step does not build on that work.";
 export const PLAN_QUESTIONS_REVIEW_CRITERION =
   "Raise an issue for a remaining step whose text rests on a choice of how to build the work that it does not state, and for a question the plan writer put to the user about how to build the work rather than what it should achieve.";
 /** Issue #176: the execution prompt's sentence on committing, which states no commit policy either. */
@@ -1018,12 +1020,17 @@ ${planIdRule(root)}
 Do not modify any file.
 Return an empty questions_for_user array.`;
 
-export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, checks: StepChecks, thread: ReviewThread): string {
+/** `parkedBranch` (issue #186): the branch of a parked earlier run that the phase's plan starts from, or null. */
+export function planReviewPrompt(root: RunRoot, phase: number, round: number, withRequirements: boolean, checks: StepChecks, thread: ReviewThread, parkedBranch: string | null = null): string {
   const prefix = `P${phase}`;
   const log = pathOf({ kind: "log", subject: { plan: phase } });
-  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "planFile" }), log, prefix, round), () => planReviewFirst(root, log, prefix, round, withRequirements, checks));
+  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "planFile" }), log, prefix, round), () => planReviewFirst(root, log, prefix, round, withRequirements, checks, parkedBranch));
 }
-function planReviewFirst(root: RunRoot, log: string, prefix: string, round: number, withRequirements: boolean, checks: StepChecks): string {
+function planReviewFirst(root: RunRoot, log: string, prefix: string, round: number, withRequirements: boolean, checks: StepChecks, parkedBranch: string | null): string {
+  const parked = parkedBranch === null ? "" : `The plan writer was given this rule on an earlier run's parked work:
+${parkedBranchFirstStepRule(parkedBranch)}
+${PARKED_BRANCH_REVIEW_CRITERION}
+`;
   const requirements = withRequirements
     ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions. It must be followed; raise an issue when a plan step contradicts it or omits something it requires.\n`
     : "";
@@ -1038,7 +1045,7 @@ ${COMMIT_STEP_REVIEW_CRITERION}
 The plan writer was given this rule on its questions to the user:
 ${PLAN_QUESTIONS_RULE}
 ${PLAN_QUESTIONS_REVIEW_CRITERION}
-${workEffectReviewRule("plan")}
+${parked}${workEffectReviewRule("plan")}
 Put the step's id in the location field.
 ${logRules(root, log, prefix, round)}`;
 }
@@ -3706,9 +3713,15 @@ const chainOutcomeText = (entry: ChainEntry): string => {
   }
 };
 
-/** Said and written when an item's newest earlier run was parked (S7): this run plans from nothing. */
+/**
+ * Said and written when an item's newest earlier run parked its work on a branch (S7; issue #186: where the parking
+ * completed, this run's plan starts from that branch).
+ */
 export const earlierRunParkedLine = (earlier: RunRoot, branch: string): string =>
-  `The earlier implementation run in ${RECORDS_DIR}/${earlier} halted and its work was moved to the branch ${branch}, so this run takes no plan from it and plans the item from nothing. The branch is left for you.`;
+  `The earlier implementation run in ${RECORDS_DIR}/${earlier} ended with its work on the branch ${branch}, so this run takes no plan from it, and its plan starts from that branch: its first step brings the branch's commits onto the working branch, and the branch is left in place.`;
+/** Issue #186 (review P1-R2-1): said and written when the newest earlier run's parking did not finish. */
+export const earlierParkingIncompleteLine = (earlier: RunRoot, branch: string): string =>
+  `The earlier implementation run in ${RECORDS_DIR}/${earlier} began to move its work to the branch ${branch} and did not finish, so that branch may be missing or hold something else. This run takes nothing from that run, and its plan starts from the working branch; the earlier run's records directory says what was done.`;
 
 /** Why a halted run's work was not parked: a branch of its name already holds another commit, which is not overwritten. */
 export const parkBranchTakenText = (branch: string, tip: string, head: string): string =>
