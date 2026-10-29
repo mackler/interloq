@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
 import fc from "fast-check";
-import { begun, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, parked, restored, runLimitOf, saveFailed, started } from "../src/chain.ts";
+import { begun, claimParking, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, parked, restored, runLimitOf, saveFailed, started } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 
@@ -116,6 +116,38 @@ test("a Parking chain never leaves Parking through saveFailed or a change of set
             : op === "listed" ? listed(s, g, { item: "1" as ItemId, title: "t" })[0]
             : parked(s, g + 1, { _tag: "NothingParked" })[0];
           assert.equal(s.chain._tag, "Parking", op);
+        }
+      }
+    }),
+    RUNS,
+  );
+});
+
+// Issue #192: whatever the claims, nothing is started once the mode is turned off.
+test("property: no run starts after the mode is turned off, whatever the claims", () => {
+  const arbOp = fc.constantFrom("claim", "off", "end0", "end1", "end1root", "parked", "due", "listed");
+  fc.assert(
+    fc.property(fc.array(arbOp, { maxLength: 14 }), (ops) => {
+      let s: ChainState = begun(initialState({ enabled: true, limits: { runs: null, cutoff: null } }), 1, "1" as ItemId, "t");
+      let run = 1;
+      let turnedOff = false;
+      for (const op of ops) {
+        const g = s.chain._tag === "Idle" ? -1 : s.chain.generation;
+        let command: ChainCommand | null = null;
+        if (op === "claim") s = claimParking(s, run)[0];
+        else if (op === "off") {
+          s = configured(s, OFF_SETTINGS, null);
+          turnedOff = true;
+        } else if (op === "end0") [s, command] = ended(s, run, { code: 0, root: null });
+        else if (op === "end1") [s, command] = ended(s, run, { code: 1, root: null });
+        else if (op === "end1root") [s, command] = ended(s, run, { code: 1, root: `runs/r${run}` as RunRoot });
+        else if (op === "parked") [s, command] = parked(s, g, { _tag: "NothingParked" });
+        else if (op === "due") [s, command] = due(s, g, 0);
+        else [s, command] = listed(s, g, { item: "2" as ItemId, title: "t" });
+        if (command?.command._tag === "Start") {
+          assert.ok(!turnedOff, "a start after the mode was turned off");
+          run++;
+          s = started(s, command.generation, run, command.command.item, "t");
         }
       }
     }),

@@ -17,7 +17,7 @@ import { identify, type MountTable } from "./hostDir.ts";
 import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
 import {
-  begun, blocksImplementationStart, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  begun, blocksImplementationStart, claimParking, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
 import { makeStore } from "./store.ts";
@@ -406,6 +406,17 @@ export const makeRunManager = (
         // Issue #147: the run's records directory once allocated, which the chain needs at the run's end, however it ends.
         const allocated = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
+        // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
+        // to keep its item implementing rests on the chain's own decision; while closing nothing is granted.
+        const claim = Ref.get(idRef).pipe(
+          Effect.flatMap((rid) =>
+            step((s): readonly [boolean, readonly Broadcast[], State] => {
+              if (s.closing) return [false, [], s];
+              const [chain, granted] = claimParking(s.chain, rid);
+              return [granted, chainChange(s.chain, chain), { ...s, chain }];
+            }),
+          ),
+        );
         // Issue #142: the run takes the choice the page sent, which is what its control showed.
         const runStart: RunStart = request.mode === "refinement" ? { mode: request.mode, item: item.id, project: cwd, terms: request.terms } : { mode: request.mode, item: item.id, project: cwd };
         // The ownership transfer (finding 11 of docs/gui-review.md) is one uninterruptible region: the fiber exists
@@ -417,7 +428,7 @@ export const makeRunManager = (
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal, allocated))),
+              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal, allocated, claim))),
               // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
               Effect.onExit((exit: Exit.Exit<number>) =>
                 Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated)]).pipe(

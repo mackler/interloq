@@ -14,7 +14,7 @@ import { type Broadcast, type ChainPersistence, type EventBroadcast, makeRunMana
 import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SETTINGS, type ParkNote, runLimitOf } from "../src/chain.ts";
 import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
 import { parkHalted } from "../src/parking.ts";
-import type { StoreShape } from "../src/services.ts";
+import type { StoreShape, UiShape } from "../src/services.ts";
 import { chainParkingText } from "../src/prompts.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
@@ -38,7 +38,7 @@ const committedWork = (repo: string) => {
 
 type Harness = { manager: RunManager; events: EventBroadcast[]; chains: ChainState[]; repo: string; tracker: FakeTracker };
 type Script = TestOptions | ((repo: string) => TestOptions);
-type Options = { park?: (store: StoreShape, item: ItemId) => Effect.Effect<ParkNote>; settings?: ChainSettings; tracker?: FakeTracker; trackerOf?: (fake: FakeTracker) => TrackerShape; persistence?: ChainPersistence; repo?: string; defaults?: ChainSettings };
+type Options = { uiOf?: (ui: UiShape) => UiShape; park?: (store: StoreShape, item: ItemId) => Effect.Effect<ParkNote>; settings?: ChainSettings; tracker?: FakeTracker; trackerOf?: (fake: FakeTracker) => TrackerShape; persistence?: ChainPersistence; repo?: string; defaults?: ChainSettings };
 
 const identified = (): string => {
   const repo = tempRepo();
@@ -58,7 +58,7 @@ const harness = async (scripts: Script[], options: Options = {}): Promise<Harnes
     const next = queue.shift() ?? {};
     return testWiring(repo, { tracker, ...(typeof next === "function" ? next(repo) : next) }).wiring;
   };
-  const manager = await run(makeRunManager((ui) => ({ ...wiringOf(), ui: Effect.succeed(ui) }), repo, [], "test", access, options.defaults ?? DEFAULT_SETTINGS, undefined, options.persistence, options.park).pipe(Effect.provide(platformLayer)));
+  const manager = await run(makeRunManager((ui) => ({ ...wiringOf(), ui: Effect.succeed(options.uiOf?.(ui) ?? ui) }), repo, [], "test", access, options.defaults ?? DEFAULT_SETTINGS, undefined, options.persistence, options.park).pipe(Effect.provide(platformLayer)));
   const events: EventBroadcast[] = [];
   const chains: ChainState[] = [];
   const scope = await run(Scope.make());
@@ -648,4 +648,74 @@ test("start interrupted during its Running save: the run is reserved, started an
   await until("the run's end", () => endCode(h, id!) !== undefined);
   await until("no slot holding the run", async () => (await run(h.manager.current)).implementation !== id);
   assert.equal(endCode(h, id!), 0);
+});
+
+// Issue #192: a chained halt that made no commit returns its item to refined unless the chain claimed its parking.
+const leftover = (repo: string) => fs.writeFileSync(path.join(repo, "left.txt"), "left uncommitted\n");
+const stateOf = async (h: Harness, item: string) => (await run(h.tracker.items)).find((i) => i.id === item)?.state;
+const parkBranches = (h: Harness, item: string) => git(h.repo, "branch", "--list", `interloq/halted/${item}/*`, "--format=%(refname:short)").split("\n").filter((b) => b !== "");
+/** A Ui whose HALTED line is said only once `held` resolves, so a halted run ends only then. */
+const holdingHalt = (held: Promise<void>) => (ui: UiShape): UiShape => ({ ...ui, say: (text) => (text.includes("HALTED:") ? Effect.promise(() => held).pipe(Effect.andThen(ui.say(text))) : ui.say(text)) });
+
+test("a chained run halted with nothing to keep is returned refined, parked as Nothing, and listed again until it halts twice", async () => {
+  const only = MANAGER_ITEMS.filter((i) => i.id === "1");
+  const h = await harness([halting(), halting()], { tracker: fakeTrackerOf(only) });
+  await begin(h, "1");
+  await idle(h);
+  assert.deepEqual(startedRuns(h).map((r) => r.item), ["1", "1"]);
+  assert.equal(await endedReason(h), "HaltedTwice");
+  assert.equal(await stateOf(h, "1"), "refined");
+  const history = (await chainOf(h)).chain.history;
+  assert.equal(history[0]?.outcome._tag === "Halted" && history[0].outcome.park._tag, "NothingParked");
+});
+
+test("a chained run halted with leftovers and no commit keeps implementing, its work parked on its branch", async () => {
+  const only = MANAGER_ITEMS.filter((i) => i.id === "1");
+  const h = await harness([halting(leftover)], { tracker: fakeTrackerOf(only) });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal(parkBranches(h, "1").length, 1);
+  assert.equal(await endedReason(h), "NoItems");
+});
+
+test("the mode turned off after the claim: the work is still parked, the item stays implementing, and the chain ends TurnedOff", async () => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  const h = await harness([halting(leftover), converging], { uiOf: holdingHalt(held) });
+  await begin(h, "1");
+  await until("the claim", async () => {
+    const c = (await chainOf(h)).chain;
+    return c._tag === "Running" && c.claim._tag === "Claimed";
+  });
+  await run(h.manager.setChain(OFF_SETTINGS));
+  release();
+  await idle(h);
+  assert.equal(parkBranches(h, "1").length, 1);
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal(await endedReason(h), "TurnedOff");
+  assert.equal(startedRuns(h).length, 1);
+});
+
+test("the mode turned off before the halt: no claim, the item returned refined, its leftovers kept, nothing parked", async () => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  const h = await harness([(repo) => ({ steps: [{ sessionTooLong: "Prompt is too long", onCall: () => leftover(repo), gate: () => held }] }), converging]);
+  const id = await begin(h, "1");
+  await until("the planning call", () => h.events.some((b) => b.run === id && b.event._tag === "Notified"));
+  await run(h.manager.setChain(OFF_SETTINGS));
+  release();
+  await idle(h);
+  assert.equal(await stateOf(h, "1"), "refined");
+  assert.ok(fs.existsSync(path.join(h.repo, "left.txt")));
+  assert.deepEqual(parkBranches(h, "1"), []);
+});
+
+test("a run started with the mode off that halts with leftovers and no commit is returned refined, its leftovers kept", async () => {
+  const h = await harness([halting(leftover)], { defaults: OFF_SETTINGS });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal(await stateOf(h, "1"), "refined");
+  assert.ok(fs.existsSync(path.join(h.repo, "left.txt")));
+  assert.deepEqual(parkBranches(h, "1"), []);
 });

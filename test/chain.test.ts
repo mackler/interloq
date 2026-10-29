@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Result, Schema } from "effect";
 import {
   begun, blocksImplementationStart, type ChainSettings, type ChainState, ChainFileSchema, configured, cutoffOf, DEFAULT_SETTINGS, due, ended, initialState,
-  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand,
+  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand, claimParking,
 } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
@@ -282,4 +282,51 @@ test("commandApplies: each command in its own state and generation, never anothe
   assert.equal(commandApplies(p, { generation: gen(p), command: { _tag: "Park", item: id("9"), root: root("1") } }), false);
   assert.equal(commandApplies(p, { generation: gen(p), command: { _tag: "Park", item: id("1"), root: root("9") } }), false);
   assert.equal(commandApplies(l, { generation: gen(l), command: { _tag: "Start", item: id("9") } }), false);
+});
+
+// Issue #192: a halted run's claim on the parking of its leftovers, which turning the mode off no longer cancels.
+test("claimParking grants and records the claim exactly for the chain's running run", () => {
+  const s = startedChain();
+  const [claimed, granted] = claimParking(s, 1);
+  assert.equal(granted, true);
+  assert.deepEqual(claimed.chain._tag === "Running" && claimed.chain.claim, { _tag: "Claimed", then: null });
+  assert.deepEqual(claimParking(s, 2), [s, false]);
+  const idle = initialState(DEFAULT_SETTINGS);
+  assert.deepEqual(claimParking(idle, 1), [idle, false]);
+  const [ready] = ended(s, 1, { code: 0, root: root("1") });
+  assert.deepEqual(claimParking(ready, 1), [ready, false]);
+});
+
+test("the mode turned off after a claim keeps the run's chain until its parking, which ends it TurnedOff; without a claim, Idle", () => {
+  const [claimed] = claimParking(startedChain(), 1);
+  const off = configured(claimed, OFF_SETTINGS, id("1"));
+  assert.equal(off.chain._tag, "Running");
+  assert.deepEqual(off.chain._tag === "Running" && off.chain.claim, { _tag: "Claimed", then: { _tag: "TurnedOff", running: id("1") } });
+  const [parking, command] = ended(off, 1, { code: 1, root: root("1") });
+  assert.equal(parking.chain._tag, "Parking");
+  assert.deepEqual(parking.chain._tag === "Parking" && parking.chain.then, { _tag: "TurnedOff", running: id("1") });
+  assert.equal(command?.command._tag, "Park");
+  const [after, next] = parked(parking, gen(parking), { _tag: "NothingParked" });
+  assert.deepEqual(after.chain._tag === "Idle" && after.chain.ended, { _tag: "TurnedOff", running: id("1") });
+  assert.equal(next, null);
+  assert.equal(configured(startedChain(), OFF_SETTINGS, id("1")).chain._tag, "Idle");
+});
+
+test("a claimed run halted the second time parks and then ends HaltedTwice", () => {
+  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [r1] = parked(p1, gen(p1), { _tag: "NothingParked" });
+  const again = chainStart(r1, 2, "1");
+  const [claimed] = claimParking(configured(again, again.settings, null), 2);
+  const [p2] = ended(configured(claimed, OFF_SETTINGS, id("1")), 2, { code: 1, root: root("2") });
+  assert.deepEqual(p2.chain._tag === "Parking" && p2.chain.then, { _tag: "HaltedTwice", item: id("1") });
+});
+
+test("a restored Running chain with a claim ends ServerEnded; a chain.json without the claim decodes Unclaimed", () => {
+  const [claimed] = claimParking(startedChain(), 1);
+  const [r] = restored(claimed);
+  assert.deepEqual(r.chain._tag === "Idle" && r.chain.ended, { _tag: "ServerEnded", item: id("1") });
+  const file = JSON.parse(JSON.stringify({ version: 2, state: startedChain() }));
+  delete file.state.chain.claim;
+  const decoded = Schema.decodeUnknownSync(ChainFileSchema)(file);
+  assert.deepEqual(decoded.state.chain._tag === "Running" && decoded.state.chain.claim, { _tag: "Unclaimed" });
 });

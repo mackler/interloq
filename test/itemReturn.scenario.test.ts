@@ -113,20 +113,16 @@ test("(f2) a conversation.md that cannot be written cuts no retry short: the ret
   for (const failures of [1, 4]) {
     const tracker = fakeTrackerOf([scriptedItem]);
     for (let i = 0; i < failures; i++) Effect.runSync(tracker.failNext("setState", unreachable(), "refined"));
-    let halted = false;
+    // The planning call makes conversation.md read-only, so every later write to it fails, the retry's lines included.
+    let probeOf: WiringProbe | null = null;
     const { wiring, probe } = testWiring(tempRepo(), {
-      ...haltsAtPlanning,
+      steps: [{ sessionTooLong: "Prompt is too long", onCall: () => probeOf !== null && fs.chmodSync(path.join(probeOf.dir, "conversation.md"), 0o444) }],
       tracker,
       config: quickTracker,
-      store: (store) => ({
-        ...store,
-        converse: (markdown) => {
-          if (markdown.startsWith("**Halted")) halted = true;
-          return halted || markdown.includes("tracker") ? Effect.fail({ _tag: "FileSystemError", operation: "append to", path: "conversation.md", message: "disk full" } as never) : store.converse(markdown);
-        },
-      }),
     });
+    probeOf = probe;
     assert.equal(await runWith(wiring, probe), 1);
+    assert.ok(!conversation(probe).includes(itemReturnedLine(item)), "conversation.md was written after it was made read-only");
     if (failures === 1) {
       assert.ok(said(probe).includes(itemReturnedLine(item)), said(probe));
       assert.equal(await stateOf(probe), "refined");

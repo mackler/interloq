@@ -208,17 +208,19 @@ export const ended = (state: ChainState, run: number, end: RunEnd): Step => {
     end.code === 0 ? { _tag: "Finished" } : end.code === 130 ? { _tag: "Stopped" } : { _tag: "Halted", park: end.root === null ? { _tag: "NothingParked" } : { _tag: "Pending" } };
   const history = [...chain.history, { item: chain.item, title: chain.title, root: end.root, outcome }];
   const common: Common = { ...commonOf(chain), history };
-  if (outcome._tag === "Finished") return ready(state, common);
+  // Issue #192: the end decided while a claimed parking kept the chain going (the mode turned off meanwhile).
+  const pending = chain.claim._tag === "Claimed" ? chain.claim.then : null;
+  if (outcome._tag === "Finished") return pending !== null ? [{ ...state, chain: { _tag: "Idle", ended: pending, history } }, null] : ready(state, common);
   if (outcome._tag === "Stopped") return [{ ...state, chain: { _tag: "Idle", ended: { _tag: "StoppedByDeveloper", item: chain.item }, history } }, null];
   const times = (chain.halts.find((h) => h.item === chain.item)?.times ?? 0) + 1;
   const halts = [...chain.halts.filter((h) => h.item !== chain.item), { item: chain.item, times }];
-  const twice: ChainEndReason | null = times >= 2 ? { _tag: "HaltedTwice", item: chain.item } : null;
+  const endsAfter: ChainEndReason | null = times >= 2 ? { _tag: "HaltedTwice", item: chain.item } : pending;
   if (end.root !== null)
     return [
-      { ...state, chain: { _tag: "Parking", item: chain.item, root: end.root, then: twice, ...common, halts } },
+      { ...state, chain: { _tag: "Parking", item: chain.item, root: end.root, then: endsAfter, ...common, halts } },
       { generation: chain.generation, command: { _tag: "Park", item: chain.item, root: end.root } },
     ];
-  return twice !== null ? [{ ...state, chain: { _tag: "Idle", ended: twice, history } }, null] : ready(state, { ...common, halts });
+  return endsAfter !== null ? [{ ...state, chain: { _tag: "Idle", ended: endsAfter, history } }, null] : ready(state, { ...common, halts });
 };
 
 /** The parking of a halted run's work ended with `note`. */
@@ -260,7 +262,11 @@ export const startGuard = (state: ChainState, generation: number, item: ItemId, 
  * The halted run `run` asks the chain to park its uncommitted files (issue #192): granted, and recorded, exactly when the
  * chain is running that run, so the program's choice to keep the item implementing rests on the chain's own decision.
  */
-export const claimParking = (state: ChainState, _run: number): readonly [ChainState, boolean] => [state, false];
+export const claimParking = (state: ChainState, run: number): readonly [ChainState, boolean] => {
+  const chain = state.chain;
+  if (chain._tag !== "Running" || chain.run !== run) return [state, false];
+  return [{ ...state, chain: { ...chain, claim: { _tag: "Claimed", then: chain.claim._tag === "Claimed" ? chain.claim.then : null } } }, true];
+};
 
 /** No implementation run is reserved while a halted run's work is being moved off the working branch. */
 export const blocksImplementationStart = (state: ChainState): boolean => state.chain._tag === "Parking";
@@ -313,7 +319,10 @@ export const configured = (state: ChainState, settings: ChainSettings, running: 
   const chain = state.chain;
   if (!settings.enabled && state.settings.enabled) {
     const off: ChainEndReason = { _tag: "TurnedOff", running };
-    return chain._tag === "Parking" ? { ...next, chain: { ...chain, then: off } } : idle(next, off);
+    if (chain._tag === "Parking") return { ...next, chain: { ...chain, then: off } };
+    // Issue #192: a claimed parking is certain, so the chain stays until it, ending TurnedOff after it.
+    if (chain._tag === "Running" && chain.claim._tag === "Claimed") return { ...next, chain: { ...chain, claim: { _tag: "Claimed", then: off } } };
+    return idle(next, off);
   }
   if (settings.enabled && !state.settings.enabled && chain._tag === "Idle") return idle(next, null);
   return next;
