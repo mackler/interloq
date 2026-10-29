@@ -44,7 +44,7 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, he
     yield* store.init(task);
     yield* converseHeld(held);
     yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
-    yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
+    yield* ui.notify({ _tag: "ModelNamed", model: { agent: "codex", name: config.codexModel } });
     yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", iterationsOf(1)) });
     yield* questionPhase(task, terms).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
     // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
@@ -224,7 +224,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       yield* store.savePlan(start.plan);
     }
     // The SDK does not report which model answered a Codex turn; the configured one is all that can be said.
-    yield* ui.say(`Codex model: ${config.codexModel ?? "the default of the Codex login"}`);
+    yield* ui.notify({ _tag: "ModelNamed", model: { agent: "codex", name: config.codexModel } });
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
     let known = 1;
     // Issue #162: the suite runs so far, in order, each with its iteration and whether it passed (run n is the n-th);

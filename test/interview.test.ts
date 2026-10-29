@@ -62,10 +62,10 @@ test("the question phase notifies its beginning and end and every interview turn
     reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  // Issue #6: the run's shape is notified first, then the question phase begins.
+  // The Codex model is named first; issue #6: then the run's shape, then the question phase begins.
   const tags = probe.ui.notified.map((e) => e._tag);
-  assert.deepEqual(tags.slice(0, 2), ["PhasesForeseen", "PhaseBegan"]);
-  assert.deepEqual(probe.ui.notified[1], { _tag: "PhaseBegan", phase: { kind: "questions" } });
+  assert.deepEqual(tags.slice(0, 3), ["ModelNamed", "PhasesForeseen", "PhaseBegan"]);
+  assert.deepEqual(probe.ui.notified[2], { _tag: "PhaseBegan", phase: { kind: "questions" } });
   const turns = probe.ui.notified.filter((e) => e._tag === "InterviewTurn");
   assert.deepEqual(turns, [
     { _tag: "InterviewTurn", heading: prompts.clarificationHeading("clarification"), message: "Anything to add?", summary: null, answered: 1, total: 1 },
@@ -75,7 +75,7 @@ test("the question phase notifies its beginning and end and every interview turn
   assert.deepEqual(probe.ui.notified.find((e) => e._tag === "InterviewOpened"), { _tag: "InterviewOpened", heading: prompts.clarificationHeading("clarification"), stage: "clarification", total: 1 });
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
   // Issue #120: a refinement run is the question phase alone; nothing begins after it ends.
-  assert.equal(tags.lastIndexOf("PhaseBegan"), 1, "a phase began after the question phase");
+  assert.equal(tags.lastIndexOf("PhaseBegan"), 2, "a phase began after the question phase");
   // The line said for a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
   assert.ok(probe.ui.said.includes("\nAnything to add?\n"));
   const confirm = presentedQuestions(probe.ui).find((q) => q.origin.kind === "confirmSummary");

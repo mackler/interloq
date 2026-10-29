@@ -363,7 +363,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           if (message.type === "system" && message.subtype === "init") {
             yield* Ref.set(session, message.session_id);
             if ((yield* Ref.get(announcedModel)) !== message.model) {
-              yield* ui.say(`Claude Code model: ${message.model}`);
+              yield* ui.notify({ _tag: "ModelNamed", model: { agent: "claude", name: message.model } });
               yield* Ref.set(announcedModel, message.model);
             }
           } else if (message.type === "assistant") {

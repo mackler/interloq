@@ -161,8 +161,12 @@ test("the model reported by Claude Code's init message is said once per change",
     messages(init("s-1", "claude-test-2"), success({})),
   ]);
   for (let i = 0; i < 3; i++) await run(fake.planner.planning("plan", schema));
-  const announced = fake.ui.said.filter((line) => line.startsWith("Claude Code model: "));
-  assert.deepEqual(announced, ["Claude Code model: claude-test-1", "Claude Code model: claude-test-2"]);
+  const announced = fake.ui.notified.filter((e) => e._tag === "ModelNamed");
+  assert.deepEqual(announced, [
+    { _tag: "ModelNamed", model: { agent: "claude", name: "claude-test-1" } },
+    { _tag: "ModelNamed", model: { agent: "claude", name: "claude-test-2" } },
+  ]);
+  assert.ok(!fake.ui.said.some((line) => line.startsWith("Claude Code model: ")));
 });
 
 test("the session id of the first call is resumed by the next call", async () => {
@@ -556,7 +560,7 @@ test("a relayed question says no line of its own: it is presented as an event", 
   })();
   const fake = await planner([script], ["2"]);
   await run(fake.planner.planning("write the plan", schema, "planning"));
-  assert.deepEqual(fake.ui.said.filter((l) => !l.startsWith("Claude Code model: ")), []);
+  assert.deepEqual(fake.ui.said, []);
 });
 
 test("an execution call notifies its start with the purpose execution", async () => {

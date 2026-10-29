@@ -2,7 +2,7 @@
 
 import { type SubjectId, subjectDir } from "./artifacts.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
-import { agentReconnectingLine, cycleHeading, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
+import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { TermsResponse } from "./schema.ts";
 import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion, WorkResponse, EffectReview } from "./schema.ts";
@@ -79,6 +79,8 @@ export type UiEvent =
    * The analysis of decision k is being prepared (S21, Q4): check 0 while it is written, then the number of Codex's checks
    * so far; `question` is the number of the question it is for. The user reads one plain status, not the loop's cycles.
    */
+  /** An agent's model, named once and again when it changes; the dashboard shows it at its top, apart from the status line. */
+  | Readonly<{ _tag: "ModelNamed"; model: NamedModel }>
   | Readonly<{ _tag: "AnalysisProgress"; decision: number; question: number | null; check: number }>
   /** A decision loop has ended: its analysis, shown before the question is asked again (decision support). */
   /** S22: `presented`, the question as the user was shown it, which the analysis is shown beside: its number, context and terms. */
@@ -184,6 +186,8 @@ export const describeEvent = (event: UiEvent): string => {
       return `decision ${event.decision} analyzed: ${event.question} (${plural(event.analysis.columns.length, "column")})`;
     case "AnswerRejected":
       return "answer rejected, asked again";
+    case "ModelNamed":
+      return modelLine(event.model);
     case "AnalysisProgress":
       return `decision ${event.decision}, check ${event.check}`;
     case "PhasesForeseen":

@@ -110,6 +110,11 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("InterviewTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
   fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const), total: nat }),
   fc.record({ _tag: fc.constant("ClaudeSaid" as const), text }),
+  // The dashboard's model lines: an agent's model as data, not a line of text.
+  fc.oneof(
+    fc.record({ _tag: fc.constant("ModelNamed" as const), model: fc.record({ agent: fc.constant("claude" as const), name: text }) }),
+    fc.record({ _tag: fc.constant("ModelNamed" as const), model: fc.record({ agent: fc.constant("codex" as const), name: fc.option(text, { nil: null }) }) }),
+  ),
   fc.constant({ _tag: "AnswerRejected" as const }),
   // Issue #26: the program's retry and its recovery.
   fc.record({ _tag: fc.constant("TransportRetrying" as const), agent, purpose: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),

@@ -412,10 +412,13 @@ test("the run announces the Codex model it was configured with, or the login's d
     config: { codexModel: "gpt-test" },
   });
   await runTask(configured.layer);
-  assert.ok(configured.probe.ui.said.includes("Codex model: gpt-test"), configured.probe.ui.said.slice(0, 3).join(" | "));
+  const models = (ui: { notified: readonly { _tag: string }[] }) => ui.notified.filter((e) => e._tag === "ModelNamed");
+  assert.deepEqual(models(configured.probe.ui), [{ _tag: "ModelNamed", model: { agent: "codex", name: "gpt-test" } }]);
+  assert.ok(!configured.probe.ui.said.some((l) => l.startsWith("Codex model:")), configured.probe.ui.said.slice(0, 3).join(" | "));
   const byDefault = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
   await runTask(byDefault.layer);
-  assert.ok(byDefault.probe.ui.said.includes("Codex model: the default of the Codex login"));
+  assert.deepEqual(models(byDefault.probe.ui), [{ _tag: "ModelNamed", model: { agent: "codex", name: null } }]);
+  assert.ok(!byDefault.probe.ui.said.some((l) => l.startsWith("Codex model:")));
 });
 
 // Plan step 1.5 (decision Q5): the run reports its phases, plan writes and execution outcomes to the Ui.

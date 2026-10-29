@@ -1407,6 +1407,22 @@ export function planInvalidText(problems: PlanProblems): string {
 // ---- the tracker (issue #120) -----------------------------------------------------------------------------------------
 
 /** What a run says when it has read its item: the item and the mode, before any agent call. */
+/**
+ * An agent's model as the run names it (the dashboard's model lines): Claude Code's as its init message reports it,
+ * Codex's as configured, null being the Codex login's default.
+ */
+export type NamedModel = Readonly<{ agent: "claude"; name: string }> | Readonly<{ agent: "codex"; name: string | null }>;
+
+/** The line that names an agent's model, the text the run said before the dashboard showed it in a place of its own. */
+export function modelLine(model: NamedModel): string {
+  switch (model.agent) {
+    case "claude":
+      return `Claude Code model: ${model.name}`;
+    case "codex":
+      return `Codex model: ${model.name ?? "the default of the Codex login"}`;
+  }
+}
+
 export function itemStartedLine(mode: "refinement" | "implementation", id: string, title: string): string {
   return `${mode === "refinement" ? "Refinement" : "Implementation"} of item ${id}: ${title}`;
 }

@@ -202,6 +202,7 @@ export const UiEventSchema = Schema.Union([
   tagged("QuestionPresented", { question: PresentedQuestionSchema }),
   tagged("QuestionExplained", { question: PresentedQuestionSchema }),
   tagged("AnswerRejected", {}),
+  tagged("ModelNamed", { model: Schema.Union([Schema.Struct({ agent: Schema.Literal("claude"), name: Str }), Schema.Struct({ agent: Schema.Literal("codex"), name: Schema.NullOr(Str) })]) }),
   tagged("AnalysisProgress", { decision: Int, question: Schema.NullOr(Int), check: Int }),
   tagged("DecisionAnalyzed", { decision: Int, question: Str, presented: PresentedQuestionSchema, options: Schema.Array(Schema.Struct({ label: Str, description: Str })), analysis: S.DecisionAnalysis }),
   tagged("PhasesForeseen", { phases: Schema.Array(PhaseSchema) }),

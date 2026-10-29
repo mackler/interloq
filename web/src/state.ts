@@ -709,6 +709,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
           return "token" in o.answer ? [{ label: description === "" ? label : `${label} — ${description}`, sends: o.answer.token }] : [];
         }),
       };
+    case "ModelNamed":
+      return run;
     case "AnalysisProgress": {
       // S21 (Q4): one plain status while the analysis is prepared, updated in place; the line said for it that
       // follows is absorbed.

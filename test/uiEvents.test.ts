@@ -23,6 +23,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   ReviewReceived: [{ _tag: "ReviewReceived", subject: "questions", round: 1, review, counted: 0 }, /review of question-review, round 1: 0 issues, 0 counted/],
   ResponseReceived: [{ _tag: "ResponseReceived", subject: "requirements", round: 2, response, resultText: "" }, /response in requirements-review, round 2/],
   LoopFinished: [{ _tag: "LoopFinished", subject: { plan: 1 }, result: "converged" }, /planning-1 finished: converged/],
+  ModelNamed: [{ _tag: "ModelNamed", model: { agent: "claude", name: "opus" } }, /^Claude Code model: opus$/],
   AnalysisProgress: [{ _tag: "AnalysisProgress", decision: 2, question: 7, check: 1 }, /^decision 2, check 1$/],
   PlanWritten: [{ _tag: "PlanWritten", phase: 1, resultText: "" }, /plan written in phase 1$/],
   ExecutionEnded: [{ _tag: "ExecutionEnded", phase: 1, outcome }, /execution 1 ended: finished/],
@@ -104,4 +105,17 @@ test("describeEvent of a usage limit's wait is usageLimitWaitLine for each basis
   assert.match(prompts.usageLimitWaitLine("claude", null, { kind: "pastReset", namedMs: 1_800_000 }, 300_000), /stated reset, 1970-01-01 00:30 UTC, has already passed; Interloq tries again at 1970-01-01 00:05 UTC$/);
   assert.match(prompts.usageLimitWaitLine("claude", null, { kind: "noKnownEnd", attempt: 3 }, 300_000), /no stated end; Interloq makes try 3 at 1970-01-01 00:05 UTC/);
   assert.match(prompts.usageLimitWaitLine("claude", null, { kind: "noKnownEnd", attempt: 3 }, 300_000), /every 5 minutes/);
+});
+
+// The seam of the model lines: the event describes itself with modelLine, which is the text the run said before ModelNamed.
+test("describeEvent of ModelNamed is modelLine of its model, the text the run said before", () => {
+  const cases: [prompts.NamedModel, string][] = [
+    [{ agent: "claude", name: "claude-test-1" }, "Claude Code model: claude-test-1"],
+    [{ agent: "codex", name: "gpt-test" }, "Codex model: gpt-test"],
+    [{ agent: "codex", name: null }, "Codex model: the default of the Codex login"],
+  ];
+  for (const [model, said] of cases) {
+    assert.equal(prompts.modelLine(model), said);
+    assert.equal(describeEvent({ _tag: "ModelNamed", model }), said);
+  }
 });
