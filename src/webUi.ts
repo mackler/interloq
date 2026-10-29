@@ -42,11 +42,15 @@ type Prompts = Readonly<{
   waiting: Waiting | null;
   /** Issue #185: the prompts whose wait ran out, with what their expiry did, so a late answer is told so. */
   expired: ReadonlyMap<number, OnExpiry>;
-  /** Issue #185: the number of the question last answered /decide or /terms, which starts held when presented again (W1-R1-3); null for none. */
-  carryHold: number | null;
+  /** Issue #185: the numbers of the questions answered /decide or /terms and not yet presented again, each of which starts held when
+   * it is (W1-R1-3); kept per question, so a decision inside a decision keeps both (work review 3 of issue #185, W3-R1-1). */
+  carryHold: ReadonlySet<number>;
   /** Issue #185: the last question presented, which a NoAnswer names. */
   lastPresented: AskedQuestion | null;
 }>;
+
+/** The set without one number, the set given never changed. */
+const withoutNumber = (set: ReadonlySet<number>, n: number): ReadonlySet<number> => new Set([...set].filter((m) => m !== n));
 
 const secondsOf = (countdown: NonNullable<Asked["countdown"]>): number => Math.round((countdown.untilMs - countdown.fromMs) / 1000);
 
@@ -55,7 +59,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
   Effect.gen(function* () {
     // The dialogue is serialized: a second concurrent prompt waits for the first answer, and is timed only when shown.
     const dialogue = yield* Semaphore.make(1);
-    const prompts = yield* Ref.make<Prompts>({ next: 1, waiting: null, expired: new Map(), carryHold: null, lastPresented: null });
+    const prompts = yield* Ref.make<Prompts>({ next: 1, waiting: null, expired: new Map(), carryHold: new Set<number>(), lastPresented: null });
     const questions = yield* Ref.make(0);
 
     /** The prompt's wait has run out (decided in a Ref.modify): recorded as expired and withdrawn. */
@@ -93,12 +97,12 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
         const limit = yield* timing.limitMs;
         const now = yield* Clock.currentTimeMillis;
         const asked = yield* Ref.modify(prompts, (p): readonly [Asked, Prompts] => {
-          // W1-R1-3: only the prompt presenting the question answered /decide or /terms again starts held, and clears the
-          // carry; a question asked in between (inside decision support or the terms request) counts down and keeps it.
-          const carried = p.carryHold !== null && p.lastPresented?.number === p.carryHold;
+          // W1-R1-3: only a prompt presenting a question answered /decide or /terms again starts held, and clears that question's
+          // carry; a question asked in between counts down and keeps the others (kept per question: work review 3 of issue #185, W3-R1-1).
+          const carried = p.lastPresented !== null && p.carryHold.has(p.lastPresented.number);
           const countdown = limit !== null && !carried ? { fromMs: now, untilMs: now + limit, then: onExpiry } : null;
           const shown: Asked = { _tag: "Asked", prompt: p.next, ...promptOf(text), countdown };
-          return [shown, { ...p, next: p.next + 1, carryHold: carried ? null : p.carryHold, waiting: { asked: shown, answer, held: countdown === null, where: text, question: p.lastPresented } }];
+          return [shown, { ...p, next: p.next + 1, carryHold: carried && p.lastPresented !== null ? withoutNumber(p.carryHold, p.lastPresented.number) : p.carryHold, waiting: { asked: shown, answer, held: countdown === null, where: text, question: p.lastPresented } }];
         });
         yield* sink(asked);
         const wait = Deferred.await(answer).pipe(
@@ -148,8 +152,10 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
               if (w !== null && w.asked.prompt === prompt) {
                 if (due(w, now) && limit !== null) return [{ _tag: "expire", w }, expiring(p, w)];
                 // /decide and /terms present the same question again: the developer is at the page, so it starts held.
-                // W1-R1-3: the carry names the question presented for this prompt, none where none was presented.
-                const carryHold = isDecide(text) || isTermsRequest(text) ? (w.question?.number ?? null) : p.carryHold;
+                // W1-R1-3: the carry adds the question presented for this prompt, nothing where none was presented; the carries of
+                // other questions are kept (work review 3 of issue #185, W3-R1-1).
+                const carryHold =
+                  (isDecide(text) || isTermsRequest(text)) && w.question !== null ? new Set([...p.carryHold, w.question.number]) : p.carryHold;
                 return [{ _tag: "take", w }, { ...p, waiting: null, carryHold }];
               }
               const then = p.expired.get(prompt);

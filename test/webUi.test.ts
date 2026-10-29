@@ -236,6 +236,18 @@ for (const request of ["/decide", "/terms"]) {
     assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, true, false, true]);
   });
 }
+// Work review 3 of issue #185 (W3-R1-1): the carried holds are kept per question, so a decision asked inside a decision
+// keeps both: the inner question and the outer one each return held.
+test("nested /decide answers: each question presented again starts held", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(5_000));
+  for (const [n, answer] of [[3, "/decide"], [4, "/decide"], [4, "x"], [3, "y"], [5, "z"]] as const) {
+    await run(ui.notify(question(n, `Question ${n}?`)));
+    const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
+    await run(ui.answer(await pendingPrompt(ui), answer));
+    await run(Fiber.join(fiber));
+  }
+  assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, true, false, false, true]);
+});
 test("an answer /decide with no question presented carries nothing", async () => {
   const { ui, events } = await withTiming(Effect.succeed(5_000));
   for (const answer of ["/decide", "x"]) {

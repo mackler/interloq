@@ -11,10 +11,11 @@ import { Cause, Effect, Exit, Option, Result } from "effect";
 import * as prompts from "../src/prompts.ts";
 import { readRefinement } from "../src/refinement.ts";
 import { subjectHeading } from "../src/render.ts";
+import { program } from "../src/program.ts";
 import { implementationRun } from "../src/run.ts";
 import { NO_STEP_CHECKS, type RecordedPlan } from "../src/schema.ts";
 import type { ParkedEnding } from "../src/runEnding.ts";
-import { EARLIER_ROOT, TEST_ROOT, fakeTrackerOf, finished, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { EARLIER_ROOT, TEST_ROOT, fakeTrackerOf, finished, haltConversationOf, haltReasonOf, scriptedItem, scriptedStart, type TestOptions, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 const step = (id: string, number: number, status: RecordedPlan["stages"][number]["steps"][number]["status"]) => ({ id, number, label: `Step ${id}`, text: `The text of ${id}.`, status });
 const PLAN: RecordedPlan = { stages: [{ number: 1, title: "Plan", steps: [step("S1", 1, "done"), step("S2", 2, "pending")] }] };
@@ -109,9 +110,8 @@ test("a parked send-back still takes the path of issue #186: the first-step rule
 
 // Work review 2 of issue #185 (W2-R1-2): a merge the developer left unfinished halts the later run before its own merge,
 // the developer's merge untouched and no step reset.
-test("a merge left unfinished in the repository halts the later run, MERGE_HEAD unchanged, no step reset", async () => {
-  const repo = tempRepo();
-  parkedRun(repo, "abandoned");
+/** The developer's merge left unfinished in the repository, conflicted; returns its MERGE_HEAD. */
+const unfinishedMerge = (repo: string): string => {
   g(repo, "checkout", "-q", "-b", "theirs");
   fs.writeFileSync(path.join(repo, "b.txt"), "theirs\n");
   g(repo, "add", "b.txt");
@@ -121,11 +121,37 @@ test("a merge left unfinished in the repository halts the later run, MERGE_HEAD 
   g(repo, "add", "b.txt");
   g(repo, "commit", "-qm", "ours");
   try { g(repo, "merge", "-q", "theirs"); } catch { /* the conflict is the point */ }
-  const mergeHead = g(repo, "rev-parse", "MERGE_HEAD");
+  return g(repo, "rev-parse", "MERGE_HEAD");
+};
+const REFUSED = prompts.parkedMergeRefusedText(BRANCH, { _tag: "State", state: { _tag: "InProgress", operation: "merge" } });
+
+test("a merge left unfinished in the repository halts the later run, MERGE_HEAD unchanged, no step reset", async () => {
+  const repo = tempRepo();
+  parkedRun(repo, "abandoned");
+  const mergeHead = unfinishedMerge(repo);
   const { probe, exit } = await implement(repo, { steps: [{ output: revision(PLAN) }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
   assert.ok(Exit.isFailure(exit), "the run did not halt");
-  const refused = prompts.parkedMergeRefusedText(BRANCH, { _tag: "State", state: { _tag: "InProgress", operation: "merge" } });
-  assert.ok(Cause.pretty(exit.cause).includes(refused), Cause.pretty(exit.cause));
+  assert.ok(Cause.pretty(exit.cause).includes(REFUSED), Cause.pretty(exit.cause));
+  assert.equal(g(repo, "rev-parse", "MERGE_HEAD"), mergeHead);
+  const plan = path.join(probe.dir, "plan.json");
+  if (fs.existsSync(plan)) assert.notDeepEqual(statusesAt(probe.dir)(), ["S1:pending", "S2:pending"]);
+  assert.deepEqual(probe.planner.prompts, []);
+});
+
+// Work review 3 of issue #185 (W3-R1-2): through program, the refused merge ends the run with 1 and conversation.md ends
+// with the halt's record, whose text is the one the page said after HALTED: and holds the refusal's words.
+test("through program, a merge left unfinished halts with 1 and the halt record naming the refusal", async () => {
+  const repo = tempRepo();
+  parkedRun(repo, "abandoned");
+  const mergeHead = unfinishedMerge(repo);
+  const { wiring, probe } = testWiring(repo, { steps: [{ output: revision(PLAN) }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+  const code = await Effect.runPromise(Effect.scoped(program(scriptedStart(repo), wiring)));
+  assert.equal(code, 1);
+  const said = probe.ui.said.join("\n");
+  const reason = haltReasonOf(said);
+  assert.ok(reason !== null && reason.includes(REFUSED), said);
+  const record = haltConversationOf(said);
+  assert.ok(record.endsWith(prompts.haltRecord(reason)), record.slice(-600));
   assert.equal(g(repo, "rev-parse", "MERGE_HEAD"), mergeHead);
   const plan = path.join(probe.dir, "plan.json");
   if (fs.existsSync(plan)) assert.notDeepEqual(statusesAt(probe.dir)(), ["S1:pending", "S2:pending"]);
