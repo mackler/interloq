@@ -5,8 +5,9 @@ import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSy
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped } from "./errors.ts";
-import { heldTrackerEnv, readWithRetry } from "./trackerRetry.ts";
-import { blankItemText, defectRecord, haltRecord, itemStartedLine, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { heldTrackerEnv, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
+import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
+import { blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, Ui, type UiShape } from "./services.ts";
@@ -19,7 +20,7 @@ import { recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
 import type { ItemId, TrackerItem } from "./tracker.ts";
-import type { RunMode } from "./runMode.ts";
+import { listedState, type RunMode } from "./runMode.ts";
 import { readRefinement, type Refinement, type SectionMalformed, withoutRefinement } from "./refinement.ts";
 
 /** What the program is wired to: the Ui, the platform, the SDKs and the agents. */
@@ -173,7 +174,7 @@ export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<n
  * run, from the configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever
  * it is. Without a signal, the run makes one that no one fails.
  */
-const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>, _claimParking: Effect.Effect<boolean> = Effect.succeed(false)): Effect.Effect<number, never, Scope.Scope> =>
+const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>, claimParking: Effect.Effect<boolean> = Effect.succeed(false)): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const signal = given ?? (yield* makeFaultSignal);
     const fault = Deferred.await(signal.fault);
@@ -383,6 +384,46 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     const { records, context } = built.value;
     const sessionId = Context.get(context, Planner).sessionId;
 
+    /**
+     * Issue #192 (decision Q5): an implementation run that ends halted or stopped having made no commit labels its item
+     * refined again, through the tracker retry, with no question (the run is already ending), saying and writing the
+     * outcome; nothing here changes the run's exit code. A halt asks the chain to claim the parking of its uncommitted
+     * files, and a claimed parking keeps the item implementing. `bounded`, after the server's fault, gives the write 5 s.
+     */
+    const returnItem = (ending: RunEnding, bounded: boolean): Effect.Effect<void> =>
+      mode !== "implementation" || tracker === null
+        ? Effect.void
+        : Effect.gen(function* () {
+            const say = (line: string) => ui.say(line).pipe(Effect.andThen(records.converse(`${line}\n\n`).pipe(Effect.ignore)));
+            const facts = yield* Effect.gen(function* () {
+              const baseline = yield* records.baseline();
+              if (baseline === null) return NO_BASELINE;
+              const head = yield* records.head();
+              const startCommit = baseline.start_commit;
+              if (head !== startCommit) return baselineFacts(startCommit, head, NOT_PARKED);
+              // The chain parks a halt alone, and only one that left files uncommitted; after the server's fault the
+              // chain is left as it is (behavior 15), so no claim is asked.
+              if (ending !== "halted" || bounded) return baselineFacts(startCommit, head, NOT_PARKED);
+              const check = yield* records.uncommittedSinceStart();
+              const claimed = check._tag === "Uncommitted" && (yield* claimParking);
+              return baselineFacts(startCommit, head, claimed ? PARKING_CLAIMED : NOT_PARKED);
+            }).pipe(Effect.result);
+            if (Result.isFailure(facts)) return yield* say(itemNotReturnedLine(start.item, describe(facts.failure), null));
+            if (itemReturnOf(facts.success)._tag !== "Return") return;
+            // Its waits and read-back recorded as any tracker write's, a record that fails ignored so it cuts no retry short.
+            const env: TrackerRetryEnv = { ui, settings: config, record: (markdown) => records.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop) };
+            const write = Effect.flatMap(Tracker, (t) => writeWithRetry(t, { kind: "setState", item: start.item, state: listedState("implementation") }, env)).pipe(Effect.provide(tracker));
+            const outcome = yield* (bounded ? write.pipe(Effect.timeoutOption(`${RETURN_AFTER_FAULT_MS} millis`)) : write.pipe(Effect.map(Option.some))).pipe(Effect.exit);
+            if (Exit.isSuccess(outcome)) {
+              return yield* say(Option.isSome(outcome.value) ? itemReturnedLine(start.item) : itemNotReturnedLine(start.item, `no answer within ${RETURN_AFTER_FAULT_MS / 1000} s`, null));
+            }
+            const error = Cause.findErrorOption(outcome.cause);
+            const failure = Option.getOrNull(error);
+            const [cause, check] =
+              failure === null ? [Cause.pretty(outcome.cause), null] : failure._tag === "TrackerWriteFailed" ? [trackerFailureText(failure.error), failure.check] : [describe(failure), null];
+            return yield* say(itemNotReturnedLine(start.item, cause, check));
+          });
+
     const interrupted = Effect.gen(function* () {
       yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${records.dir}.`);
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
@@ -392,13 +433,14 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     const bodyFaulted = (error: ServerFault) =>
       Effect.gen(function* () {
         yield* recordFault(records, error.message);
+        yield* returnItem("halted", true);
         return yield* sayHalt(describe(error), yield* sessionId, records);
       });
     /**
      * An interruption of the whole run from outside: the server's fault's halt if the fault has come (W1-S1-1 of issue
      * #158: haltAll interrupts a faulted run whose body did not end within the grace), otherwise the user's (Stop task).
      */
-    const interruptedFromOutside = faultCome.pipe(Effect.flatMap(Option.match({ onNone: () => interrupted, onSome: (error) => Effect.asVoid(bodyFaulted(error)) })));
+    const interruptedFromOutside = faultCome.pipe(Effect.flatMap(Option.match({ onNone: () => returnItem("stopped", false).pipe(Effect.andThen(interrupted)), onSome: (error) => Effect.asVoid(bodyFaulted(error)) })));
     // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
     const kind = start.kind;
     const body: Effect.Effect<RunOutcome, RunError> =
@@ -430,12 +472,24 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
     }
     // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
     if (error.value._tag === "UserStopped") {
+      yield* returnItem("stopped", false);
       yield* interrupted;
       return 130;
     }
     if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value);
+    yield* returnItem("halted", false);
     return yield* halted(describe(error.value), yield* sessionId, records);
   });
+
+/**
+ * Issue #192: how long the relabeling of an item may take after the server's fault, half of SERVER_FAULT_GRACE_MS (10 s),
+ * after which the manager interrupts the run; the first attempt and its read-back fit, the first retry's wait does not.
+ */
+export const RETURN_AFTER_FAULT_MS = 5_000;
+const NOT_PARKED: Parking = { _tag: "NotParked" };
+const PARKING_CLAIMED: Parking = { _tag: "ParkingClaimed" };
+const NO_BASELINE: ReturnFacts = { _tag: "NoBaseline" };
+const baselineFacts = (startCommit: string | null, head: string | null, parking: Parking): ReturnFacts => ({ _tag: "Baseline", startCommit, head, parking });
 
 /** Issue #193 (Q2): the message of a defect, an error of Interloq that is not a typed error, for its record. */
 export const defectMessage = (defect: unknown): string => (defect instanceof Error ? defect.message : String(defect));

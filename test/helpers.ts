@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { marked } from "marked";
 import { type PresentedQuestion, type ShownExplanation, shownExplanations } from "../src/question.ts";
 import { programWritten } from "../src/questionContext.ts";
-import { CONTEXT_REQUEST_HEADING, confirmEndText, LIST_DONE_SENTENCE, permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { CONTEXT_REQUEST_HEADING, confirmEndText, itemReturnedLine, LIST_DONE_SENTENCE, permissionPrompt, recordSubject } from "../src/prompts.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { type Block, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
 import { askOffering, permissionDraft } from "../src/offer.ts";
@@ -962,3 +962,14 @@ export const senseRead = (text: string): string => text.replace(/\s+/g, " ").tri
 
 /** Issue #142: a run manager's start of the mode from an item; a refinement with the choice of terms `checked`, as every existing scenario scripts. */
 export const startOf = (mode: RunMode, item: string, terms: TermsMode = "checked"): StartRequest => (mode === "refinement" ? { mode, item, terms } : { mode, item });
+
+/**
+ * Issue #192: a record without the line of an item's return to refined that the program writes after the server
+ * fault's record, for the tests that read the fault's record as the end of conversation.md. The pattern is built from
+ * itemReturnedLine itself, so the two never disagree.
+ */
+export const withoutReturnLine = (record: string): string => {
+  const [before, after] = itemReturnedLine("\u0000").split("\u0000");
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return record.replace(new RegExp(`${escape(before ?? "")}\\S+${escape(after ?? "")}\\n\\n$`), "");
+};

@@ -20,7 +20,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type HaltBounds, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { startOf } from "./helpers.ts";
+import { startOf, withoutReturnLine } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
 import { OFF_SETTINGS } from "../src/chain.ts";
 
@@ -570,7 +570,7 @@ test("haltAll halts the run of each mode with code 1 and its record, and returns
   assert.deepEqual(report.unconfirmed, []);
   assert.equal(endCode(h, implementation), 1);
   assert.equal(endCode(h, refinement), 1);
-  for (const dir of runDirsOf(repo)) assert.ok(fs.readFileSync(path.join(dir, "conversation.md"), "utf8").endsWith(serverFaultRecord("write EPIPE")), dir);
+  for (const dir of runDirsOf(repo)) assert.ok(withoutReturnLine(fs.readFileSync(path.join(dir, "conversation.md"), "utf8")).endsWith(serverFaultRecord("write EPIPE")), dir);
   assert.deepEqual(await run(h.manager.current), NONE);
   assert.deepEqual((await run(h.manager.replay)).runs.map((r) => r.id).sort(), [implementation, refinement].sort());
 });
@@ -638,7 +638,7 @@ test("a faulted run that ends by interruption is recorded with code 1, not 130",
   assert.equal(endCode(h, id), 1);
   // W1-S1-1: the outside interruption of a faulted run records and says the fault, not the user's interruption.
   const record = fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8");
-  assert.ok(record.endsWith(serverFaultRecord("write EPIPE")), record);
+  assert.ok(withoutReturnLine(record).endsWith(serverFaultRecord("write EPIPE")), record);
   assert.ok(!record.includes("**Interrupted by the user.**"), record);
   const texts = eventsOf(h, id).flatMap((e) => (e._tag === "Said" ? [e.text] : []));
   assert.ok(texts.some((t) => t.includes("HALTED: ")), texts.join("\n"));

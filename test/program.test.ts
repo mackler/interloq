@@ -10,7 +10,7 @@ import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
-import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf } from "./helpers.ts";
+import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import { checkCommandInvalidText, defectRecord, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
@@ -412,7 +412,7 @@ const assertServerFault = (probe: WiringProbe, exit: Exit.Exit<number, never>, d
   assert.ok(said(probe).includes(`HALTED: ${serverFaultText("write EPIPE")}`), said(probe));
   assert.ok(!said(probe).includes("INTERRUPTED"));
   const record = fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
-  assert.ok(record.endsWith(serverFaultRecord("write EPIPE")), record);
+  assert.ok(withoutReturnLine(record).endsWith(serverFaultRecord("write EPIPE")), record);
   assert.ok(!record.includes("**Interrupted by the user.**"));
 };
 
@@ -480,7 +480,7 @@ test("a faulted run interrupted from outside in an uninterruptible turn records 
   assert.ok(said(probe).includes(`HALTED: ${serverFaultText("write EPIPE")}`), said(probe));
   assert.ok(!said(probe).includes("INTERRUPTED"), said(probe));
   const record = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
-  assert.ok(record.endsWith(serverFaultRecord("write EPIPE")), record);
+  assert.ok(withoutReturnLine(record).endsWith(serverFaultRecord("write EPIPE")), record);
   assert.ok(!record.includes("**Interrupted by the user.**"), record);
   assert.ok(Effect.runSync(Deferred.isDone(signal.recorded)), "the record was not marked written");
   assertTail(probe);
