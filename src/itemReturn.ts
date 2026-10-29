@@ -10,7 +10,14 @@ export type RunEnding = "halted" | "stopped";
  * Whether the chain has committed to parking the run's uncommitted files on a branch (behavior 15). The program asks
  * for the claim only where a halted run left files uncommitted, so a claim carries that fact.
  */
-export type Parking = Readonly<{ _tag: "NotParked" }> | Readonly<{ _tag: "ParkingClaimed" }>;
+export type Parking =
+  | Readonly<{ _tag: "NotParked" }>
+  | Readonly<{ _tag: "ParkingClaimed" }>
+  /**
+   * Issue #186: the run's parked.json exists, whatever it holds. During a run only its own send-back or guard stop writes
+   * it (src/sendBack.ts); the chain parks a halt only after the run ended, after the item's return was decided.
+   */
+  | Readonly<{ _tag: "ParkedByRun" }>;
 
 /**
  * What the decision rests on: no baseline.json (the run ended before it, which is after its item was labeled
@@ -25,8 +32,9 @@ export type ItemReturn = Readonly<{ _tag: "Return" }> | Readonly<{ _tag: "Keep";
 
 export const itemReturnOf = (facts: ReturnFacts): ItemReturn => {
   if (facts._tag === "NoBaseline") return { _tag: "Keep", reason: "noBaseline" };
+  if (facts.parking._tag === "ParkedByRun") return { _tag: "Keep", reason: "parkedWork" };
   // Strict equality of the nullable values: an unborn branch still unborn made no commit, and a baseline written before
   // start_commit existed (read as null) never matches a real HEAD.
   if (facts.head !== facts.startCommit) return { _tag: "Keep", reason: "committed" };
-  return facts.parking._tag === "ParkingClaimed" ? { _tag: "Keep", reason: "parkedWork" } : { _tag: "Return" };
+  return facts.parking._tag === "NotParked" ? { _tag: "Return" } : { _tag: "Keep", reason: "parkedWork" };
 };

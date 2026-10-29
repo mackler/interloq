@@ -16,6 +16,8 @@ import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
+import type { ParkNote } from "./chain.ts";
+import type { ParkRecord } from "./park.ts";
 import { pathOf, recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
@@ -134,7 +136,25 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  * manager gives it as one step of its publisher. Without a chain nothing parks the run.
  */
 /**
- * `concluded` (work review 2 of issue #192, W2-R1-1) receives the code the run computed once its records exist. The run's
+ * What a run concluded once its records exist (issue #186): its exit code, and the parking the run did itself (a
+ * send-back's or a guard stop's, src/sendBack.ts), which the chain then takes as given; null where the run parked nothing.
+ */
+export type Conclusion = Readonly<{ code: number; parked: ParkNote | null }>;
+/** Issue #186: the note of a parking the run recorded in parked.json; an Intended one did not complete, so none. */
+export const parkedNoteOf = (record: ParkRecord | null): ParkNote | null => {
+  if (record === null) return null;
+  switch (record._tag) {
+    case "Parked":
+      return { _tag: "Parked", branch: record.branch, commit: record.commit };
+    case "Nothing":
+      return { _tag: "NothingParked" };
+    case "Intended":
+      return null;
+  }
+};
+/**
+ * `concluded` (work review 2 of issue #192, W2-R1-1) receives the code the run computed once its records exist, with its
+ * own parking since issue #186. The run's
  * ending is uninterruptible, so a Stop task during it leaves the fiber interrupted when it ends although the program
  * computed its code; the caller reads the code here rather than from the fiber's exit.
  */
@@ -144,7 +164,7 @@ export const program = (
   signal?: FaultSignal,
   allocated?: Ref.Ref<Option.Option<RunRoot>>,
   claimParking: Effect.Effect<boolean> = Effect.succeed(false),
-  concluded?: Ref.Ref<Option.Option<number>>,
+  concluded?: Ref.Ref<Option.Option<Conclusion>>,
 ): Effect.Effect<number, never, Scope.Scope> =>
   programWith(
     {
@@ -209,7 +229,7 @@ const programWith = (
   given?: FaultSignal,
   allocated?: Ref.Ref<Option.Option<RunRoot>>,
   claimParking: Effect.Effect<boolean> = Effect.succeed(false),
-  concluded?: Ref.Ref<Option.Option<number>>,
+  concluded?: Ref.Ref<Option.Option<Conclusion>>,
 ): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const signal = given ?? (yield* makeFaultSignal);
@@ -436,6 +456,8 @@ const programWith = (
               if (baseline === null) return NO_BASELINE;
               const head = yield* records.head();
               const startCommit = baseline.start_commit;
+              // Issue #186: the run's own send-back or guard stop wrote parked.json; its item is never returned.
+              if ((yield* records.loadParked()) !== null) return baselineFacts(startCommit, head, PARKED_BY_RUN);
               if (head !== startCommit) return baselineFacts(startCommit, head, NOT_PARKED);
               // The chain parks a halt alone, and only one that left files uncommitted; after the server's fault the
               // chain is left as it is (behavior 15), so no claim is asked.
@@ -460,8 +482,18 @@ const programWith = (
             return yield* say(itemNotReturnedLine(start.item, cause, check));
           });
 
-    /** W2-R1-1: the code the run computed, kept for the caller in `concluded` and returned. */
-    const conclude = (code: number): Effect.Effect<number> => (concluded === undefined ? Effect.succeed(code) : Ref.set(concluded, Option.some(code)).pipe(Effect.as(code)));
+    /**
+     * W2-R1-1: the code the run computed, kept for the caller in `concluded` and returned. Issue #186: with the run's own
+     * parking, given where the ending carries it and otherwise read from parked.json, so an interruption after a
+     * completed parking tells the chain the work is parked.
+     */
+    const conclude = (code: number, given?: ParkNote | null): Effect.Effect<number> =>
+      Effect.gen(function* () {
+        if (concluded === undefined) return code;
+        const parked = given !== undefined ? given : parkedNoteOf(yield* records.loadParked().pipe(Effect.orElseSucceed(() => null)));
+        yield* Ref.set(concluded, Option.some({ code, parked }));
+        return code;
+      });
     const interrupted = Effect.gen(function* () {
       yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${records.dir}.`);
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
@@ -480,7 +512,7 @@ const programWith = (
      */
     const interruptedFromOutside = faultCome.pipe(
       Effect.flatMap(Option.match({ onNone: () => returnItem("stopped", false).pipe(Effect.andThen(interrupted), Effect.as(130)), onSome: bodyFaulted })),
-      Effect.flatMap(conclude),
+      Effect.flatMap((code) => conclude(code)),
     );
     // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
     const kind = start.kind;
@@ -510,7 +542,7 @@ const programWith = (
             } else yield* ui.say(`Verdict: ${records.dir}/${pathOf({ kind: "verdict", verdict: end.verdict })}\nConversation record: ${records.dir}/conversation.md`);
           } else yield* ui.say(`Requirements: ${records.requirements}\nConversation record: ${records.dir}/conversation.md`);
           yield* tail(yield* sessionId, records);
-          return yield* conclude(0);
+          return yield* conclude(0, exit.value.mode === "implementation" && exit.value.end._tag === "SentBack" ? exit.value.end.park : null);
         }
         const error = Cause.findErrorOption(exit.cause);
         if (Option.isNone(error)) {
@@ -526,9 +558,14 @@ const programWith = (
           yield* interrupted;
           return yield* conclude(130);
         }
-        if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value).pipe(Effect.flatMap(conclude));
-        yield* returnItem("halted", false);
-        return yield* halted(describe(error.value), yield* sessionId, records).pipe(Effect.flatMap(conclude));
+        if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value).pipe(Effect.flatMap((code) => conclude(code)));
+        // Issue #186: the guard's stop keeps the item implementing (requirements Q5), and a parking that failed or a
+        // send-back left incomplete keeps it too (Q6): the item is not returned, and the ending's parking is concluded.
+        const failure = error.value;
+        const parkedEnding = failure._tag === "NotRefinedStopped" || failure._tag === "SendBackNotParked" || failure._tag === "SendBackIncomplete" ? failure : null;
+        if (parkedEnding === null) yield* returnItem("halted", false);
+        const code = yield* halted(describe(failure), yield* sessionId, records);
+        return yield* conclude(code, parkedEnding === null ? undefined : parkedEnding.park);
       }),
     );
   });
@@ -540,6 +577,7 @@ const programWith = (
 export const RETURN_AFTER_FAULT_MS = 5_000;
 const NOT_PARKED: Parking = { _tag: "NotParked" };
 const PARKING_CLAIMED: Parking = { _tag: "ParkingClaimed" };
+const PARKED_BY_RUN: Parking = { _tag: "ParkedByRun" };
 const NO_BASELINE: ReturnFacts = { _tag: "NoBaseline" };
 const baselineFacts = (startCommit: string | null, head: string | null, parking: Parking): ReturnFacts => ({ _tag: "Baseline", startCommit, head, parking });
 

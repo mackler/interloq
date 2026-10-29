@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -10,10 +11,10 @@ import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { commentText, runCommentKey } from "../src/itemComments.ts";
-import { defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
-import { askedInPlanReview, finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
+import { type Conclusion, defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
+import { askedInPlanReview, tempDir, finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { checkCommandInvalidText, defectRecord, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { checkCommandInvalidText, defectRecord, sentBackLine, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
@@ -679,5 +680,92 @@ describe("the first read of the item, repeated", () => {
     assert.ok(probe.ui.notified.some((e) => e._tag === "TrackerRetrying"), "the wait never began");
     await Effect.runPromise(Fiber.interrupt(fiber));
     assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
+  });
+});
+
+// Issue #186: a send-back ends with 0 and concludes the run's own parking; a guard stop, a parking that failed and a
+// send-back left incomplete end with 1 and keep the item implementing; an interruption after the run's own parking
+// concludes it from parked.json and never returns the item to refined (reviews P1-R1-2, P1-R1-3).
+describe("issue #186: how a send-back ends", () => {
+  const MISSING = "The requirements do not say how long a note is kept.";
+  const noQuestions = { questions_for_user: [] };
+  const verdictAtFirstPlan = { steps: [{ output: { reply: { kind: "notRefined", missing: MISSING } } }], reviews: [{ issues: [] }] };
+  const notRefinedExec = { status: "not_refined" as const, summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [] };
+  const verdictMidWork = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [notRefinedExec] };
+  /** The item, whose last refinement asked the developer nothing where `asked` is false: the guard of requirements Q5. */
+  const itemAsked = (asked: boolean): FakeItem => ({ ...scriptedItem, comments: [{ body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" }] });
+  const started = (probe: WiringProbe, wiring: Wiring, signal?: FaultSignal) => {
+    const concluded = Effect.runSync(Ref.make(Option.none<Conclusion>()));
+    const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring, signal, undefined, undefined, concluded)));
+    return { concluded, fiber };
+  };
+  const ended = async (probe: WiringProbe, wiring: Wiring) => {
+    const { concluded, fiber } = started(probe, wiring);
+    const code = exitCodeOf(await Effect.runPromise(Fiber.await(fiber)));
+    return { code, conclusion: Option.getOrNull(Effect.runSync(Ref.get(concluded))) };
+  };
+  const stateOf = async (probe: WiringProbe) => (await Effect.runPromise(probe.tracker!.items)).find((i) => i.id === scriptedItem.id)?.state;
+  const waitFor = async (probe: WiringProbe, tag: string) => {
+    for (let waited = 0; !probe.ui.notified.some((e) => e._tag === tag) && waited < 20_000; waited += 10) await sleep(10);
+    assert.ok(probe.ui.notified.some((e) => e._tag === tag), `${tag} never came`);
+  };
+
+  test("a send-back concludes 0 with its parking and says the send-back line", async () => {
+    const { wiring, probe } = testWiring(tempRepo(), verdictMidWork);
+    const { code, conclusion } = await ended(probe, wiring);
+    assert.equal(code, 0);
+    assert.equal(conclusion?.code, 0);
+    assert.equal(conclusion?.parked?._tag, "Parked");
+    assert.ok(probe.ui.said.includes(sentBackLine(scriptedItem.id, 1)), said(probe));
+    assert.equal(await stateOf(probe), "unrefined");
+  });
+
+  test("a guard stop concludes 1 with its note, records its halt and keeps the item implementing with no commit made", async () => {
+    const tracker = fakeTrackerOf([itemAsked(false)]);
+    const { wiring, probe } = testWiring(tempRepo(), { ...verdictAtFirstPlan, tracker });
+    const { code, conclusion } = await ended(probe, wiring);
+    assert.equal(code, 1);
+    assert.deepEqual(conclusion, { code: 1, parked: { _tag: "NothingParked" } });
+    assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes("**Halted (exit code 1):**"));
+    assert.equal(await stateOf(probe), "implementing");
+  });
+
+  test("a parking that failed concludes 1 with ParkFailed and keeps the item implementing", async () => {
+    // A repository on an unborn branch: the baseline has no start commit, so the parking cannot return the working
+    // branch to it (PARK_NO_START_COMMIT).
+    const unborn = tempDir("interloq-unborn-");
+    execFileSync("git", ["-C", unborn, "init", "-q"]);
+    const { wiring, probe } = testWiring(unborn, verdictAtFirstPlan);
+    const { code, conclusion } = await ended(probe, wiring);
+    assert.equal(code, 1);
+    assert.equal(conclusion?.parked?._tag, "ParkFailed");
+    assert.equal(await stateOf(probe), "implementing");
+  });
+
+  test("a guard stop and a send-back, each stopped by Stop task during the comment write with nothing to park, conclude 130 with NothingParked", async () => {
+    for (const asked of [false, true]) {
+      const tracker = fakeTrackerOf([itemAsked(asked)]);
+      Effect.runSync(tracker.failNext("comment", new TrackerUnreachable({ tracker: "fake", message: "down", status: null })));
+      const { wiring, probe } = testWiring(tempRepo(), { ...verdictAtFirstPlan, tracker, config: { maxTrackerRetries: 2, trackerRetryDelaySeconds: 60 } });
+      const { concluded, fiber } = started(probe, wiring);
+      await waitFor(probe, "TrackerRetrying");
+      await Effect.runPromise(Fiber.interrupt(fiber));
+      assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
+      assert.deepEqual(Option.getOrNull(Effect.runSync(Ref.get(concluded))), { code: 130, parked: { _tag: "NothingParked" } }, `asked: ${asked}`);
+      assert.equal(await stateOf(probe), "implementing", `asked: ${asked}`);
+    }
+  });
+
+  test("a guard stop interrupted by the server's fault during its comment write concludes 1 and keeps the item implementing", async () => {
+    const tracker = fakeTrackerOf([itemAsked(false)]);
+    Effect.runSync(tracker.failNext("comment", new TrackerUnreachable({ tracker: "fake", message: "down", status: null })));
+    const { wiring, probe } = testWiring(tempRepo(), { ...verdictAtFirstPlan, tracker, config: { maxTrackerRetries: 2, trackerRetryDelaySeconds: 60 } });
+    const signal = Effect.runSync(makeFaultSignal);
+    const { concluded, fiber } = started(probe, wiring, signal);
+    await waitFor(probe, "TrackerRetrying");
+    await Effect.runPromise(Deferred.fail(signal.fault, new ServerFault({ message: "write EPIPE" })));
+    assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 1);
+    assert.equal(Option.getOrNull(Effect.runSync(Ref.get(concluded)))?.code, 1);
+    assert.equal(await stateOf(probe), "implementing");
   });
 });

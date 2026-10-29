@@ -8,7 +8,7 @@
 import { Clock, Deferred, Effect, Exit, Fiber, FileSystem, Layer, Option, Ref, Result, type Scope, Semaphore, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import type { Platform } from "./platform.ts";
-import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
+import { type Conclusion, exitCodeOf, type FaultSignal, makeFaultSignal, program, type RunStart, taskTextOf, type Wiring } from "./program.ts";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
@@ -477,7 +477,7 @@ export const makeRunManager = (
         const allocated = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
         // W2-R1-1 of issue #192: the code the program computed, which a Stop task during its uninterruptible ending
         // cannot overrule; a run ended before its records or by a defect leaves it empty, and exitCodeOf decides.
-        const concluded = yield* Ref.make(Option.none<number>());
+        const concluded = yield* Ref.make(Option.none<Conclusion>());
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
         // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
         // to keep its item implementing rests on the chain's own decision; while closing nothing is granted.
@@ -505,7 +505,7 @@ export const makeRunManager = (
               // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
               Effect.onExit((exit: Exit.Exit<number>) =>
                 Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated), Ref.get(concluded)]).pipe(
-                  Effect.flatMap(([rid, faulted, root, code]) => end(rid, faulted ? 1 : Option.getOrElse(code, () => exitCodeOf(exit)), Option.getOrNull(root))),
+                  Effect.flatMap(([rid, faulted, root, conclusion]) => end(rid, faulted ? 1 : Option.getOrElse(Option.map(conclusion, (c) => c.code), () => exitCodeOf(exit)), Option.getOrNull(root))),
                 ),
               ),
               Effect.forkDetach({ startImmediately: true }),

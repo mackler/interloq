@@ -12,7 +12,7 @@ const facts: fc.Arbitrary<ReturnFacts> = fc.oneof(
     _tag: fc.constant("Baseline" as const),
     startCommit: commit,
     head: commit,
-    parking: fc.constantFrom({ _tag: "NotParked" as const }, { _tag: "ParkingClaimed" as const }),
+    parking: fc.constantFrom({ _tag: "NotParked" as const }, { _tag: "ParkingClaimed" as const }, { _tag: "ParkedByRun" as const }),
   }),
 );
 
@@ -23,7 +23,8 @@ test("property: the item returns exactly when there is a baseline, HEAD is the s
       const decided = itemReturnOf(f);
       assert.equal(decided._tag === "Return", shouldReturn);
       if (decided._tag === "Keep") {
-        const reason = f._tag === "NoBaseline" ? "noBaseline" : f.head !== f.startCommit ? "committed" : "parkedWork";
+        // Issue #186: a run that parked its own work keeps its item, whatever HEAD names.
+        const reason = f._tag === "NoBaseline" ? "noBaseline" : f.parking._tag === "ParkedByRun" ? "parkedWork" : f.head !== f.startCommit ? "committed" : "parkedWork";
         assert.equal(decided.reason, reason);
       }
     }),
@@ -38,4 +39,7 @@ test("the cases by example", () => {
   assert.deepEqual(itemReturnOf({ _tag: "Baseline", startCommit: null, head: "b", parking: { _tag: "NotParked" } }), { _tag: "Keep", reason: "committed" });
   assert.deepEqual(itemReturnOf({ _tag: "Baseline", startCommit: "a", head: "a", parking: { _tag: "ParkingClaimed" } }), { _tag: "Keep", reason: "parkedWork" });
   assert.deepEqual(itemReturnOf({ _tag: "Baseline", startCommit: "a", head: "a", parking: { _tag: "NotParked" } }), { _tag: "Return" });
+  // Issue #186: parked.json exists (the run's own send-back or guard stop), whatever was parked.
+  assert.deepEqual(itemReturnOf({ _tag: "Baseline", startCommit: "a", head: "a", parking: { _tag: "ParkedByRun" } }), { _tag: "Keep", reason: "parkedWork" });
+  assert.deepEqual(itemReturnOf({ _tag: "Baseline", startCommit: "a", head: "b", parking: { _tag: "ParkedByRun" } }), { _tag: "Keep", reason: "parkedWork" });
 });

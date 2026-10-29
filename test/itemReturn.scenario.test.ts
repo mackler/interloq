@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Clock, Deferred, Effect, Fiber, Option, Ref } from "effect";
 import { ServerFault, trackerFailureText, TrackerUnreachable } from "../src/errors.ts";
-import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
+import { type Conclusion, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { haltRecord, itemReturnedLine, serverFaultRecord, sessionTooLongText } from "../src/prompts.ts";
 import type { ItemState } from "../src/tracker.ts";
 import { askedInPlanReview, fakeTrackerOf, heldClock, questionOf, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
@@ -247,7 +247,7 @@ test("(j) a refinement run's halt leaves its item unrefined", async () => {
 // reaches the caller through `concluded`, although the fiber ends interrupted. Work review 3 (W3-R2-1): the relabel's
 // waits are held on `heldClock`, so the interruption is requested while the run is known to be inside its wait.
 const interruptedDuringRelabel = (probe: WiringProbe, wiring: Wiring, clock: Clock.Clock, signal?: FaultSignal) => {
-  const concluded = Effect.runSync(Ref.make(Option.none<number>()));
+  const concluded = Effect.runSync(Ref.make(Option.none<Conclusion>()));
   const fiber = Effect.runFork(
     Effect.scoped(program(scriptedStart(probe.project), wiring, signal, undefined, undefined, concluded)).pipe(Effect.provideService(Clock.Clock, clock)),
   );
@@ -271,7 +271,7 @@ test("W2-R1-1 (k) Stop task during the relabel's wait: the item is returned, the
   held.advance(3000);
   const exit = await Effect.runPromise(Fiber.await(fiber));
   assert.equal(exitCodeOf(exit), 130, "the interruption did not land inside the run's ending");
-  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some(1));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null }));
   assert.equal(await stateOf(probe), "refined");
   const record = conversation(probe);
   assert.ok(record.includes(itemReturnedLine(item)), record);
@@ -290,7 +290,7 @@ test("W2-R1-1 (k2) Stop task during the relabel's wait, the tracker unreachable 
   held.advance(3000);
   const exit = await Effect.runPromise(Fiber.await(fiber));
   assert.equal(exitCodeOf(exit), 130, "the interruption did not land inside the run's ending");
-  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some(1));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null }));
   // The relabel ran to its last attempt: the line names the tracker's failure, not an interruption of the write.
   const exhausted = `could not label item ${item} refined again: ${trackerFailureText(unreachable())}.`;
   assert.ok(said(probe).includes(exhausted), said(probe));
@@ -322,7 +322,7 @@ test("W2-R1-1 (k3) after the server's fault, an interruption during the relabel 
   held.advance(5000);
   const exit = await Effect.runPromise(Fiber.await(fiber));
   assert.equal(exitCodeOf(exit), 130, "the interruption did not land inside the run's ending");
-  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some(1));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null }));
   assert.ok(said(probe).includes("no answer within 5 s"), said(probe));
   assert.deepEqual(
     [held.sleeps().filter((ms) => ms === 5000).length, held.sleeps().filter((ms) => ms === 10_000).length],
