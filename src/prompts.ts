@@ -3918,6 +3918,12 @@ export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", adde
     ? `No answer came to the question at ${limit} of ${heading}, so the review goes on for ${cycles}.`
     : `${heading} reached ${limit} again; Interloq gave it ${cycles} without asking, because an earlier limit went unanswered.`;
 };
+/** The refusal of an answer to a prompt that no longer waits. */
+export const ALREADY_ANSWERED_TEXT = "that question has already been answered";
+/** Issue #185: the refusal of an answer that arrived after its question's wait ran out and ended the run. */
+export const answerExpiredText = "that question expired: no answer came within the wait, and its run has ended";
+/** Issue #185: the same, where the question was a review's limit, after which the review went on. */
+export const limitAnswerExpiredText = "that question expired: no answer came within the wait, so the review went on with more cycles; the run continues";
 /** Issue #185: why a run ended without an answer: the wait and the question it waited on. */
 export const noAnswerText = (question: { readonly number: number; readonly text: string } | null, seconds: number): string =>
   question === null

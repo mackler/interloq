@@ -13,7 +13,7 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
+import { ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
 import { type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
@@ -31,7 +31,7 @@ import { EMPTY_SLOT, endedIn, refusalOf, reserved, runsOf, type Slot as RunSlot 
 import { parkHalted } from "./parking.ts";
 import type { RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
-import { makeWebUi, type WebUi } from "./webUi.ts";
+import { type AnswerTiming, makeWebUi, type WebUi } from "./webUi.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
 export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
@@ -67,6 +67,11 @@ export type RunManager = Readonly<{
   stop: (incarnation: string, run: number) => Effect.Effect<Refusal | null>;
   /** The answer to a pending prompt of the run with that id of that incarnation. */
   answer: (incarnation: string, run: number, prompt: number, text: string) => Effect.Effect<Refusal | null>;
+  /**
+   * Issue #185: the developer is working on a prompt of the run with that id of that incarnation: its countdown stops
+   * for good. A prompt that no longer waits is not refused (the frame may cross its answer); it does nothing.
+   */
+  hold: (incarnation: string, run: number, prompt: number) => Effect.Effect<Refusal | null>;
   /** Opens or closes one scope of the shared state of the run with that id of that incarnation, the current or the last one (issue #87). */
   setUi: (incarnation: string, run: number, flag: UiFlag) => Effect.Effect<Refusal | null>;
   /**
@@ -451,6 +456,17 @@ export const makeRunManager = (
     /** After a change of the chain: its persistence and its commands, in a detached fiber under one permit (P1-R3-1). */
     const settle = (command: ChainCommand | null): Effect.Effect<void> => Effect.asVoid(Effect.forkDetach(continuations.withPermits(1)(continueFrom(command))));
 
+    /**
+     * Issue #185 (requirements Q2): a question counts down only while its run is the chain's running implementation run,
+     * read at each prompt and at its deadline, so a run started with the mode off never counts down and turning the
+     * mode off lets a waiting question wait as before.
+     */
+    const answerTimingOf = (mode: RunMode, seconds: number, idRef: Ref.Ref<number>): AnswerTiming => ({
+      limitMs: Effect.all([Ref.get(idRef), Ref.get(state)]).pipe(
+        Effect.map(([rid, s]) => (mode === "implementation" && s.chain.settings.enabled && s.chain.chain._tag === "Running" && s.chain.chain.run === rid ? seconds * 1000 : null)),
+      ),
+    });
+
     /** The run with that id, if it is a mode's run in progress, with its mode. */
     const currentRun = (id: number) =>
       Ref.get(state).pipe(
@@ -475,9 +491,10 @@ export const makeRunManager = (
         // Issue #191: before the tracker is read, so a refused start contacts no tracker; repeated in the reservation.
         const busy = refusalOf(mode, before.runs[mode], id.success);
         if (busy !== null) return refused(busy);
-        const read = yield* withTracker((t) => t.read(id.success));
+        // Issue #185: the configuration the read already loads gives the wait of the run's questions.
+        const read = yield* withTracker((t, config) => t.read(id.success).pipe(Effect.map((item) => ({ item, seconds: config.answerTimeoutSeconds }))));
         if (Result.isFailure(read)) return refused(read.failure);
-        const item = read.success;
+        const { item, seconds } = read.success;
         if (item.state !== listedState(mode)) return refused(itemMovedText(item.id, listedState(mode), item.state));
         const gate = yield* Deferred.make<void>();
         const signal = yield* makeFaultSignal;
@@ -488,7 +505,7 @@ export const makeRunManager = (
         // W2-R1-1 of issue #192: the code the program computed, which a Stop task during its uninterruptible ending
         // cannot overrule; a run ended before its records or by a defect leaves it empty, and exitCodeOf decides.
         const concluded = yield* Ref.make(Option.none<Conclusion>());
-        const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
+        const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))), answerTimingOf(mode, seconds, idRef));
         // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
         // to keep its item implementing rests on the chain's own decision; while closing nothing is granted.
         const claim = Ref.get(idRef).pipe(
@@ -646,7 +663,19 @@ export const makeRunManager = (
           Effect.flatMap((found) => {
             if (of !== incarnation) return Effect.succeed(earlier(found?.mode ?? null));
             if (found === null) return Effect.succeed(ended);
-            return found.run.ui.answer(prompt, text).pipe(Effect.map((taken): Refusal | null => (taken === "taken" ? null : { refused: "that question has already been answered", mode: found.mode })));
+            return found.run.ui.answer(prompt, text).pipe(
+              Effect.map((taken): Refusal | null =>
+                taken === "taken" ? null : { refused: taken === "notWaiting" ? ALREADY_ANSWERED_TEXT : taken.then === "abandon" ? answerExpiredText : limitAnswerExpiredText, mode: found.mode },
+              ),
+            );
+          }),
+        ),
+      hold: (of, id, prompt) =>
+        currentRun(id).pipe(
+          Effect.flatMap((found) => {
+            if (of !== incarnation) return Effect.succeed(earlier(found?.mode ?? null));
+            if (found === null) return Effect.succeed(ended);
+            return found.run.ui.hold(prompt).pipe(Effect.as(null));
           }),
         ),
       // Issue #87: the change and its broadcast are one serialized, uninterruptible step of the publisher, so every tab

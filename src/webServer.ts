@@ -143,8 +143,8 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
           case "answer":
             return manager.answer(message.incarnation, message.run, message.prompt, message.text).pipe(Effect.flatMap(refuse));
           case "hold":
-            // Issue #185: the run manager's hold is built in step S8 of the run of issue #185.
-            return Effect.void;
+            // Issue #185: the developer is working on the prompt; its countdown stops.
+            return manager.hold(message.incarnation, message.run, message.prompt).pipe(Effect.flatMap(refuse));
           case "stop":
             // The interruption waits for the run's finalizers; the connection keeps reading meanwhile.
             return Effect.forkScoped(manager.stop(message.incarnation, message.run).pipe(Effect.flatMap(refuse))).pipe(Effect.asVoid);

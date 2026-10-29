@@ -14,7 +14,7 @@ import { type Broadcast, makeRunManager, type RunManager } from "../src/runManag
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { chainFrame, itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { chainFrame, holdFrame, itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
@@ -492,6 +492,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     listItems: () => Effect.succeed({ mode: "implementation", result: { _tag: "Unavailable", notice: "not in this test" } }),
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
+    hold: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
@@ -797,5 +798,20 @@ test("two refinement start frames of two unrefined items both start, with distin
     await until("both ends", () => startedRuns().every((r) => hasEnded(a, r)));
     a.close();
     b.close();
+  });
+});
+
+// Issue #185: the seam of the hold frame: the frame the page builds reaches the manager with the same run and prompt.
+test("the page's hold frame reaches the manager's hold with its incarnation, run and prompt", async () => {
+  const holds: [string, number, number][] = [];
+  const real = await managerOf(tempRepo(), []);
+  const fake: RunManager = { ...real, hold: (of, id, prompt) => Effect.sync(() => void holds.push([of, id, prompt])).pipe(Effect.as(null)) };
+  await serve(fake, dist(), async (port) => {
+    const a = await connect(port);
+    await until("the replay", () => a.messages.some((m) => m.type === "replay"));
+    a.send(holdFrame("test", 3, 7));
+    await until("the hold", () => holds.length === 1);
+    assert.deepEqual(holds, [["test", 3, 7]]);
+    a.close();
   });
 });

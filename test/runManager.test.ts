@@ -12,7 +12,7 @@ import { platformLayer } from "../src/platform.ts";
 import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
-import { refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
+import { answerExpiredText, limitAnswerExpiredText, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
 import { Reviewer, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
@@ -21,9 +21,9 @@ import { type Broadcast, type EventBroadcast, type HaltBounds, type Listener, ty
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
 import { commentText, runCommentKey } from "../src/itemComments.ts";
-import { askedInPlanReview, startOf, withoutReturnLine } from "./helpers.ts";
+import { askedInPlanReview, issue, respond, startOf, withoutReturnLine } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
-import { OFF_SETTINGS } from "../src/chain.ts";
+import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -786,4 +786,75 @@ test("a faulted run interrupted from outside without its halt record written is 
   const report = await readOnlyRecord(repo, () => run(h.manager.haltAll("write EPIPE")));
   assert.deepEqual(report, { halted: [], unconfirmed: [id] });
   assert.equal(endCode(h, id), 1);
+});
+
+// ---- Issue #185: the countdown of a chained run's questions, the hold and a late answer ----
+
+/** A manager with the chain on (its default) over a project whose questions wait `seconds`. */
+const chained = async (scripts: TestOptions[], config: Record<string, unknown>): Promise<Harness> => {
+  const repo = tempRepo();
+  fs.mkdirSync(path.join(repo, "plan-review"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "plan-review", "config.json"), JSON.stringify(config));
+  const h = await harness(repo, scripts);
+  const queue = [...scripts];
+  const tracker = fakeTrackerOf(ITEMS);
+  const manager = await run(makeRunManager((ui) => ({ ...testWiring(repo, { tracker, ...(queue.shift() ?? {}) }).wiring, ui: Effect.succeed(ui) }), repo, [], "test", trackerAccessOf(tracker), DEFAULT_SETTINGS).pipe(Effect.provide(platformLayer)));
+  await run(manager.subscribe((b: Broadcast) => Effect.sync(() => void (b._tag === "event" ? h.received.push(b) : undefined))).pipe(Scope.provide(h.scope)));
+  return { ...h, manager, tracker };
+};
+
+test("a hold of another incarnation or of an ended run is refused; a hold of a prompt that does not wait does nothing", async () => {
+  const h = await harness(tempRepo(), [converging]);
+  const id = await started(h);
+  await ended(h, id);
+  assert.notEqual(await run(h.manager.hold("another", id, 1)), null);
+  assert.notEqual(await run(h.manager.hold(h.manager.incarnation, id, 1)), null);
+});
+
+test("a chained run's question counts down the configured wait; an answer after it is refused as expired", async () => {
+  const h = await chained([askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] })], { answerTimeoutSeconds: 1 });
+  const id = await started(h);
+  const asked = await pendingAsk(h, id);
+  assert.ok(asked.countdown !== null);
+  assert.equal(asked.countdown.untilMs - asked.countdown.fromMs, 1000);
+  await until("the expiry", () => eventsOf(h, id).some((e) => e._tag === "AnswerExpired"), 10_000);
+  assert.deepEqual(await run(h.manager.answer(h.manager.incarnation, id, asked.prompt, "late")), { refused: answerExpiredText, mode: "implementation" });
+  await ended(h, id);
+});
+
+test("an answer after a review limit's expiry is refused with the text that the review went on", async () => {
+  const h = await chained(
+    [{ steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["A", "accepted"]]), plan: "v2" }], reviews: [{ issues: [issue("A")] }, { issues: [] }, { issues: [] }], execs: [finished], config: { maxRounds: 1 } }],
+    // The manager reads the wait from the project's file; the program takes its configuration from the scripted wiring.
+    { answerTimeoutSeconds: 1 },
+  );
+  const id = await started(h);
+  const asked = await pendingAsk(h, id);
+  assert.equal(asked.countdown?.then, "extend");
+  await until("the expiry", () => eventsOf(h, id).some((e) => e._tag === "AnswerExpired"), 10_000);
+  assert.deepEqual(await run(h.manager.answer(h.manager.incarnation, id, asked.prompt, "3")), { refused: limitAnswerExpiredText, mode: "implementation" });
+  await ended(h, id);
+  assert.equal(endCode(h, id), 0);
+});
+
+test("a manual run with the mode off counts nothing down", async () => {
+  const h = await harness(tempRepo(), [askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] })]);
+  const id = await started(h);
+  const asked = await pendingAsk(h, id);
+  assert.equal(asked.countdown, null);
+  await run(h.manager.stop(h.manager.incarnation, id));
+  await ended(h, id);
+});
+
+test("turning the mode off while a question counts down stops the countdown at its end, and the run keeps waiting", async () => {
+  const h = await chained([askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] })], { answerTimeoutSeconds: 1 });
+  const id = await started(h);
+  const asked = await pendingAsk(h, id);
+  assert.ok(asked.countdown !== null);
+  await run(h.manager.setChain(OFF_SETTINGS));
+  await until("the countdown's stop", () => eventsOf(h, id).some((e) => e._tag === "CountdownStopped" && e.reason === "chainOff"), 10_000);
+  assert.ok(!eventsOf(h, id).some((e) => e._tag === "AnswerExpired"));
+  assert.equal(await run(h.manager.answer(h.manager.incarnation, id, asked.prompt, "PostgreSQL")), null);
+  await ended(h, id);
+  assert.equal(endCode(h, id), 0);
 });
