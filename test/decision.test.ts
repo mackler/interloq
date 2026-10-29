@@ -11,7 +11,7 @@ import { withOffer } from "../src/prompts.ts";
 import type { RunError } from "../src/errors.ts";
 import type { ArguedColumn, Column, DecisionAnalysis, Entry } from "../src/schema.ts";
 import { Decider, type DecisionQuestion, type Services, Store, Ui } from "../src/services.ts";
-import { issue, opt, para, plain, questionEntry, respond, tempRepo, term, testLayer, type TestOptions, presentedQuestions, presentedSubjects, userQuestion, questionOf } from "./helpers.ts";
+import { askedInPlanReview, issue, opt, para, plain, questionEntry, respond, tempRepo, term, testLayer, type TestOptions, presentedQuestions, presentedSubjects, userQuestion, questionOf } from "./helpers.ts";
 import { piecesText } from "../src/pieces.ts";
 
 /** The column as an argued one (a test fails on an unclear column). */
@@ -272,7 +272,7 @@ const twoColumns = (a: string, b: string): DecisionAnalysis => ({ ...analysis(),
 const runTaskWith = async (options: TestOptions) => {
   const t = testLayer(tempRepo(), options);
   const { run } = await import("../src/run.ts");
-  return { ...t, finished: await Effect.runPromise(run("task").pipe(Effect.provide(t.layer))) };
+  return { ...t, finished: await Effect.runPromise(run("task").pipe(Effect.map((end) => (end._tag === "Finished" ? end.phases : 0)), Effect.provide(t.layer))) };
 };
 
 test("a disputed pause offers Help me decide; the analysis runs in the phase, and the chosen position is the decision", async () => {
@@ -303,9 +303,9 @@ test("a disputed pause offers Help me decide; the analysis runs in the phase, an
 });
 
 test("a decision inside a decision: a pause of decision 1 opens decision 2 in the same phase and returns to decision 1", async () => {
-  const { probe } = await runTaskWith({
-    // The plan writer's question offers the options; decision 1's review disputes an issue twice; its pause is decided
-    // with decision 2; then the plan writer's question is answered.
+  const { probe } = await runTaskWith(askedInPlanReview({
+    // The question of Claude Code's response to the first plan review offers the options; decision 1's review disputes
+    // an issue twice; its pause is decided with decision 2; then that question is answered.
     // "" is no decision at decision 1's idle pause (two cycles without an amendment).
     answers: ["/decide", "/decide", "2", "", "1"],
     steps: [
@@ -318,7 +318,7 @@ test("a decision inside a decision: a pause of decision 1 opens decision 2 in th
     ],
     reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [issue("D1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finishedExec],
-  });
+  }));
   assert.deepEqual(json(probe.dir, "decision-2/question.json").phase, { kind: "planning", n: 1 });
   assert.equal(json(probe.dir, "decision-2/chosen.json").option, prompts.PLANNER_POSITION);
   assert.equal(json(probe.dir, "decision-1/chosen.json").option, "SQLite");
@@ -462,12 +462,12 @@ test("a decision names its phase by the run's count: Planning in a run of one it
   const analysisPrompt = (prompts: readonly string[]) => prompts.find((p) => p.includes(prompts_.DECISION_FORMAT_AUTHORITY)) ?? "";
   const prompts_ = prompts;
 
-  const one = testLayer(tempRepo(), {
+  const one = testLayer(tempRepo(), askedInPlanReview({
     answers: ["/decide", "1"],
     steps: [{ output: asking, plan: "v1" }, { output: analysis() }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-  });
+  }));
   await Effect.runPromise(run("task").pipe(Effect.provide(one.layer)));
   assert.ok(analysisPrompt(one.probe.planner.prompts).includes(expected(1, 1)), analysisPrompt(one.probe.planner.prompts).slice(-600));
 

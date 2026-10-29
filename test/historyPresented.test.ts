@@ -13,7 +13,7 @@ import { renderQuestionRecord } from "../src/render.ts";
 import { normalizeTurn } from "../src/schemaNormalize.ts";
 import type * as S from "../src/schema.ts";
 import { Decider, Store, Ui } from "../src/services.ts";
-import { currentOf, entryOf, finished, noDecider, para, plain, presentedQuestions, questionOf, runRefinement, runTask, scriptedContextReply, summaryReply, tempRepo, testLayer } from "./helpers.ts";
+import { askedInPlanReview, currentOf, entryOf, finished, noDecider, para, plain, presentedQuestions, questionOf, runRefinement, runTask, scriptedContextReply, summaryReply, tempRepo, testLayer } from "./helpers.ts";
 import { permissionDraft } from "../src/offer.ts";
 
 const HISTORY = "You decided on 9 Oct 2026 to keep the service on one machine.";
@@ -88,12 +88,12 @@ test("a question the program composes gets the context call's history; the fallb
 
 test("a plan writer's question carries its history to the page", async () => {
   const asked = { ...questionOf({ context: "Claude Code, the planning agent, writes the plan.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }] }), history: para(HISTORY) };
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { layer, probe } = testLayer(tempRepo(), askedInPlanReview({
     answers: ["1"],
     steps: [{ output: { questions_for_user: [asked] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  });
+  }));
   await runTask(layer);
   const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
   assert.deepEqual(q.history, para(HISTORY));

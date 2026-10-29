@@ -463,8 +463,8 @@ test("a plan write saves plan.json and plan.md and notifies the plan for its pha
   assert.deepEqual(changed.map((e) => (e._tag === "PlanChanged" ? [e.phase, e.plan.stages[0].steps[0].text] : null)), [[1, "first text"], [1, "second text"]]);
   // Issue #53: a plan written by the program names no report of a step.
   assert.ok(changed.every((e) => e._tag === "PlanChanged" && e.step === null));
-  // The planner's schema carries the plan (F1).
-  assert.ok(probe.planner.schemas.slice(0, 2).every((s) => s === S.PlanWrite || s === S.PlanResponse));
+  // The planner's schema carries the plan (F1); issue #186: the first plan's is the reply that may be the verdict.
+  assert.deepEqual(probe.planner.schemas.slice(0, 2), [S.FirstPlanReply, S.PlanResponse]);
 });
 
 test("a plan that breaks the id rule gets one validation repair turn, and a second failure stops the run", async () => {

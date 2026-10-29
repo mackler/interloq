@@ -7,7 +7,7 @@ import { test } from "node:test";
 import * as prompts from "../src/prompts.ts";
 import { renderQuestionRecord } from "../src/render.ts";
 import type { PresentedQuestion } from "../src/question.ts";
-import { contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead, runRefinement, refinementFails, ack, summaryReply } from "./helpers.ts";
+import { askedInPlanReview, contextText, detailsText, entryOf, finished, issue, para, plain, presentedQuestions, questionText, respond, runTask, scriptedContextReply, tempRepo, term, testLayer, questionOf, currentOf, readBack, readBlocks, readTerms, senseRead, runRefinement, refinementFails, ack, summaryReply } from "./helpers.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import fc from "fast-check";
 import { Result } from "effect";
@@ -46,9 +46,10 @@ const refinementScenario = () =>
   });
 const implementationScenario = () =>
   testLayer(tempRepo(), {
-    // The plan writer's question, the pause on issue A raised again.
+    // Claude Code's question in its response to the first plan review (issue #186: the first plan asks none), the pause
+    // on issue A raised again.
     answers: ["1", ""],
-    steps: [{ output: { questions_for_user: [plannerQuestion] }, plan: "v1" }, { output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }, { output: respond([["P1-R1-1", "rejected"]]) }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: [plannerQuestion] }) }, { output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
     config: { maxIdleRounds: 5 },
@@ -250,12 +251,12 @@ test("S5: a plan writer's question with a piece that refers to an explanation re
     explanations: [{ id: "o", term: "order", senses: ["What a customer buys."] }],
     options: [{ label: plain("SQLite"), description: [...plain("one file per "), term("order", "o")] }, { label: plain("PostgreSQL"), description: plain("a server") }],
   };
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { layer, probe } = testLayer(tempRepo(), askedInPlanReview({
     answers: ["1"],
     steps: [{ output: { questions_for_user: [asked] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  });
+  }));
   await runTask(layer);
   const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
   assert.deepEqual(q.context.blocks, asked.context);
@@ -278,12 +279,12 @@ test("S37: a plain piece's backtick and trailing backslash reach conversation.md
     explanations: [],
     options: [{ label: plain("The first"), description: plain("list the files") }, { label: plain("The second"), description: plain("list the directory") }],
   };
-  const { layer, probe } = testLayer(tempRepo(), {
+  const { layer, probe } = testLayer(tempRepo(), askedInPlanReview({
     answers: ["1"],
     steps: [{ output: { questions_for_user: [asked] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  });
+  }));
   await runTask(layer);
   const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "planner");
   const expected = "Should the step run \\``ls` or C:\\\\`dir` first?";

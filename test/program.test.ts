@@ -11,7 +11,7 @@ import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
-import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
+import { askedInPlanReview, finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import { checkCommandInvalidText, defectRecord, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
@@ -139,11 +139,11 @@ const assertInterrupted = (probe: WiringProbe, exit: Exit.Exit<number, never>): 
 };
 
 test("interrupt while the UI waits for input", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), {
+  const { wiring, probe } = testWiring(tempRepo(), askedInPlanReview({
     answers: [{ wait: true }],
     // A plan writer's question, which still reaches the user (issue #181 removed the question at an execution stop).
     steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }],
-  });
+  }));
   const exit = await interruptWhen(probe, wiring, probe.ui.nextAsk());
   assertInterrupted(probe, exit);
 });
@@ -164,7 +164,7 @@ test("exitCodeOf: the program's own code, 130 for an interruption, 1 for a defec
 
 // S24 (issue #25; the user's decision at the stop of execution phase 1): End the run is an interruption with exit code
 // 130, like Stop task and Ctrl+C; Stop at the cycle limit stays a halt with exit code 1. Each confirmation says so.
-const withQuestion = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] };
+const withQuestion = askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] });
 const statedCode = (text: string): number => Number(/exit code (\d+)/.exec(text)?.[1]);
 
 test("q at a question, confirmed, ends the run as an interruption with exit code 130", async () => {

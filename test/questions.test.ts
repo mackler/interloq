@@ -207,18 +207,20 @@ test("a response to the question review whose list breaks a rule gets the valida
 
 // S16 (Q12): a question of the plan writer and an interview question outside questions.json are held to the rules, with
 // behaviour 10's validation repair turn and no Codex review; an agreed question and a turn that asks nothing are not.
+// Issue #186: the first plan asks none, so the plan writer's question is the one of its response to the plan review.
 test("a plan writer's question that breaks a rule gets the validation repair turn; a second failure halts", async () => {
   const bad = { context: para("c"), history: [], question: plain("Which database? Say."), explanations: [], options: [] };
   const good = { context: para("c"), history: [], question: plain("Which database?"), explanations: [], options: [] };
+  const asking = (question: typeof bad) => ({ output: respond([["P1-R1-1", "rejected"]], { questions_for_user: [question] }) });
   const repaired = testLayer(tempRepo(), {
     answers: ["SQLite"],
-    steps: [{ output: { questions_for_user: [bad] }, plan: "v1" }, { output: { questions_for_user: [good] }, plan: "v1" }, { output: noQuestions, plan: "v1" }],
-    reviews: [{ issues: [] }, { issues: [] }],
+    steps: [{ output: noQuestions, plan: "v1" }, asking(bad), asking(good), { output: noQuestions, plan: "v1" }],
+    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   });
   await runTask(repaired.layer);
-  assert.equal(repaired.probe.planner.prompts[1], prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [{ kind: "notLast", subject: "" }] }]));
-  const halted = testLayer(tempRepo(), { steps: [{ output: { questions_for_user: [bad] }, plan: "v1" }, { output: { questions_for_user: [bad] }, plan: "v1" }] });
+  assert.equal(repaired.probe.planner.prompts[2], prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [{ kind: "notLast", subject: "" }] }]));
+  const halted = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }, asking(bad), asking(bad)], reviews: [{ issues: [issue("P1-R1-1")] }] });
   await runFails(halted.layer, "QuestionInvalid", /questions_for_user 1/);
 });
 
@@ -296,15 +298,16 @@ test("the seven rules of 5 Oct 2026 reach the writers of the question list and t
     reviews: [{ issues: [] }, { issues: [] }],
   });
   await runRefinement(layer);
-  // Issue #120: the plan is written by an implementation run of its own.
-  const implementation = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+  // Issue #120: the plan is written by an implementation run of its own. Issue #186: the first plan asks no question, so
+  // the rules reach the plan writer in its response to the plan review, where questions_for_user stays.
+  const implementation = testLayer(tempRepo(), { steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "rejected"]]) }], reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }], execs: [finished] });
   await runTask(implementation.layer);
   const ids = ["contextBearsOnChoice", "askOutcome", "readerConsequence", "statedWarrant", "developmentFacts", "readerInstructions", "namedActor"];
   const rules = ids.map((id) => prompts.QUESTION_RULES.find((r) => r.id === id));
   assert.ok(rules.every((r) => r !== undefined), "a rule is missing");
   const listPrompt = probe.planner.prompts[0];
-  const planPrompt = implementation.probe.planner.prompts[0];
-  assert.match(planPrompt, /Produce an implementation plan/);
+  assert.match(implementation.probe.planner.prompts[0], /Produce an implementation plan/);
+  const planPrompt = implementation.probe.planner.prompts[1];
   const reviewPrompt = probe.reviewer.prompts[0];
   for (const r of rules) {
     assert.ok(listPrompt.includes(r!.rule), r!.id);

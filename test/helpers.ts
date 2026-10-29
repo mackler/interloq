@@ -71,7 +71,7 @@ export const scriptedPlan = (text: string): SPlan => ({ stages: [{ number: 1, ti
 /** That plan as plan.json records it, every step with `status`. */
 export const scriptedRecordedPlan = (text: string, status: StepStatus = "pending"): RecordedPlan => ({ stages: scriptedPlan(text).stages.map((st) => ({ ...st, steps: st.steps.map((x) => ({ ...x, status })) })) });
 /** Whether a planning call's schema carries the plan (the plan write and the response to a plan review). */
-const carriesPlan = (schema: Schema.Top): boolean => schema === S.PlanWrite || schema === S.PlanResponse;
+const carriesPlan = (schema: Schema.Top): boolean => schema === S.PlanWrite || schema === S.PlanResponse || schema === S.PlanOnly;
 
 /** Every temporary directory a test file created; removed when the file's tests are done. */
 const tempDirs: string[] = [];
@@ -498,6 +498,15 @@ export class ScriptedPlanner implements PlannerShape {
   private withPlan(schema: Schema.Top, step: PlanningStep): unknown {
     if (step.plan !== undefined) this.root.lastPlan = step.plan;
     const output = withWorkEffects(step.output);
+    // Issue #186: the run's first planning call replies a plan or the verdict under `reply`; a script written as a plan
+    // write (a plan and an empty questions_for_user) is that plan, and a script with a question there is refused, since
+    // the first plan asks none any more.
+    if (schema === S.FirstPlanReply && output !== null && typeof output === "object" && !Array.isArray(output) && ("questions_for_user" in output || "plan" in output)) {
+      const questions = (output as { questions_for_user?: readonly unknown[] }).questions_for_user ?? [];
+      if (questions.length > 0) throw new Error("a first plan scripts questions_for_user: move the question into the response to the first plan review");
+      const plan = "plan" in output ? output.plan : this.lastPlan === null ? undefined : scriptedPlan(this.lastPlan);
+      return { reply: { kind: "plan", plan } };
+    }
     if (!carriesPlan(schema) || output === null || typeof output !== "object" || Array.isArray(output) || "plan" in output || this.lastPlan === null) return output;
     return { ...output, plan: scriptedPlan(this.lastPlan) };
   }
@@ -741,7 +750,8 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
  */
 const withSuite = <A, E>(effect: Effect.Effect<A, E, SuiteRunner>): Effect.Effect<A, E> => Effect.provideService(effect, SuiteRunner, new ScriptedSuite([]));
 /** Runs the procedure against a layer and returns the number of execution phases. */
-export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<number> => Effect.runPromise(withSuite(run(task).pipe(Effect.provide(layer))));
+export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<number> =>
+  Effect.runPromise(withSuite(run(task).pipe(Effect.map((end) => (end._tag === "Finished" ? end.phases : 0)), Effect.provide(layer))));
 
 /** Runs a refinement run of the scripted item (issue #120): the question phase, written back to the item. */
 export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task", terms: TermsMode = "checked"): Promise<void> => Effect.runPromise(refinementRun(task, scriptedItem.id, terms).pipe(Effect.provide(layer)));
@@ -1030,4 +1040,25 @@ export const withoutReturnLine = (record: string): string => {
   const [before, after] = itemReturnedLine("\u0000").split("\u0000");
   const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return record.replace(new RegExp(`${escape(before ?? "")}\\S+${escape(after ?? "")}\\n\\n$`), "");
+};
+
+/** Issue #186: the run's first plan as its reply, a plan; with `plan` in the step, its one step's text. */
+export const firstPlan = (): unknown => ({ questions_for_user: [] });
+/** Issue #186: the run's first planning reply as the verdict that the item is not refined. */
+export const notRefined = (missing: string): unknown => ({ reply: { kind: "notRefined", missing } });
+
+/**
+ * Issue #186: the run's first plan asks no question, so a script that put one in it moves it into Claude Code's
+ * response to the first plan review, where questions_for_user stays: the review raises P1-R1-1, the response rejects it
+ * and asks the questions, and the next review round is the script's first.
+ */
+export const askedInPlanReview = (options: TestOptions): TestOptions => {
+  const [first, ...rest] = options.steps ?? [];
+  const output = (first?.output ?? {}) as { questions_for_user?: readonly unknown[] };
+  const questions = output.questions_for_user ?? [];
+  return {
+    ...options,
+    steps: [{ ...first, output: { ...output, questions_for_user: [] } }, { output: respond([["P1-R1-1", "rejected"]], { questions_for_user: questions as PlannerResponse["questions_for_user"] }) }, ...rest],
+    reviews: [{ issues: [issue("P1-R1-1")] }, ...(options.reviews ?? [])],
+  };
 };

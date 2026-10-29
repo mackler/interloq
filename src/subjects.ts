@@ -21,7 +21,7 @@ import { validatePlan } from "./plan.ts";
 import { normalizeQuestionList } from "./schemaNormalize.ts";
 import { Store, Ui } from "./services.ts";
 import type { VerdictRecord } from "./records.ts";
-import { verdictResponseValidation } from "./verdictValidation.ts";
+import { verdictResponseValidation, verdictValidation } from "./verdictValidation.ts";
 
 /** Records the list as questions.json after normalisation: an invalid list halts, and a dropped default is noted in the conversation. */
 export const writeQuestions = (task: string, list: QuestionList): Effect.Effect<void, RunError, Store> =>
@@ -291,3 +291,15 @@ export function verdictSubject(n: number, phase: number, phaseRecord: VerdictRec
     prepare: null,
   };
 }
+
+/**
+ * The validation of the run's first planning call's reply (issue #186): a plan's (planValidation), or the verdict's
+ * (verdictValidation), each with the validation repair turn of behavior 10.
+ */
+export const firstPlanValidation =
+  (root: RunRoot, previous: RecordedPlan | null): Validation<S.FirstPlanReply> =>
+  (output) => {
+    const reply = output.reply;
+    if (reply.kind === "plan") return Result.map(planValidation(root, previous)(reply.plan), ({ value, notes }) => ({ value: { reply: { ...reply, plan: value } }, notes }));
+    return Result.map(verdictValidation<S.NotRefinedVerdict>()(reply), ({ value, notes }) => ({ value: { reply: value }, notes }));
+  };

@@ -22,7 +22,7 @@ import { TrackerUnreachable } from "../src/errors.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, finished, MANAGER_ITEMS, questionOf, startOf, type TestOptions, tempDir, tempRepo, testWiring } from "./helpers.ts";
+import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, questionOf, startOf, type TestOptions, tempDir, tempRepo, testWiring } from "./helpers.ts";
 
 const run = Effect.runPromise;
 const noQuestions = { questions_for_user: [] };
@@ -153,11 +153,11 @@ test("a run stopped with Stop task starts nothing", async () => {
 });
 
 test("a question answered inside a run starts nothing until the run ends", async () => {
-  const asking: TestOptions = {
+  const asking: TestOptions = askedInPlanReview({
     steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  };
+  });
   const h = await harness([asking, converging], { settings: settings(2) });
   const id = await begin(h, "1");
   await until("the question", () => h.events.some((b) => b.run === id && b.event._tag === "Asked"));

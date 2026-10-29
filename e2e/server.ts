@@ -26,7 +26,7 @@ import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { E2E_ITEMS } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
 import type { RunMode } from "../src/runMode.ts";
-import { fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, entryOf, para, ack, summaryReply } from "../test/helpers.ts";
+import { askedInPlanReview, fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, entryOf, para, ack, summaryReply } from "../test/helpers.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -72,11 +72,11 @@ export const SCENARIOS: Record<string, TestOptions> = {
     reviews: [{ issues: [issue("P1-R1-1", "The step names no file.")] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   },
-  decision: {
+  decision: askedInPlanReview({
     steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [] })] }, plan: "1. [ ] the step\n" }, { output: noQuestions }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  },
+  }),
   stop: { steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }, { hang: true }], reviews: [{ issues: [issue("P1-R1-1")] }] },
   // Finding 10 of docs/gui-review.md: the scenarios the review names.
   // The question phase: a question list, an interview message, /done, a proposed summary and its confirmation.
@@ -142,19 +142,19 @@ export const SCENARIOS: Record<string, TestOptions> = {
     execs: [finished, finished],
   },
   // Two decisions in a row, for two tabs and a dropped connection.
-  tabs: {
+  tabs: askedInPlanReview({
     steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [] }), questionOf({ context: "c", question: "Which cache should the service use?", terms: [], options: [] })] }, plan: "1. [ ] the step\n" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  },
-  drop: {
+  }),
+  drop: askedInPlanReview({
     steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [] })] }, plan: "1. [ ] the step\n" }],
     reviews: [{ issues: [] }, { issues: [] }],
     execs: [finished],
-  },
+  }),
   // Decision support: a question with two options, one analysis that converges in its first cycle, then the answer.
   // Issue #79: a context of about ten lines at 1280 px and a short recommendation, which fit beside the columns.
-  decide: {
+  decide: askedInPlanReview({
     steps: [
       { output: { questions_for_user: [questionOf({ context: LONG_DECISION_CONTEXT, question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
       { output: { ...DECIDE_ANALYSIS, recommendation: { option: "SQLite", reason: "Developers set up the service sooner." } } },
@@ -162,11 +162,11 @@ export const SCENARIOS: Record<string, TestOptions> = {
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-  },
+  }),
   // W1-R1-3: a long recommendation must not squeeze the columns.
   // Issue #133: its question has a history too, and its context is eight paragraphs, so that the History heading and
   // the text columns are exercised.
-  decideLong: {
+  decideLong: askedInPlanReview({
     steps: [
       { output: { questions_for_user: [{ ...questionOf({ context: LONG_DECISION_CONTEXT, question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] }), context: para(...LONG_DECISION_CONTEXT.split("\n\n")), history: para(DECISION_HISTORY) }] }, plan: "1. [ ] the step\n" },
       { output: { ...DECIDE_ANALYSIS, recommendation: { option: "SQLite", reason: LONG_RECOMMENDATION } } },
@@ -174,9 +174,9 @@ export const SCENARIOS: Record<string, TestOptions> = {
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-  },
+  }),
   // W2-R1-1: the analysis's review raises an issue; Claude's response carries the amended analysis to the page.
-  decideRevise: {
+  decideRevise: askedInPlanReview({
     steps: [
       { output: { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
       { output: DECIDE_ANALYSIS },
@@ -190,7 +190,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
     ],
     reviews: [{ issues: [issue("D1-R1-1", "The advantage of SQLite states no extent.")] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-  },
+  }),
   // A long transcript: 60 accepted rounds, then two rounds without an acceptance and the idle pause, which waits.
   long: {
     config: { maxRounds: 100, maxIdleRounds: 2 },
@@ -268,19 +268,19 @@ export const LONG_QUESTION = {
   ...longQuestion,
   context: [{ kind: "paragraph" as const, pieces: [{ text: "Databases", ref: databaseRef, code: false }, { text: " keep what a service must remember.", ref: "", code: false }] }, ...longQuestion.context],
 };
-SCENARIOS.longQuestion = {
+SCENARIOS.longQuestion = askedInPlanReview({
   steps: [{ output: { questions_for_user: [LONG_QUESTION] }, plan: "1. [ ] the step\n" }, { output: noQuestions }],
   reviews: [{ issues: [] }, { issues: [] }],
   execs: [finished],
-};
+});
 
 // Issue #79 (P2-R1-1): the long context of longQuestion with two short options, so that in a tall window the question
 // pane's context can be shown whole.
-SCENARIOS.longContextShortAnswers = {
+SCENARIOS.longContextShortAnswers = askedInPlanReview({
   steps: [{ output: { questions_for_user: [questionOf({ ...LONG_QUESTION_WORDS, options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" }, { output: noQuestions }],
   reviews: [{ issues: [] }, { issues: [] }],
   execs: [finished],
-};
+});
 
 // Issue #22 (W1-R1-1 of work review 1): five agreed questions, each with two options a paragraph long, so that the
 // fifth waits after four long answers, which the compact dashboard's heading of every answer lists under it.

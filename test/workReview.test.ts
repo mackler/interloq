@@ -451,7 +451,7 @@ test("issue #122: the work response's prompt carries the task, the run's require
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
     execs: [stop("needs_input", "PostgreSQL"), finished],
   });
-  assert.equal(await Effect.runPromise(implementationRun(task, scriptedItem.id, requirements, NO_STEP_CHECKS).pipe(Effect.provide(layer))), 2);
+  assert.deepEqual(await Effect.runPromise(implementationRun(task, scriptedItem.id, requirements, NO_STEP_CHECKS).pipe(Effect.provide(layer))), { _tag: "Finished", phases: 2 });
   const response = probe.planner.prompts[1];
   assert.match(response, /work-review-1\/review-1\.json/);
   assert.ok(response.includes(task), "the task");

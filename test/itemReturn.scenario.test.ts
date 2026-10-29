@@ -11,7 +11,7 @@ import { ServerFault, trackerFailureText, TrackerUnreachable } from "../src/erro
 import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { haltRecord, itemReturnedLine, serverFaultRecord, sessionTooLongText } from "../src/prompts.ts";
 import type { ItemState } from "../src/tracker.ts";
-import { fakeTrackerOf, heldClock, questionOf, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
+import { askedInPlanReview, fakeTrackerOf, heldClock, questionOf, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
 const item = scriptedItem.id;
@@ -66,12 +66,12 @@ test("(b) Stop task during the first planning call: 130, the item refined, the l
 });
 
 test("(c) End the run, confirmed, at a question: 130 and the item refined", async () => {
-  const { wiring, probe } = testWiring(tempRepo(), {
+  const { wiring, probe } = testWiring(tempRepo(), askedInPlanReview({
     steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }],
     reviews: [{ issues: [] }],
     answers: ["q", "y"],
     confirmEnds: true,
-  });
+  }));
   assert.equal(await runWith(wiring, probe), 130);
   assert.equal(await stateOf(probe), "refined");
 });

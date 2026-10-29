@@ -8,12 +8,12 @@ import { rootName } from "./park.ts";
 import { type Refinement, refinementOf } from "./refinement.ts";
 import { stateAtEnd, stateAtStart } from "./runMode.ts";
 import type { ItemId } from "./tracker.ts";
-import { describe, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText } from "./errors.ts";
+import { describe, NotRefinedStopped, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
 import type { EarlierPlan } from "./earlierPlan.ts";
-import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -27,7 +27,8 @@ import { Decider, Planner, type PlannerShape, RunConfig, type Services, type Ste
 import { runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
 import { SUITE_TAIL_LINES, type SuiteStop, suiteOutcomeOf, suiteVerdictOf, tailLines } from "./suite.ts";
-import { planField, planSubject, planValidation, savePlan, workSubject } from "./subjects.ts";
+import { firstPlanValidation, planField, planSubject, planValidation, savePlan, verdictSubject, workSubject } from "./subjects.ts";
+import { type SentBack, sendBack } from "./sendBack.ts";
 
 /**
  * A refinement run (issue #120, the developer's decision of 8 Oct 2026): the question phase and nothing after it. It sets no
@@ -98,7 +99,7 @@ const firstLine = (task: string): string => task.split("\n")[0] ?? "";
  * executes and reviews, and sets the item to implemented when the run finishes. A run that halts or is stopped sets
  * nothing more, and Interloq never moves an item backward. Succeeds with the number of execution phases.
  */
-export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks, held: readonly string[] = []): Effect.Effect<number, RunError, Services | Tracker | SuiteRunner> =>
+export const implementationRun = (task: string, item: ItemId, requirements: Refinement | null, checks: S.StepChecks, held: readonly string[] = []): Effect.Effect<ImplementationEnd, RunError, Services | Tracker | SuiteRunner> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const tracker = yield* Tracker;
@@ -113,16 +114,21 @@ export const implementationRun = (task: string, item: ItemId, requirements: Refi
     // asking; after the requirements, so that the revision is written for the item's section as it stands now (Q5).
     const earlier = yield* store.earlierPlan(item);
     const start: PlanStart = yield* planStartOf(earlier);
-    const phases = yield* implementationPhases(task, requirements !== null, checks, start);
+    const ended = yield* implementationPhases(task, requirements !== null, checks, start);
+    // Issue #186: a verdict that stood sends the item back, its work parked, instead of setting it implemented.
+    if (ended._tag === "NotRefined") return { _tag: "SentBack", verdict: ended.verdict, ...(yield* sendBack(item, ended.verdict, ended.missing)) } as const;
     yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("implementation") }, env, "setImplemented", null);
-    return phases;
+    return ended;
   });
 
 /** The planning, execution and review of a task without a tracker item: the implementation run's phases after a new records directory. */
-export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effect.Effect<number, RunError, Services | SuiteRunner> =>
+export const run = (task: string, checks: S.StepChecks = S.NO_STEP_CHECKS): Effect.Effect<ImplementationEnd, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
     yield* (yield* Store).init(task);
-    return yield* implementationPhases(task, false, checks, { _tag: "Fresh" });
+    const ended = yield* implementationPhases(task, false, checks, { _tag: "Fresh" });
+    // Issue #186: without a tracker there is no item to send back.
+    if (ended._tag === "NotRefined") return yield* Effect.fail(new NotRefinedStopped({ item: null, missing: ended.missing, reason: "noTracker", park: null }));
+    return ended;
   });
 
 /** Where an implementation run's planning starts, from what the Store found of the item's earlier runs, with its line said and written. */
@@ -211,7 +217,27 @@ const processEndedStop = (ended: PhaseProcessEnded, records: StepRecords): S.Exe
   checks: ended.checks,
 });
 
-const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks, start: PlanStart): Effect.Effect<number, RunError, Services | SuiteRunner> =>
+/** How the implementation phases ended (issue #186): the run finished, or a verdict that the item is not refined stood. */
+export type PhasesEnd = Readonly<{ _tag: "Finished"; phases: number }> | Readonly<{ _tag: "NotRefined"; missing: string; verdict: number }>;
+/** How an implementation run ended when it did not halt: finished, or its item sent back to refinement (issue #186). */
+export type ImplementationEnd = Readonly<{ _tag: "Finished"; phases: number }> | (Readonly<{ _tag: "SentBack"; verdict: number }> & SentBack);
+
+/** A cause of the run's first planning call, whose reply may be the verdict (issue #186), or null for a revision. */
+const firstCauseOf = (cause: PlanningCause): FirstPlanCause | null => {
+  switch (cause._tag) {
+    case "FirstPlan":
+    case "EarlierPlan":
+    case "ParkedBranch":
+      return cause;
+    case "ExecutionEnded":
+    case "SuiteFailed":
+    case "Uncommitted":
+    case "VerdictWithdrawn":
+      return null;
+  }
+};
+
+const implementationPhases = (task: string, withRequirements: boolean, checks: S.StepChecks, start: PlanStart): Effect.Effect<PhasesEnd, RunError, Services | SuiteRunner> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -331,6 +357,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         }
       });
 
+    /** The verdicts given so far, numbered across the run (issue #186). */
+    let verdicts = 0;
     /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
     let previous: PlanningCause = start._tag === "Fresh" ? { _tag: "FirstPlan" } : { _tag: "EarlierPlan", root: start.root };
     for (let k = 1; ; k++) {
@@ -341,6 +369,35 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         // Planning phase K: write or revise the plan, then review it.
         yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: k } });
         yield* ui.say(planningBeganLine(label("planning", k), previous._tag === "FirstPlan"));
+        // Issue #186: the run's first planning call returns a plan or the verdict that the item is not refined; Codex
+        // reviews a verdict in this phase and session, and where it is withdrawn Claude Code writes the plan instead.
+        const first = firstCauseOf(previous);
+        if (first !== null) {
+          const reply = yield* planningCall(planningPrompt(store.root, task, withRequirements, k, previous, checks), S.FirstPlanReply, "planning", "records", firstPlanValidation(store.root, before));
+          const replied = reply.output.reply;
+          if (replied.kind === "plan") {
+            yield* store.savePlanWrite(k, { questions_for_user: [] });
+            yield* savePlan(k, replied.plan, before);
+            yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: reply.resultText });
+            return { _tag: "Reviewed", loop: yield* reviewLoop(subject) } as const;
+          }
+          verdicts += 1;
+          const n = verdicts;
+          const phase = { kind: "planning", n: k } as const;
+          yield* store.saveVerdict(n, { missing: replied.missing, phase, origin: "firstPlan" });
+          yield* sayAndWrite(verdictGivenLine(label("planning", k)));
+          const judged = yield* reviewLoop(verdictSubject(n, k, phase, { _tag: "FirstPlan" }, withRequirements));
+          if (judged.result !== "revise") {
+            yield* sayAndWrite(verdictStandsLine(n));
+            return { _tag: "NotRefined", missing: (yield* store.loadVerdict(n)).missing, verdict: n, loop: judged } as const;
+          }
+          yield* sayAndWrite(verdictWithdrawnLine(n));
+          const replaced = yield* planningCall(planAfterVerdictPrompt(store.root, task, withRequirements, n, first, checks), S.PlanOnly, "planning", "records", planField<S.PlanOnly>(planValidation(store.root, before)));
+          yield* savePlan(k, replaced.output.plan, before);
+          yield* ui.notify({ _tag: "PlanWritten", phase: k, resultText: replaced.resultText });
+          return { _tag: "Reviewed", loop: yield* reviewLoop(subject) } as const;
+        }
+
         // The reply is the plan (F1): validated, then written by the program as plan.json and plan.md.
         const written = yield* planningCall(planningPrompt(store.root, task, withRequirements, k, previous, checks), S.PlanWrite, "planning", "records", bothValidations(planField<S.PlanWrite>(planValidation(store.root, before)), userQuestionsValidation<S.PlanWrite>()));
         yield* store.savePlanWrite(k, written.output);
@@ -353,9 +410,10 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         }
         if (answered) yield* applyDecisions(subject);
 
-        return yield* reviewLoop(subject);
+        return { _tag: "Reviewed", loop: yield* reviewLoop(subject) } as const;
       }).pipe(ownSession, inPhase({ kind: "planning", n: k }));
-      yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "planning", n: k }, result: reviewed.result });
+      yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "planning", n: k }, result: reviewed.loop.result });
+      if (reviewed._tag === "NotRefined") return { _tag: "NotRefined", missing: reviewed.missing, verdict: reviewed.verdict } as const;
 
       // Execution phase K.
       const execution = yield* Effect.gen(function* () {
@@ -422,7 +480,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
           }
         }
         const committed = yield* store.uncommittedSinceStart();
-        if (committed._tag === "Committed") return k;
+        if (committed._tag === "Committed") return { _tag: "Finished", phases: k } as const;
         // The next iteration is known first, so that the line names this work review as the run now numbers it.
         yield* foresee(k + 1);
         yield* sayAndWrite(uncommittedLine(label("work", k), committed.paths, checks.suite));

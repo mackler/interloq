@@ -20,7 +20,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type HaltBounds, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
-import { startOf, withoutReturnLine } from "./helpers.ts";
+import { askedInPlanReview, startOf, withoutReturnLine } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
 import { OFF_SETTINGS } from "../src/chain.ts";
 
@@ -109,7 +109,7 @@ test("a run: Started, the Ui's events, Ended 0; conversation.md is byte-identica
 
 test("a question is answered through the manager, with the same text the scripted Ui would send", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] }]);
+  const h = await harness(repo, [askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] })]);
   const id = await started(h);
   const asked = await pendingAsk(h, id);
   assert.equal(asked.kind, "decision");
@@ -152,7 +152,7 @@ test("a start for an item whose state changed since the list was shown is refuse
 
 test("answering and stopping one run leaves the run of the other mode running, each with its own records directory", async () => {
   const repo = tempRepo();
-  const question = (q: string): TestOptions => ({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+  const question = (q: string): TestOptions => (askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] }));
   const refining: TestOptions = { steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }], reviews: [{ issues: [] }, { issues: [] }], answers: [] };
   const h = await harness(repo, [question("Which database?"), refining]);
   const implementation = await started(h, "implementation");
@@ -278,7 +278,7 @@ test("a blank item id is refused, before the project check; no run starts and no
 
 test("stop interrupts the run like Ctrl+C; answers and stops naming an ended run are refused; a new run gets a new id", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }] }, converging]);
+  const h = await harness(repo, [askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }] }), converging]);
   const first = await started(h);
   const asked = await pendingAsk(h, first);
   assert.equal(await run(h.manager.stop(h.manager.incarnation, first)), null);
@@ -349,10 +349,10 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
 
 test("over the real adapters and the fake SDK, the run reports both agents' activity", async () => {
   const repo = tempRepo();
-  // Issue #6 (F1): the plan is the reply.
+  // Issue #6 (F1): the plan is the reply; issue #186: under the first plan reply's reply.
   const writePlan = () => (async function* () {
     yield init("s-1");
-    yield success({ ...noQuestions, plan: scriptedPlan("step") });
+    yield success({ reply: { kind: "plan", plan: scriptedPlan("step") } });
   })();
   const report = { status: "finished", summary: "done", question: "", remaining_work: "", checks: [] };
   const sdk = new FakeSdk([writePlan, messages(init("s-1"), success(report))], [turn(JSON.stringify({ issues: [] })), turn(JSON.stringify({ issues: [] }))]);
@@ -445,7 +445,7 @@ test("start interrupted while Started is being delivered leaves a run that can b
 // Finding 12 of docs/gui-review.md: an action of another incarnation is refused even when its numbers match.
 test("a stop and an answer with the current run's numbers but another incarnation are refused, and the run continues", async () => {
   const repo = tempRepo();
-  const withQuestion: TestOptions = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
+  const withQuestion: TestOptions = askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
   const h = await harness(repo, [withQuestion]);
   const id = await started(h);
   const asked = await pendingAsk(h, id);
@@ -512,7 +512,7 @@ test("append and end stamp every event with the Clock's time; the replay holds t
 // S24: End the run in the page (the answer q, which the page confirms itself, S25) ends the run with code 130.
 test("End the run in the page ends the run with code 130 as an interruption, and the server keeps running", async () => {
   const repo = tempRepo();
-  const h = await harness(repo, [{ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }] }, converging]);
+  const h = await harness(repo, [askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }] }), converging]);
   const first = await started(h);
   const asked = await pendingAsk(h, first);
   await run(h.manager.answer(h.manager.incarnation, first, asked.prompt, "q"));
@@ -637,7 +637,7 @@ test("the Refinement listing carries the configured choice of terms; an unknown 
 // Issue #158 (the user's decision Q1): after an error the server cannot trace to one run, the manager refuses every new
 // start, halts every run in progress with its record, and returns within its bounds even when a run does not end.
 const SHORT: HaltBounds = { graceMs: 400, interruptMs: 1_000 };
-const asking = (q: string): TestOptions => ({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] });
+const asking = (q: string): TestOptions => (askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: q, terms: [], options: [] })] }, plan: "v1" }], reviews: [{ issues: [] }] }));
 const refiningAsk: TestOptions = {
   steps: [{ output: { questions: [questionEntry("Q1", "Which cache?", [["Redis", "r"], ["None", "n"]], { context: "c" })] } }],
   reviews: [{ issues: [] }],

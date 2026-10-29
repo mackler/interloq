@@ -8,7 +8,7 @@ import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe,
 import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
 import { blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
-import { implementationRun, refinementRun, run } from "./run.ts";
+import { type ImplementationEnd, implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
@@ -16,7 +16,7 @@ import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
-import { recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
+import { pathOf, recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
 import type { ItemComment, ItemId, TrackerItem } from "./tracker.ts";
@@ -86,7 +86,7 @@ const isTrackerError = (error: TrackerError | RunError): error is TrackerError =
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
 
 /** How a run ended when it finished: a refinement run, or an implementation run with its number of execution phases. */
-type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implementation"; phases: number }>;
+type RunOutcome = Readonly<{ mode: "refinement" }> | Readonly<{ mode: "implementation"; end: ImplementationEnd }>;
 /** How a run is started: from an item (RunStart), or, until the run manager starts runs from items (S10 of issue #120), from a task. */
 type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task: (config: Config, ui: UiShape) => Effect.Effect<Result.Result<Readied, Unready>, UserStopped> }>;
 /**
@@ -491,7 +491,7 @@ const programWith = (
           : refinementRun(task, start.item, kind.terms, held).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
         : (tracker === null ? run(task, checks) : implementationRun(task, start.item, requirements, checks, held).pipe(Effect.provide(tracker))).pipe(
             Effect.provide(context),
-            Effect.map((phases) => ({ mode: "implementation", phases }) as const),
+            Effect.map((end) => ({ mode: "implementation", end }) as const),
           );
     // The race with the server's fault is inside onInterrupt, so a body ended by the fault does not say INTERRUPTED;
     // only an interruption of the whole run (Stop task) does. W2-R1-1 of issue #192: the body alone is interruptible;
@@ -502,8 +502,12 @@ const programWith = (
         const exit = yield* restore(Effect.raceFirst(body, fault)).pipe(Effect.onInterrupt(() => interruptedFromOutside), Effect.exit);
         if (Exit.isSuccess(exit)) {
           if (exit.value.mode === "implementation") {
-            yield* ui.say(taskFinishedLine(exit.value.phases));
-            yield* ui.say(`Plan: ${records.plan}\nConversation record: ${records.dir}/conversation.md`);
+            const end = exit.value.end;
+            // Issue #186: a send-back is the run doing what it was asked, so it ends with 0; its line was said by sendBack.
+            if (end._tag === "Finished") {
+              yield* ui.say(taskFinishedLine(end.phases));
+              yield* ui.say(`Plan: ${records.plan}\nConversation record: ${records.dir}/conversation.md`);
+            } else yield* ui.say(`Verdict: ${records.dir}/${pathOf({ kind: "verdict", verdict: end.verdict })}\nConversation record: ${records.dir}/conversation.md`);
           } else yield* ui.say(`Requirements: ${records.requirements}\nConversation record: ${records.dir}/conversation.md`);
           yield* tail(yield* sessionId, records);
           return yield* conclude(0);

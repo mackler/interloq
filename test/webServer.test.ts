@@ -12,7 +12,7 @@ import { decodeClient as decodeClientMessage, listedItemOf, ServerMessageSchema 
 import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
-import { fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
+import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
 import { chainFrame, itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
@@ -30,7 +30,7 @@ const run = Effect.runPromise;
 // Plan step 3.4: the server over NodeHttpServer.layerTest, with Node's WebSocket as the scripted client.
 const noQuestions = { questions_for_user: [] };
 const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
-const withQuestion: TestOptions = { steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] };
+const withQuestion: TestOptions = askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
 
 /** The refined items the start frames of a test name, in turn (issue #120); reset with every manager. */
 let started = 0;
@@ -608,7 +608,7 @@ test("two real decisions sharing entry e1: interleaved with run events, every ta
     recommendation: { option: "", reason: "" },
   });
   const options = (x: string, y: string) => [{ label: x, description: `${x} it is` }, { label: y, description: `${y} it is` }];
-  const script: TestOptions = {
+  const script: TestOptions = askedInPlanReview({
     steps: [
       { output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: options("SQLite", "PostgreSQL") }), questionOf({ context: "c", question: "Which cache?", terms: [], options: options("Redis", "Memcached") })] }, plan: "v1" },
       { output: analysis("Which database?", "SQLite", "PostgreSQL", "The first decision's advantage.") },
@@ -617,7 +617,7 @@ test("two real decisions sharing entry e1: interleaved with run events, every ta
     ],
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
-  };
+  });;
   const analyzed = (c: Client, decision: number) =>
     (perRun(c).get(1) ?? []).some((e) => e.event._tag === "Notified" && e.event.event._tag === "DecisionAnalyzed" && e.event.event.decision === decision);
   const askedAfter = (c: Client, decision: number) => {

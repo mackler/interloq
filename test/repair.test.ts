@@ -26,7 +26,8 @@ test("an invalid planner reply gets one repair turn and the corrected reply is u
   assert.equal(await runTask(layer), 1);
   assert.equal(probe.planner.prompts.length, 2);
   assert.match(probe.planner.prompts[1], REPAIR);
-  assert.match(probe.planner.prompts[1], /questions_for_user/);
+  // Issue #186: the first plan's reply is a plan or the verdict under reply.
+  assert.match(probe.planner.prompts[1], /\["reply"\]/);
   assert.deepEqual(JSON.parse(kept(probe.dir, "claude-1.json")), { dispositions: "x" });
   assert.deepEqual(probe.ui.asked, []);
 });
@@ -125,7 +126,7 @@ const withClaude = (repo: string, sdk: FakeSdk, reviewer: ScriptedReviewer): Lay
 test("a Claude Code planning call without structured output gets one repair turn in the same session", async () => {
   const repo = tempRepo();
   const paths = pathsOf(repo);
-  const sdk = new FakeSdk([planWithoutOutput(path.join(paths.records(), "plan.md")), messages(init("s-1"), success({ ...noQuestions, plan: scriptedPlan("v1") })), messages(init("s-1"), success(report))]);
+  const sdk = new FakeSdk([planWithoutOutput(path.join(paths.records(), "plan.md")), messages(init("s-1"), success({ reply: { kind: "plan", plan: scriptedPlan("v1") } })), messages(init("s-1"), success(report))]);
   const layer = withClaude(repo, sdk, new ScriptedReviewer(paths, [{ issues: [] }, { issues: [] }]));
   assert.equal(await runTask(layer), 1);
   assert.equal(sdk.calls.length, 3);
