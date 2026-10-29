@@ -916,6 +916,40 @@ suite("issue #186: a send-back in a chain", () => {
     assert.equal(history[0]?.returned, null, "the manager did not try to return the item");
   });
 
+  // Work review 1 (W1-R1-5): a guard-stopped item stays implementing, so it is listed again only once relabeled refined,
+  // for example by the developer by hand; here the chain's next listing relabels it first. Its second guard stop in the
+  // same chain ends the chain HaltedTwice.
+  test("a second guard stop of the same item, relabeled refined during the chain, ends the chain HaltedTwice", async () => {
+    const tracker = unasked();
+    const order = await refinedOrder(tracker);
+    const first = order[0]! as ItemId;
+    let relabeled = false;
+    const h = await harness([verdict, verdict, converging], {
+      settings: settings(null),
+      tracker,
+      trackerOf: (fake) => ({
+        ...fake.tracker,
+        list: (state) =>
+          Effect.gen(function* () {
+            const item = (yield* fake.tracker.read(first));
+            if (state === "refined" && !relabeled && item.state === "implementing") {
+              relabeled = true;
+              yield* fake.tracker.setState(first, "refined");
+            }
+            return yield* fake.tracker.list(state);
+          }),
+      }),
+    });
+    await begin(h, first);
+    await idle(h);
+    assert.ok(relabeled, "the item was relabeled refined before the chain's listing");
+    const runs = startedRuns(h);
+    assert.deepEqual(runs.map((r) => r.item), [first, first]);
+    for (const r of runs) assert.equal(endCode(h, r.run), 1);
+    assert.equal(await endedReason(h), "HaltedTwice");
+    assert.equal((await itemOf(h, first))?.state, "implementing");
+  });
+
   test("a send-back whose parking fails ends the chain with ParkFailed and starts nothing", async () => {
     // A repository on an unborn branch: the baseline has no start commit to return the working branch to.
     const repo = tempDir("pr-unborn-");
