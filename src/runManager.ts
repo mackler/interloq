@@ -646,7 +646,7 @@ export const makeRunManager = (
           Effect.flatMap((found) => {
             if (of !== incarnation) return Effect.succeed(earlier(found?.mode ?? null));
             if (found === null) return Effect.succeed(ended);
-            return found.run.ui.answer(prompt, text).pipe(Effect.map((taken): Refusal | null => (taken ? null : { refused: "that question has already been answered", mode: found.mode })));
+            return found.run.ui.answer(prompt, text).pipe(Effect.map((taken): Refusal | null => (taken === "taken" ? null : { refused: "that question has already been answered", mode: found.mode })));
           }),
         ),
       // Issue #87: the change and its broadcast are one serialized, uninterruptible step of the publisher, so every tab

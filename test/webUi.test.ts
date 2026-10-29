@@ -30,7 +30,7 @@ test("say, notify, and a prompt with its answer become events in order", async (
   await run(ui.notify({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }));
   const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
   const prompt = await pendingPrompt(ui);
-  assert.equal(await run(ui.answer(prompt, "keep it")), true);
+  assert.equal(await run(ui.answer(prompt, "keep it")), "taken");
   assert.equal(await run(Fiber.join(fiber)), "keep it");
   assert.deepEqual(
     events.map((e) => e._tag),
@@ -47,8 +47,8 @@ test("the first answer wins; a later one is ignored", async () => {
   const { ui, events } = await withUi();
   const fiber = Effect.runFork(ui.ask(prompts.optionOrTextPrompt));
   const prompt = await pendingPrompt(ui);
-  assert.equal(await run(ui.answer(prompt, "first")), true);
-  assert.equal(await run(ui.answer(prompt, "second")), false);
+  assert.equal(await run(ui.answer(prompt, "first")), "taken");
+  assert.equal(await run(ui.answer(prompt, "second")), "notWaiting");
   assert.equal(await run(Fiber.join(fiber)), "first");
   assert.equal(events.filter((e) => e._tag === "Answered").length, 1);
 });
@@ -89,7 +89,7 @@ test("interrupting a waiting ask clears the pending prompt, and a late answer is
   const prompt = await pendingPrompt(ui);
   await run(Fiber.interrupt(fiber));
   assert.equal(await run(ui.pending), null);
-  assert.equal(await run(ui.answer(prompt, "late")), false);
+  assert.equal(await run(ui.answer(prompt, "late")), "notWaiting");
 });
 
 // Finding 11 of docs/gui-review.md (src/webUi.ts:61): an answer interrupted while Answered is being delivered is not lost.
@@ -108,7 +108,7 @@ test("an answer interrupted while Answered is in the sink still resolves the ask
   assert.ok(Exit.isSuccess(asked), "the asking fiber was stranded");
   assert.ok(Exit.isSuccess(asked.value) && asked.value.value === "the decision");
   assert.equal(await run(ui.pending), null);
-  assert.equal(await run(ui.answer(prompt, "again")), false);
+  assert.equal(await run(ui.answer(prompt, "again")), "notWaiting");
 });
 
 test("of two concurrent answers to one prompt exactly one is taken", async () => {
@@ -116,7 +116,128 @@ test("of two concurrent answers to one prompt exactly one is taken", async () =>
   const asking = Effect.runFork(ui.ask(prompts.decisionPrompt));
   const prompt = await pendingPrompt(ui);
   const taken = await run(Effect.all([ui.answer(prompt, "one"), ui.answer(prompt, "two")], { concurrency: 2 }));
-  assert.deepEqual(taken.filter((t) => t).length, 1);
+  assert.deepEqual(taken.filter((t) => t === "taken").length, 1);
   assert.equal(events.filter((e) => e._tag === "Answered").length, 1);
   await run(Fiber.join(asking));
+});
+
+// ---- Issue #185: the countdown on the server's clock, the hold and the expiry ----
+
+const withTiming = async (limitMs: Effect.Effect<number | null>): Promise<{ ui: WebUi; events: RunEvent[] }> => {
+  const events: RunEvent[] = [];
+  const ui = await run(makeWebUi((e) => Effect.sync(() => void events.push(e)), { limitMs }));
+  return { ui, events };
+};
+const question = (n: number, text: string): RunEvent extends never ? never : Parameters<WebUi["notify"]>[0] => ({
+  _tag: "QuestionPresented",
+  question: {
+    number: n,
+    origin: { kind: "planner", heading: "Planning phase 1" },
+    context: [],
+    history: [],
+    question: [{ text, ref: "", code: false }],
+    explanations: [],
+    options: [],
+    attached: null,
+  },
+} as unknown as Parameters<WebUi["notify"]>[0]);
+const askedOf = (events: RunEvent[]) => events.filter((e): e is Extract<RunEvent, { _tag: "Asked" }> => e._tag === "Asked");
+
+test("a counting prompt carries the wait the server times, and expires with NoAnswer naming the question", async () => {
+  const limit = 60;
+  const { ui, events } = await withTiming(Effect.succeed(limit));
+  await run(ui.notify(question(4, "Which format?")));
+  const exit = Effect.runPromiseExit(ui.ask(prompts.decisionPrompt, "extend"));
+  const prompt = await pendingPrompt(ui);
+  const countdown = askedOf(events)[0].countdown;
+  assert.ok(countdown !== null);
+  // The seam: the length the page counts down is the one the server times, from one value.
+  assert.equal(countdown.untilMs - countdown.fromMs, limit);
+  assert.equal(countdown.then, "extend");
+  const result = await exit;
+  assert.ok(Exit.isFailure(result));
+  const error = result.cause.reasons.find((r) => r._tag === "Fail");
+  assert.deepEqual(error?._tag === "Fail" && { ...error.error }, { _tag: "NoAnswer", where: prompts.decisionPrompt, seconds: 0, question: { number: 4, text: "Which format?" }, then: "extend" });
+  assert.deepEqual(events.at(-1), { _tag: "AnswerExpired", prompt, seconds: 0, then: "extend" });
+  assert.deepEqual(await run(ui.answer(prompt, "late")), { _tag: "expired", then: "extend" });
+  assert.equal(await run(ui.pending), null);
+});
+
+test("an answer before the end is taken; nothing expires afterward", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(80));
+  const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  const prompt = await pendingPrompt(ui);
+  assert.equal(await run(ui.answer(prompt, "yes")), "taken");
+  assert.equal(await run(Fiber.join(fiber)), "yes");
+  await sleep(150);
+  assert.ok(!events.some((e) => e._tag === "AnswerExpired"));
+});
+
+test("a late timer: an answer after the deadline is refused as expired and fails the ask; a hold then is refused", async () => {
+  const release = await run(Deferred.make<void>());
+  let reads = 0;
+  // The first read times the prompt; the timer's own read at the deadline is held back.
+  const limitMs = Effect.suspend(() => (++reads === 1 ? Effect.succeed(30) : Deferred.await(release).pipe(Effect.as(30))));
+  const { ui, events } = await withTiming(limitMs);
+  const exit = Effect.runPromiseExit(ui.ask(prompts.decisionPrompt));
+  const prompt = await pendingPrompt(ui);
+  await sleep(80);
+  assert.equal(await run(ui.hold(prompt)), false);
+  // The answer's own read of the limit is the third; it is released so the answer can see that the chain still holds.
+  await run(Deferred.succeed(release, undefined));
+  assert.deepEqual(await run(ui.answer(prompt, "too late")), { _tag: "expired", then: "abandon" });
+  const result = await exit;
+  assert.ok(Exit.isFailure(result));
+  assert.ok(!events.some((e) => e._tag === "Answered"));
+  assert.equal(events.filter((e) => e._tag === "AnswerExpired").length, 1);
+});
+
+test("a hold before the end stops the countdown for good; the answer is still taken", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(50));
+  const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  const prompt = await pendingPrompt(ui);
+  assert.equal(await run(ui.hold(prompt)), true);
+  assert.equal(await run(ui.hold(prompt)), false);
+  assert.deepEqual(events.at(-1), { _tag: "CountdownStopped", prompt, reason: "held" });
+  await sleep(120);
+  assert.ok(!events.some((e) => e._tag === "AnswerExpired"));
+  assert.equal(await run(ui.answer(prompt, "done")), "taken");
+  assert.equal(await run(Fiber.join(fiber)), "done");
+});
+
+test("no limit at the ask: no countdown; the limit gone at the deadline: CountdownStopped(chainOff), then it waits", async () => {
+  const none = await withTiming(Effect.succeed(null));
+  const f1 = Effect.runFork(none.ui.ask(prompts.decisionPrompt));
+  const p1 = await pendingPrompt(none.ui);
+  assert.equal(askedOf(none.events)[0].countdown, null);
+  assert.equal(await run(none.ui.answer(p1, "a")), "taken");
+  await run(Fiber.join(f1));
+  let reads = 0;
+  const off = await withTiming(Effect.sync(() => (++reads === 1 ? 30 : null)));
+  const f2 = Effect.runFork(off.ui.ask(prompts.decisionPrompt));
+  const p2 = await pendingPrompt(off.ui);
+  await sleep(100);
+  assert.deepEqual(off.events.at(-1), { _tag: "CountdownStopped", prompt: p2, reason: "chainOff" });
+  assert.equal(await run(off.ui.answer(p2, "b")), "taken");
+  assert.equal(await run(Fiber.join(f2)), "b");
+});
+
+test("an answer /decide makes the next prompt start held; the prompt after an ordinary answer counts down again", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(5_000));
+  for (const answer of ["/decide", "x", "y"]) {
+    const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
+    await run(ui.answer(await pendingPrompt(ui), answer));
+    await run(Fiber.join(fiber));
+  }
+  assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, false, true]);
+});
+
+test("an interruption during the countdown withdraws the prompt and publishes no expiry", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(60));
+  const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  await pendingPrompt(ui);
+  await run(Fiber.interrupt(fiber));
+  await sleep(120);
+  assert.equal(await run(ui.pending), null);
+  assert.ok(!events.some((e) => e._tag === "AnswerExpired"));
 });
