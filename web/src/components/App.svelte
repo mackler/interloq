@@ -275,7 +275,9 @@
   /**
    * What the page shows of one presented run, as decide observes it (issue #120, S17; issue #191: each refinement run on
    * its own): its pending prompt, the run and its end; the prompt counts as shown only for the run on screen in the
-   * selected tab, and the list or another refinement run as the form for a new task only in that run's tab.
+   * selected tab, and only the selected tab's item list as the form for a new task (work review 2 of issue #191,
+   * W2-R1-1: another refinement run on screen is not the form, so a run not on screen that ends at a hidden tab still
+   * raises its notification and end mark, which clears when the tab becomes visible).
    */
   const observation = (p: Presented): Observation => {
     const watched = p.shown.run;
@@ -287,7 +289,7 @@
       ended: watched?.ended ?? null,
       visible,
       promptShown: onScreen && (asking || deciding),
-      formShown: selected && (showList || !onScreen),
+      formShown: selected && showList,
       preferences,
       permission,
     };

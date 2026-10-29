@@ -1634,6 +1634,17 @@ describe("App: several refinement runs", () => {
       ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: askedOf(2) });
       expect(NotificationStub.calls).toHaveLength(1);
     });
+
+    test("W2-R1-1: a run not on screen that ends at a hidden tab raises its end notification", async () => {
+      begin("hidden");
+      const { root, ws } = await open([1, 2]);
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }, { id: 2, events: stamp([startedOf("12")]) }] });
+      clickRunTab(root, "run-1");
+      expect(headline(root)).toBe(prompts.itemHeadline("11", "title 11"));
+      expect(NotificationStub.calls).toHaveLength(0);
+      ws.receive({ type: "event", run: 2, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.endNotificationTitle("p", 0)]);
+    });
   });
 });
 
