@@ -21,6 +21,7 @@ import { type ItemId, itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { CurrentRuns, ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
+import { sentBackCount } from "./itemComments.ts";
 import {
   begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
 } from "./chain.ts";
@@ -299,7 +300,14 @@ export const makeRunManager = (
 
     /** Issue #142: the Refinement tab's listing carries the configured choice of terms, read with the configuration. */
     const listItems = (mode: RunMode): Effect.Effect<ItemsAnswer> =>
-      withTracker((t, config) => Effect.map(t.list(listedState(mode)), (items) => ({ items: items.map(listedItemOf), terms: config.terms }))).pipe(
+      // Issue #186 (F1): each item's comments read, the server's own requests (not repeated, as the listing is not), and
+      // its send-backs counted; a failure of any of them answers the listing with its notice.
+      withTracker((t, config) =>
+        t.list(listedState(mode)).pipe(
+          Effect.flatMap((items) => Effect.forEach(items, (item) => Effect.map(t.comments(item.id), (comments) => listedItemOf(item, sentBackCount(comments))), { concurrency: 4 })),
+          Effect.map((items) => ({ items, terms: config.terms })),
+        ),
+      ).pipe(
         Effect.map((listed): ItemsAnswer => {
           const unavailable = (notice: string) => ({ _tag: "Unavailable", notice }) as const;
           if (mode === "refinement") return { mode, result: Result.isFailure(listed) ? unavailable(listed.failure) : { _tag: "Listed", ...listed.success } };

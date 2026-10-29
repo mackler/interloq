@@ -20,6 +20,7 @@ import type { RunEvent } from "../src/protocol.ts";
 import { type Broadcast, type EventBroadcast, type HaltBounds, type Listener, type UiBroadcast, makePublisher, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { subscribeBounded } from "../src/webServer.ts";
 import { FakeSdk, init, messages, success, turn } from "./fakeSdk.ts";
+import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { askedInPlanReview, startOf, withoutReturnLine } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
 import { OFF_SETTINGS } from "../src/chain.ts";
@@ -598,7 +599,7 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
   const h = await harness(repo, []);
   for (const mode of ["refinement", "implementation"] as const) {
     const listed = await run(h.manager.listItems(mode));
-    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url) }));
+    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0 }));
     // Issue #125: the listing carries each item's address, null where the tracker gave none, and both occur.
     assert.deepEqual(new Set(items.map((i) => i.url === null)), new Set([true, false]));
     // Issue #142: the Refinement tab's listing carries the configured choice of terms, which its control starts at.
@@ -615,6 +616,22 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
   assert.match(notice._tag === "Unavailable" ? notice.notice : "", /no issue tracker is configured/);
   const refused = (await run(none.start({ mode: "implementation", item: "1" }))) as Refusal;
   assert.deepEqual([refused.mode, /no issue tracker is configured/.test(refused.refused)], ["implementation", true]);
+});
+
+// Issue #186 (F1): each listed item carries how many times Interloq sent it back, counted from its comments by their
+// markers (one per send-back's key); a comment listing that fails is the listing's notice, as a failed listing is.
+test("listItems counts each item's send-backs from its comments; a failed comment listing is a notice", async () => {
+  const repo = tempRepo();
+  const sentBack = (key: string) => ({ body: commentText({ _tag: "SentBack", key: runCommentKey(key, "verdict-1"), date: "2026-10-28", missing: "m" }), created: "2026-10-28T00:00:00Z" });
+  const twice = ITEMS.map((i) => (i.state === "unrefined" && i.id === ITEMS.find((x) => x.state === "unrefined")!.id ? { ...i, comments: [sentBack("run-a"), { body: "a developer's note", created: "t" }, sentBack("run-b"), sentBack("run-b")] } : i));
+  const tracker = fakeTrackerOf(twice);
+  const h = await harness(repo, [], undefined, [], tracker);
+  const listed = await run(h.manager.listItems("refinement"));
+  assert.ok(listed.result._tag === "Listed");
+  const counts = listed.result._tag === "Listed" ? listed.result.items.map((i) => i.sentBack) : [];
+  assert.deepEqual(counts, twice.filter((i) => i.state === "unrefined").map((i) => (i.comments === undefined ? 0 : 2)));
+  await run(tracker.failNext("comments", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
+  assert.deepEqual(await run(h.manager.listItems("refinement")), { mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: connection reset" } });
 });
 
 // Issue #142 (requirements Q3): the listing reads the configuration each time, so an edited file shows on the next Refresh.

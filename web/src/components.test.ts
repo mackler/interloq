@@ -151,8 +151,8 @@ test("every author's message carries its author as class and data-author", () =>
 // Issue #120: a tab's items, each with a button that starts the tab's run; the page never calls the tracker.
 describe("ItemList", () => {
   const items = [
-    { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120" },
-    { id: "121", title: "No address", excerpt: "", url: null },
+    { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120", sentBack: 0 },
+    { id: "121", title: "No address", excerpt: "", url: null, sentBack: 0 },
   ];
   const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined, ...props });
 
@@ -220,7 +220,7 @@ describe("ItemList", () => {
   ];
   for (const [tracker, itemFrom, address] of sources) {
     test(`the address ${tracker}'s adapter reads is the href the page's row links to`, () => {
-      const sent: ServerMessage = { type: "items", mode: "implementation", result: { _tag: "Listed", items: [listedItemOf(itemFrom())] } };
+      const sent: ServerMessage = { type: "items", mode: "implementation", result: { _tag: "Listed", items: [listedItemOf(itemFrom(), 0)] } };
       const received = Result.getOrThrow(decodeServer(JSON.stringify(sent)));
       if (received.type !== "items" || received.result._tag !== "Listed") throw new Error("not a listing");
       const root = show(ItemList, { mode: "implementation", items: received.result, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined });
@@ -697,7 +697,7 @@ describe("App and the draft", () => {
       flushSync();
     };
     const startedIn = (mode: RunMode, id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode, item: { id, title: "t" } });
-    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null };
+    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0 };
     const begin = async () => {
       vi.stubGlobal("WebSocket", FakeWebSocket);
       const { default: App } = await import("./components/App.svelte");
@@ -1582,7 +1582,7 @@ describe("App: several refinement runs", () => {
     const { root, ws } = await open([1]);
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
     clickRunTab(root, "list");
-    ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null }, { id: "12", title: "b", excerpt: "", url: null }], terms: "checked" } });
+    ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null, sentBack: 0 }, { id: "12", title: "b", excerpt: "", url: null, sentBack: 0 }], terms: "checked" } });
     expect((one(root, 'button[name=start][data-item="11"]') as HTMLButtonElement).disabled).toBe(true);
     expect((one(root, 'button[name=start][data-item="12"]') as HTMLButtonElement).disabled).toBe(false);
     expect(root.querySelector("section.items")?.textContent).toContain(prompts.ITEM_IN_PROGRESS);

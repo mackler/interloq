@@ -75,9 +75,12 @@ export const chainSettingsOf = (frame: ChainFrameSettings): Result.Result<ChainS
  * An item as a tab lists it (issue #120): its id, its title, enough of its text to choose by, and (issue #125) the
  * address of its page in its tracker, null where the tracker gave none. No credential.
  */
-export type ListedItem = Readonly<{ id: string; title: string; excerpt: string; url: string | null }>;
-/** The one way the server lists an item (issue #125): the page links to exactly the address the adapter read. */
-export const listedItemOf = (item: TrackerItem): ListedItem => ({ id: item.id, title: item.title, excerpt: excerptOf(item.body), url: Option.getOrNull(item.url) });
+export type ListedItem = Readonly<{ id: string; title: string; excerpt: string; url: string | null; sentBack: number }>;
+/**
+ * The one way the server lists an item (issue #125): the page links to exactly the address the adapter read. Issue #186
+ * (F1): `sentBack`, how many times Interloq sent the item back to refinement, counted from its comments.
+ */
+export const listedItemOf = (item: TrackerItem, sentBack: number): ListedItem => ({ id: item.id, title: item.title, excerpt: excerptOf(item.body), url: Option.getOrNull(item.url), sentBack });
 /** A tab's items, or the notice of why the tracker could not list them; never both. */
 export type ItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Unavailable;
 /** Why the tracker or the configuration could not list a tab's items. */
@@ -239,7 +242,7 @@ const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });
 
 /** An item's address as the page receives it: what itemUrlOf accepts, so a frame naming another scheme never decodes. */
 const ItemUrlStr = Str.check(Schema.makeFilter((text: string) => Result.isSuccess(itemUrlOf(text)) || "an item's address must be an absolute https address"));
-const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str, url: Schema.NullOr(ItemUrlStr) }));
+const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str, url: Schema.NullOr(ItemUrlStr), sentBack: Int }));
 const UnavailableSchema = tagged("Unavailable", { notice: Str });
 
 export const ClientMessageSchema = Schema.Union([
