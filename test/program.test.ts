@@ -599,6 +599,18 @@ describe("the first read of the item, repeated", () => {
     assert.ok(retry >= 0 && question > retry && decision > question && record > decision, conversation);
   });
 
+  test("W1-R1-1: a first read that succeeds after a repeat, then a listed command naming a missing script: the retry line comes before the halt's record", async () => {
+    const tracker = fakeTrackerOf([scriptedItem]);
+    await failReads(tracker, 1);
+    const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: { ...FAST, checkCommands: [{ change: "unit", command: "npm run test:missing" }] } });
+    writeManifest(probe.project, { test: "node --test" });
+    assert.equal(await runProgram(probe, wiring), 1);
+    const conversation = assertHaltedBeforeRecords(probe);
+    const retry = conversation.indexOf(readLine(1, 0.01));
+    const record = conversation.indexOf(haltRecord(haltReasonOf(said(probe)) ?? ""));
+    assert.ok(retry >= 0 && record > retry, conversation);
+  });
+
   test("Retry again, then a read that succeeds: the run goes on, the question and the decision in conversation.md", async () => {
     const tracker = fakeTrackerOf([scriptedItem]);
     await failReads(tracker, 3);

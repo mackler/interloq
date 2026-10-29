@@ -211,7 +211,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
      * recordsRoot, so a server fault racing it finds the same directory), the first read's held records and the halt's
      * record are written there, and the page is told; where the allocation fails, the page alone.
      */
-    const haltedBeforeRecords = (reason: string, held: readonly string[] = []) =>
+    const haltedBeforeRecords = (reason: string, held: readonly string[]) =>
       Effect.gen(function* () {
         const root = yield* Effect.uninterruptible(
           Effect.gen(function* () {
@@ -239,7 +239,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Exit.isFailure(configExit)) {
         const error = Cause.findErrorOption(configExit.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(configExit.cause));
-        return yield* haltedBeforeRecords(describe(error.value));
+        return yield* haltedBeforeRecords(describe(error.value), []);
       }
       const sourced = configExit.value;
       const config = sourced.config;
@@ -255,7 +255,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Exit.isFailure(formatExit)) {
         const error = Cause.findErrorOption(formatExit.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(formatExit.cause));
-        return yield* haltedBeforeRecords(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })));
+        return yield* haltedBeforeRecords(describe(new DecisionFormatUnreadable({ file: formatFile, message: error.value.message })), []);
       }
       const decisionFormat = formatExit.value;
 
@@ -280,7 +280,7 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Result.isFailure(checks)) {
         const { key, path: inside, message } = checks.failure;
         const invalid = new ConfigInvalid({ file: fileOf(sourced, key) ?? "the default configuration", path: `${key}${inside}`, message });
-        return yield* haltedBeforeRecords(describe(invalid));
+        return yield* haltedBeforeRecords(describe(invalid), held);
       }
       const manifest = yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -290,10 +290,10 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
       if (Exit.isFailure(manifest)) {
         const error = Cause.findErrorOption(manifest.cause);
         if (Option.isNone(error)) return yield* Effect.die(Cause.squash(manifest.cause));
-        return yield* haltedBeforeRecords(describe(new FileSystemError({ operation: "read", path: path.join(project, "package.json"), message: error.value.message })));
+        return yield* haltedBeforeRecords(describe(new FileSystemError({ operation: "read", path: path.join(project, "package.json"), message: error.value.message })), held);
       }
       const problems = manifestProblems(listedCommands(checks.success), manifest.value);
-      if (problems.length > 0) return yield* haltedBeforeRecords(describe(new CheckCommandInvalid({ problems })));
+      if (problems.length > 0) return yield* haltedBeforeRecords(describe(new CheckCommandInvalid({ problems })), held);
       return { config, decisionFormat, task, tracker, requirements, held, checks: checks.success } as const;
     });
     // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
