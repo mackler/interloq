@@ -963,6 +963,17 @@ const afterHello = (items: ItemsView): ItemsView => (items._tag === "Loading" ? 
  * project (W3-R1-1).
  */
 const restartedMode = (current: readonly number[]): ModeView => ({ ...emptyMode, current });
+/**
+ * The focus after a run's Started changed the runs held (W1-R1-3): a focus on a run no longer held moves to the started
+ * run where that run is of the dropped run's item, the run the user was looking at having been replaced by it, and
+ * otherwise to the list; a focus on a run still held, or on the list, is unchanged.
+ */
+const normalizedFocus = (focus: Focus, before: readonly RunView[], after: readonly RunView[], started: RunView): Focus => {
+  if (focus._tag !== "Run" || after.some((r) => r.id === focus.run)) return focus;
+  const dropped = before.find((r) => r.id === focus.run);
+  return dropped !== undefined && dropped.item !== null && dropped.item.id === started.item?.id ? { _tag: "Run", run: started.id } : LIST;
+};
+
 /** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
 const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
 /** A mode's runs in progress as a hello gives them (issue #191). */
@@ -1046,8 +1057,10 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       return withMode({ ...state, runModes, termsChoice }, mode, (m) => {
         const kept = mode === "refinement" && item !== null ? m.runs.filter((r) => r.ended === null || r.item?.id !== item) : m.runs;
         const asked = item !== null && m.starting === item;
-        const focus: Focus = mode === "refinement" && (asked || (m.focus._tag === "List" && m.runs.length === 0)) ? { _tag: "Run", run: message.run } : m.focus;
-        return { ...m, current, runs: held(mode, [...kept, run]), focus, starting: asked ? null : m.starting, refusal: message.event._tag === "Started" ? null : m.refusal };
+        const chosen: Focus = mode === "refinement" && (asked || (m.focus._tag === "List" && m.runs.length === 0)) ? { _tag: "Run", run: message.run } : m.focus;
+        const runs = held(mode, [...kept, run]);
+        const focus = normalizedFocus(chosen, m.runs, runs, run);
+        return { ...m, current, runs, focus, starting: asked ? null : m.starting, refusal: message.event._tag === "Started" ? null : m.refusal };
       });
     }
   }

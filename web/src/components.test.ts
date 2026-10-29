@@ -1555,6 +1555,29 @@ describe("App: several refinement runs", () => {
     expect(field(root).value).toBe("half of the first");
   });
 
+  test("W1-R1-1: unsent text of a run a restarted server no longer holds is discarded with a notice quoting it", async () => {
+    const { root, ws } = await open([1]);
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), question("First?"), askedOf(1)]) }] });
+    field(root).value = "typed before the restart";
+    field(root).dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
+    expect(root.textContent).toContain(prompts.draftWithdrawnNotice("typed before the restart"));
+  });
+
+  test("P2-R1-1: closing an ended run whose draft is held discards it with a notice, with no further server message", async () => {
+    const { root, ws } = await open([1]);
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11"), question("First?"), askedOf(1)]) }] });
+    field(root).value = "typed before the end";
+    field(root).dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: { _tag: "Ended", code: 130 } });
+    expect(root.textContent).not.toContain(prompts.draftWithdrawnNotice("typed before the end"));
+    one(root, "button[name=close]").click();
+    flushSync();
+    expect(root.textContent).toContain(prompts.draftWithdrawnNotice("typed before the end"));
+  });
+
   test("the item list shows the running refinement's item as being refined, its start disabled, another's enabled", async () => {
     const { root, ws } = await open([1]);
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });

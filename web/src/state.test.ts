@@ -2525,6 +2525,26 @@ describe("several refinement runs", () => {
     expect(again.modes.refinement.runs.map((r) => r.id)).toEqual([2, 3]);
   });
 
+  test("W1-R1-3: the focused ended run replaced by another page's start of its item moves the focus to the replacing run", () => {
+    const ended = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3)], empty);
+    const viewing = focusRun(ended, 1);
+    expect(viewing.modes.refinement.starting).toBe(null);
+    const replaced = fold(eventsOf(2, a), viewing);
+    expect(replaced.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
+    expect(runOf(replaced, "refinement")?.id).toBe(2);
+    const values = runTabs(replaced).map((t) => t.value);
+    expect(values).toContain("run-2");
+    expect(values).not.toContain("run-1");
+  });
+
+  test("W1-R1-3: a focused running run of another item keeps the focus when the ended run of an item is replaced", () => {
+    const s = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
+    const viewing = focusRun(s, 2);
+    const replaced = fold(eventsOf(3, a), viewing);
+    expect(replaced.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
+    expect(runOf(replaced, "refinement")?.id).toBe(2);
+  });
+
   test("a replay before the user chooses shows the Refinement tab and focuses the waiting run", () => {
     const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([refining("11"), said("x")]) }, { id: 2, events: stamp(b) }] };
     const s = fold([helloOf([1, 2]), replay]);

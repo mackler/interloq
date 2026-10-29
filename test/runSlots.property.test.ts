@@ -6,91 +6,107 @@ import { refinementInProgressText, runInProgressText } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 
 // Issue #191: any number of refinement runs, each of a different item; one implementation run at a time.
+// The properties compare the slot with a reference model built from those rules alone, with no call into
+// src/runSlots.ts, so a reservation or an end that does nothing fails the comparison (W1-R1-2).
 type R = Readonly<{ id: number; item: string; ended: boolean }>;
-type Op = Readonly<{ _tag: "start"; item: string }> | Readonly<{ _tag: "end"; pick: number }>;
-const ITEMS = ["1", "2", "3", "4", "5"];
+type Entry = Readonly<{ id: number; item: string }>;
+type Model = Readonly<{ inProgress: readonly Entry[]; ended: readonly Entry[] }>;
+type Op =
+  | Readonly<{ _tag: "start"; item: string }>
+  | Readonly<{ _tag: "end"; pick: number }>
+  | Readonly<{ _tag: "endUnknown" }>;
+const ITEMS = ["0", "1", "2", "3"];
 const op: fc.Arbitrary<Op> = fc.oneof(
   fc.constantFrom(...ITEMS).map((item): Op => ({ _tag: "start", item })),
   fc.nat().map((pick): Op => ({ _tag: "end", pick })),
+  fc.constant<Op>({ _tag: "endUnknown" }),
 );
 const mode = fc.constantFrom<RunMode>("refinement", "implementation");
+const EMPTY_MODEL: Model = { inProgress: [], ended: [] };
 
-/** Applies the operations as the manager does: a start refused or reserved, an end of one run in progress. */
-const apply = (m: RunMode, ops: readonly Op[], check: (before: Slot<R>, o: Op, after: Slot<R>, refusal: string | null) => void): Slot<R> => {
+const modelRefusal = (m: RunMode, model: Model, item: string): string | null => {
+  switch (m) {
+    case "implementation":
+      return model.inProgress.length > 0 ? runInProgressText("implementation") : null;
+    case "refinement":
+      return model.inProgress.some((e) => e.item === item) ? refinementInProgressText(item) : null;
+  }
+};
+
+const modelStarted = (m: RunMode, model: Model, entry: Entry): Model => {
+  switch (m) {
+    case "implementation":
+      return { inProgress: [entry], ended: model.ended };
+    case "refinement":
+      return { inProgress: [...model.inProgress, entry], ended: model.ended.filter((e) => e.item !== entry.item) };
+  }
+};
+
+const modelEnded = (m: RunMode, model: Model, entry: Entry): Model => {
+  const inProgress = model.inProgress.filter((e) => e.id !== entry.id);
+  switch (m) {
+    case "implementation":
+      return { inProgress, ended: [entry] };
+    case "refinement":
+      return { inProgress, ended: [...model.ended.filter((e) => e.item !== entry.item), entry] };
+  }
+};
+
+const entries = (runs: readonly R[]): readonly Entry[] => runs.map((r) => ({ id: r.id, item: r.item }));
+const UNKNOWN_ID = 1_000_000;
+
+/** Applies the operations to the slot and the model alike, comparing them after every operation. */
+const drive = (m: RunMode, ops: readonly Op[]): Slot<R> => {
   let slot: Slot<R> = EMPTY_SLOT;
+  let model = EMPTY_MODEL;
   let next = 1;
   for (const o of ops) {
-    const before = slot;
-    let refusal: string | null = null;
-    if (o._tag === "start") {
-      refusal = refusalOf(m, slot, o.item);
-      if (refusal === null) slot = reserved(m, slot, { id: next++, item: o.item, ended: false });
-    } else if (slot.current.length > 0) {
-      const run = slot.current[o.pick % slot.current.length]!;
-      slot = endedIn(m, slot, run.id, (r) => ({ ...r, ended: true }));
+    switch (o._tag) {
+      case "start": {
+        const expected = modelRefusal(m, model, o.item);
+        assert.equal(refusalOf(m, slot, o.item), expected);
+        if (expected === null) {
+          const id = next++;
+          slot = reserved(m, slot, { id, item: o.item, ended: false });
+          model = modelStarted(m, model, { id, item: o.item });
+        }
+        break;
+      }
+      case "end": {
+        if (model.inProgress.length === 0) break;
+        const entry = model.inProgress[o.pick % model.inProgress.length]!;
+        slot = endedIn(m, slot, entry.id, (r) => ({ ...r, ended: true }));
+        model = modelEnded(m, model, entry);
+        break;
+      }
+      case "endUnknown": {
+        const before = slot;
+        slot = endedIn(m, slot, UNKNOWN_ID, (r) => ({ ...r, ended: true }));
+        assert.equal(slot, before);
+        break;
+      }
     }
-    check(before, o, slot, refusal);
+    assert.deepEqual(entries(slot.current), model.inProgress);
+    assert.deepEqual(entries(slot.last), model.ended);
+    assert.ok(slot.current.every((r) => !r.ended) && slot.last.every((r) => r.ended));
+    assert.deepEqual(entries(runsOf(slot)), [...model.ended, ...model.inProgress]);
   }
   return slot;
 };
 
-test("refinement: a start is refused exactly when a run in progress has its item, whatever the count", () => {
-  fc.assert(
-    fc.property(fc.array(op, { maxLength: 40 }), (ops) => {
-      apply("refinement", ops, (before, o, _after, refusal) => {
-        if (o._tag !== "start") return;
-        const busy = before.current.some((r) => r.item === o.item);
-        assert.equal(refusal, busy ? refinementInProgressText(o.item) : null);
-      });
-    }),
-  );
+test("the slot follows the reference model after every start, end and end of an unknown id, in both modes", () => {
+  fc.assert(fc.property(mode, fc.array(op, { maxLength: 40 }), (m, ops) => void drive(m, ops)));
 });
 
-test("implementation: a start is refused exactly when a run is in progress, and each list holds at most one run", () => {
+test("refinement: starts of distinct items are never refused, whatever their number", () => {
   fc.assert(
-    fc.property(fc.array(op, { maxLength: 40 }), (ops) => {
-      apply("implementation", ops, (before, o, after, refusal) => {
-        if (o._tag === "start") assert.equal(refusal, before.current.length > 0 ? runInProgressText("implementation") : null);
-        assert.ok(after.current.length <= 1 && after.last.length <= 1);
-      });
-    }),
-  );
-});
-
-test("refinement: the ended runs hold one run per item, and none of an item just reserved", () => {
-  fc.assert(
-    fc.property(fc.array(op, { maxLength: 40 }), (ops) => {
-      apply("refinement", ops, (_before, o, after, refusal) => {
-        const items = after.last.map((r) => r.item);
-        assert.equal(new Set(items).size, items.length);
-        if (o._tag === "start" && refusal === null) assert.ok(!items.includes(o.item));
-      });
-    }),
-  );
-});
-
-test("an ended run leaves the runs in progress for the ended ones; an unknown id changes nothing", () => {
-  fc.assert(
-    fc.property(mode, fc.array(op, { maxLength: 40 }), fc.integer({ min: 1000 }), (m, ops, unknown) => {
-      const slot = apply(m, ops, (before, o, after) => {
-        if (o._tag !== "end" || before.current.length === 0) return;
-        const id = before.current[o.pick % before.current.length]!.id;
-        assert.ok(!after.current.some((r) => r.id === id));
-        assert.ok(after.last.some((r) => r.id === id && r.ended));
-      });
-      assert.equal(endedIn(m, slot, unknown, (r) => r), slot);
-    }),
-  );
-});
-
-test("the runs in progress keep their start order, and runsOf holds every run", () => {
-  fc.assert(
-    fc.property(mode, fc.array(op, { maxLength: 40 }), (m, ops) => {
-      const slot = apply(m, ops, () => undefined);
-      const ids = slot.current.map((r) => r.id);
-      assert.deepEqual(ids, [...ids].sort((a, b) => a - b));
-      assert.deepEqual(runsOf(slot).map((r) => r.id).sort((a, b) => a - b), [...slot.last, ...slot.current].map((r) => r.id).sort((a, b) => a - b));
-      assert.equal(runsOf(slot).length, slot.last.length + slot.current.length);
+    fc.property(fc.integer({ min: 1, max: 60 }), (count) => {
+      let slot: Slot<R> = EMPTY_SLOT;
+      for (let i = 0; i < count; i++) {
+        assert.equal(refusalOf("refinement", slot, `item-${i}`), null);
+        slot = reserved("refinement", slot, { id: i + 1, item: `item-${i}`, ended: false });
+      }
+      assert.equal(slot.current.length, count);
     }),
   );
 });

@@ -74,6 +74,27 @@
   /** The key of a run's draft and notifications: the implementation tab's one key, or the refinement run's own. */
   const draftKeyOf = (run: number): string => (view.runModes[run] === "refinement" ? `refinement-${run}` : "implementation");
 
+  /**
+   * Reconciles every draft with the view (W1-R1-1, P2-R1-1): a presented run's with that run, and a draft of a run no
+   * longer presented (a restarted server's, an ended run replaced or closed) with no run, so a non-empty one is
+   * discarded with its notice before its key is dropped.
+   */
+  const reconcileDrafts = () => {
+    const next: Record<string, Draft | null> = {};
+    const shownKeys = new Set<string>();
+    for (const p of presented(view)) {
+      shownKeys.add(p.key);
+      const reconciled = reconcile(drafts[p.key] ?? null, p.shown);
+      next[p.key] = reconciled.draft;
+      if (reconciled.notice !== null) view = notice(view, reconciled.notice);
+    }
+    for (const [key, draft] of Object.entries(drafts)) {
+      if (shownKeys.has(key) || draft === null) continue;
+      const reconciled = reconcile(draft, { incarnation: view.incarnation, run: null });
+      if (reconciled.notice !== null) view = notice(view, reconciled.notice);
+    }
+    drafts = next;
+  };
   const send = (m: ClientMessage) => connection?.send(m);
   /** Asks the server for a tab's items; the server, never the page, calls the tracker. */
   const requestItems = (mode: RunMode) => {
@@ -85,13 +106,7 @@
     connection = connect(url, {
       onMessage: (m) => {
         view = reduce(view, m);
-        const next: Record<string, Draft | null> = {};
-        for (const p of presented(view)) {
-          const reconciled = reconcile(drafts[p.key] ?? null, p.shown);
-          next[p.key] = reconciled.draft;
-          if (reconciled.notice !== null) view = notice(view, reconciled.notice);
-        }
-        drafts = next;
+        reconcileDrafts();
         if (m.type === "event" && m.event._tag === "Started") listWanted = { ...listWanted, [m.event.mode]: false };
         if (view.needsReconnect) connection?.reconnect();
       },
@@ -202,6 +217,7 @@
   const closeRunTab = (id: number) => {
     view = closeRun(view, id);
     toRefinementList();
+    reconcileDrafts();
   };
   // Decision support: a decision's analysis covers both chat columns until its question is answered; the user may
   // look at the conversation meanwhile and come back [user control and freedom]. The rail, the prompt and the activity
