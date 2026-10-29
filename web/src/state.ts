@@ -5,7 +5,7 @@
 // timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { REFINEMENT_LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
@@ -19,7 +19,7 @@ import type { LimitWaitBasis } from "../../src/limitReset.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
-import type { ChainSettings, ChainState } from "../../src/chain.ts";
+import { abandonedItems, type ChainSettings, type ChainState } from "../../src/chain.ts";
 import { acknowledged, type ChainField, differingFields, effective, type InFlight, NO_IN_FLIGHT, sameFrame, sameSettings, sent, withdrawn } from "./chainPending.ts";
 
 /** The authors of the "Claude and Codex" panel, the one panel of messages (issue #22). */
@@ -113,7 +113,23 @@ export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; l
  * S26: `question`, the question the prompt asks, as it was last presented, and `hint`, the prompt's text in the page's
  * words; neither is a transcript message while the prompt is pending. `presentedAt`, the time it was presented, or the prompt asked when it has no question.
  */
-export type Widget = Readonly<{ asked: Asked; options: readonly Choice[]; choices: readonly Choice[]; question: PresentedQuestion | null; presentedAt: string | null; hint: string }>;
+/**
+ * Issue #185: `countdown`, the wait the server times for the prompt, null where it waits as long as it takes or since
+ * the countdown stopped; `held`, the countdown stopped because the developer is working on the question or the run left
+ * the chain.
+ */
+export type Widget = Readonly<{
+  asked: Asked;
+  options: readonly Choice[];
+  choices: readonly Choice[];
+  question: PresentedQuestion | null;
+  presentedAt: string | null;
+  hint: string;
+  countdown: AnswerCountdown | null;
+  held: boolean;
+}>;
+/** Issue #185: a prompt whose wait ran out: its number, the wait and what the expiry did. */
+export type Expired = Readonly<{ prompt: number; seconds: number; then: OnExpiry }>;
 
 /**
  * The dashboard's one status line (issue #22): what is happening now, each change replacing the one before. `Activity` is
@@ -162,6 +178,11 @@ export type RunView = Readonly<{
   nextSeq: number;
   right: readonly Message[];
   pending: Widget | null;
+  /**
+   * Issue #185: the last prompt whose wait ran out. One that abandoned the run stays while the run is shown; one that
+   * extended a review is cleared by the next prompt, round or phase's end.
+   */
+  expired: Expired | null;
   /** The prompts answered so far, in order (finding 5): what a draft is reconciled against, live and after a replay. */
   answered: readonly number[];
   /** Whether an agent call runs: `calls` is not empty. */
@@ -392,6 +413,7 @@ export const emptyRun = (id: number): RunView => ({
   nextSeq: 0,
   right: [],
   pending: null,
+  expired: null,
   answered: [],
   busy: false,
   calls: [],
@@ -657,11 +679,13 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return reshow(relabel({ ...next, phase: bandOf(event.phase, time, countIn(next, event.phase)) }));
     }
     case "PhaseEnded":
-      return reshow({ ...withoutHelp(withActivity(run, "")), busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
+      return reshow({ ...withoutHelp(withActivity(run, "")), expired: run.expired?.then === "extend" ? null : run.expired, busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
     case "RoundBegan":
       // A decision loop is a loop inside a phase that the progress panel does not show (D12 of the decision-support plan).
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.
       if (isDecision(event.subject)) return run;
+      // Issue #185: a review that went on after its limit's expiry has moved on.
+      if (run.expired?.then === "extend") return notifiedEvent({ ...run, expired: null }, event, time);
       // Issue #22: the round of a review after the interview ends it, and its help with it.
       return { ...withoutHelp(run), timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
     case "QuestionExplained":
@@ -882,12 +906,15 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one.
         const analysis = r.analysis !== null && r.analysis.prompt === null ? { ...r.analysis, prompt: event.prompt } : r.analysis;
         const hint = pagePromptText(event.kind, event.text);
-        return { ...r, pending: { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint }, questionOptions: [], presented: null, analysis, dismissed: null };
+        const pending: Widget = { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint, countdown: event.countdown, held: event.countdown === null };
+        return { ...r, pending, expired: r.expired?.then === "extend" ? null : r.expired, questionOptions: [], presented: null, analysis, dismissed: null };
       }
-      // Issue #185: folded in step S13 of the run of issue #185.
+      // Issue #185: the countdown stopped for good; the prompt waits as long as it takes.
       case "CountdownStopped":
+        return r.pending?.asked.prompt === event.prompt ? { ...r, pending: { ...r.pending, countdown: null, held: true } } : r;
+      // Issue #185: the wait ran out: the prompt is withdrawn, and its expiry kept for the page to say.
       case "AnswerExpired":
-        return r;
+        return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds, then: event.then } };
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
@@ -1131,3 +1158,6 @@ export const chainShown = (view: ViewState, time: TimeText): ChainShown | null =
   const chain = view.chain.chain;
   return { settings: view.chain.settings, effective: effective(view.chainPending, view.chain.settings), reset: view.chainReset, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText) };
 };
+
+/** Issue #185: the items the chain abandoned for want of an answer, which the Implementation tab's list marks. */
+export const abandonedInChain = (chain: ChainState): ReadonlySet<string> => abandonedItems(chain);

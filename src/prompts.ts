@@ -2088,6 +2088,11 @@ export function answerHint(free: "line" | "message"): string {
 /** The accessible name of the agent's options, the cards above the fixed choices (issue #12). */
 export const PROPOSED_ANSWERS_LABEL = "Proposed answers";
 /** Another tab answered the prompt this tab had an unsent draft for (finding 5). */
+/** Issue #185: a draft whose question expired before it was sent, by what the expiry did; its text quoted. */
+export function draftExpiredNotice(then: "abandon" | "extend", text: string): string {
+  const after = then === "abandon" ? "its run has ended" : "the review went on with more cycles and the run continues";
+  return `The question expired before your answer was sent; ${after}. Your text is kept here: «${text}»`;
+}
 export function draftWithdrawnNotice(text: string): string {
   return `This question was answered in another tab; your unsent text was discarded: «${text}»`;
 }

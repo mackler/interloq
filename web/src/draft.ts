@@ -3,7 +3,7 @@
 // another tab's answer withdraws it with a notice instead of leaving it attached to the next prompt.
 
 import { isTermsRequest } from "../../src/input.ts";
-import { draftWithdrawnNotice } from "../../src/prompts.ts";
+import { draftExpiredNotice, draftWithdrawnNotice } from "../../src/prompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
 import type { Shown } from "./state.ts";
 
@@ -39,6 +39,9 @@ export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
   const pending = pendingKey(view);
   if (pending !== null && sameKey(pending, draft.key)) return { draft, notice: null };
   const sameRun = view.incarnation === draft.key.incarnation && view.run !== null && view.run.id === draft.key.run;
+  // Issue #185: its prompt's wait ran out: withdrawn with the notice of what the expiry did, the text kept in it.
+  const expired = sameRun ? view.run!.expired : null;
+  if (expired !== null && expired.prompt === draft.key.prompt) return { draft: null, notice: draft.text.trim() === "" ? null : draftExpiredNotice(expired.then, draft.text) };
   const overtaken = !sameRun || view.run!.answered.includes(draft.key.prompt);
   // A prompt neither pending nor answered in the same run (for example not yet replayed): the draft waits.
   if (!overtaken) return { draft, notice: null };

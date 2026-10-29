@@ -7,7 +7,7 @@ import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } f
 import fc from "fast-check";
 import { plainPieces } from "../../src/pieces.ts";
 import type { UiEvent } from "../../src/uiEvents.ts";
-import { initialState, reduce, type Shown, shownRun, type ViewState } from "./state.ts";
+import { emptyRun, initialState, reduce, type Shown, shownRun, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 
 // Finding 5 of docs/gui-review.md: a draft belongs to (incarnation, run, prompt).
@@ -134,5 +134,21 @@ describe("a draft carried across the request for terms", () => {
         return reconciled && (unsent.draft?.text === text || unsent.quoted === text);
       }),
     );
+  });
+});
+
+// Issue #185: a draft whose question expired is withdrawn with the notice of what the expiry did, its text kept.
+describe("a draft whose question expired (issue #185)", () => {
+  test("each expiry withdraws the draft with its own notice", () => {
+    for (const then of ["abandon", "extend"] as const) {
+      const key = { incarnation: "a", run: 1, prompt: 1 };
+      const view = { incarnation: "a", run: { ...emptyRun(1), expired: { prompt: 1, seconds: 120, then } } } as unknown as Parameters<typeof reconcile>[1];
+      const { draft, notice } = reconcile({ _tag: "Held", key, text: "my answer" }, view);
+      expect(draft).toBe(null);
+      expect(notice).toBe(prompts.draftExpiredNotice(then, "my answer"));
+      expect(notice).toContain("my answer");
+    }
+    expect(prompts.draftExpiredNotice("abandon", "x")).toContain("its run has ended");
+    expect(prompts.draftExpiredNotice("extend", "x")).toContain("the review went on");
   });
 });

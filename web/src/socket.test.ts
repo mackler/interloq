@@ -164,6 +164,26 @@ describe("socket across a server restart", () => {
     expect(sockets[1].sent).toEqual([]);
     expect(h.notices).toEqual([prompts.notSentNotice("stop", "restarted"), prompts.notSentNotice("answer", "restarted")]);
   });
+  // Issue #185: a queued hold follows a queued answer's rules.
+  test("a queued hold is sent when its run is current, and discarded with a notice for another incarnation or an ended run", () => {
+    for (const [incarnation, current, sent, notice] of [
+      ["a", 1, true, null],
+      ["b", 1, false, prompts.notSentNotice("hold", "restarted")],
+      ["a", null, false, prompts.notSentNotice("hold", "ended")],
+    ] as const) {
+      sockets.length = 0;
+      const h = handlers();
+      const c = connect("ws://x/ws", wire(h), env());
+      sockets[0].receive({ type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 1 }, incarnation: "a" });
+      sockets[0].drop();
+      c.send({ type: "hold", incarnation: "a", run: 1, prompt: 2 });
+      vi.advanceTimersByTime(1000);
+      sockets[1].receive({ type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: current }, incarnation });
+      expect(sockets[1].sent.length > 0).toBe(sent);
+      expect(h.notices).toEqual(notice === null ? [] : [notice]);
+      c.close();
+    }
+  });
 });
 
 // Defect B of docs/page-question-phase-defects.md: a frame that does not decode is never dropped in silence. It is

@@ -83,7 +83,7 @@ const type = (el: HTMLInputElement | HTMLTextAreaElement, text: string) => {
 };
 const widget = (text: string, options: Widget["options"] = []): Widget => {
   const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text), countdown: null };
-  return { asked, options, choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, text) };
+  return { asked, options, choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, text), countdown: null, held: true };
 };
 
 // Issue #1: a message's time, shown in its header or, when grouped, given to assistive technology only.

@@ -14,7 +14,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -2610,5 +2610,42 @@ describe("the presented runs", () => {
     expect(startableOf(two, "refinement")).toEqual({ _tag: "Except", items: ["11", "12"] });
     expect(startableOf(empty, "implementation")).toEqual({ _tag: "Except", items: [] });
     expect(startableOf(fold(eventsOf(3, [started]), two), "implementation")).toEqual({ _tag: "None" });
+  });
+});
+
+// Issue #185: the countdown of a question, its hold and its expiry by kind, the abandoned items' mark.
+describe("the countdown of a question (issue #185)", () => {
+  const counting = (prompt: number, then: "abandon" | "extend"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000, then } });
+  test("an Asked with a countdown sets it on the pending prompt; CountdownStopped clears it and marks it held", () => {
+    const s = fold(live([started, counting(1, "abandon")]));
+    expect(runOf(s, "implementation")?.pending?.countdown).toEqual({ fromMs: 1000, untilMs: 121_000, then: "abandon" });
+    expect(runOf(s, "implementation")?.pending?.held).toBe(false);
+    const held = fold(live([started, counting(1, "abandon"), { _tag: "CountdownStopped", prompt: 1, reason: "held" }]));
+    expect(runOf(held, "implementation")?.pending?.countdown).toBe(null);
+    expect(runOf(held, "implementation")?.pending?.held).toBe(true);
+  });
+  test("an expiry that abandons clears the prompt and keeps the expiry; Ended marks the run over with its word", () => {
+    const events = [started, counting(1, "abandon"), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then: "abandon" } as RunEvent, { _tag: "Ended", code: 2 } as RunEvent];
+    const run = runOf(fold(live(events)), "implementation");
+    expect(run?.pending).toBe(null);
+    expect(run?.expired).toEqual({ prompt: 1, seconds: 120, then: "abandon" });
+    expect(run?.ended).toBe(2);
+    expect(prompts.endedOutcome(2)).toBe("abandoned");
+    // A replay of the same events folds alike.
+    expect(runOf(replayed(events), "implementation")?.expired).toEqual(run?.expired);
+  });
+  test("an expiry that extends a review leaves the run going, and the next round clears it", () => {
+    const expired = [started, counting(1, "extend"), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then: "extend" } as RunEvent];
+    const run = runOf(fold(live(expired)), "implementation");
+    expect(run?.expired?.then).toBe("extend");
+    expect(run?.ended).toBe(null);
+    const next = runOf(fold(live([...expired, notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 2 })])), "implementation");
+    expect(next?.expired).toBe(null);
+  });
+  test("abandonedInChain lists the items the chain's history records as abandoned", () => {
+    const begunChain = begun(helloChain, 4, "7" as ItemId, "seven");
+    const [abandoned] = ended(begunChain, 4, { code: 2, root: null, parked: null, abandoned: { _tag: "SetRefined" } });
+    expect([...abandonedInChain(abandoned)]).toEqual(["7"]);
+    expect([...abandonedInChain(helloChain)]).toEqual([]);
   });
 });

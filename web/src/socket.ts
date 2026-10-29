@@ -71,9 +71,9 @@ export const connect = (url: string, handlers: Handlers, env: Environment = brow
     const pending = queue;
     queue = [];
     for (const m of pending) {
-      if ((m.type === "answer" || m.type === "stop" || m.type === "ui") && m.incarnation !== hello.incarnation) handlers.onNotice(notSentNotice(m.type, "restarted"));
+      if ((m.type === "answer" || m.type === "stop" || m.type === "ui" || m.type === "hold") && m.incarnation !== hello.incarnation) handlers.onNotice(notSentNotice(m.type, "restarted"));
       // Issue #191: a run in progress is any refinement run in progress or the implementation run.
-      else if ((m.type === "answer" || m.type === "stop") && !currentIds(hello.current).includes(m.run)) handlers.onNotice(notSentNotice(m.type, "ended"));
+      else if ((m.type === "answer" || m.type === "stop" || m.type === "hold") && !currentIds(hello.current).includes(m.run)) handlers.onNotice(notSentNotice(m.type, "ended"));
       else socket?.send(JSON.stringify(m));
     }
   };

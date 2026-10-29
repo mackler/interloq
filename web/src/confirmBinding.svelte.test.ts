@@ -70,7 +70,7 @@ describe("TopBar's confirmation of Stop task", () => {
 describe("QuestionPane's confirmation of End the run", () => {
   const widgetOf = (prompt: number): Widget => {
     const asked = { _tag: "Asked" as const, prompt, ...promptOf(prompts.decisionPrompt), countdown: null };
-    return { asked, options: [], choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, prompts.decisionPrompt) };
+    return { asked, options: [], choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, prompts.decisionPrompt), countdown: null, held: true };
   };
   const pane = (how: "click" | "typed") => {
     const sent: [number, string][] = [];
