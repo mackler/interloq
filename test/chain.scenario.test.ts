@@ -1034,7 +1034,13 @@ test("abandon: a parking that fails ends the chain ParkFailed, the item implemen
   assert.equal(endCode(h, id), 2);
   assert.equal(await endedReason(h), "ParkFailed");
   assert.equal(await stateIn(h.tracker, order[0]!), "implementing");
-  for (const state of [await chainOf(h), await chainOf(await harness([], { repo, tracker: h.tracker }))]) {
+  const live = await chainOf(h);
+  // The chain's save is detached from the run's end, so the restart waits for the file to hold the ended chain.
+  await until("the ended chain on disk", async () => {
+    const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
+    return onDisk.chain._tag === "Idle" && onDisk.chain.ended?._tag === "ParkFailed" && onDisk.chain.history.length > 0;
+  });
+  for (const state of [live, await chainOf(await harness([], { repo, tracker: h.tracker }))]) {
     const entry = state.chain.history[0]!;
     assert.deepEqual(entry.outcome._tag === "Abandoned" && entry.outcome.label, { _tag: "KeptImplementing" });
     const text = chainEntryText(entry);
