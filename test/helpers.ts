@@ -925,6 +925,64 @@ export const steppingClock = (startMs: number, onSleep: (ms: number) => Effect.E
   return { clock, sleeps, now: () => time };
 };
 
+/**
+ * Issue #192 (work review 3, W3-R2-1): a Clock whose time moves only when the test calls `advance`. A sleep registers
+ * its duration and the time it wakes at, and waits until `advance` reaches that time; an interrupted sleep removes
+ * itself. `sleepRegistered(ms)` resolves once a sleep of exactly `ms` is registered, and `sleeps()` lists every sleep
+ * ever registered, in order. Unlike `steppingClock`, starting a sleep never moves the time, so a sleep started
+ * concurrently cannot shorten another's computed delay.
+ */
+export const heldClock = (startMs: number): {
+  clock: Clock.Clock;
+  advance: (ms: number) => void;
+  sleepRegistered: (ms: number) => Promise<void>;
+  sleeps: () => readonly number[];
+} => {
+  type Pending = { readonly ms: number; readonly wakeAt: number; readonly wake: () => void };
+  let time = startMs;
+  let pending: readonly Pending[] = [];
+  let all: readonly number[] = [];
+  let waiters: readonly { readonly ms: number; readonly resolve: () => void }[] = [];
+  const notify = (): void => {
+    const [ready, rest] = [waiters.filter((w) => pending.some((p) => p.ms === w.ms)), waiters.filter((w) => !pending.some((p) => p.ms === w.ms))];
+    waiters = rest;
+    ready.forEach((w) => w.resolve());
+  };
+  const nanos = (): bigint => BigInt(time) * 1_000_000n;
+  const clock: Clock.Clock = {
+    currentTimeMillisUnsafe: () => time,
+    currentTimeMillis: Effect.sync(() => time),
+    currentTimeNanosUnsafe: nanos,
+    currentTimeNanos: Effect.sync(nanos),
+    monotonicTimeNanosUnsafe: nanos,
+    monotonicTimeNanos: Effect.sync(nanos),
+    sleep: (duration) =>
+      Effect.callback<void>((resume) => {
+        const ms = Duration.toMillis(duration);
+        const entry: Pending = { ms, wakeAt: time + ms, wake: () => resume(Effect.void) };
+        pending = [...pending, entry];
+        all = [...all, ms];
+        notify();
+        return Effect.sync(() => {
+          pending = pending.filter((p) => p !== entry);
+        });
+      }),
+  };
+  const advance = (ms: number): void => {
+    time += ms;
+    const due = [...pending.filter((p) => p.wakeAt <= time)].sort((a, b) => a.wakeAt - b.wakeAt);
+    pending = pending.filter((p) => p.wakeAt > time);
+    due.forEach((p) => p.wake());
+  };
+  const sleepRegistered = (ms: number): Promise<void> =>
+    pending.some((p) => p.ms === ms)
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          waiters = [...waiters, { ms, resolve }];
+        });
+  return { clock, advance, sleepRegistered, sleeps: () => all };
+};
+
 /** Issue #112: an explanation as a presented question holds it, its senses built by the program's one constructor. */
 export const shownOf = (e: S.Explanation): ShownExplanation => {
   const shown = shownExplanations([e]);
