@@ -15,7 +15,9 @@ import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SE
 import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
 import { parkHalted } from "../src/parking.ts";
 import type { StoreShape, UiShape } from "../src/services.ts";
-import { chainParkingText, itemReturnedLine } from "../src/prompts.ts";
+import { chainParkingText, itemNotReturnedLine, itemReturnedLine } from "../src/prompts.ts";
+import { loadConfig } from "../src/config.ts";
+import { describe } from "../src/errors.ts";
 import { TrackerUnreachable } from "../src/errors.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
@@ -826,4 +828,28 @@ test("W1-R1-1 a failed save after the claim, the persistence still failing: the 
   assert.match(git(h.repo, "status", "--porcelain"), /left\.txt/);
   assert.deepEqual((await entryOf(h, "1"))?.returned, { _tag: "Returned" });
   assert.equal(await endedReason(h), "SaveFailed");
+});
+
+// Work review 1 of issue #192 (W1-R1-2): an unreadable configuration when the item would be returned is said, not silent.
+test("W1-R1-2 a configuration unreadable at the return: NotReturned with its cause, the line written, the item kept implementing", async () => {
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const repo = identified();
+  const park = () =>
+    Effect.sync((): ParkNote => {
+      fs.mkdirSync(path.join(repo, "plan-review"), { recursive: true });
+      fs.writeFileSync(path.join(repo, "plan-review", "config.json"), "{ not json");
+      return { _tag: "NothingParked" };
+    });
+  const h = await harness([halting(leftOnly)], { repo, tracker: only, settings: settings(1), park });
+  await begin(h, "1");
+  await idle(h);
+  const shared = path.join(tempDir("pr-shared-"), "config.json");
+  fs.writeFileSync(shared, "{}");
+  const failure = await run(loadConfig(h.repo, shared).pipe(Effect.flip, Effect.provide(platformLayer)));
+  const cause = describe(failure);
+  assert.deepEqual((await entryOf(h, "1"))?.returned, { _tag: "NotReturned", cause });
+  const record = await conversationOf(h, "1");
+  assert.ok(record.endsWith(`${itemNotReturnedLine("1", cause, null)}\n\n`), record.slice(-300));
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal(await endedReason(h), "RunLimitReached");
 });

@@ -330,15 +330,17 @@ export const makeRunManager = (
      */
     const returnUnparked = (generation: number, root: RunRoot, item: ItemId): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const config = yield* Effect.result(loadConfig(cwd, access.sharedConfig).pipe(Effect.provide(platform)));
-        if (Result.isFailure(config)) return;
-        const opened = yield* Effect.result(makeStore(cwd, root, config.success.ignorePaths).pipe(Effect.provide(platform)));
-        if (Result.isFailure(opened)) return;
-        const store = opened.success;
-        const record = (outcome: ItemReturnOutcome) =>
+        const record = (store: StoreShape, outcome: ItemReturnOutcome) =>
           chainStep((s) => [itemReturned(s.chain, generation, item, outcome), null]).pipe(
             Effect.andThen(store.converse(`${outcome._tag === "Returned" ? itemReturnedLine(item) : itemNotReturnedLine(item, outcome.cause, null)}\n\n`).pipe(Effect.ignore)),
           );
+        const config = yield* Effect.result(loadConfig(cwd, access.sharedConfig).pipe(Effect.provide(platform)));
+        // W1-R1-2: without the configuration the run's store is not the one the run used, so it only writes the line.
+        if (Result.isFailure(config)) {
+          const bare = yield* makeStore(cwd, root, []).pipe(Effect.provide(platform));
+          return yield* record(bare, { _tag: "NotReturned", cause: describe(config.failure) });
+        }
+        const store = yield* makeStore(cwd, root, config.success.ignorePaths).pipe(Effect.provide(platform));
         const kept = yield* Effect.result(
           Effect.gen(function* () {
             const baseline = yield* store.baseline();
@@ -348,7 +350,7 @@ export const makeRunManager = (
             return (yield* store.loadParked())?._tag === "Parked";
           }),
         );
-        if (Result.isFailure(kept)) return yield* record({ _tag: "NotReturned", cause: describe(kept.failure) });
+        if (Result.isFailure(kept)) return yield* record(store, { _tag: "NotReturned", cause: describe(kept.failure) });
         if (kept.success) return;
         const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0) };
         const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop) };
@@ -365,7 +367,7 @@ export const makeRunManager = (
           ),
         );
         const outcome: ItemReturnOutcome | null = Result.isFailure(written) ? { _tag: "NotReturned", cause: written.failure } : written.success;
-        if (outcome !== null) yield* record(outcome);
+        if (outcome !== null) yield* record(store, outcome);
       });
 
     /** Runs one command of the chain, for the generation it was computed for; the next command, or none. */
