@@ -319,7 +319,7 @@ describe("Claude Code's latest message and the answers on the dashboard (issue #
 // Plan step 4.7 (the review against the heuristics): the page states a prompt without the hint's key
 // conventions, which the buttons replace [match between the system and the real world].
 test("every prompt is shown in the page's words, without the hint's key conventions", () => {
-  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt, prompts.confirmSummaryPrompt];
+  const texts = [prompts.decisionPrompt, prompts.limitPrompt, prompts.limitNoProceedPrompt, prompts.optionOrTextPrompt, prompts.permissionPrompt, prompts.interviewMessagePrompt];
   for (const text of texts) {
     const body = runOf(fold(live([started, asked(1, text)])), "implementation")?.pending?.hint ?? "";
     expect(body, text).not.toMatch(/>\s*$|\bq = quit|Enter =|= stop|p = /);

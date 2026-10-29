@@ -15,7 +15,7 @@ import { fakeTrackerOf, questionEntry, scriptedItem, summaryReply, type TestOpti
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
 const item: FakeItem = { ...scriptedItem, id: Result.getOrThrow(itemIdOf("186")), title: "Send back", body: "Declare it unrefined.", state: "unrefined" };
-const oneQuestion: TestOptions = { answers: ["A", ""], steps: [{ output: { questions: [q("Q1")] } }], closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }], reviews: [{ issues: [] }, { issues: [] }] };
+const oneQuestion: TestOptions = { answers: ["A"], steps: [{ output: { questions: [q("Q1")] } }], closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }], reviews: [{ issues: [] }, { issues: [] }] };
 const empty: TestOptions = { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }] };
 
 /** The fake with the order of its writes recorded. */

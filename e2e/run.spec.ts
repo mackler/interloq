@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -269,7 +269,7 @@ test.describe("the tests of the stop server, in order", () => {
 test.describe("the tests of the interview server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(5) an interview through confirmation: the page's help, a numbered answer, /done, the confirmed summary", async ({ page }) => {
+  test("(5) an interview through to the requirements: the page's help, a numbered answer, /done, the summary written with no confirmation", async ({ page }) => {
     await startTask(page, "interview");
     await expect(asking(page, DATABASE)).toBeVisible();
     // S27: the conversation is one click away while the question waits.
@@ -299,11 +299,11 @@ test.describe("the tests of the interview server, in order", () => {
     expect(await background(claude)).not.toBe(await background(answer));
     await page.getByRole("button", { name: SHOW_QUESTION }).click();
     await pane(page).getByRole("button", { name: END_CLARIFICATION }).click();
-    await openSection(page, attachedHeading("summary"));
-    await expect(pane(page).getByText("The service uses PostgreSQL.")).toBeVisible();
-    await pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true }).click();
-    // Issue #120: a refinement run ends after the requirements review, its requirements written back to its item.
+    // Issue #138: the summary is written to requirements.md as it arrives, with no question; Claude Code's closing
+    // message is its latest. Issue #120: a refinement run ends after the requirements review, its requirements
+    // written back to its item.
     await toHaveEnded(page, 0);
+    await expect(dashboard(page).locator("[data-claude]")).toContainText("That is all I need.");
     await expect(rail(page).locator("li.entry")).toHaveCount(1);
     await expect(rail(page).locator("li.entry", { has: page.getByText("Gather Requirements", { exact: true }) })).toHaveAttribute("data-state", "done");
     await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "done");
@@ -467,9 +467,7 @@ test.describe("the tests of the questionReview server, in order", () => {
     // Issue #184: Interloq presents the second agreed question, the port, itself.
     await expect(asking(page, "Which port?")).toBeVisible();
     await option(page, /1\. 8080/).click();
-    await openSection(page, attachedHeading("summary"));
-    await expect(pane(page).getByText("The service uses PostgreSQL on port 8080.")).toBeVisible();
-    await pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true }).click();
+    // Issue #138: the summary is written with no confirmation, and the requirements review follows.
     await expect(right(page).getByText(/Requirements review, cycle 1/)).toBeVisible();
     // Issue #120: a refinement run ends after the requirements review.
     await toHaveEnded(page, 0);
@@ -624,7 +622,6 @@ test.describe("the tests of the decideBlank server, in order", () => {
     await expect(analysis.locator(".column h3")).toHaveText(["PostgreSQL", "SQLite"]);
     await option(page, /1\. PostgreSQL/).click();
     await expect(analysis).toBeHidden();
-    await pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true }).click();
     // Issue #120: a refinement run ends after the requirements review.
     await toHaveEnded(page, 0);
   });

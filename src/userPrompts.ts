@@ -6,7 +6,7 @@ import { DECIDE, TERMS_REQUEST } from "./input.ts";
 import * as prompts from "./prompts.ts";
 
 export type Choice = Readonly<{ label: string; sends: string }>;
-export type PromptKind = "decision" | "limit" | "limitNoProceed" | "unchanged" | "transport" | "optionOrText" | "permission" | "interviewMessage" | "confirmSummary" | "unknown";
+export type PromptKind = "decision" | "limit" | "limitNoProceed" | "unchanged" | "transport" | "optionOrText" | "permission" | "interviewMessage" | "unknown";
 /**
  * The widget of a prompt (S8): its kind, recognized by the prompt's fixed hint; the controls that are not options of the
  * question (continuing without a decision, finishing the clarification, confirming, starting, the offer, ending the run);
@@ -42,7 +42,6 @@ export const HINTS: Readonly<Record<Exclude<PromptKind, "unknown">, string>> = {
   optionOrText: prompts.optionOrTextPrompt,
   permission: prompts.permissionPrompt,
   interviewMessage: prompts.interviewMessagePrompt,
-  confirmSummary: prompts.confirmSummaryPrompt,
 };
 
 const FIXED: ReadonlyMap<string, (text: string) => UserPrompt> = new Map([
@@ -54,7 +53,6 @@ const FIXED: ReadonlyMap<string, (text: string) => UserPrompt> = new Map([
   [HINTS.optionOrText, (t: string) => entry("optionOrText", t, "ask", [], "line")],
   [HINTS.permission, (t: string) => entry("permission", t, "ask", [], "none")],
   [HINTS.interviewMessage, (t: string) => entry("interviewMessage", t, "message", [{ label: prompts.END_CLARIFICATION, sends: "/done" }], "message")],
-  [HINTS.confirmSummary, (t: string) => entry("confirmSummary", t, "message", [{ label: prompts.CONFIRM_SUMMARY_LABEL, sends: "" }], "message")],
 ]);
 
 /**

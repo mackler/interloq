@@ -729,7 +729,6 @@ test("S17: every question Interloq composes names the user as the one who decide
     prompts.transportExhaustedQuestion("codex", "the review"),
     prompts.permissionQuestion("Bash", { command: "ls" }),
     prompts.permissionQuestion("Edit", { file_path: "/a" }),
-    prompts.CONFIRM_SUMMARY_QUESTION,
     prompts.REPLY_QUESTION,
   ];
   for (const q of questions) {

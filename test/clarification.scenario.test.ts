@@ -55,7 +55,7 @@ const timeout = { timeout: 20_000 };
 
 test("1: the next agreed question is presented before Claude Code replies to the answer before it", timeout, async () => {
   const l = late();
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", "B", ""], replies: [{ output: ack(), gate: presented(l.ui, "Q2") }], closings: [{ output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", "B"], replies: [{ output: ack(), gate: presented(l.ui, "Q2") }], closings: [{ output: summaryReply(SUMMARY) }] });
   l.bind(s.ui);
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "Q2"]);
@@ -68,7 +68,7 @@ test("2: a follow-up that arrives while Q2 is shown is asked after Q2 and before
   const l = late();
   const replies: PlanningStep[] = [{ output: ack() }, { output: ack("Noted.", { follow_ups: [followUpOf("F1", "Which kind?", ["X", "Y"])] }), gate: presented(l.ui, "Q2") }];
   // Q2 is answered only after the reply with the follow-up arrived while Q2 was on the page.
-  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", { text: "A", when: replied(l.ui, "Noted.") }, "X", "A", ""], replies, closings: [{ output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", { text: "A", when: replied(l.ui, "Noted.") }, "X", "A"], replies, closings: [{ output: summaryReply(SUMMARY) }] });
   l.bind(s.ui);
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "Q2", "F1", "Q3"]);
@@ -76,7 +76,7 @@ test("2: a follow-up that arrives while Q2 is shown is asked after Q2 and before
 });
 
 test("3: a follow-up in the closing reply is asked after the last agreed question, then the summary", timeout, async () => {
-  const s = scenario([q("Q1")], { answers: ["A", "X", ""], closings: [{ output: ack("", { follow_ups: [followUpOf("F1", "Which kind?", ["X", "Y"])] }) }, { output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1")], { answers: ["A", "X"], closings: [{ output: ack("", { follow_ups: [followUpOf("F1", "Which kind?", ["X", "Y"])] }) }, { output: summaryReply(SUMMARY) }] });
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "F1"]);
   const sent = s.probe.planner.clarificationPrompts;
@@ -89,7 +89,7 @@ test("4: the summary waits for a reply still outstanding, and for the follow-up 
   const l = late();
   let answeredQ2 = false;
   const replies: PlanningStep[] = [{ output: ack() }, { output: ack("", { follow_ups: [followUpOf("F1", "Which kind?", ["X", "Y"])] }), gate: async () => { while (!answeredQ2) await new Promise((r) => setTimeout(r, 5)); } }];
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", { text: "A", before: () => void (answeredQ2 = true) }, "X", ""], replies, closings: [{ output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", { text: "A", before: () => void (answeredQ2 = true) }, "X"], replies, closings: [{ output: summaryReply(SUMMARY) }] });
   l.bind(s.ui);
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "Q2", "F1"]);
@@ -102,7 +102,7 @@ test("4: the summary waits for a reply still outstanding, and for the follow-up 
 test("5: a reply naming a question unnecessary is said and recorded, and the next question is still presented", timeout, async () => {
   const l = late();
   const replies: PlanningStep[] = [{ output: ack() }, { output: ack("", { unnecessary: [{ id: "Q1", reason: "the task settles it" }] }), gate: presented(l.ui, "Q2") }];
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", "A", ""], replies, closings: [{ output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", "A"], replies, closings: [{ output: summaryReply(SUMMARY) }] });
   l.bind(s.ui);
   succeeded(await s.run());
   const line = prompts.unnecessaryLine("Q1", "the task settles it");
@@ -112,7 +112,7 @@ test("5: a reply naming a question unnecessary is said and recorded, and the nex
 });
 
 test("6: a chosen answer that meets Q2's skip condition: Q2 is never presented, and the note reaches Claude Code", timeout, async () => {
-  const s = scenario([q("Q1"), q("Q2", { question: "Q1", answer: "B" }), q("Q3")], { answers: ["B", "A", ""], closings: [{ output: summaryReply(`${SUMMARY} Skipped questions: Q2.`) }] });
+  const s = scenario([q("Q1"), q("Q2", { question: "Q1", answer: "B" }), q("Q3")], { answers: ["B", "A"], closings: [{ output: summaryReply(`${SUMMARY} Skipped questions: Q2.`) }] });
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "Q3"]);
   const note = prompts.skippedNote([{ id: "Q2", question: "Q1", answer: "B", cause: "answered" }]);
@@ -123,7 +123,7 @@ test("6: a chosen answer that meets Q2's skip condition: Q2 is never presented, 
 
 test("7: answers given while a request is outstanding go together in the next request, in order", timeout, async () => {
   const l = late();
-  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", "B", "A", ""], replies: [{ output: ack(), gate: presented(l.ui, "Q3") }], closings: [{ output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", "B", "A"], replies: [{ output: ack(), gate: presented(l.ui, "Q3") }], closings: [{ output: summaryReply(SUMMARY) }] });
   l.bind(s.ui);
   succeeded(await s.run());
   const together = s.probe.planner.clarificationPrompts[1];
@@ -132,33 +132,37 @@ test("7: answers given while a request is outstanding go together in the next re
 });
 
 test("8: /done at Q1 presents no further agreed question and closes with the done instruction", timeout, async () => {
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["/done", ""], closings: [{ output: summaryReply(SUMMARY) }] });
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["/done"], closings: [{ output: summaryReply(SUMMARY) }] });
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1"]);
   assert.ok(s.probe.planner.clarificationPrompts.some((p) => p.includes(prompts.interviewDonePrompt)));
 });
 
-test("9: after /done, a follow-up is asked and Q2 never is, also after a summary not confirmed", timeout, async () => {
-  const closings: PlanningStep[] = [{ output: ack("", { follow_ups: [followUpOf("F1", "Which kind?", ["X", "Y"])] }) }, { output: summaryReply(SUMMARY) }, { output: summaryReply(`${SUMMARY}\n\nRevised.`) }];
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["/done", "X", "not quite", ""], closings });
+test("9: after /done, a follow-up is asked and Q2 never is", timeout, async () => {
+  const closings: PlanningStep[] = [{ output: ack("", { follow_ups: [followUpOf("F1", "Which kind?", ["X", "Y"])] }) }, { output: summaryReply(SUMMARY) }];
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["/done", "X"], closings });
   succeeded(await s.run());
   assert.deepEqual(presentedIds(s.probe.ui), ["Q1", "F1"]);
   const sent = s.probe.planner.clarificationPrompts.filter((p) => p.includes(prompts.LIST_DONE_SENTENCE));
   assert.ok(sent[1].includes(prompts.interviewDonePrompt), sent[1]);
-  assert.ok(sent[2].includes("not quite") && sent[2].includes("ended the interview"), sent[2]);
 });
 
 test("10: the count reaches the agreed questions not skipped", timeout, async () => {
-  const s = scenario([q("Q1"), q("Q2", { question: "Q1", answer: "B" }), q("Q3")], { answers: ["B", "A", ""], closings: [{ output: summaryReply(`${SUMMARY} Skipped questions: Q2.`) }] });
+  const s = scenario([q("Q1"), q("Q2", { question: "Q1", answer: "B" }), q("Q3")], { answers: ["B", "A"], closings: [{ output: summaryReply(`${SUMMARY} Skipped questions: Q2.`) }] });
   succeeded(await s.run());
   const counts = s.probe.ui.notified.flatMap((e) => (e._tag === "InterviewCounted" ? [`${e.answered}/${e.total}`] : []));
   assert.deepEqual(counts, ["1/2", "2/2"]);
 });
 
-test("11: after the summary is confirmed, requirements.md is written and the requirements review runs; the run ends", timeout, async () => {
-  const s = scenario([q("Q1")], { answers: ["A", ""], closings: [{ output: summaryReply(SUMMARY) }] });
+test("11: an interview that ends writes requirements.md with no prompt in between, and the requirements review runs", timeout, async () => {
+  const s = scenario([q("Q1")], { answers: ["A"], closings: [{ output: summaryReply(SUMMARY) }] });
   succeeded(await s.run());
   assert.equal(fs.readFileSync(path.join(s.probe.dir, "requirements.md"), "utf8"), `${SUMMARY}\n`);
+  assert.equal(s.probe.ui.asked.length, 1, s.probe.ui.asked.join("\n---\n"));
+  const notified = s.probe.ui.notified;
+  const summaryTurn = notified.findIndex((e) => e._tag === "InterviewTurn" && e.summary !== null);
+  assert.ok(summaryTurn >= 0, "no turn carried the summary");
+  assert.ok(!notified.slice(summaryTurn).some((e) => e._tag === "QuestionPresented"), "a question was presented after the summary");
   assert.equal(s.probe.reviewer.prompts.length, 2, "the requirements review did not run");
 });
 
@@ -179,7 +183,7 @@ test("13: a terms request beside the interview's request: each call's start and 
   const s = scenario(
     [q("Q1")],
     {
-      answers: [TERMS_REQUEST, "A", ""],
+      answers: [TERMS_REQUEST, "A"],
       replies: [{ output: ack(), gate: async () => { while (!termsStarted) await new Promise((r) => setTimeout(r, 5)); } }],
       terms: [{ output: { entries: [{ id, context, history, question, reason, proposed_answers, explanations: [] }] }, onCall: () => void (termsStarted = true) }],
       closings: [{ output: summaryReply(SUMMARY) }],
@@ -210,7 +214,7 @@ test("S7-1: the opening request is tried in the background while the questions a
   const { clock, sleeps } = steppingClock(Date.UTC(2026, 9, 19, 12), (ms) => (ms === BACKGROUND_MS && ++backgroundSleeps === 2 ? Effect.promise(presented(l.ui, "Q2")) : Effect.void));
   let planner: () => string[] = () => [];
   const replies: PlanningStep[] = [FAULT, FAULT, FAULT, { output: ack(), gate: presented(l.ui, "Q3") }];
-  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", "B", { text: "A", when: until(() => planner().length >= 4) }, ""], replies, closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", clock);
+  const s = scenario([q("Q1"), q("Q2"), q("Q3")], { answers: ["A", "B", { text: "A", when: until(() => planner().length >= 4) }], replies, closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", clock);
   l.bind(s.ui);
   planner = () => s.probe.planner.clarificationPrompts;
   succeeded(await s.run());
@@ -244,7 +248,7 @@ test("S7-2: once the list is used up with the connection still down, the questio
 
 test("S7-3: Retry again at that question runs a full set of attempts, and on success the interview goes on to the summary", timeout, async () => {
   const l = late();
-  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), prompts.TRANSPORT_ANSWERS.retry, ""], replies: [FAULT, FAULT, FAULT, FAULT, { output: ack() }], closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", heldClock());
+  const s = scenario([q("Q1"), q("Q2")], { answers: ["A", afterFirstTry(l.ui, "B"), prompts.TRANSPORT_ANSWERS.retry], replies: [FAULT, FAULT, FAULT, FAULT, { output: ack() }], closings: [{ output: summaryReply(SUMMARY) }], config: fewRetries }, "unchecked", heldClock());
   l.bind(s.ui);
   const exit = await s.run();
   succeeded(exit);

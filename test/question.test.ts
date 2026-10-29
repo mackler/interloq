@@ -370,8 +370,8 @@ test("attachedOf: null for blocks without text; otherwise the kind and the block
     }),
     { numRuns: 200 },
   );
-  assert.equal(attachedOf("summary", [{ kind: "document", markdown: "  " }]), null);
-  assert.deepEqual(attachedOf("summary", [{ kind: "document", markdown: "# R" }]), { kind: "summary", blocks: [{ kind: "document", markdown: "# R" }] });
+  assert.equal(attachedOf("reason", [{ kind: "document", markdown: "  " }]), null);
+  assert.deepEqual(attachedOf("reason", [{ kind: "document", markdown: "# R" }]), { kind: "reason", blocks: [{ kind: "document", markdown: "# R" }] });
 });
 
 // Issue #142: a question presented without its terms (the choice onRequest) has no explanations and no references, and

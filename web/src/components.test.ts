@@ -2503,13 +2503,13 @@ describe("QuestionPane's order", () => {
     expect(sent).toEqual(["1"]);
   });
 
-  test("a context the program wrote carries the note; the summary to confirm is inside the pane", () => {
-    const summary: PresentedQuestion = { ...question, origin: { kind: "confirmSummary" }, context: { blocks: plainBlocks("Interloq asks."), by: "program" }, options: [], explanations: [], attached: { kind: "summary", blocks: [{ kind: "document", markdown: "# Requirements\n\nUse SQLite." }] }, question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION) };
-    const root = show(QuestionPane, { widget: withQuestion(summary, prompts.confirmSummaryPrompt), onAnswer: () => undefined });
+  test("a context the program wrote carries the note; the attached material is inside the pane", () => {
+    const agreed: PresentedQuestion = { ...question, origin: { kind: "clarification", id: "Q1" }, context: { blocks: plainBlocks("Interloq asks."), by: "program" }, options: [], explanations: [], attached: { kind: "reason", blocks: [{ kind: "document", markdown: "The plan needs a database." }] }, question: plainPieces("Which database?") };
+    const root = show(QuestionPane, { widget: withQuestion(agreed, prompts.interviewMessagePrompt), onAnswer: () => undefined });
     openSections(root);
     expect(one(root, ".context").textContent).toContain(prompts.PROGRAM_CONTEXT_NOTE);
-    expect(one(root, ".details").textContent).toContain("Use SQLite.");
-    expect(sectionToggle(root, prompts.attachedHeading("summary"))).not.toBe(undefined);
+    expect(one(root, ".details").textContent).toContain("The plan needs a database.");
+    expect(sectionToggle(root, prompts.attachedHeading("reason"))).not.toBe(undefined);
   });
 
   // S28: every occurrence of a term in the context, the details, the question and the options carries its explanation,

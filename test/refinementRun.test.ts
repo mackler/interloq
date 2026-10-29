@@ -21,9 +21,9 @@ type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
 const REQUIREMENTS = "# Requirements\n\nQ1: A";
 const item: FakeItem = { ...scriptedItem, id: Result.getOrThrow(itemIdOf("120")), title: "Two modes", body: "Make the page two tabs.", state: "unrefined" };
-/** One question, answered, and a summary confirmed: the question review, the interview and the requirements review. */
+/** One question, answered, and a summary written: the question review, the interview and the requirements review. */
 const oneQuestion: TestOptions = {
-  answers: ["A", ""],
+  answers: ["A"],
   steps: [{ output: { questions: [q("Q1")] } }],
   closings: [{ output: summaryReply(REQUIREMENTS, "Done.") }],
   reviews: [{ issues: [] }, { issues: [] }],

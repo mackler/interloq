@@ -16,7 +16,7 @@ const read = (dir: string, name: string): string => fs.readFileSync(path.join(di
 
 test("a turn that is complete with a blank summary continues the conversation instead of proposing a summary", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "more", ""],
+    answers: ["A", "more"],
     steps: [{ output: { questions: [q("Q1")] } }],
     // Issue #184: the closing reply is complete with a blank summary; the developer replies to its message.
     closings: [{ output: ack("Anything to add?", { complete: true, summary: "  " }) }, { output: summaryReply("# Requirements\n\nNone.", "Done.") }],
@@ -40,7 +40,7 @@ test("duplicate question ids halt with QuestionListInvalid before any review", a
 
 test("a default answer that names no proposed answer is recorded as null, with a note in the conversation", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", ""],
+    answers: ["A"],
     steps: [{ output: { questions: [q("Q1", "C")] } }],
     closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }],
     reviews: [{ issues: [] }, { issues: [] }],
@@ -55,7 +55,7 @@ test("a default answer that names no proposed answer is recorded as null, with a
 // emitted before the lines said for that turn, which stay unchanged.
 test("the question phase notifies its beginning and end and every interview turn before its lines", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "more", ""],
+    answers: ["A", "more"],
     steps: [{ output: { questions: [q("Q1")] } }],
     // Issue #184: a closing reply with a message and no summary, then the summary.
     closings: [{ output: ack("Anything to add?") }, { output: summaryReply("# Requirements\n\nNone.", "Done.") }],
@@ -76,17 +76,16 @@ test("the question phase notifies its beginning and end and every interview turn
   assert.ok(probe.ui.notified.some((e) => e._tag === "PhaseEnded" && e.phase.kind === "questions"));
   // Issue #120: a refinement run is the question phase alone; nothing begins after it ends.
   assert.equal(tags.lastIndexOf("PhaseBegan"), 2, "a phase began after the question phase");
-  // The line said for a turn is unchanged; S7: the summary is shown in the context of the question that confirms it.
+  // The line said for a turn is unchanged; issue #138: no question is presented after the turn that carries the summary.
   assert.ok(probe.ui.said.includes("\nAnything to add?\n"));
-  const confirm = presentedQuestions(probe.ui).find((q) => q.origin.kind === "confirmSummary");
-  assert.deepEqual(confirm?.attached?.blocks, [{ kind: "document", markdown: "# Requirements\n\nNone." }]);
-  assert.equal(confirm === undefined ? null : questionText(confirm), prompts.CONFIRM_SUMMARY_QUESTION);
+  const summaryTurn = probe.ui.notified.findIndex((e) => e._tag === "InterviewTurn" && e.summary !== null);
+  assert.ok(!probe.ui.notified.slice(summaryTurn).some((e) => e._tag === "QuestionPresented"), "a question was presented after the summary");
 });
 
 // Finding 8 of docs/gui-review.md: the interview's opening help is a structured event, rendered per interface.
 test("the interview's opening is an InterviewOpened event, not a say", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", ""],
+    answers: ["A"],
     steps: [{ output: { questions: [q("Q1")] } }],
     closings: [{ output: summaryReply("# Requirements\n\nNone.", "Done.") }],
     reviews: [{ issues: [] }, { issues: [] }],
@@ -167,7 +166,7 @@ test("Help me decide on an agreed question names the question as reviewed, not C
 // first interview.
 test("a closing reply without a summary or a follow-up asks for the user's reply, its message the context, with no option and no offer", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "more text", ""],
+    answers: ["1", "more text"],
     steps: [{ output: { questions: [db] } }],
     closings: [{ output: ack("Tell me about the deployment.") }, { output: summaryReply("# R", "Done.") }],
     reviews: [{ issues: [] }, { issues: [] }],
@@ -197,7 +196,7 @@ const premisedScenario = (answer: string, closing: unknown, repairs: readonly un
     while (built.probe.planner.clarificationPrompts.length < 1) await new Promise((r) => setTimeout(r, 5));
   };
   const built = testLayer(tempRepo(), {
-    answers: [{ text: answer, when: opened }, ...extraAnswers, ""],
+    answers: [{ text: answer, when: opened }, ...extraAnswers],
     steps: [{ output: { questions: premised() } }],
     replies: [{ output: ack() }, { output: ack() }, ...repairs.map((output) => ({ output }))],
     closings: [{ output: closing }],
@@ -232,7 +231,7 @@ test("a skipped question is never presented, and a summary that omits it twice h
   assert.ok(prompts.clarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }]).includes("Q2"));
 });
 
-test("a summary that omits a skipped question gets the repair turn, and the repaired summary is confirmed", async () => {
+test("a summary that omits a skipped question gets the repair turn, and the repaired summary is written", async () => {
   const { layer, probe } = premisedScenario("1", summaryReply("# Requirements\n\nQ1: A", "Complete."), [summaryReply(SUMMARY, "Complete.")]);
   await runRefinement(layer);
   assert.ok(probe.planner.clarificationPrompts.includes(prompts.clarificationReplyRepairPrompt([{ kind: "summaryOmits", ids: ["Q2"] }])));
@@ -241,7 +240,7 @@ test("a summary that omits a skipped question gets the repair turn, and the repa
 
 test("a free-text answer to the premise question skips nothing: the dependent question is asked", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["it depends", "1", ""],
+    answers: ["it depends", "1"],
     steps: [{ output: { questions: premised() } }],
     closings: [{ output: summaryReply("# Requirements\n\nQ1: it depends\nQ2: A", "Complete.") }],
     reviews: [{ issues: [] }, { issues: [] }],

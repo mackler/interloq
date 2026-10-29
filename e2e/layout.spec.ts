@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, startFromTab, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -514,17 +514,15 @@ test.describe("the tests of the longChoices server, in order", () => {
       }
       await cards.nth(1).focus();
       await page.keyboard.press("Enter");
-      // Issue #184: the answer goes to Claude Code in the background and the agreed list is then done, so the next
-      // prompt is the summary. The reply "Anything else?" acknowledges the answer and asks nothing (requirements, "What
+      // Issue #184: the answer goes to Claude Code in the background and the agreed list is then done. Issue #138:
+      // Claude Code's summary is written to requirements.md with no prompt, and the refinement run ends after its
+      // requirements review. The reply "Anything else?" acknowledges the answer and asks nothing (requirements, "What
       // Claude Code is told"), so it is no longer a prompt; issue #22: it was Claude Code's latest message on the
       // dashboard, and the proposed summary has replaced it there.
-      await expect(pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true })).toBeVisible();
-      await expect(pane(page).getByText("Anything else?")).toHaveCount(0);
-      await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
+      await toHaveEnded(page, 0);
       await expect(dashboard(page).locator("[data-claude]")).toContainText("Relative time.");
       await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]")).toContainText("Relative time");
-      await page.locator("button[name=stop]").click();
-      await confirmEnd(page);
+      await expect(pane(page).getByText("Anything else?")).toHaveCount(0);
     });
   }
 

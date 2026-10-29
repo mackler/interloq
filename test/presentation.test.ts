@@ -34,12 +34,12 @@ const plannerQuestion = questionOf({ context: "Claude Code, the planning agent, 
 
 /**
  * Two runs, since issue #120 separated the question phase from planning: a refinement run with two clarification
- * questions and the summary's confirmation, and an implementation run with a question of the plan writer and a pause.
+ * questions, and an implementation run with a question of the plan writer and a pause.
  */
 const refinementScenario = () =>
   testLayer(tempRepo(), {
     // Q1, Q2, the confirmation.
-    answers: ["1", "2", ""],
+    answers: ["1", "2"],
     steps: [{ output: { questions: [entry("Q1"), entry("Q2")] } }],
     closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     reviews: [{ issues: [] }, { issues: [] }],
@@ -65,10 +65,10 @@ const scenario = async () => {
 
 test("S6: the questions are numbered in one sequence for the run, whatever produced them; the records keep their ids", async () => {
   const { refinement, implementation } = await scenario();
-  assert.deepEqual(presentedQuestions(refinement.ui).map((q) => [q.number, q.origin.kind]), [[1, "clarification"], [2, "clarification"], [3, "confirmSummary"]]);
+  assert.deepEqual(presentedQuestions(refinement.ui).map((q) => [q.number, q.origin.kind]), [[1, "clarification"], [2, "clarification"]]);
   assert.deepEqual(presentedQuestions(implementation.ui).map((q) => [q.number, q.origin.kind]), [[1, "planner"], [2, "pause"]]);
   const read = (dir: string) => fs.readFileSync(path.join(dir, "conversation.md"), "utf8");
-  for (const heading of ["### Question 1 (Q1)", "### Question 2 (Q2)", "### Question 3\n"]) assert.ok(read(refinement.dir).includes(heading), heading);
+  for (const heading of ["### Question 1 (Q1)", "### Question 2 (Q2)"]) assert.ok(read(refinement.dir).includes(heading), heading);
   for (const heading of ["### Question 1\n", "### Question 2 (P1-R1-1)"]) assert.ok(read(implementation.dir).includes(heading), heading);
   // The ids in the records and in the prompts to the agents are the records' own.
   assert.ok(!fs.readFileSync(path.join(implementation.dir, "user-decisions.md"), "utf8").includes("Question 1"));
@@ -154,7 +154,7 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
   assert.match(unchanged.probe.planner.contextPrompts[0], /did not change, also after Claude Code was told so/);
 });
 
-test("S12: the questions that do not need one make no context call: the clarification, the plan writer's, the summary's", async () => {
+test("S12: the questions that do not need one make no context call: the clarification's and the plan writer's", async () => {
   const { refinement, implementation, uis } = await scenario();
   // The one context call of the scenario is the pause's.
   assert.deepEqual([refinement.planner.contextPrompts.length, implementation.planner.contextPrompts.length], [0, 1]);
@@ -162,15 +162,6 @@ test("S12: the questions that do not need one make no context call: the clarific
   // S18: an agreed question's context is the reviewed one of questions.json, not what the turn writes beside its id.
   assert.deepEqual(byKind.get("clarification"), { blocks: entry("Q2").context, by: "agent" });
   assert.deepEqual(byKind.get("planner"), { blocks: plannerQuestion.context, by: "agent" });
-  assert.equal(byKind.get("confirmSummary")?.by, "program");
-});
-
-// Issue #137: the summary to confirm is attached as the summary, whole, and recorded under its heading.
-test("the summary's confirmation carries the summary as its attached material", async () => {
-  const { refinement } = await scenario();
-  const confirm = presentedQuestions(refinement.ui).find((q) => q.origin.kind === "confirmSummary");
-  assert.deepEqual(confirm?.attached, { kind: "summary", blocks: [{ kind: "document", markdown: SUMMARY }] });
-  assert.ok(fs.readFileSync(path.join(refinement.dir, "conversation.md"), "utf8").includes(`**${prompts.attachedHeading("summary")}**`));
 });
 
 // S18: an agreed question is presented from the reviewed records alone: questions.json and terms.json.
@@ -180,7 +171,7 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
   const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(zod)/).filter((t) => t !== "").map((t) => (t === "zod" ? term(t, "z") : { text: t, ref: "", code: false })));
   const divided: TermsEntry = { id: "Q1", explanations: [zod], context: entryZod.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), history: [], question: divide(entryZod.question), reason: entryZod.reason, proposed_answers: entryZod.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [
       { output: { questions: [entryZod] } },
       { output: noQuestions, plan: "v1" },
@@ -219,7 +210,7 @@ test("S18: an agreed question is presented as reviewed: its context, text, propo
 test("S18: an accepted requirements issue in the second interview is validated, presented from the turn, and keeps its id", async () => {
   const gap = (context: string) => ({ ...asking("G-R1-1", []), current_question: currentOf({ id: "G-R1-1", context, text: "Which port should the service listen on?", terms: [], options: [{ label: "8080", description: "the usual" }, { label: "80", description: "needs root" }] }), asked_ids: ["G-R1-1"] });
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "", "1", ""],
+    answers: ["1", "1"],
     steps: [
       { output: { questions: [entry("Q1")] } },
       { output: respond([["G-R1-1", "accepted"]]) },
@@ -303,7 +294,7 @@ test("issue #94: a plain piece that would open a block reaches conversation.md a
   const opening = { ...entry("Q1"), context: para("- not a list, the context of Q1."), history: [], question: plain("    not code, the question?") };
   const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [opening] } }, { output: noQuestions, plan: "v1" }],
     closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
@@ -328,7 +319,7 @@ test("W1-R1-1: a context whose link label spans two lines reaches conversation.m
   const opening = { ...entry("Q1"), context: para(context) };
   const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [opening] } }, { output: noQuestions, plan: "v1" }],
     closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
@@ -352,7 +343,7 @@ test("work review 2: a context whose link label has a backslash before its line 
   const opening = { ...entry("Q1"), context: para(context) };
   const divided: TermsEntry = { id: "Q1", explanations: [], context: opening.context, history: [], question: opening.question, reason: opening.reason, proposed_answers: opening.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [opening] } }, { output: noQuestions, plan: "v1" }],
     closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],
@@ -376,7 +367,7 @@ test("issue #112: an agreed question whose term has two senses is presented with
   const divide = (ps: readonly Piece[]): readonly Piece[] => ps.flatMap((p) => p.text.split(/(port)/).filter((t) => t !== "").map((t) => (t === "port" ? term(t, "p") : { text: t, ref: "", code: false })));
   const divided: TermsEntry = { id: "Q1", explanations: [port], context: entryPort.context.map((b) => (b.kind === "paragraph" ? { ...b, pieces: divide(b.pieces) } : b)), history: [], question: divide(entryPort.question), reason: entryPort.reason, proposed_answers: entryPort.proposed_answers };
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [entryPort] } }, { output: noQuestions, plan: "v1" }],
     closings: [{ output: summaryReply(SUMMARY, "Done.") }],
     terms: [{ output: { entries: [divided] } }],

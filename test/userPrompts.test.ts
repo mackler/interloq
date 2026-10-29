@@ -19,8 +19,12 @@ const catalog: [string, Partial<UserPrompt> & { kind: UserPrompt["kind"] }, stri
   [prompts.optionOrTextPrompt, { kind: "optionOrText", mode: "ask", free: "line" }, ["End the run=q"]],
   [prompts.permissionPrompt, { kind: "permission", mode: "ask", free: "none" }, ["End the run=q"]],
   [prompts.interviewMessagePrompt, { kind: "interviewMessage", mode: "message", free: "message" }, ["Finish clarification and start planning=/done", "End the run=/quit"]],
-  [prompts.confirmSummaryPrompt, { kind: "confirmSummary", mode: "message", free: "message" }, ["Confirm=", "End the run=/quit"]],
 ];
+
+// Issue #138: the confirmation of the summary is gone; its former hint is no prompt the page recognizes.
+test("the former confirm-the-summary hint is recognized as no kind", () => {
+  assert.equal(promptOf("Enter = confirm the summary; any other text continues the conversation > ").kind, "unknown");
+});
 
 for (const [text, expected, choices] of catalog) {
   test(`promptOf maps the ${expected.kind} text to its widget`, () => {

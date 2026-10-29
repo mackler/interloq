@@ -110,7 +110,7 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
   };
 }
 
-/** The confirmed interview result. An accepted issue is put to the user in a second interview. */
+/** The interview's result, written from Claude Code's summary. An accepted issue is put to the user in a second interview. */
 export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult> {
   const id = "requirements" as const;
   return {

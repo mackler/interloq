@@ -339,9 +339,7 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
   const choice = presented?.options[1];
   assert.deepEqual(choice, { label: plain("SQLite"), description: plain("no server needed"), answer: { token: "2" } });
   await run(h.manager.answer(h.manager.incarnation, id, you.prompt, "token" in choice.answer ? choice.answer.token : ""));
-  const confirm = await pendingAsk(h, id);
-  assert.equal(confirm.kind, "confirmSummary");
-  await run(h.manager.answer(h.manager.incarnation, id, confirm.prompt, ""));
+  // Issue #138: the summary is written with no prompt, and the run ends.
   await ended(h, id);
   assert.equal(endCode(h, id), 0);
   assert.match(fs.readFileSync(path.join(runDirOf(repo), "conversation.md"), "utf8"), /\*\*User:\*\* 2\n/);

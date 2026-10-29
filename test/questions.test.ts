@@ -29,9 +29,9 @@ const presentedAgreed = (ui: () => ScriptedUi, id: string) => async (): Promise<
   while (!presentedQuestions(ui()).some((p) => p.origin.kind === "clarification" && p.origin.id === id)) await new Promise((r) => setTimeout(r, 5));
 };
 
-test("question list is amended in review, the interview runs, the summary is confirmed, and the refinement ends (issue #120)", async () => {
+test("question list is amended in review, the interview runs, the summary is written, and the refinement ends (issue #120)", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "B, because of X", ""],
+    answers: ["1", "B, because of X"],
     steps: [
       { output: { questions: [q("Q1")] } },                                              // question list
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), q("Q2")] } }, // Codex: Q2 is missing
@@ -53,7 +53,7 @@ test("question list is amended in review, the interview runs, the summary is con
   const conversation = read(probe.dir, "conversation.md");
   assert.match(conversation, /## Agreed question list/);
   assert.match(conversation, /\*\*User:\*\* B, because of X/);
-  assert.match(conversation, /### Confirmed summary/);
+  assert.ok(conversation.includes(`### ${prompts.SUMMARY_WRITTEN_HEADING}`), conversation);
 });
 
 // Issue #83 (the developer's instruction of 4 Oct 2026): an empty agreed list is no reason to pause. Nothing is asked;
@@ -78,21 +78,9 @@ test("an empty agreed list asks nothing: requirements.md is written, the phase e
   assert.equal(probe.reviewer.phases, 1); // the question review: no requirements review without a conversation
 });
 
-test("an unconfirmed summary continues the conversation", async () => {
+test("a gap that Claude Code accepts produces a second interview whose summary is written to the requirements file with no prompt", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "Q1 is B, not A", ""],
-    steps: [{ output: { questions: [q("Q1")] } }],
-    closings: [...closing("Q1: A"), ...closing("Q1: B", "Corrected.")],
-    reviews: [{ issues: [] }, { issues: [] }],
-  });
-  await runRefinement(layer);
-  assert.equal(read(probe.dir, "requirements.md"), "Q1: B\n");
-  assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes("The user does not confirm the summary") && p.includes("Q1 is B, not A")));
-});
-
-test("a gap that Claude Code accepts produces a second interview and a revised requirements file", async () => {
-  const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "", "retries: 3", ""],
+    answers: ["A", "retries: 3"],
     closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
@@ -106,6 +94,10 @@ test("a gap that Claude Code accepts produces a second interview and a revised r
   });
   await runRefinement(layer);
   assert.equal(read(probe.dir, "requirements.md"), "Q1: A\nRetries: 3\n");
+  // Issue #138: the only prompts are Q1 and the second interview's question; neither summary is put to the user.
+  assert.equal(probe.ui.asked.length, 2, probe.ui.asked.join("\n---\n"));
+  // The question review, the requirements review's first round, and its second round after the second interview.
+  assert.ok(probe.reviewer.prompts.length >= 3, "the requirements review did not run a second round");
   assert.match(read(probe.dir, "conversation.md"), /## Interview\n[\s\S]*## Second interview\n/);
   assert.equal((await probe.loadLog("requirements"))[0].id, "G-R1-1");
   // Issue #31 (G-R1-1): the requirements' change is measured from the response through the second interview.
@@ -122,15 +114,15 @@ test("a gap that Claude Code accepts produces a second interview and a revised r
 });
 
 // Issue #30 (G-R1-1): the requirements go straight to the pause, without a corrective turn; its Retry is another interview.
-test("a gap accepted but the confirmed summary unchanged: the pause, and Retry holds another interview", async () => {
+test("a gap accepted but the summary unchanged: the pause, and Retry holds another interview", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "", "no change", "", "r", "retries: 3", ""],
+    answers: ["A", "no change", "r", "retries: 3"],
     closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: respond([["G-R1-1", "accepted"]]) },
       { output: turn("How many retries?", []) },
-      { output: turn("Complete.", ["G-R1-1"], "Q1: A") }, // the summary confirmed unchanged
+      { output: turn("Complete.", ["G-R1-1"], "Q1: A") }, // the summary unchanged
       { output: turn("How many retries, then?", []) }, // Retry: another interview
       { output: turn("Complete.", ["G-R1-1"], "Q1: A\nRetries: 3") },
       { output: noQuestions, plan: "v1" },
@@ -146,7 +138,7 @@ test("a gap accepted but the confirmed summary unchanged: the pause, and Retry h
 
 test("/done ends the interview early", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["/done", ""],
+    answers: ["/done"],
     steps: [{ output: { questions: [q("Q1")] } }],
     closings: closing("Open points: Q1 -> default A", "Ended."),
     reviews: [{ issues: [] }, { issues: [] }],
@@ -160,7 +152,7 @@ test("/done ends the interview early", async () => {
 // closing reply after both agreed questions were answered.
 test("a follow-up asked during the clarification raises its total", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["A", "A", "3", ""],
+    answers: ["A", "A", "3"],
     steps: [{ output: { questions: [q("Q1"), q("Q2")] } }],
     closings: [{ output: ack("", { follow_ups: [followUpOf("F1", "How many retries?", [])] }) }, ...closing("Q1: A\nRetries: 3\nQ2: A")],
     reviews: [{ issues: [] }, { issues: [] }],
@@ -175,7 +167,7 @@ test("a follow-up asked during the clarification raises its total", async () => 
 const blank = (id: string): QuestionEntry => ({ ...q(id), context: para(" ") });
 test("a question list whose entry breaks a rule gets the validation repair turn at the first call; a second failure halts", async () => {
   const repaired = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [
       { output: { questions: [blank("Q1")] } },
       { output: { questions: [q("Q1")] } },
@@ -191,7 +183,7 @@ test("a question list whose entry breaks a rule gets the validation repair turn 
 
 test("a response to the question review whose list breaks a rule gets the validation repair turn", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "1", ""],
+    answers: ["1", "1"],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), { ...q("Q2"), question: plain("Which one? It matters.") }] } },
@@ -230,7 +222,7 @@ test("an interview question outside questions.json is validated, an agreed one i
   const followUp = (context: string) => ack("A follow-up.", { follow_ups: [{ id: "F1", context: para(context), history: [], text: plain("Which port?"), explanations: [], options: [] }] });
   let ui: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "8080", ""],
+    answers: ["1", "8080"],
     steps: [{ output: { questions: [q("Q1")] } }],
     replies: [{ output: followUp(" "), gate: presentedAgreed(() => ui(), "Q1") }, { output: followUp("The service listens on a port.") }],
     closings: closing("# Requirements\n\nQ1: A; F1: 8080", "Done."),
@@ -274,7 +266,7 @@ test("S7: a follow-up with a dangling ref gets the validation repair turn, and t
   const repaired = { ...dangling, explanations: [{ id: "p", term: "port", senses: ["The number a program listens on for connections."] }] };
   let ui: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "8080", ""],
+    answers: ["1", "8080"],
     steps: [{ output: { questions: [q("Q1")] } }],
     replies: [{ output: ack("A follow-up.", { follow_ups: [dangling] }), gate: presentedAgreed(() => ui(), "Q1") }, { output: ack("A follow-up.", { follow_ups: [repaired] }) }],
     closings: closing("# Requirements\n\nF1: 8080", "Done."),
@@ -292,7 +284,7 @@ test("S7: a follow-up with a dangling ref gets the validation repair turn, and t
 // and their criteria the reviewer of the question list, in a run of the question phase.
 test("the seven rules of 5 Oct 2026 reach the writers of the question list and the plan, and their criteria the review", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [q("Q1")] } }],
     closings: closing("# Requirements\n\nQ1: A"),
     reviews: [{ issues: [] }, { issues: [] }],
@@ -321,7 +313,7 @@ test("the seven rules of 5 Oct 2026 reach the writers of the question list and t
 const dependent = (id: string, question: string, answer: string): QuestionEntry => ({ ...q(id), skip_if: { question, answer } });
 const skipConditionRun = (first: readonly QuestionEntry[], second: readonly QuestionEntry[]) =>
   testLayer(tempRepo(), {
-    answers: ["1", "1", ""],
+    answers: ["1", "1"],
     steps: [
       { output: { questions: first } },
       { output: { questions: second } },
@@ -361,7 +353,7 @@ test("a skip condition is checked at a response to the review and at the applica
 
 test("a dependent question listed before its premise is recorded after it, and conversation.md names its condition", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "1", ""],
+    answers: ["1", "1"],
     steps: [
       { output: { questions: [dependent("Q2", "Q1", "B"), q("Q1")] } },
     ],
@@ -399,7 +391,7 @@ test("the description of skip_if in the question list's prompt states each requi
 test("issue #112: an issue of the question list raised again after a partial acceptance is not put to the user", async () => {
   const amended = questionEntry("Q1", "question Q1, amended?", [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "partially_accepted"]]), questions: [amended] } },
@@ -458,7 +450,7 @@ test("issue #156: a marked rejection of a request to drop a question, raised aga
 
 test("issue #156: a marked rejection that Codex does not raise again asks nothing", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...markedRejection("Q-R1-1", OTHER_READING), questions: [q("Q1")] } },
@@ -481,7 +473,7 @@ test("issue #156: a reversal settled unmarked is put to the developer when the c
     questions: [amended],
   });
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", "1", ""],
+    answers: ["1", "1"],
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [amended] } },

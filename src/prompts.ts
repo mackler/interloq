@@ -793,7 +793,7 @@ ${interviewRules(root)}
 Begin now with your first message to the user.`;
 
 export function interviewGapsPrompt(root: RunRoot, reviewFile: string, ids: string[]): string {
-  return `The reviewer has examined ${runDir(root)}/requirements.md, the confirmed result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
+  return `The reviewer has examined ${runDir(root)}/requirements.md, the result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
 Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in ${runDir(root)}/requirements.md.
 ${interviewRules(root)}
 When complete is true, summary contains the complete revised requirements document, not only the changes.
@@ -804,10 +804,6 @@ export const interviewDonePrompt = `The user ends the interview now. Return comp
 
 export function interviewUserMessage(text: string): string {
   return `User: ${text}`;
-}
-
-export function interviewNotConfirmed(text: string): string {
-  return `The user does not confirm the summary and writes:\n${text}\nContinue the conversation. Return complete = true with the revised summary when the point is resolved.`;
 }
 
 /**
@@ -838,8 +834,8 @@ export type ClarificationEntry =
   | Readonly<{ kind: "agreed"; id: string; text: string; option: string | null }>
   | Readonly<{ kind: "followUp"; id: string; text: string }>
   | Readonly<{ kind: "message"; text: string }>;
-/** What closes a request: the list is done, the developer ended the interview, or he did not confirm the summary. */
-export type ClarificationTrailer = Readonly<{ kind: "listDone" }> | Readonly<{ kind: "done" }> | Readonly<{ kind: "notConfirmed"; text: string; ended: boolean }>;
+/** What closes a request: the list is done, or the developer ended the interview. */
+export type ClarificationTrailer = Readonly<{ kind: "listDone" }> | Readonly<{ kind: "done" }>;
 
 /** Issue #184: the sentence every closing request of the first interview carries; the scripted planner recognizes it. */
 export const LIST_DONE_SENTENCE = "The program has no further agreed question to present.";
@@ -861,8 +857,6 @@ const trailerText = (trailer: ClarificationTrailer): string => {
       return `${LIST_DONE_SENTENCE} Every agreed question has been presented and answered or skipped, and every follow-up question has been answered. Ask any follow-up question you still need; otherwise return complete = true with the summary.`;
     case "done":
       return `${LIST_DONE_SENTENCE} ${interviewDonePrompt}`;
-    case "notConfirmed":
-      return `${LIST_DONE_SENTENCE} ${trailer.ended ? "The user ended the interview earlier. " : ""}The user does not confirm the summary and writes:\n${trailer.text}\nAsk any follow-up question the point needs; otherwise return complete = true with the revised summary.${trailer.ended ? " List every agreed question that was not answered under 'Open points', with the default that will be assumed." : ""}`;
   }
 };
 
@@ -880,7 +874,7 @@ export const unnecessaryLine = (id: string, reason: string): string => `Claude C
 
 export function requirementsReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
   const log = pathOf({ kind: "log", subject: "requirements" });
-  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the result of an interview between the planner and the user, confirmed by the user. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
+  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the planner's summary of an interview between the planner and the user, written from the user's answers, each of which is final when given; the user did not confirm the summary itself. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
 The planner will write an implementation plan from the task and this file.
 Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent. An agreed question listed under 'Skipped questions' was not put to the user because his answer to another question denied its premise; it is not an issue unless you name what in the task, the codebase or the file establishes that premise.
 Put the question id or the heading in the location field.
@@ -1309,8 +1303,6 @@ export const optionOrTextPrompt = "Answer with the number of an option, or in yo
 export const permissionPrompt = "y = allow; anything else = do not allow (q = end the run) > ";
 /** A message of the interview. */
 export const interviewMessagePrompt = "You > ";
-/** The confirmation of the interview's summary. */
-export const confirmSummaryPrompt = "Enter = confirm the summary; any other text continues the conversation > ";
 
 // ---- status lines to the user (issue #14: "Gather Requirements", "Implementation", "cycle") -----------------------
 
@@ -1922,8 +1914,6 @@ export function pagePromptText(kind: string, offeredText: string): string {
       return "Allow this action?";
     case "interviewMessage":
       return "Your reply";
-    case "confirmSummary":
-      return "Confirm the summary, or write what should change.";
     default:
       return text.replace(/\s*>\s*$/, "").trim();
   }
@@ -1956,7 +1946,6 @@ export function clarificationHeading(stage: InterviewStage): string {
 export const END_CLARIFICATION = "Finish clarification and start planning";
 export const END_RUN_LABEL = "End the run";
 export const CONTINUE_WITHOUT_DECIDING = "Continue without deciding";
-export const CONFIRM_SUMMARY_LABEL = "Confirm";
 /** The interview's opening help in the page (finding 8 of docs/gui-review.md). */
 export function interviewHelp(heading: string): string {
   return `${heading}. /done ends the clarification, /quit ends the run; Shift+Enter starts a new line.`;
@@ -3278,8 +3267,6 @@ const originText = (origin: QuestionOrigin): string => {
       return "A further question Claude Code asks you while it clarifies the task";
     case "reply":
       return "Claude Code, the planning agent, waits for your reply while it clarifies the task";
-    case "confirmSummary":
-      return "Asked at the end of the clarification of the task";
     case "planner":
       return `Asked by Claude Code, the planning agent, during ${origin.heading}`;
     case "relayed":
@@ -3371,8 +3358,6 @@ export function attachedHeading(kind: AttachedKind): string {
   switch (kind) {
     case "reason":
       return "Why You're Being Asked This";
-    case "summary":
-      return "The Summary to Confirm";
     case "request":
       return "What Claude Code Would Do";
     case "reviewFacts":
@@ -3387,10 +3372,10 @@ export function attachedHeading(kind: AttachedKind): string {
 export function defaultMarked(description: string): string {
   return description.trim() === "" ? "(the default)" : `${description} (the default)`;
 }
+/** Issue #138: the heading in conversation.md above the summary an interview ends with, which the program writes to requirements.md. */
+export const SUMMARY_WRITTEN_HEADING = "Requirements written from Claude Code's summary";
 /** The question of a clarification turn that asks no particular question: its context is Claude Code's message. */
 export const REPLY_QUESTION = "What do you want to reply to Claude Code?";
-/** The question of the summary's confirmation. */
-export const CONFIRM_SUMMARY_QUESTION = "Claude Code has written this summary of the requirements from the clarification. Do you confirm that it states the requirements correctly?";
 
 // ---- an execution call whose Claude Code process ended, its retries used up (issue #157) ----------------------------
 
@@ -3452,8 +3437,6 @@ export function fallbackContext(origin: QuestionOrigin): string {
       return `${interloq} Before the plan is written, Claude Code asks you questions in a conversation, so that the plan follows your decisions and not its own assumptions.`;
     case "reply":
       return `${interloq} Before the plan is written, Claude Code clarifies the task with you in a conversation.`;
-    case "confirmSummary":
-      return `${interloq} At the end of the clarification, Claude Code writes a summary of your answers, the requirements document, which Codex then checks and from which the plan is written. Your confirmation makes it the record the plan must follow.`;
     case "planner":
       return `${interloq} While Claude Code writes or revises a document during ${origin.heading}, it may find a decision that only you can make. It asks you here rather than deciding on an assumption, so that the plan follows your choice.`;
     case "relayed":

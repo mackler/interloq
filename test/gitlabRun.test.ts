@@ -22,9 +22,9 @@ const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [[
 const REQUIREMENTS = "# Requirements\n\nQ1: A";
 const DEVELOPER = "Make the page two tabs.";
 const ID = Result.getOrThrow(itemIdOf("120"));
-/** One question, answered, and a summary confirmed; `onSummary` runs when the summary's turn is called. */
+/** One question, answered, and a summary written; `onSummary` runs when the summary's turn is called. */
 const oneQuestion = (onSummary: () => void = () => {}): TestOptions => ({
-  answers: ["A", ""],
+  answers: ["A"],
   steps: [{ output: { questions: [q("Q1")] } }],
   closings: [{ output: summaryReply(REQUIREMENTS, "Done."), onCall: onSummary }],
   reviews: [{ issues: [] }, { issues: [] }],

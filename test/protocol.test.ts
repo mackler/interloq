@@ -66,7 +66,7 @@ const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_
 // S5: a question as the user is shown it, with every kind of origin and both kinds of answer.
 const origin = fc.oneof(
   fc.record({ kind: fc.constantFrom("clarification" as const, "followUp" as const), id: text }),
-  fc.record({ kind: fc.constantFrom("reply" as const, "confirmSummary" as const, "relayed" as const) }),
+  fc.record({ kind: fc.constantFrom("reply" as const, "relayed" as const) }),
   fc.record({ kind: fc.constant("planner" as const), heading: text }),
   fc.record({ kind: fc.constant("permission" as const), tool: text, input: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constantFrom("reraised" as const, "secondClarification" as const, "disputedSelfCorrection" as const), id: text }),
@@ -436,6 +436,15 @@ test("a presented question's attached material decodes with each kind and as nul
   assert.deepEqual(Result.getOrThrow(decode(question(null))), question(null));
   assert.ok(Result.isFailure(decode(question({ kind: "reason", blocks: [] }))));
   assert.ok(Result.isFailure(decode({ ...question(null), attached: undefined, details: [] })));
+});
+
+// Issue #138: the confirmation of the summary is gone, so the page refuses a question of its origin or its material.
+test("a presented question of origin confirmSummary, or with attached material of kind summary, does not decode", () => {
+  const question = (origin: unknown, attached: unknown) => ({ number: 1, origin, context: { blocks: [], by: "program" }, history: [], explanations: [], question: [], options: [], attached, decision: null });
+  const decode = Schema.decodeUnknownResult(PresentedQuestionSchema);
+  assert.ok(Result.isSuccess(decode(question({ kind: "reply" }, null))));
+  assert.ok(Result.isFailure(decode(question({ kind: "confirmSummary" }, null))));
+  assert.ok(Result.isFailure(decode(question({ kind: "reply" }, { kind: "summary", blocks: [{ kind: "document", markdown: "x" }] }))));
 });
 
 // Issue #162: a Full test suite phase crosses the protocol like every numbered phase, its kind from NUMBERED_PHASE_KINDS.

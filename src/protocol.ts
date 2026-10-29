@@ -176,7 +176,6 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("clarification"), id: Str }),
   Schema.Struct({ kind: Schema.Literal("followUp"), id: Str }),
   Schema.Struct({ kind: Schema.Literal("reply") }),
-  Schema.Struct({ kind: Schema.Literal("confirmSummary") }),
   Schema.Struct({ kind: Schema.Literal("planner"), ...withHeading }),
   Schema.Struct({ kind: Schema.Literal("relayed") }),
   Schema.Struct({ kind: Schema.Literal("permission"), tool: Str, input: Str }),
@@ -263,7 +262,7 @@ export const RunEventSchema = Schema.Union([
   tagged("Asked", {
     prompt: Int,
     text: Str,
-    kind: Schema.Literals(["decision", "limit", "limitNoProceed", "unchanged", "transport", "optionOrText", "permission", "interviewMessage", "confirmSummary", "unknown"]),
+    kind: Schema.Literals(["decision", "limit", "limitNoProceed", "unchanged", "transport", "optionOrText", "permission", "interviewMessage", "unknown"]),
     mode: Schema.Literals(["ask", "message"]),
     choices: Schema.Array(ChoiceSchema),
     free: Schema.Literals(["none", "line", "message"]),

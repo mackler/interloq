@@ -23,7 +23,7 @@ const FAST = { maxTrackerRetries: 2, trackerRetryDelaySeconds: 0.01 };
 const unrefined: FakeItem = { ...scriptedItem, id: Result.getOrThrow(itemIdOf("155")), title: "Retry", body: "Repeat a failed request.", state: "unrefined" };
 const refined: FakeItem = { ...unrefined, id: Result.getOrThrow(itemIdOf("171")), body: Result.getOrThrow(withRefinement("Repeat it.", Result.getOrThrow(refinementOf("# Requirements")))), state: "refined" };
 const oneQuestion = (answers: readonly string[] = []): TestOptions => ({
-  answers: ["A", "", ...answers],
+  answers: ["A", ...answers],
   steps: [{ output: { questions: [q("Q1")] } }],
   closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }],
   reviews: [{ issues: [] }, { issues: [] }],

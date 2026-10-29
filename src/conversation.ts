@@ -15,7 +15,7 @@ import * as S from "./schema.ts";
 import type { QuestionsFile, TermsEntry } from "./schema.ts";
 import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNormalize.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
-import { agentContext, askOffering, byMessage, numberedOptions, programContext, type QuestionDraft } from "./offer.ts";
+import { agentContext, askOffering, byMessage, numberedOptions, type QuestionDraft } from "./offer.ts";
 import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -123,7 +123,8 @@ const requestTerms = (task: string, agreed: QuestionsFile["questions"][number], 
 /**
  * The second interview (issue #184: the first is `clarification`), on the accepted gaps of the requirements review: a
  * conversation between the user and Claude Code, turn by turn, since Claude Code writes each of its questions. It ends
- * when Claude Code reports completion and the user confirms the summary, which the program writes to requirements.md.
+ * when Claude Code reports completion with a summary, which the program writes to requirements.md at once (issue #138:
+ * an answer is final when the user gives it, so nothing asks him to confirm the summary).
  */
 export const interview = (opening: string, agreed: readonly string[]): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
@@ -144,17 +145,7 @@ export const interview = (opening: string, agreed: readonly string[]): Effect.Ef
       yield* ui.say(messageLine);
       yield* store.converse(`**Claude Code:** ${turn.message}\n\n`);
 
-      if (turn.kind === "summary_proposed") {
-        const reply = yield* confirmSummary(turn.summary);
-        if (reply.kind !== "text") {
-          yield* store.writeRequirements(turn.summary.trimEnd() + "\n");
-          yield* store.converse(`**User:** confirmed the summary.\n\n### Confirmed summary\n\n${turn.summary}\n\n`);
-          return;
-        }
-        yield* store.converse(`**User:** ${reply.text}\n\n`);
-        prompt = prompts.interviewNotConfirmed(reply.text);
-        continue;
-      }
+      if (turn.kind === "summary_proposed") return yield* writeSummary(turn.summary);
 
       // A blank message is asked again inside the offer, so that it is never recorded as the choice (W1-R1-1).
       const draft = turnDraft(turn, { questions, terms: yield* store.loadTerms() });
@@ -165,13 +156,12 @@ export const interview = (opening: string, agreed: readonly string[]): Effect.Ef
     }
   });
 
-/** The confirmation of a proposed summary (S7): the summary read beside the question that confirms it. */
-const confirmSummary = (summary: string): Effect.Effect<ReturnType<typeof parseInterviewMessage>, RunError, Services> =>
+/** The end of an interview (issue #138): Claude Code's summary written to requirements.md and recorded, with no prompt. */
+const writeSummary = (summary: string): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
-    const ui = yield* Ui;
-    const origin: QuestionOrigin = { kind: "confirmSummary" };
-    const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], attached: attachedOf("summary", [{ kind: "document", markdown: summary.trim() }]), decision: null };
-    return parseInterviewMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.confirmSummaryPrompt, draft));
+    const store = yield* Store;
+    yield* store.writeRequirements(summary.trimEnd() + "\n");
+    yield* store.converse(`### ${prompts.SUMMARY_WRITTEN_HEADING}\n\n${summary}\n\n`);
   });
 
 /** A question presented and asked until the developer's reply is not empty. */
@@ -190,7 +180,8 @@ const askUntilAnswered = (draft: QuestionDraft, request: ((number: number) => Ef
  * sends every answer to Claude Code at once through the interview's worker, which runs beside this fiber; a follow-up
  * a reply asks is presented after the question then on the page. When nothing is left to present, the worker is
  * drained: every reply arrived and applied, every follow-up answered, and only then is the list reported done and the
- * summary asked for. The first of the two fibers to end decides: a confirmed summary ends the interview and interrupts
+ * summary asked for. The first of the two fibers to end decides: a summary, which the program writes to
+ * requirements.md, ends the interview and interrupts
  * the worker, and a halt of the worker ends the run and interrupts the pending prompt.
  */
 export const clarification = (agreed: readonly string[], termsOffer: TermsOffer): Effect.Effect<void, RunError, Services> =>
@@ -251,21 +242,15 @@ export const clarification = (agreed: readonly string[], termsOffer: TermsOffer)
       return true;
     });
 
-    /** The closing: the worker drained, then the summary confirmed, or what is still outstanding presented. */
+    /** The closing: the worker drained, then the summary written, or what is still outstanding presented. */
     const close = (trailer: ClarificationTrailer): Effect.Effect<"done" | "present", RunError, Services> =>
       Effect.gen(function* () {
         const drained = yield* worker.drain(trailer);
         if (drained.kind === "followUps") return "present";
         const reply = drained.reply;
         if (reply.kind === "summary_proposed") {
-          const confirmation = yield* confirmSummary(reply.summary);
-          if (confirmation.kind !== "text") {
-            yield* store.writeRequirements(reply.summary.trimEnd() + "\n");
-            yield* store.converse(`**User:** confirmed the summary.\n\n### Confirmed summary\n\n${reply.summary}\n\n`);
-            return "done";
-          }
-          yield* store.converse(`**User:** ${confirmation.text}\n\n`);
-          return yield* close({ kind: "notConfirmed", text: confirmation.text, ended: (yield* Ref.get(state)).ended });
+          yield* writeSummary(reply.summary);
+          return "done";
         }
         if ((yield* Ref.get(state)).followUps.length > 0) return "present";
         // A closing reply that neither proposes the summary nor asks a follow-up: the developer replies to its message.

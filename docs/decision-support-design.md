@@ -27,7 +27,6 @@ Applying the rule to the prompt catalog in `src/userPrompts.ts` as it stands tod
 | A decision at a review-loop pause | the reviewer's and the planner's positions | yes |
 | A permission request | Allow, Deny | yes |
 | The cycle limit | Proceed, Stop | yes |
-| Confirm the summary | Confirm | no — one action |
 | Start planning | Start planning | no — one action |
 
 Quit is present on every prompt as an escape from the program, not as an option of the question, and

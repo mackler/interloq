@@ -64,7 +64,7 @@ test("a second invalid Codex reply stops the run with AgentReplyInvalid naming b
 
 test("an interview reply is validated the same way", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [questionEntry("Q1", "Which database should the service use?", [["PostgreSQL", "p"], ["SQLite", "s"]], { context: "c" })] } }],
     // The first reply fails its schema; its repair turn is a further reply call.
     replies: [{ output: { message_to_user: 1 } }, { output: ack() }],

@@ -25,7 +25,7 @@ const conversation = (dir: string) => fs.readFileSync(path.join(dir, "conversati
 
 test("an agreed question presents the history of its terms.json entry, and conversation.md records it under History after the context", async () => {
   const { layer, probe } = testLayer(tempRepo(), {
-    answers: ["1", ""],
+    answers: ["1"],
     steps: [{ output: { questions: [agreed] } }],
     closings: [{ output: summaryReply("# Requirements\n\nSQLite.", "Done.") }],
     terms: [{ output: { entries: [divided] } }],

@@ -79,7 +79,7 @@ export const SCENARIOS: Record<string, TestOptions> = {
   }),
   stop: { steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }, { hang: true }], reviews: [{ issues: [issue("P1-R1-1")] }] },
   // Finding 10 of docs/gui-review.md: the scenarios the review names.
-  // The question phase: a question list, an interview message, /done, a proposed summary and its confirmation.
+  // The question phase: a question list, an interview message, /done, a proposed summary.
   interview: {
     steps: [
       { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },

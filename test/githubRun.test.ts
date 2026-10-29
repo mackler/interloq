@@ -18,7 +18,7 @@ import { type Answer, json, makeStub, type SentRequest } from "./stubHttp.ts";
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
 const oneQuestion: TestOptions = {
-  answers: ["A", ""],
+  answers: ["A"],
   steps: [{ output: { questions: [q("Q1")] } }],
   closings: [{ output: summaryReply("# Requirements\n\nQ1: A", "Done.") }],
   reviews: [{ issues: [] }, { issues: [] }],
