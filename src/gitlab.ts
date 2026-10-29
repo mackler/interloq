@@ -21,6 +21,8 @@ import {
   GITLAB_PAGE_SIZE,
   type GitlabIssue,
   GitlabIssue as GitlabIssueSchema,
+  commentsOfNotes,
+  GitlabNote,
   type GitlabTarget,
   gitlabPageProblem,
   gitlabStatusFailure,
@@ -44,6 +46,7 @@ const API = "https://gitlab.com/api/v4";
 
 const decodeIssue = Schema.decodeUnknownResult(GitlabIssueSchema);
 const decodeIssues = Schema.decodeUnknownResult(Schema.Array(GitlabIssueSchema));
+const decodeNotes = Schema.decodeUnknownResult(Schema.Array(GitlabNote));
 
 /**
  * A failure of the client as the tracker's error. Of the HttpClientError only a StatusCodeError's status is read,
@@ -167,9 +170,32 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
         return issue.state === "closed" ? closedRefusal(id, issue, `its state was not set to ${state}`) : put(url, id, relabelBody(config.labels, state));
       });
 
-    // Issue #186: replaced by the comment requests in its next step.
-    const comment = (_id: ItemId, _text: string): Effect.Effect<void, TrackerError> => Effect.void;
-    const comments = (_id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError> => Effect.succeed([]);
+    /** Issue #186: one POST of a note, after the issue is read; a closed issue is refused, since Interloq writes to no closed issue (G-R1-1). */
+    const comment = (id: ItemId, text: string): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemIssueOf(id), ({ issue, url }) =>
+        issue.state === "closed" ? closedRefusal(id, issue, "the comment was not written") : Effect.asVoid(send(HttpClientRequest.post(`${url}/notes`).pipe(HttpClientRequest.bodyJsonUnsafe({ body: text })), { kind: "item", id })),
+      );
+
+    /** Every page of an issue's notes from `page`, oldest first, following X-Next-Page; a page the server repeated fails the listing. */
+    const notePages = (url: string, id: ItemId, page: number, before: readonly GitlabNote[]): Effect.Effect<readonly GitlabNote[], TrackerError> => {
+      const params = { per_page: String(GITLAB_PAGE_SIZE), sort: "asc", order_by: "created_at", page: String(page) };
+      return Effect.flatMap(send(HttpClientRequest.get(url).pipe(HttpClientRequest.setUrlParams(params)), { kind: "item", id }), ({ json, nextPage }): Effect.Effect<readonly GitlabNote[], TrackerError> => {
+        const notes = decodeNotes(json);
+        if (Result.isFailure(notes)) return Effect.fail(new TrackerBodyInvalid({ id, message: `GitLab's answer is not a list of notes: ${notes.failure.message}` }));
+        const next = nextPageOf(nextPage);
+        const problem = gitlabPageProblem(page, next, new Set(before.map((n) => n.id)), notes.success.map((n) => ({ iid: n.id })), "note");
+        if (problem !== null) return Effect.fail(new TrackerBodyInvalid({ id, message: `GitLab did not follow the page parameter: ${problem}` }));
+        const all = [...before, ...notes.success];
+        return Option.match(next, { onNone: () => Effect.succeed(all), onSome: (n) => notePages(url, id, n, all) });
+      });
+    };
+
+    /** Issue #186: the issue's notes that are comments, oldest first; an id outside GitLab's format names no item and sends nothing. */
+    const comments = (id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError> =>
+      Option.match(iidOf(id), {
+        onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
+        onSome: (iid) => Effect.map(notePages(`${issuesUrl}/${iid}/notes`, id, 1, []), commentsOfNotes),
+      });
     const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
     return tracker;
   });

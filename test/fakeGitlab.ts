@@ -34,8 +34,19 @@ export type GitlabServer = Readonly<{
 const PAGE_SIZE_DEFAULT = 20;
 const names = (text: unknown): readonly string[] => (typeof text === "string" && text !== "" ? text.split(",") : []);
 
+/** A note as GitLab sends it (issue #186): `system` for GitLab's own note of a change. */
+export type ServerNote = Readonly<{ id: number; body: string; created_at: string; system: boolean }>;
+
 export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
   const issues = new Map(initial.map((issue) => [issue.iid, issue]));
+  const notes = new Map<number, ServerNote[]>();
+  let noteIds = 0;
+  const addNote = (iid: number, body: string, system: boolean): ServerNote => {
+    noteIds += 1;
+    const created: ServerNote = { id: noteIds, body, created_at: new Date(Date.UTC(2026, 9, 29, 0, 0, noteIds)).toISOString(), system };
+    notes.set(iid, [...(notes.get(iid) ?? []), created]);
+    return created;
+  };
   const putFailures: { field: string; applied: boolean }[] = [];
   const handler = (r: SentRequest): Answer => {
     const parts = r.url.pathname.split("/");
@@ -48,6 +59,17 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
       const matching = [...issues.values()].filter((i) => (state === null || i.state === state) && wanted.every((l) => i.labels.includes(l)));
       const more = page * size < matching.length;
       return json(matching.slice((page - 1) * size, page * size), 200, { "x-next-page": more ? String(page + 1) : "" });
+    }
+    if (last === "notes") {
+      // Issue #186: an issue's notes, paged as the issues are, and a note added.
+      const noted = issues.get(Number(parts.at(-2)));
+      if (noted === undefined) return json({ message: "404 Not found" }, 404);
+      if (r.method === "POST") return json(addNote(noted.iid, String((JSON.parse(r.body ?? "{}") as Record<string, unknown>).body ?? ""), false), 201);
+      const size = Number(r.url.searchParams.get("per_page") ?? PAGE_SIZE_DEFAULT);
+      const page = Number(r.url.searchParams.get("page") ?? "1");
+      const all = notes.get(noted.iid) ?? [];
+      const more = page * size < all.length;
+      return json(all.slice((page - 1) * size, page * size), 200, { "x-next-page": more ? String(page + 1) : "" });
     }
     const issue = issues.get(Number(last));
     if (issue === undefined) return json({ message: "404 Not found" }, 404);
@@ -66,6 +88,7 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
         state: body.state_event === "close" ? "closed" : body.state_event === "reopen" ? "opened" : issue.state,
       };
       issues.set(issue.iid, next);
+      if (next.labels.join(",") !== issue.labels.join(",") || next.state !== issue.state) addNote(issue.iid, "changed the labels or state", true);
       return failure !== null ? json({ message: "500 Internal Server Error" }, 500) : json(next);
     }
     return json({ message: "405 Method Not Allowed" }, 405);

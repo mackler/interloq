@@ -334,6 +334,54 @@ test("a refused connection mixed with a reset, as one aggregate, is sent once an
   assert.equal(stub.sent().length, 1);
 });
 
+// Issue #186, requirements Q3: a note on an issue, and the listing of its notes.
+const note = (id: number, body: string, system = false): Record<string, unknown> => ({ id, body, created_at: `2026-10-0${id}T00:00:00Z`, system, author: { username: "adammackler" } });
+
+test("a comment is one POST of its text to the issue's notes, after the issue is read", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [GITLAB_LABELS.implementing])), [`POST ${ISSUES}/7/notes`]: json(note(1, "sent back"), 201) }));
+  await withTracker(stub, (t) => t.comment(id("7"), "sent back"));
+  const posts = stub.sent().filter((r) => r.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.equal(where(posts[0]), `POST ${ISSUES}/7/notes`);
+  assert.deepEqual(JSON.parse(posts[0].body ?? ""), { body: "sent back" });
+  assert.ok(stub.sent().every((r) => !r.url.toString().includes(SECRET)));
+});
+
+test("a comment on a closed issue is TrackerBodyInvalid after one GET, and nothing is POSTed", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [GITLAB_LABELS.implementing], { state: "closed" })) }));
+  assert.equal((await failure(stub, (t) => t.comment(id("7"), "x")))._tag, "TrackerBodyInvalid");
+  assert.deepEqual(stub.sent().map((r) => r.method), ["GET"]);
+});
+
+test("an issue's notes are listed oldest first across pages, without GitLab's system notes", async () => {
+  const stub = makeStub((r) =>
+    r.url.searchParams.get("page") === "2"
+      ? json([note(3, "third"), note(4, "added label", true)])
+      : json([note(1, "first"), note(2, "changed the description", true)], 200, { "x-next-page": "2" }),
+  );
+  const comments = await withTracker(stub, (t) => t.comments(id("7")));
+  assert.deepEqual(comments, [
+    { body: "first", created: "2026-10-01T00:00:00Z" },
+    { body: "third", created: "2026-10-03T00:00:00Z" },
+  ]);
+  const params = stub.sent()[0].url.searchParams;
+  assert.equal(where(stub.sent()[0]), `GET ${ISSUES}/7/notes`);
+  assert.deepEqual([params.get("per_page"), params.get("sort"), params.get("order_by"), params.get("page")], ["100", "asc", "created_at", "1"]);
+});
+
+test("a page of notes that repeats a note fails the listing", async () => {
+  const stub = makeStub((r) => (r.url.searchParams.get("page") === "2" ? json([note(1, "first")]) : json([note(1, "first")], 200, { "x-next-page": "2" })));
+  assert.equal((await failure(stub, (t) => t.comments(id("7"))))._tag, "TrackerBodyInvalid");
+});
+
+test("over the stub GitLab, a note written is listed and a relabel's system note is not", async () => {
+  const server = gitlabServer([serverIssue(7, [GITLAB_LABELS.implementing])]);
+  const stub = makeStub(server.handler);
+  const comments = await withTracker(stub, (t) => Effect.andThen(t.comment(id("7"), "sent back"), Effect.andThen(t.setState(id("7"), "unrefined"), t.comments(id("7")))));
+  assert.deepEqual(comments.map((c) => c.body), ["sent back"]);
+  assert.equal(stub.sent().filter((r) => r.url.pathname.endsWith("/notes")).length, 2);
+});
+
 test("the token is in no error the adapter produced", () => {
   assert.ok(errors.length >= 20);
   for (const error of errors) {

@@ -10,7 +10,7 @@ import { type Refinement, type SectionMalformed, withRefinement } from "./refine
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
 import { GITLAB_LABELED_STATES, type GitlabLabeledState, type GitlabLabels } from "./schema.ts";
-import { type ItemId, type ItemState, itemUrlFrom, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type ItemComment, type ItemId, type ItemState, itemUrlFrom, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 const TRACKER = "GitLab";
 
@@ -73,13 +73,25 @@ export const GITLAB_PAGE_SIZE = 100;
 /** The next page of a listing from GitLab's `X-Next-Page` header; absent, empty or not a positive integer is the last page. */
 export const nextPageOf = (header: string | undefined): Option.Option<number> => (header === undefined ? Option.none() : positiveDecimalOf(header));
 
-/** What is wrong with a page of a listing, or null: an issue repeated or already seen, or a next page not after the current one. */
-export const gitlabPageProblem = (current: number, next: Option.Option<number>, seen: ReadonlySet<number>, page: readonly Pick<GitlabIssue, "iid">[]): string | null => {
+/**
+ * What is wrong with a page of a listing, or null: an issue repeated or already seen, or a next page not after the
+ * current one. Issue #186: a listing of notes passes each note's id as `iid` and names it by `what`.
+ */
+export const gitlabPageProblem = (current: number, next: Option.Option<number>, seen: ReadonlySet<number>, page: readonly Pick<GitlabIssue, "iid">[], what = "issue"): string | null => {
   const iids = page.map((issue) => issue.iid);
   const repeated = iids.find((iid, i) => seen.has(iid) || iids.indexOf(iid) < i);
-  if (repeated !== undefined) return `issue #${repeated} came twice`;
+  if (repeated !== undefined) return `${what} #${repeated} came twice`;
   return Option.isSome(next) && next.value <= current ? `the next page ${next.value} is not after the page ${current}` : null;
 };
+
+/**
+ * A note on an issue as GitLab sends it, the fields read (issue #186). `system` marks GitLab's own note of a change (a
+ * label added, the issue closed), which no one wrote and which is not a comment.
+ */
+export const GitlabNote = Schema.Struct({ id: Schema.Int, body: Schema.String, created_at: Schema.String, system: Schema.Boolean });
+export type GitlabNote = typeof GitlabNote.Type;
+/** The notes that are comments, as the port's comments, in their order. */
+export const commentsOfNotes = (notes: readonly GitlabNote[]): readonly ItemComment[] => notes.filter((n) => !n.system).map((n) => ({ body: n.body, created: n.created_at }));
 
 /** GitLab's limit on an issue's description, by its documentation; unproven by a real call. */
 export const GITLAB_DESCRIPTION_LIMIT = 1_000_000;
