@@ -533,7 +533,13 @@ export const makeRunManager = (
               Effect.onExit((exit: Exit.Exit<number>) =>
                 Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated), Ref.get(concluded)]).pipe(
                   Effect.flatMap(([rid, faulted, root, conclusion]) =>
-                    end(rid, faulted ? 1 : Option.getOrElse(Option.map(conclusion, (c) => c.code), () => exitCodeOf(exit)), Option.getOrNull(root), Option.getOrNull(Option.map(conclusion, (c) => c.parked))),
+                    end(
+                      rid,
+                      faulted ? 1 : Option.getOrElse(Option.map(conclusion, (c) => c.code), () => exitCodeOf(exit)),
+                      Option.getOrNull(root),
+                      Option.getOrNull(Option.map(conclusion, (c) => c.parked)),
+                      Option.getOrNull(Option.map(conclusion, (c) => c.abandoned)),
+                    ),
                   ),
                 ),
               ),

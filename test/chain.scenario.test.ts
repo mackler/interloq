@@ -15,11 +15,11 @@ import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SE
 import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
 import { parkHalted } from "../src/parking.ts";
 import type { StoreShape, UiShape } from "../src/services.ts";
-import { chainParkingText, itemNotReturnedLine, itemReturnedLine } from "../src/prompts.ts";
+import { chainEntryText, chainParkingText, itemNotReturnedLine, itemReturnedLine } from "../src/prompts.ts";
 import { loadConfig } from "../src/config.ts";
 import { describe } from "../src/errors.ts";
 import { commentText, parseComment, runCommentKey } from "../src/itemComments.ts";
-import { TrackerUnreachable } from "../src/errors.ts";
+import { GitError as GitErrorOf, TrackerUnreachable } from "../src/errors.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
@@ -973,4 +973,71 @@ suite("issue #186: a send-back in a chain", () => {
     assert.equal(await sendBacks(h, order[0]!), 1);
     assert.equal(startedRuns(h).length, 1);
   });
+});
+
+// ---- Issue #185: a chained run whose question goes unanswered within the wait ----
+
+/** A repository whose questions wait one second, read by the manager from the project's own configuration. */
+const waitingRepo = (): string => {
+  const repo = identified();
+  fs.mkdirSync(path.join(repo, "plan-review"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "plan-review", "config.json"), JSON.stringify({ answerTimeoutSeconds: 1 }));
+  return repo;
+};
+/** A run whose plan writer asks a question no one answers. */
+const unanswered = (extra: Partial<TestOptions> = {}): TestOptions =>
+  askedInPlanReview({ steps: [{ output: { questions_for_user: [questionOf({ context: "c", question: "Which retention?", terms: [], options: [] })] }, plan: "v1" }, { output: noQuestions }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished], ...extra });
+const stateIn = async (tracker: FakeTracker, item: string) => (await run(tracker.items)).find((i) => i.id === item)!.state;
+
+test("abandon: a chained run's question unanswered for the wait ends 2, its item's label refined, and the chain starts the next item", async () => {
+  const h = await harness([unanswered(), converging], { repo: waitingRepo(), settings: settings(2) });
+  const order = await refinedOrder(h.tracker);
+  const id = await begin(h, order[0]!);
+  await idle(h);
+  assert.equal(endCode(h, id), 2);
+  assert.equal(await stateIn(h.tracker, order[0]!), "refined");
+  assert.deepEqual(startedRuns(h).map((r) => r.item), [order[0], order[1]]);
+  const entry = (await chainOf(h)).chain.history[0]!;
+  assert.deepEqual(entry.outcome._tag === "Abandoned" && entry.outcome.label, { _tag: "SetRefined" });
+});
+
+test("abandon: with only the abandoned item left refined, the chain ends NoItems instead of starting it again", async () => {
+  const only = fakeTrackerOf([MANAGER_ITEMS[0]!]);
+  const h = await harness([unanswered()], { repo: waitingRepo(), tracker: only });
+  const id = await begin(h, MANAGER_ITEMS[0]!.id);
+  await idle(h);
+  assert.equal(endCode(h, id), 2);
+  assert.equal(startedRuns(h).length, 1);
+  assert.equal(await endedReason(h), "NoItems");
+});
+
+test("abandon: the label request failing after its repeats asks nothing, and the chain still starts the next item", async () => {
+  const tracker = fakeTrackerOf(MANAGER_ITEMS);
+  const order = await refinedOrder(tracker);
+  for (let i = 0; i < 2; i++) await run(tracker.failNext("setState", new TrackerUnreachable({ tracker: "fake", message: "down", status: null }), "refined"));
+  const h = await harness([unanswered({ config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 } }), converging], { repo: waitingRepo(), tracker, settings: settings(2) });
+  const id = await begin(h, order[0]!);
+  await idle(h);
+  assert.equal(endCode(h, id), 2);
+  assert.equal(await stateIn(tracker, order[0]!), "implementing");
+  assert.deepEqual(startedRuns(h).map((r) => r.item), [order[0], order[1]]);
+  assert.ok(!h.events.some((b) => b.run === id && b.event._tag === "Asked" && b.event.kind === "transport"));
+});
+
+test("abandon: a parking that fails ends the chain ParkFailed, the item implementing and its entry KeptImplementing, before and after a restart", async () => {
+  const failing = (s: StoreShape): StoreShape => ({ ...s, commitLeftovers: () => Effect.fail(new GitErrorOf({ args: ["commit"], message: "refused" })) });
+  const repo = waitingRepo();
+  const h = await harness([unanswered({ store: failing })], { repo, settings: settings(2) });
+  const order = await refinedOrder(h.tracker);
+  const id = await begin(h, order[0]!);
+  await idle(h);
+  assert.equal(endCode(h, id), 2);
+  assert.equal(await endedReason(h), "ParkFailed");
+  assert.equal(await stateIn(h.tracker, order[0]!), "implementing");
+  for (const state of [await chainOf(h), await chainOf(await harness([], { repo, tracker: h.tracker }))]) {
+    const entry = state.chain.history[0]!;
+    assert.deepEqual(entry.outcome._tag === "Abandoned" && entry.outcome.label, { _tag: "KeptImplementing" });
+    const text = chainEntryText(entry);
+    assert.ok(text.includes("`implementing`") && !text.includes("set to `refined`"), text);
+  }
 });

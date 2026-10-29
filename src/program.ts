@@ -4,10 +4,10 @@
 import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped } from "./errors.ts";
+import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered } from "./errors.ts";
 import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
-import { blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
+import { ABANDONED_EXIT_CODE, abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { type ImplementationEnd, implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
@@ -16,7 +16,8 @@ import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
-import type { ParkNote } from "./chain.ts";
+import type { AbandonLabel, ParkNote } from "./chain.ts";
+import { abandonRun } from "./abandon.ts";
 import type { ParkRecord } from "./park.ts";
 import { pathOf, recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
@@ -97,7 +98,11 @@ type Started = Readonly<{ project: string; kind: StartedKind; item: ItemId; task
  * Why a run could not read its task (issue #193): the halt's reason, and the records of the first read's repeats
  * (issue #171) collected before it, written to conversation.md before the halt's record.
  */
-type Unready = Readonly<{ reason: string; held: readonly string[] }>;
+/**
+ * Why a run is not ready, with the first read's held records: a halt's reason, or (issue #185) a question of the first
+ * read that went unanswered within its wait.
+ */
+type Unready = Readonly<{ _tag: "Halt"; reason: string; held: readonly string[] }> | Readonly<{ _tag: "NoAnswer"; error: NoAnswer; held: readonly string[] }>;
 /**
  * The mode of a started run with what only that mode carries (issue #142): a refinement run's choice of how the agreed
  * questions' terms are explained; an implementation run has no question phase, so it carries no choice.
@@ -141,7 +146,8 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  * What a run concluded once its records exist (issue #186): its exit code, and the parking the run did itself (a
  * send-back's or a guard stop's, src/sendBack.ts), which the chain then takes as given; null where the run parked nothing.
  */
-export type Conclusion = Readonly<{ code: number; parked: ParkNote | null }>;
+/** Issue #185: `abandoned`, what an abandonment for want of an answer did to the item's label; null for every other ending. */
+export type Conclusion = Readonly<{ code: number; parked: ParkNote | null; abandoned: AbandonLabel | null }>;
 /** Issue #186: the note of a parking the run recorded in parked.json; an Intended one did not complete, so none. */
 export const parkedNoteOf = (record: ParkRecord | null): ParkNote | null => {
   if (record === null) return null;
@@ -176,7 +182,7 @@ export const program = (
       task: (config, ui) =>
         Effect.gen(function* () {
           const layer = wiring.tracker(config);
-          if (Result.isFailure(layer)) return Result.fail({ reason: trackerFailureText(layer.failure), held: [] });
+          if (Result.isFailure(layer)) return Result.fail({ _tag: "Halt", reason: trackerFailureText(layer.failure), held: [] });
           // Issue #171 (requirements Q3): the first read is repeated like every tracker request; its records are held
           // until conversation.md exists, and its question carries no Help me decide (the developer's decision of 15 Oct 2026).
           const held = yield* Ref.make<readonly string[]>([]);
@@ -190,7 +196,8 @@ export const program = (
               if (Option.isNone(error)) return yield* Effect.die(Cause.squash(exit.cause));
               const failure = error.value;
               if (failure._tag === "UserStopped") return yield* Effect.fail(failure);
-              return Result.fail({ reason: isTrackerError(failure) ? trackerFailureText(failure) : describe(failure), held: yield* Ref.get(held) });
+              if (failure._tag === "NoAnswer") return Result.fail({ _tag: "NoAnswer", error: failure, held: yield* Ref.get(held) });
+              return Result.fail({ _tag: "Halt", reason: isTrackerError(failure) ? trackerFailureText(failure) : describe(failure), held: yield* Ref.get(held) });
             });
           const read = yield* heldRead((t) => readWithRetry(t, start.item, env));
           if (Result.isFailure(read)) return Result.fail(read.failure);
@@ -202,9 +209,9 @@ export const program = (
           yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
           // An implementation run's requirements are the item's section, where it has one (S7).
           const section = readRefinement(item.body);
-          if (Result.isFailure(section)) return Result.fail({ reason: sectionMalformedText(item.id, section.failure.reason), held: heldRecords });
+          if (Result.isFailure(section)) return Result.fail({ _tag: "Halt", reason: sectionMalformedText(item.id, section.failure.reason), held: heldRecords });
           return Result.mapBoth(taskTextOf(start.mode, item, comments.success), {
-            onFailure: (e): Unready => ({ reason: e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason), held: heldRecords }),
+            onFailure: (e): Unready => ({ _tag: "Halt", reason: e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason), held: heldRecords }),
             onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success), held: heldRecords }),
           });
         }),
@@ -264,6 +271,16 @@ const programWith = (
      */
     const halted = (reason: string, sessionId: string | null, records: StoreShape) =>
       records.converse(haltRecord(reason)).pipe(Effect.ignore, Effect.andThen(sayHalt(reason, sessionId, records)));
+    /** Issue #185: what the page is told of a run that got no answer: NO ANSWER, the reason and the records, then the last two lines. */
+    const sayAbandoned = (reason: string, sessionId: string | null, records: StoreShape) =>
+      Effect.gen(function* () {
+        yield* ui.say(`\nNO ANSWER: ${reason}\nState is preserved in ${records.dir}.`);
+        yield* tail(sessionId, records);
+        return ABANDONED_EXIT_CODE;
+      });
+    /** Issue #185: the record of the abandonment in conversation.md, then what the page is told; 2. */
+    const abandonedEnding = (error: NoAnswer | SendBackUnanswered, sessionId: string | null, records: StoreShape) =>
+      records.converse(abandonedRecord(describe(error))).pipe(Effect.ignore, Effect.andThen(sayAbandoned(describe(error), sessionId, records)));
 
     /**
      * Issue #193: any directory this run allocated, the setup's (which rootRef names too) or one allocated for a halt
@@ -275,7 +292,15 @@ const programWith = (
      * recordsRoot, so a server fault racing it finds the same directory), the first read's held records and the halt's
      * record are written there, and the page is told; where the allocation fails, the page alone.
      */
-    const haltedBeforeRecords = (reason: string, held: readonly string[]) =>
+    const haltedBeforeRecords = (reason: string, held: readonly string[]) => endedBeforeRecords(held, (records) => halted(reason, null, records), (records) => sayHalt(reason, null, records));
+    /**
+     * Issue #185: a question of the first read that went unanswered: the same directory with the held records and the
+     * abandonment's record, and 2. Nothing was committed and no label set, so the item keeps the label refined.
+     */
+    const abandonedBeforeRecords = (error: NoAnswer, held: readonly string[]) =>
+      endedBeforeRecords(held, (records) => abandonedEnding(error, null, records), (records) => sayAbandoned(describe(error), null, records));
+    /** The directory of an ending before the records exist, its held records, then `ended`; where it fails, `said` alone. */
+    const endedBeforeRecords = (held: readonly string[], ended: (records: StoreShape) => Effect.Effect<number>, said: (records: StoreShape) => Effect.Effect<number>) =>
       Effect.gen(function* () {
         const root = yield* Effect.uninterruptible(
           Effect.gen(function* () {
@@ -286,10 +311,10 @@ const programWith = (
             return made;
           }),
         );
-        if (Exit.isFailure(root)) return yield* sayHalt(reason, null, yield* store(planned, []));
+        if (Exit.isFailure(root)) return yield* said(yield* store(planned, []));
         const records = yield* store(root.value, []);
         yield* Effect.forEach(held, (markdown) => records.converse(markdown), { discard: true }).pipe(Effect.ignore);
-        return yield* halted(reason, null, records);
+        return yield* ended(records);
       });
 
     /**
@@ -334,7 +359,8 @@ const programWith = (
         return 130;
       }
       const taskRead = taskExit.value;
-      if (Result.isFailure(taskRead)) return yield* haltedBeforeRecords(taskRead.failure.reason, taskRead.failure.held);
+      if (Result.isFailure(taskRead))
+        return yield* taskRead.failure._tag === "NoAnswer" ? abandonedBeforeRecords(taskRead.failure.error, taskRead.failure.held) : haltedBeforeRecords(taskRead.failure.reason, taskRead.failure.held);
       const { task, tracker, requirements, held } = taskRead.success;
 
       // Issue #162: an implementation run decodes its check commands and checks their npm scripts against the project's
@@ -489,12 +515,32 @@ const programWith = (
      * parking, given where the ending carries it and otherwise read from parked.json, so an interruption after a
      * completed parking tells the chain the work is parked.
      */
-    const conclude = (code: number, given?: ParkNote | null): Effect.Effect<number> =>
+    const conclude = (code: number, given?: ParkNote | null, abandoned: AbandonLabel | null = null): Effect.Effect<number> =>
       Effect.gen(function* () {
         if (concluded === undefined) return code;
         const parked = given !== undefined ? given : parkedNoteOf(yield* records.loadParked().pipe(Effect.orElseSucceed(() => null)));
-        yield* Ref.set(concluded, Option.some({ code, parked }));
+        yield* Ref.set(concluded, Option.some({ code, parked, abandoned }));
         return code;
+      });
+    /**
+     * Issue #185: what an abandonment did to the work and the label. A send-back that had begun keeps its parking and
+     * sets no label; an implementation run with its tracker parks and sets the label to refined; a run without one
+     * (a refinement, which never counts down, or the tests' run) touches neither.
+     */
+    const abandonment = (failure: NoAnswer | SendBackUnanswered): Effect.Effect<Readonly<{ park: ParkNote | null; label: AbandonLabel }>> =>
+      Effect.gen(function* () {
+        if (failure._tag === "SendBackUnanswered") {
+          const line = abandonAfterSendBackLine(failure.item, failure.park._tag === "Parked" ? failure.park.branch : null, failure.step);
+          yield* ui.say(line);
+          yield* records.converse(`${line}\n\n`).pipe(Effect.ignore);
+          return { park: failure.park, label: { _tag: "SendBackUnfinished", step: failure.step } as const };
+        }
+        if (mode !== "implementation" || tracker === null) return { park: null, label: { _tag: "Unchanged" } as const };
+        const done = yield* Effect.result(abandonRun(start.item).pipe(Effect.provide(tracker), Effect.provide(context)));
+        if (Result.isSuccess(done)) return done.success;
+        // A failure of the abandonment's own records is said; the label was not confirmed.
+        yield* ui.say(describe(done.failure));
+        return { park: parkedNoteOf(yield* records.loadParked().pipe(Effect.orElseSucceed(() => null))), label: { _tag: "Unconfirmed", cause: describe(done.failure) } as const };
       });
     const interrupted = Effect.gen(function* () {
       yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${records.dir}.`);
@@ -561,6 +607,14 @@ const programWith = (
           return yield* conclude(130);
         }
         if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value).pipe(Effect.flatMap((code) => conclude(code)));
+        // Issue #185: no answer came within the wait: the run's work moved to the item's branch and the label set to
+        // refined (abandonRun), or, where a send-back had begun, its undone step said and no label set.
+        if (error.value._tag === "NoAnswer" || error.value._tag === "SendBackUnanswered") {
+          const failure = error.value;
+          const { park, label } = yield* abandonment(failure);
+          const code = yield* abandonedEnding(failure, yield* sessionId, records);
+          return yield* conclude(code, park, label);
+        }
         // Issue #186: the guard's stop keeps the item implementing (requirements Q5), and a parking that failed or a
         // send-back left incomplete keeps it too (Q6): the item is not returned, and the ending's parking is concluded.
         const failure = error.value;

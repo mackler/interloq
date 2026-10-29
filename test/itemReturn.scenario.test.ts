@@ -271,7 +271,7 @@ test("W2-R1-1 (k) Stop task during the relabel's wait: the item is returned, the
   held.advance(3000);
   const exit = await Effect.runPromise(Fiber.await(fiber));
   assert.equal(exitCodeOf(exit), 130, "the interruption did not land inside the run's ending");
-  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null }));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null, abandoned: null }));
   assert.equal(await stateOf(probe), "refined");
   const record = conversation(probe);
   assert.ok(record.includes(itemReturnedLine(item)), record);
@@ -290,7 +290,7 @@ test("W2-R1-1 (k2) Stop task during the relabel's wait, the tracker unreachable 
   held.advance(3000);
   const exit = await Effect.runPromise(Fiber.await(fiber));
   assert.equal(exitCodeOf(exit), 130, "the interruption did not land inside the run's ending");
-  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null }));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null, abandoned: null }));
   // The relabel ran to its last attempt: the line names the tracker's failure, not an interruption of the write.
   const exhausted = `could not label item ${item} refined again: ${trackerFailureText(unreachable())}.`;
   assert.ok(said(probe).includes(exhausted), said(probe));
@@ -322,7 +322,7 @@ test("W2-R1-1 (k3) after the server's fault, an interruption during the relabel 
   held.advance(5000);
   const exit = await Effect.runPromise(Fiber.await(fiber));
   assert.equal(exitCodeOf(exit), 130, "the interruption did not land inside the run's ending");
-  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null }));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some({ code: 1, parked: null, abandoned: null }));
   assert.ok(said(probe).includes("no answer within 5 s"), said(probe));
   assert.deepEqual(
     [held.sleeps().filter((ms) => ms === 5000).length, held.sleeps().filter((ms) => ms === 10_000).length],

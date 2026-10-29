@@ -726,7 +726,7 @@ describe("issue #186: how a send-back ends", () => {
     const { wiring, probe } = testWiring(tempRepo(), { ...verdictAtFirstPlan, tracker });
     const { code, conclusion } = await ended(probe, wiring);
     assert.equal(code, 1);
-    assert.deepEqual(conclusion, { code: 1, parked: { _tag: "NothingParked" } });
+    assert.deepEqual(conclusion, { code: 1, parked: { _tag: "NothingParked" }, abandoned: null });
     assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes("**Halted (exit code 1):**"));
     assert.equal(await stateOf(probe), "implementing");
   });
@@ -752,7 +752,7 @@ describe("issue #186: how a send-back ends", () => {
       await waitFor(probe, "TrackerRetrying");
       await Effect.runPromise(Fiber.interrupt(fiber));
       assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
-      assert.deepEqual(Option.getOrNull(Effect.runSync(Ref.get(concluded))), { code: 130, parked: { _tag: "NothingParked" } }, `asked: ${asked}`);
+      assert.deepEqual(Option.getOrNull(Effect.runSync(Ref.get(concluded))), { code: 130, parked: { _tag: "NothingParked" }, abandoned: null }, `asked: ${asked}`);
       assert.equal(await stateOf(probe), "implementing", `asked: ${asked}`);
     }
   });
