@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
 import fc from "fast-check";
-import { begun, claimParking, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, parked, restored, runLimitOf, saveFailed, started } from "../src/chain.ts";
+import { begun, claimParking, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, type ParkClaim, parked, restored, runLimitOf, saveFailed, started } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 
@@ -150,6 +150,79 @@ test("property: no run starts after the mode is turned off, whatever the claims"
           s = started(s, command.generation, run, command.command.item, "t");
         }
       }
+    }),
+    RUNS,
+  );
+});
+
+// Work review 1 of issue #192 (W1-R1-1): a failed save keeps a granted parking claim.
+const arbItemId = fc.constantFrom("1", "2", "3", "41").map((s) => s as ItemId);
+const arbReason = fc.oneof(
+  fc.constant({ _tag: "NoItems" as const }),
+  arbItemId.map((item) => ({ _tag: "HaltedTwice" as const, item })),
+  fc.option(arbItemId, { nil: null }).map((running) => ({ _tag: "TurnedOff" as const, running })),
+  fc.string().map((message) => ({ _tag: "SaveFailed" as const, message })),
+  arbItemId.map((item) => ({ _tag: "StoppedByDeveloper" as const, item })),
+);
+const arbEntry = fc.record({
+  item: arbItemId,
+  title: fc.string(),
+  root: fc.constant(null),
+  outcome: fc.constantFrom({ _tag: "Finished" as const }, { _tag: "Stopped" as const }, { _tag: "Halted" as const, park: { _tag: "NothingParked" as const } }),
+  returned: fc.constant(null),
+});
+const arbSettings = fc.record({
+  enabled: fc.boolean(),
+  limits: fc.record({ runs: fc.option(fc.integer({ min: 1, max: 9 }).map((n) => Result.getOrThrow(runLimitOf(n))), { nil: null }), cutoff: fc.constant(null) }),
+});
+const arbRunning = (claim: fc.Arbitrary<ParkClaim>) =>
+  fc.record({
+    settings: arbSettings,
+    generation: fc.nat(50),
+    chain: fc.record({
+      _tag: fc.constant("Running" as const),
+      run: fc.nat(100),
+      item: arbItemId,
+      title: fc.string(),
+      claim,
+      generation: fc.nat(50),
+      count: fc.nat(20),
+      halts: fc.array(fc.record({ item: arbItemId, times: fc.nat(3) }), { maxLength: 3 }),
+      history: fc.array(arbEntry, { maxLength: 4 }),
+    }),
+  }) as fc.Arbitrary<ChainState>;
+const arbClaimed = arbRunning(fc.option(arbReason, { nil: null }).map((then) => ({ _tag: "Claimed" as const, then })));
+
+test("W1-R1-1 property: saveFailed keeps a claimed Running chain, its claim ending with SaveFailed", () => {
+  fc.assert(
+    fc.property(arbClaimed, fc.string(), (state, message) => {
+      const s = saveFailed(state, message);
+      assert.deepEqual(s.settings, state.settings);
+      assert.equal(s.chain._tag, "Running");
+      const { claim: _before, ...rest } = state.chain as Extract<ChainState["chain"], { _tag: "Running" }>;
+      const { claim, ...after } = s.chain as Extract<ChainState["chain"], { _tag: "Running" }>;
+      assert.deepEqual(after, rest);
+      assert.deepEqual(claim, { _tag: "Claimed", then: { _tag: "SaveFailed", message } });
+    }),
+    RUNS,
+  );
+});
+
+test("W1-R1-1 property: saveFailed ends every chain that is neither Parking nor a claimed Running chain", () => {
+  const arbOther = fc.oneof(
+    arbRunning(fc.constant({ _tag: "Unclaimed" as const })),
+    fc.tuple(fc.array(arbEnd, { maxLength: 8 }), arbItems).chain(([ends, items]) => {
+      const states = [drive(null, ends, items).state, ...drive(null, ends, items).seen.map((x) => x.state)].filter(
+        (s) => s.chain._tag !== "Parking" && !(s.chain._tag === "Running" && s.chain.claim._tag === "Claimed"),
+      );
+      return fc.constantFrom(...states);
+    }),
+  );
+  fc.assert(
+    fc.property(arbOther, fc.string(), (state, message) => {
+      const s = saveFailed(state, message);
+      assert.deepEqual(s.chain, { _tag: "Idle", ended: { _tag: "SaveFailed", message }, history: state.chain.history });
+      assert.deepEqual(s.settings, state.settings);
     }),
     RUNS,
   );

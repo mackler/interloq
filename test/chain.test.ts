@@ -345,3 +345,37 @@ test("itemReturned sets the outcome on the item's newest halted entry of its gen
   delete file.state.chain.history[0].returned;
   assert.equal(Schema.decodeUnknownSync(ChainFileSchema)(file).state.chain.history[0]?.returned, null);
 });
+
+// Work review 1 of issue #192 (W1-R1-1): a failed save after the claim keeps the claim, so the parking still runs.
+test("W1-R1-1 saveFailed keeps a claimed Running chain with its claim ending SaveFailed", () => {
+  const claimed = claimParking(startedChain(), 1)[0];
+  const off = configured(claimed, OFF_SETTINGS, id("1"));
+  for (const before of [claimed, off]) {
+    const s = saveFailed(before, "disk full");
+    assert.equal(s.chain._tag, "Running");
+    if (s.chain._tag !== "Running" || before.chain._tag !== "Running") return;
+    assert.equal(s.chain.run, before.chain.run);
+    assert.equal(s.chain.item, before.chain.item);
+    assert.equal(s.chain.count, before.chain.count);
+    assert.deepEqual(s.chain.history, before.chain.history);
+    assert.deepEqual(s.chain.claim, { _tag: "Claimed", then: { _tag: "SaveFailed", message: "disk full" } });
+  }
+});
+
+test("W1-R1-1 saveFailed still ends an unclaimed Running chain", () => {
+  const s = saveFailed(startedChain(), "disk full");
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+});
+
+test("W1-R1-1 after a failed save of a claimed chain, the halt is parked and the chain ends SaveFailed", () => {
+  const f = saveFailed(claimParking(startedChain(), 1)[0], "disk full");
+  const [p, c] = ended(f, 1, { code: 1, root: root("1") });
+  assert.equal(p.chain._tag, "Parking");
+  assert.deepEqual(p.chain._tag === "Parking" && p.chain.then, { _tag: "SaveFailed", message: "disk full" });
+  assert.deepEqual(c?.command, { _tag: "Park", item: "1", root: root("1") });
+  const [done, none] = parked(p, gen(p), { _tag: "NothingParked" });
+  assert.equal(none, null);
+  assert.deepEqual(done.chain._tag === "Idle" && done.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+  const [noRoot] = ended(f, 1, { code: 1, root: null });
+  assert.deepEqual(noRoot.chain._tag === "Idle" && noRoot.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+});

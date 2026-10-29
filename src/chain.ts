@@ -308,11 +308,16 @@ export const refused = (state: ChainState, generation: number, reason: ChainEndR
 /**
  * The chain's state could not be saved: it stops rather than risk a start after a restart. A parking in progress keeps
  * `Parking`, so no implementation run is reserved beside its git writes (behavior 15), and the chain ends saying the state
- * could not be saved once the parking ends (`parked` applies `then`).
+ * could not be saved once the parking ends (`parked` applies `then`). A `Running` chain whose run's parking was claimed
+ * is kept for the same reason (work review 1 of issue #192, W1-R1-1): the program has already kept the item implementing
+ * on that claim, so the parking must still run; its claim ends with SaveFailed, which `ended` takes as the end after it.
  */
 export const saveFailed = (state: ChainState, message: string): ChainState => {
   const reason: ChainEndReason = { _tag: "SaveFailed", message };
-  return state.chain._tag === "Parking" ? { ...state, chain: { ...state.chain, then: reason } } : idle(state, reason);
+  const chain = state.chain;
+  if (chain._tag === "Parking") return { ...state, chain: { ...chain, then: reason } };
+  if (chain._tag === "Running" && chain.claim._tag === "Claimed") return { ...state, chain: { ...chain, claim: { _tag: "Claimed", then: reason } } };
+  return idle(state, reason);
 };
 
 /** The save that must precede a parking failed, so no parking runs: the chain ends with the end decided, else SaveFailed. */

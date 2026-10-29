@@ -787,3 +787,43 @@ test("a return whose relabeling is unreachable on every attempt says NotReturned
   assert.equal((await entryOf(h, "1"))?.returned?._tag, "NotReturned");
   assert.equal(await endedReason(h), "ParkFailed");
 });
+
+// Work review 1 of issue #192 (W1-R1-1): a failed save after the claim keeps the claim, so the parking still runs.
+const claimedThenFailedSave = async (recovers: boolean) => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  let failing = false;
+  const repo = identified();
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const h = await harness([halting(leftOnly)], { repo, tracker: only, uiOf: holdingHalt(held), persistence: flagged(repo, () => failing) });
+  await begin(h, "1");
+  await until("the claim", async () => {
+    const c = (await chainOf(h)).chain;
+    return c._tag === "Running" && c.claim._tag === "Claimed";
+  });
+  failing = true;
+  await run(h.manager.setChain(settings(5)));
+  if (recovers) failing = false;
+  release();
+  await idle(h);
+  return h;
+};
+
+test("W1-R1-1 a failed save after the claim, the persistence recovering: the work is parked, the item stays implementing, the chain ends SaveFailed", async () => {
+  const h = await claimedThenFailedSave(true);
+  assert.equal(parkBranches(h, "1").length, 1);
+  const parkedNote = JSON.parse(fs.readFileSync(path.join(h.repo, "plan-review", (await entryOf(h, "1"))?.root ?? "", "parked.json"), "utf8"));
+  assert.equal(parkedNote._tag, "Parked");
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal((await entryOf(h, "1"))?.returned, null);
+  assert.equal(await endedReason(h), "SaveFailed");
+});
+
+test("W1-R1-1 a failed save after the claim, the persistence still failing: the parking is abandoned and the item returned refined", async () => {
+  const h = await claimedThenFailedSave(false);
+  assert.deepEqual(parkBranches(h, "1"), []);
+  assert.equal(await stateOf(h, "1"), "refined");
+  assert.match(git(h.repo, "status", "--porcelain"), /left\.txt/);
+  assert.deepEqual((await entryOf(h, "1"))?.returned, { _tag: "Returned" });
+  assert.equal(await endedReason(h), "SaveFailed");
+});
