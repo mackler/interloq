@@ -1,13 +1,14 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect, listOf, startFromTab, test, toTheList } from "./fixtures.ts";
+import { dashboard, expect, listOf, startFromTab, test, toHaveEnded, toTheList } from "./fixtures.ts";
 import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
-// and both panels are side by side; below it, one panel at a time, chosen by its title, with a badge for the other's
-// new messages, and a prompt selects "You and Interloq". The "tabs" server asks two decisions in a row.
+// and both columns are side by side; below it, one column at a time, chosen by its title, and a prompt selects "You and
+// Interloq". Issue #22: that column is the dashboard, which has no message list, so only "Claude and Codex" keeps a
+// reading position, a chip of new messages and a badge on its button. The "tabs" server asks two decisions in a row.
 const URL = layoutUrl("tabs");
 const LEFT = "You and Interloq";
 const RIGHT = "Claude and Codex";
@@ -56,7 +57,7 @@ const compactChecks = async (page: Page, context: import("@playwright/test").Bro
   expect((await box(page.locator("[name=answer]"))).width, "the answer field's width").toBeGreaterThanOrEqual(280);
   await expect(panel(page, RIGHT)).toBeHidden();
 
-  // The other panel by its title; a prompt brings "You and Interloq" back.
+  // The other panel by its title; a prompt brings the dashboard's column, "You and Interloq", back.
   await page.getByRole("button", { name: new RegExp(RIGHT) }).click();
   await expect(panel(page, RIGHT)).toBeVisible();
   await expect(pane(page)).toBeHidden();
@@ -69,12 +70,13 @@ const compactChecks = async (page: Page, context: import("@playwright/test").Bro
   // Messages that arrive in the hidden panel are counted on its button.
   await continueWithoutDeciding(other).click();
   await expect(page.getByRole("button", { name: new RegExp(`${RIGHT}.*[1-9][0-9]* new`) })).toBeVisible();
-  await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+  await toHaveEnded(page, 0);
   await other.close();
 };
 
-// W2-R1-3 and P3-R1-1 (work review 2 and planning 3): a panel keeps its reading position across a switch and a resize,
-// and a panel that was hidden follows its end when it is shown again, unless the user had scrolled it up.
+// W2-R1-3 and P3-R1-1 (work review 2 and planning 3): the right panel keeps its reading position across a switch and a
+// resize, and when it was hidden it follows its end when shown again, unless the user had scrolled it up. Issue #22: the
+// dashboard has no list, so these are the right panel's alone.
 const LONG_URL = layoutUrl("long");
 const list = (page: Page, name: string) => panel(page, name).locator(".list");
 const fromEnd = (l: Locator) => l.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
@@ -337,7 +339,7 @@ test.describe("the tests of the tabs server, in order", () => {
     await continueWithoutDeciding(page).click();
     await expect(asking(page, SECOND)).toBeVisible();
     await continueWithoutDeciding(page).click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await toHaveEnded(page, 0);
   });
 
   // W2-R1-2: a notice is visible whichever panel is shown; here the server's own end (finding 15).
@@ -360,7 +362,7 @@ test.describe("the tests of the tabs server, in order", () => {
 
   // W2-R1-1: prompt 1 of a new run is a new prompt, although its number is that of the old run's prompt. The page is
   // disconnected while run 1 ends and run 2 starts, so the replay brings run 2's prompt 1 with no step without a prompt.
-  test("(L8) a new run's first prompt selects 'You and Interloq' although the old run waited on a prompt of the same number", async ({ page, context }) => {
+  test("(L8) a new run's first prompt selects the dashboard's column although the old run waited on a prompt of the same number", async ({ page, context }) => {
     let hold = false;
     let current: import("@playwright/test").WebSocketRoute | null = null;
     await page.routeWebSocket(/\/ws$/, (ws) => {
@@ -387,6 +389,7 @@ test.describe("the tests of the tabs server, in order", () => {
     await expect(page.getByText("connected", { exact: true })).toBeVisible();
     await expect(page.getByText(`Refined item ${second}`).first()).toBeVisible();
     await expect(pane(page)).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(`^${LEFT}`) })).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator("[name=answer]")).toBeVisible();
     await other.close();
   });
@@ -434,15 +437,16 @@ test.describe("the tests of the tabs server, in order", () => {
 test.describe("the tests of the long server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(L4) a panel's reading position survives a switch of panels and a resize across 840 px", async ({ page }) => {
+  test("(L4) the right panel's reading position survives a switch of columns and a resize across 840 px", async ({ page }) => {
     await longRunAtItsPrompt(page);
-    await toTop(list(page, LEFT));
     await showPanel(page, RIGHT);
+    await toTop(list(page, RIGHT));
     await showPanel(page, LEFT);
-    expect(await list(page, LEFT).evaluate((el) => el.scrollTop), "after a switch").toBe(0);
+    await showPanel(page, RIGHT);
+    expect(await list(page, RIGHT).evaluate((el) => el.scrollTop), "after a switch").toBe(0);
     await page.setViewportSize({ width: 1280, height: 844 });
     await page.setViewportSize({ width: 390, height: 844 });
-    expect(await list(page, LEFT).evaluate((el) => el.scrollTop), "after a resize").toBe(0);
+    expect(await list(page, RIGHT).evaluate((el) => el.scrollTop), "after a resize").toBe(0);
   });
 
   test("(L5) a hidden panel opens at its end, and follows the messages that arrived while it was hidden", async ({ page }) => {
@@ -512,11 +516,13 @@ test.describe("the tests of the longChoices server, in order", () => {
       await page.keyboard.press("Enter");
       // Issue #184: the answer goes to Claude Code in the background and the agreed list is then done, so the next
       // prompt is the summary. The reply "Anything else?" acknowledges the answer and asks nothing (requirements, "What
-      // Claude Code is told"), so it is said as Claude Code's message in the conversation and is no longer a prompt.
+      // Claude Code is told"), so it is no longer a prompt; issue #22: it was Claude Code's latest message on the
+      // dashboard, and the proposed summary has replaced it there.
       await expect(pane(page).getByRole("button", { name: CONFIRM_SUMMARY_LABEL, exact: true })).toBeVisible();
+      await expect(pane(page).getByText("Anything else?")).toHaveCount(0);
       await pane(page).getByRole("button", { name: SHOW_CONVERSATION }).click();
-      await expect(panel(page, LEFT).getByText("Anything else?")).toBeVisible();
-      await expect(panel(page, LEFT).locator("[data-author=user]").last()).toContainText("Relative time");
+      await expect(dashboard(page).locator("[data-claude]")).toContainText("Relative time.");
+      await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]")).toContainText("Relative time");
       await page.locator("button[name=stop]").click();
       await confirmEnd(page);
     });
@@ -921,7 +927,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
       await expect(question).toBeInViewport();
       const first = pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
       await expect(first).toBeInViewport({ ratio: 0.1 });
-      // The transcript is not what the user reads while the question waits (issue #20).
+      // The dashboard is not what the user reads while the question waits (issue #20).
       await expect(panel(page, LEFT)).toBeHidden();
       await expect(pane(page).locator(".top, .bottom")).toHaveCount(0);
       expect(await pane(page).evaluate((el) => getComputedStyle(el).overflowY), "the pane is the scrolling region").toBe("auto");
@@ -935,7 +941,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
       // The pointer is left where Start was clicked; a term may lie under it now and its tooltip cover the answer.
       await page.mouse.move(0, 0);
       await continueWithoutDeciding(page).click();
-      await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+      await toHaveEnded(page, 0);
     });
   }
   test("(L19) a long question at 640 × 400, below the 450 px limit: no sideways overflow, the question in view, the first option reached by scrolling", async ({ page }) => {
@@ -944,7 +950,7 @@ test.describe("the tests of the longQuestion server, in order", () => {
     await belowTheLimit(page, pane(page).locator(".question-text"));
     await page.mouse.move(0, 0);
     await continueWithoutDeciding(page).click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await toHaveEnded(page, 0);
   });
 });
 
@@ -965,7 +971,7 @@ test.describe("the tests of the longContextShortAnswers server, in order", () =>
     const whole = await pane(page).evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
     expect(whole.scroll, "the pane's content does not fit").toBeLessThanOrEqual(whole.client + 1);
     await continueWithoutDeciding(page).click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await toHaveEnded(page, 0);
   });
 });
 
@@ -1006,7 +1012,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
       await expect(sectionButton(analysis, attachedHeading("request"))).toHaveCount(1);
       await expect(sectionButton(analysis, attachedHeading("reason"))).toHaveCount(0);
       await firstOption().click();
-      await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+      await toHaveEnded(page, 0);
     });
   }
   // Issue #73: the page names Liberation, installed in Regular, Bold, Italic and Bold Italic in the developer's browser,
@@ -1031,7 +1037,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
     expect(sizes.length, "the details hold code").toBeGreaterThan(0);
     for (const s of sizes) expect(Math.abs(s.own - (s.parent * 13) / 16), `${s.tag} is ${s.own} px under a parent of ${s.parent} px`).toBeLessThanOrEqual(0.5);
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await toHaveEnded(page, 0);
   });
   // Issue #133 (the developer's instruction of 11 Oct 2026, requirements item 1), superseding the decision of the task of
   // L21 that kept the heading on one line: the heading is "Your Choice:" and the question, and it wraps, never cut.
@@ -1050,7 +1056,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
       expect(m.overflow).not.toBe("ellipsis");
       await inWindow(page, analysis.locator("h2"), "the heading");
       await cards(page).first().click();
-      await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+      await toHaveEnded(page, 0);
     });
   }
   // Issue #133 (decision G-R1-1): beside its analysis the question and its choices are at the top of the page, so they
@@ -1073,7 +1079,7 @@ test.describe("the tests of the permissionLong server, in order", () => {
     const parts = everyPart(analysis);
     for (let i = 0; i < (await parts.count()); i++) await unclipped(page, parts.nth(i), `part ${i}`);
     await cards(page).first().click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await toHaveEnded(page, 0);
   });
   // Finding W2-R1-1 of work review 2: a notice that appears while the analysis is shown takes room above the decision
   // area, and the room is measured again, so the question and the first answer stay in view without a resize. The
@@ -1111,14 +1117,14 @@ test.describe("the tests of the permissionLong server, in order", () => {
     // analysis is laid out again after it; the layout settles within a few frames, so the check is retried until then.
     await expect(async () => questionAndFirstAnswerAtTheTop()).toPass({ timeout: 5_000 });
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+    await toHaveEnded(page, 0);
   });
 });
 
 test.describe("the tests of the whitespace server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(L22) code in rendered Markdown keeps its whitespace: in the pane, beside an analysis and in the transcript", async ({ page }) => {
+  test("(L22) code in rendered Markdown keeps its whitespace: in the pane, beside an analysis and in the dashboard", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await startTask(page, WHITESPACE_URL);
     await expect(pane(page).locator(".question-text")).toContainText("Do you want to allow it?");
@@ -1132,8 +1138,9 @@ test.describe("the tests of the whitespace server, in order", () => {
     await request.click();
     await distinctWidths("beside the analysis", await bodyOf(page, request));
     await page.getByRole("group", { name: "Proposed answers" }).getByRole("button").first().click();
-    await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
-    await distinctWidths("in the transcript", panel(page, LEFT).locator("article", { hasText: "Probe" }).last());
+    await toHaveEnded(page, 0);
+    // Issue #22: the answered question is the dashboard's last answer, its input shown inline (AnsweredQuestion).
+    await distinctWidths("in the dashboard", dashboard(page).locator("[data-last-answer]"));
   });
 });
 
@@ -1166,7 +1173,7 @@ test.describe("the tests of the transportLong server, in order", () => {
       await end.scrollIntoViewIfNeeded();
       await expect(end).toBeInViewport();
       await firstOption().click();
-      await expect(panel(page, LEFT).getByText(/finished after 1 implementation phase/)).toBeVisible();
+      await toHaveEnded(page, 0);
     });
   }
 });
