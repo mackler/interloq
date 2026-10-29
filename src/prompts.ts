@@ -3,6 +3,7 @@
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
+import type { ParkedEnding } from "./runEnding.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -1521,7 +1522,7 @@ export const TRACKER_FAILURE_TEXTS = {
   ambiguous: (id: string, labels: readonly string[]) => `item ${id} of the issue tracker carries more than one stage label: ${labels.join(", ")}`,
 } as const;
 /** The tracker steps at the end or the start of a run (TrackerStepFailed), as a halt names them. */
-export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "recordRefinement", "setRefined", "setImplemented"] as const;
+export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "recordRefinement", "setRefined", "setImplemented", "readComments", "commentSendBack", "setUnrefined"] as const;
 export type TrackerStep = (typeof TRACKER_STEPS)[number];
 /** A tracker step that failed: what was not done, the cause, and that the records stand (behavior 11). */
 export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null, check: WriteCheck | null): string {
@@ -1532,6 +1533,9 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
     recordRefinement: `the requirements were written to item ${item}, but the record of whether the developer was asked a question could not be added, so its state was not changed`,
     setRefined: `the requirements were written to item ${item}, but its state was not changed to refined`,
     setImplemented: `the work is done, but item ${item} could not be set to implemented and stays implementing`,
+    readComments: `the comments of item ${item} could not be read, so it was neither sent back nor parked, and it stays implementing`,
+    commentSendBack: `the comment saying what item ${item}'s requirements left out could not be added, and its label was not changed`,
+    setUnrefined: `the comment was added to item ${item}, but it could not be set to unrefined and stays implementing`,
   };
   /** A write was attempted (W1-R1-1): the lead asserts nothing of its outcome, which the check alone states. */
   const attempted: Record<TrackerStep, string> = {
@@ -1540,6 +1544,9 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
     recordRefinement: `the requirements were written to item ${item}, but adding the record of whether the developer was asked a question could not be completed, so its state was not changed`,
     setRefined: `the requirements were written to item ${item}, but setting it to refined could not be completed`,
     setImplemented: `the work is done, but setting item ${item} to implemented could not be completed`,
+    readComments: `reading the comments of item ${item} could not be completed, so it was neither sent back nor parked`,
+    commentSendBack: `adding the comment saying what item ${item}'s requirements left out could not be completed, and its label was not changed`,
+    setUnrefined: `the comment was added to item ${item}, but setting it to unrefined could not be completed`,
   };
   return `${(check === null ? unsent : attempted)[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
 }
@@ -3558,24 +3565,36 @@ export const earlierPlanSetAsideLine = (earlier: RunRoot): string =>
 
 // ---- Issue #147: the chain of implementation runs, and the parking of a halted run's work ----
 
-/** The message of the commit that keeps a halted run's leftovers on its branch; its last line is the trailer. */
-export const parkCommitMessage = (item: string, root: RunRoot, branch: string): string =>
+/** How a run whose work is parked ended, as the parking's texts say it (issue #186: the three endings stated once). */
+const endingWords = (ending: ParkedEnding): Readonly<{ adjective: string; clause: string }> => {
+  switch (ending) {
+    case "halted":
+      return { adjective: "halted", clause: "halted" };
+    case "sentBack":
+      return { adjective: "sent-back", clause: "sent its item back to refinement" };
+    case "stoppedUnrefined":
+      return { adjective: "stopped", clause: "declared its item not refined and stopped" };
+  }
+};
+
+/** The message of the commit that keeps a parked run's leftovers on its branch; its last line is the trailer. */
+export const parkCommitMessage = (item: string, root: RunRoot, branch: string, ending: ParkedEnding = "halted"): string =>
   [
-    `Work of a halted implementation run of item #${item} (${rootName(root)})`,
+    `Work of a ${endingWords(ending).adjective} implementation run of item #${item} (${rootName(root)})`,
     "",
-    `Interloq made this commit after the run halted, with ${PARK_NO_VERIFY}, skipping the repository's hooks, so the run's work is kept on the branch ${branch}.`,
+    `Interloq made this commit after the run ${endingWords(ending).clause}, with ${PARK_NO_VERIFY}, skipping the repository's hooks, so the run's work is kept on the branch ${branch}.`,
     "",
     parkTrailerOf(root),
   ].join("\n");
 
 /** The line written to the halted run's conversation.md once its work is on its branch. */
-export const parkedRecordLine = (record: ParkedRecord): string => {
+export const parkedRecordLine = (record: ParkedRecord, ending: ParkedEnding = "halted"): string => {
   const paths = record.committed.length === 0 ? "no files were left uncommitted" : `the files it left uncommitted were committed with ${PARK_NO_VERIFY}, skipping the repository's hooks: ${record.committed.join(", ")}`;
-  return `**Parked:** this run halted; ${paths}. Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began. The item keeps the label implementing.`;
+  return `**Parked:** this run ${endingWords(ending).clause}; ${paths}. Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began.${ending === "sentBack" ? "" : " The item keeps the label implementing."}`;
 };
 
 /** The line written to the halted run's conversation.md where there was nothing to keep. */
-export const nothingParkedLine = "**Parked:** this run halted with no work to keep: it made no commit and left no file uncommitted.";
+export const nothingParkedLine = (ending: ParkedEnding = "halted"): string => `**Parked:** this run ${endingWords(ending).clause} with no work to keep: it made no commit and left no file uncommitted.`;
 
 /** The chain's switch on the Implementation tab, its two optional fields and their supporting texts. */
 export const CHAIN_SWITCH_LABEL = "Start the next refined item when a run ends";

@@ -10,23 +10,31 @@ import { type BranchName, type ParkedRecord, parkBranchOf, parkTrailerOf } from 
 import { nothingParkedLine, PARK_NO_START_COMMIT, parkBranchTakenText, parkCommitMessage, parkedRecordLine } from "./prompts.ts";
 import type { StoreError, StoreShape } from "./services.ts";
 import type { ItemId } from "./tracker.ts";
+import type { ParkedEnding } from "./runEnding.ts";
 
 /** Stops the parking with its note: a value, never a failure, carried in the error channel to leave the phases early. */
 type Early = Readonly<{ _tag: "Early"; note: ParkNote }>;
 const early = (note: ParkNote): Effect.Effect<never, Early> => Effect.fail({ _tag: "Early", note });
 const failed = (message: string): Effect.Effect<never, Early> => early({ _tag: "ParkFailed", message });
 
-/** Parks the work of the halted run whose store is given. Never fails: a StoreError becomes ParkFailed with its text. */
-export const parkHalted = (store: StoreShape, item: ItemId): Effect.Effect<ParkNote> => {
+/** Parks the work of the halted run whose store is given (the run manager's parking of a halted run's work). */
+export const parkHalted = (store: StoreShape, item: ItemId): Effect.Effect<ParkNote> => parkWork(store, item, "halted");
+
+/**
+ * Parks the work of the run whose store is given, the one parking of every ending that parks (issue #186, src/runEnding.ts):
+ * the ending names the run's end in the commit message and the conversation.md line. Never fails: a StoreError becomes
+ * ParkFailed with its text.
+ */
+export const parkWork = (store: StoreShape, item: ItemId, ending: ParkedEnding): Effect.Effect<ParkNote> => {
   const time = Clock.currentTimeMillis.pipe(Effect.map((ms) => new Date(ms).toISOString()));
   const nothing = Effect.gen(function* () {
     yield* store.saveParked({ _tag: "Nothing", version: 2, time: yield* time });
-    yield* store.converse(`${nothingParkedLine}\n\n`);
+    yield* store.converse(`${nothingParkedLine(ending)}\n\n`);
     return yield* early({ _tag: "NothingParked" });
   });
   const recorded = (record: ParkedRecord): Effect.Effect<ParkNote, StoreError> =>
     Effect.gen(function* () {
-      yield* store.converse(`${parkedRecordLine(record)}\n\n`);
+      yield* store.converse(`${parkedRecordLine(record, ending)}\n\n`);
       yield* store.saveParked({ ...record, recorded: true });
       return { _tag: "Parked", branch: record.branch, commit: record.commit } as const;
     });
@@ -43,7 +51,7 @@ export const parkHalted = (store: StoreShape, item: ItemId): Effect.Effect<ParkN
     if (Result.isFailure(branchResult)) return yield* failed(`the branch name ${branchResult.failure.text} is not one git accepts.`);
     const branch: BranchName = branchResult.success;
     if (previous === null) yield* store.saveParked({ _tag: "Intended", version: 2, branch, start_commit: start, time: yield* time });
-    yield* store.commitLeftovers(parkCommitMessage(item, store.root, branch));
+    yield* store.commitLeftovers(parkCommitMessage(item, store.root, branch, ending));
     const tip = yield* store.branchTip(branch);
     const head = yield* store.head();
     if (tip === null && head === start) return yield* nothing;
