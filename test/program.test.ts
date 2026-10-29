@@ -9,6 +9,7 @@ import { Planner, Reviewer, Tracker } from "../src/services.ts";
 import type { FakeItem } from "./fakeTracker.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
+import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
@@ -285,6 +286,36 @@ for (const mode of ["refinement", "implementation"] as const) {
     assert.equal(held.state === "refined" && (await Effect.runPromise(tracker.items))[0].body !== item.body, mode === "refinement");
   });
 }
+
+// Issue #186 (requirements Q3): a refinement run's task carries the item's comments, a send-back's and the developer's,
+// without the markers; an implementation run's carries none.
+const sentBackItem = (): FakeItem => ({
+  ...sectionedItem(),
+  comments: [
+    { body: commentText({ _tag: "SentBack", key: runCommentKey("earlier-run", "verdict-1"), date: "2026-10-28", missing: "The retention period of a note." }), created: "2026-10-28T10:00:00Z" },
+    { body: "Keep them 30 days.", created: "2026-10-28T11:00:00Z" },
+  ],
+});
+for (const mode of ["refinement", "implementation"] as const) {
+  test(`issue #186: a${mode === "implementation" ? "n" : ""} ${mode} run's task ${mode === "refinement" ? "carries" : "does not carry"} the item's comments`, async () => {
+    const item = sentBackItem();
+    const script = mode === "refinement" ? { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }] } : converging;
+    const { wiring, probe } = testWiring(tempRepo(), { ...script, tracker: fakeTrackerOf([item]) });
+    assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, mode, item.id), wiring))), 0);
+    const first = probe.planner.prompts[0];
+    for (const text of ["The retention period of a note.", "Keep them 30 days."]) assert.equal(first.includes(text), mode === "refinement", text);
+    assert.ok(!first.includes("interloq:"), "a marker reached the task");
+  });
+}
+
+test("issue #186: a refinement whose comments cannot be read halts with 1 before any agent call, its halt recorded", async () => {
+  const tracker = fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
+  await Effect.runPromise(tracker.failNext("comments", new TrackerAuthRefused({ tracker: "GitHub", status: 401 })));
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }], tracker, mode: "refinement" });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "refinement"), wiring))), 1);
+  assert.deepEqual(probe.planner.prompts, []);
+  assertHaltedBeforeRecords(probe);
+});
 
 test("an item the tracker does not hold halts the run with 1 before any agent call, its halt recorded", async () => {
   const { wiring, probe } = testWiring(tempRepo(), converging);

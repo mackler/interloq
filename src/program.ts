@@ -5,12 +5,12 @@ import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSy
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped } from "./errors.ts";
-import { heldTrackerEnv, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
+import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
 import { blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
 import { implementationRun, refinementRun, run } from "./run.ts";
 import type { AgentSdk } from "./sdk.ts";
-import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, Ui, type UiShape } from "./services.ts";
+import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
 import { fileOf, loadSourcedConfig } from "./config.ts";
 import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestCheck.ts";
@@ -19,7 +19,8 @@ import { allocateRunRoot, makeStore } from "./store.ts";
 import { recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
-import type { ItemId, TrackerItem } from "./tracker.ts";
+import type { ItemComment, ItemId, TrackerItem } from "./tracker.ts";
+import { commentsTaskText } from "./itemComments.ts";
 import { listedState, type RunMode } from "./runMode.ts";
 import { readRefinement, type Refinement, type SectionMalformed, withoutRefinement } from "./refinement.ts";
 
@@ -62,12 +63,18 @@ export type RunStart =
 
 /**
  * The task text of a run from its item: the title, a blank line, and the body. A refinement run takes the body without
- * its `Refined using Interloq` section, since the run writes a new one; an implementation run takes the whole body,
- * the section included. A malformed section is SectionMalformed; a blank text BlankTask.
+ * its `Refined using Interloq` section, since the run writes a new one, and then the item's comments (issue #186,
+ * requirements Q3: what an earlier send-back found missing, and what the developer answered), as `commentsTaskText`
+ * gives them; an implementation run takes the whole body, the section included, and no comments. A malformed section
+ * is SectionMalformed; a blank text BlankTask.
  */
-export const taskTextOf = (mode: RunMode, item: TrackerItem): Result.Result<Task, BlankTask | SectionMalformed> => {
+export const taskTextOf = (mode: RunMode, item: TrackerItem, comments: readonly ItemComment[]): Result.Result<Task, BlankTask | SectionMalformed> => {
   const body = mode === "refinement" ? withoutRefinement(item.body) : Result.succeed(item.body);
-  return Result.flatMap(body, (text) => taskOf(text.trim() === "" ? item.title : `${item.title}\n\n${text}`));
+  const commented = mode === "refinement" ? commentsTaskText(comments) : "";
+  return Result.flatMap(body, (text) => {
+    const parts = [item.title, text.trim() === "" ? "" : text, commented].filter((part) => part !== "");
+    return taskOf(parts.join("\n\n"));
+  });
 };
 /** What a run starts with until the program reads its item (S5 of issue #120 replaces it with RunStart). */
 export type TaskStart = Readonly<{ task: Task; project: string }>;
@@ -151,21 +158,30 @@ export const program = (
           // Issue #171 (requirements Q3): the first read is repeated like every tracker request; its records are held
           // until conversation.md exists, and its question carries no Help me decide (the developer's decision of 15 Oct 2026).
           const held = yield* Ref.make<readonly string[]>([]);
-          const read = yield* Effect.exit(Effect.flatMap(Tracker, (t) => readWithRetry(t, start.item, heldTrackerEnv(ui, config, held))).pipe(Effect.provide(layer.success)));
-          if (Exit.isFailure(read)) {
-            const error = Cause.findErrorOption(read.cause);
-            if (Option.isNone(error)) return yield* Effect.die(Cause.squash(read.cause));
-            const failure = error.value;
-            if (failure._tag === "UserStopped") return yield* Effect.fail(failure);
-            return Result.fail({ reason: isTrackerError(failure) ? trackerFailureText(failure) : describe(failure), held: yield* Ref.get(held) });
-          }
-          const item = read.value;
+          const env = heldTrackerEnv(ui, config, held);
+          /** A read of the run's before its records: a failure for good is the halt's reason; End the run is UserStopped. */
+          const heldRead = <A>(read: (t: TrackerShape) => Effect.Effect<A, TrackerError | RunError>): Effect.Effect<Result.Result<A, Unready>, UserStopped> =>
+            Effect.gen(function* () {
+              const exit = yield* Effect.exit(Effect.flatMap(Tracker, read).pipe(Effect.provide(layer.success)));
+              if (Exit.isSuccess(exit)) return Result.succeed(exit.value);
+              const error = Cause.findErrorOption(exit.cause);
+              if (Option.isNone(error)) return yield* Effect.die(Cause.squash(exit.cause));
+              const failure = error.value;
+              if (failure._tag === "UserStopped") return yield* Effect.fail(failure);
+              return Result.fail({ reason: isTrackerError(failure) ? trackerFailureText(failure) : describe(failure), held: yield* Ref.get(held) });
+            });
+          const read = yield* heldRead((t) => readWithRetry(t, start.item, env));
+          if (Result.isFailure(read)) return Result.fail(read.failure);
+          // Issue #186 (requirements Q3): a refinement reads the item's comments, repeated and held as the first read is.
+          const comments = start.mode === "refinement" ? yield* heldRead((t) => readCommentsWithRetry(t, start.item, env)) : Result.succeed<readonly ItemComment[]>([]);
+          if (Result.isFailure(comments)) return Result.fail(comments.failure);
+          const item = read.success;
           const heldRecords = yield* Ref.get(held);
           yield* ui.say(itemStartedLine(start.mode, item.id, item.title));
           // An implementation run's requirements are the item's section, where it has one (S7).
           const section = readRefinement(item.body);
           if (Result.isFailure(section)) return Result.fail({ reason: sectionMalformedText(item.id, section.failure.reason), held: heldRecords });
-          return Result.mapBoth(taskTextOf(start.mode, item), {
+          return Result.mapBoth(taskTextOf(start.mode, item, comments.success), {
             onFailure: (e): Unready => ({ reason: e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason), held: heldRecords }),
             onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success), held: heldRecords }),
           });

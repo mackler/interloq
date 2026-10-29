@@ -550,7 +550,7 @@ export const makeRunManager = (
               }
             }
             yield* Ref.set(idRef, runId);
-            yield* append(runId, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item), () => item.title), mode, item: { id: item.id, title: item.title } });
+            yield* append(runId, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item, []), () => item.title), mode, item: { id: item.id, title: item.title } });
             yield* Deferred.succeed(gate, undefined);
             return runId;
           }),
