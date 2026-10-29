@@ -92,12 +92,54 @@ export type QuestionRule = Readonly<{ id: string; rule: string; criterion: strin
  */
 /** Issue #183 (the developer's instruction of 20 Oct 2026): each option's time cost, where the records allow it to be measured. */
 export const OPTION_TIME_COST = "State in each option's description its time cost in minutes where the records Interloq keeps of the earlier runs in this project allow it to be measured, and say that it cannot be measured where they do not.";
+/**
+ * The concerns through which a question list is discovered (the developer's instruction of 29 Oct 2026). They are
+ * lenses for finding what the task's success depends on, not a checklist that owes a question each, and the inventory
+ * does not claim to hold every concern a task can raise. `TASK_INVESTIGATION` gives them to the writer of the list and
+ * `questionReviewPrompt` gives them to its reviewer, from this one source.
+ */
+export const TASK_CONCERNS: readonly string[] = [
+  "correctness",
+  "completeness and scope",
+  "usability and accessibility",
+  "security",
+  "privacy and confidentiality",
+  "data integrity and preservation",
+  "reliability and resilience",
+  "availability",
+  "performance and efficiency",
+  "scalability and capacity",
+  "compatibility and interoperability",
+  "maintainability",
+  "testability and verifiability",
+  "operability and observability",
+  "deployability and change safety",
+  "portability and environmental fitness",
+  "cost and resource stewardship, the user's own time and attention included",
+  "safety and harm prevention",
+  "legal, contractual and policy compliance",
+  "consistency and predictability",
+  "simplicity and proportionality",
+  "adaptability and reversibility",
+  "trust and transparency",
+];
+/** The concerns as one sentence of a prompt, from `TASK_CONCERNS` alone. */
+export const taskConcernsText = (): string => `Consider at least these concerns, as lenses for finding what the task's success depends on and not as a checklist that owes a question each: ${TASK_CONCERNS.join("; ")}. The inventory is not exhaustive; consider any other concern the task or this project raises, and pass over a concern the task does not touch.`;
+/**
+ * How the writer of the question list finds its questions (the developer's instruction of 29 Oct 2026): from the task
+ * and what accomplishing it requires, not from a survey of choices that would change a plan. The named practices are
+ * examples that may bear on a choice and settle none by themselves.
+ */
+export const TASK_INVESTIGATION = `Understand the task and what accomplishing it requires. Work out what its success depends on, and investigate the uncertainties and the choices you find in it: its intended outcome first, what the user wants to be true once the work is done, and then the concerns below.
+${taskConcernsText()}
+Investigate each uncertainty or choice you find with the task, the codebase, this project's documentation, the conventions the codebase already follows, the practices that apply, and your own engineering judgment. Practices that may bear on a choice include the Twelve-Factor App, continuous delivery as Humble and Farley describe it, and test-driven development as Beck describes it; apply one where it fits, and treat none of them as settling a choice by itself.
+Let each question come out of that investigation. Do not survey the choices the task contains, write a question for each and then remove the ones that do not qualify: a question exists because the investigation reached a point that needs the user, and for no other reason. You may reason about the work and about what it would cause without writing an implementation plan.`;
 export const QUESTION_RULES: readonly QuestionRule[] = [
   {
     // Issues #95 and #99 (6 Oct 2026): the one statement of whether to ask, and of the premise a question's options share.
     id: "whetherToAsk",
-    rule: "Where you decide whether to ask a question, ask it only if all three hold: its answer changes the plan or the work; nothing available settles it, neither the task text, the codebase, the project documentation, nor an answer the user has already given; and a difference the reader can act on, as stated below for each option, can be named between its options. Where any of the three fails, do not ask: settle the matter yourself and say what you settled. Before asking, state the premise the options share, what is true if any of them is chosen. If the same sources do not settle that premise, the premise is the question, and it is asked first; a question whose options all rest on an unsettled premise is not asked until the premise is.",
-    criterion: "a question is asked that the task text, the codebase, the project documentation or an earlier answer of the user settles (name the file or the answer), or whose answer changes neither the plan nor the work, or whose options differ in nothing the reader can act on; or every proposed answer of a question assumes a premise that none of those sources establishes (name the premise and the files that would have settled it), and the premise is not asked first.",
+    rule: "Ask the user only where you need the user's knowledge or decision: to establish what the task is to accomplish, or to resolve an uncertainty or choice whose consequences you cannot responsibly carry yourself. That the options would lead to different plans or different work does not establish the need, since almost every choice in a task does. Ask only if all three hold: the user's knowledge or decision is needed in that sense; nothing available settles it, neither the task text, the codebase, the project documentation, the conventions the codebase already follows, a practice that applies, nor an answer the user has already given; and a difference the reader can act on, as stated below for each option, can be named between its options. Weigh the default you would otherwise assume: a default that the codebase's conventions or a sound practice support is evidence that you may proceed without asking, and is not conclusive, so judge how well it is supported and what would follow if it were wrong. Where a wrong choice would cost the user little to correct, choose the behavior the conventions or the practice support and do not ask. Where any of the three fails, do not ask: settle the matter yourself and say what you settled. The user's time and attention are scarce, and a question spends them. Before asking, state the premise the options share, what is true if any of them is chosen. If the same sources do not settle that premise, the premise is the question, and it is asked first; a question whose options all rest on an unsettled premise is not asked until the premise is.",
+    criterion: "a question is asked although the user's knowledge or decision is not needed for it, because the task text, the codebase, the project documentation, a convention the codebase already follows, an applicable practice or an earlier answer of the user settles it (name the file, the convention or the answer); or a question is asked whose stated reason shows only that the answer would change the plan or the work, with no account of what the task's success depends on here; or a question is asked whose default the codebase's conventions or a sound practice support and whose reason does not show that a wrong default would cost the user more than the question costs (name the convention or practice that supports the default); or a question is asked whose options differ in nothing the reader can act on; or every proposed answer of a question assumes a premise that none of those sources establishes (name the premise and the files that would have settled it), and the premise is not asked first.",
   },
   {
     // Issue #183 (the developer's instruction of 19 Oct 2026): an option that costs only time or usage is no choice.
@@ -629,16 +671,16 @@ export const AGREED_QUESTION_PREFIX = "Q";
 export const FOLLOW_UP_PREFIX = "F";
 export function questionListPrompt(task: string): string {
   return `Do not write a plan yet. Read the task below and inspect the codebase without changing anything.
-Return in 'questions' the questions whose answers you need from the user before you can write an implementation plan for the task.
-Include a question only as the rule on whether to ask, below, allows.
-Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. history: what happened before that led to the question, apart from the context, as the rules below describe it, as blocks; an empty list when there is none. question: one decision per question, as pieces. reason: what in the plan depends on the answer, and the files you inspected that do not settle it, as blocks. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference.
+${TASK_INVESTIGATION}
+Return in 'questions' the questions the investigation reached that need the user, under the rule on whether to ask, below, which decides whether each one is asked.
+Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. history: what happened before that led to the question, apart from the context, as the rules below describe it, as blocks; an empty list when there is none. question: one decision per question, as pieces. reason: the evidence that this question needs the user, as blocks: which of the task's concerns it bears on and what the task's success depends on here; what you investigated that did not settle it, each source named (the passage of the task, the files of the codebase, the documentation, the convention the codebase follows, the practice you considered); and what would follow if the answer in default_answer were wrong, with the support that answer has, so that the cost of a wrong default can be compared with the cost of asking the user. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference; its support and the consequence of its being wrong go in the reason, where the review reads them.
 ${SKIP_IF_FIELD}
 How the text of an entry is written:
 ${formatClauses(["blocks", "pieces", "code", "inline"])}
 - Every piece is plain here: ref "" everywhere. The explanations are written after the list is agreed, by dividing its text into pieces that refer to them, its wording unchanged.
 ${questionWritingRules()}
 The rules apply to the question, its reason, its proposed answers and its default alike. Write the list so that it needs as few explanations as possible.
-Return an empty list if no question is needed. Do not modify any file. Do not use the AskUserQuestion tool.
+Return an empty list where the investigation reached nothing that needs the user. Do not modify any file. Do not use the AskUserQuestion tool.
 Task: ${task}`;
 }
 
@@ -646,7 +688,9 @@ export function questionReviewPrompt(root: RunRoot, round: number, thread: Revie
   const log = pathOf({ kind: "log", subject: "questions" });
   return byThread(round, thread, log, root, () => `${laterRound(root, pathOf({ kind: "questions" }), log, "Q", round)}\n${WORDING_DISPUTES}`, () => `Review the question list in ${runDir(root)}/questions.json against the task text in the same file and against the codebase. Do not modify any file.
 The planner will ask the user these questions in an interview and will then write an implementation plan from the answers.
-Raise an issue when: a question whose answer the plan needs is missing; a question combines several decisions; a reason is wrong; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
+The list is to come out of an investigation of the task and of what accomplishing it requires, not out of a survey of the choices that would change a plan.
+${taskConcernsText()}
+Raise an issue when: a question is missing that the user's knowledge or decision is needed for, because the task's intended outcome is not established or a consequential uncertainty or choice cannot be settled from the task, the codebase, this project's documentation, the conventions the codebase follows or an applicable practice (name the concern it bears on, what in the task or the codebase leaves it open, and what would go wrong if the work proceeded without it); a question combines several decisions; a reason is wrong, or does not carry the evidence the rule on whether to ask requires of it; a feasible answer is missing from the proposed answers, or a proposed answer is not feasible in this codebase; a default contradicts the task or the codebase.
 ${questionReviewCriteria()}
 These criteria apply to the question, its context, its reason, its proposed answers and its default alike. Any question in the list may be put to decision support, which works out the arguments for and against each proposed answer, so hold every proposed answer to that standard.
 Put the question id, or 'list' for an issue that concerns the list as a whole, in the location field.
@@ -768,14 +812,14 @@ const clarificationRules = (root: RunRoot): string => `Rules for the interview.
 The program presents the agreed questions of ${runDir(root)}/questions.json to the user itself, in the order of the list, with their context, their terms and their proposed answers, and does not present a question whose skip condition the user's answer met. It sends you each answer as soon as the user gives it, several answers together when the user answered more than one while you were replying, each with the id of its question and, for an agreed question, the label of the option chosen. The program does not wait for your reply before it presents the next agreed question. Never ask an agreed question yourself.
 Each of your replies produces these output fields.
 message_to_user: what you say to the user, in plain text without Markdown tables: a short acknowledgment, a remark, or the answer to a question the user asked in a written answer. It may be an empty string; the program shows nothing for an empty message.
-follow_ups: the follow-up questions the answers make necessary, or an empty list. The program asks each one after the question the user is answering when your reply arrives, or after the last agreed question if none remains. Give each an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
+follow_ups: the follow-up questions for which an answer has shown that you need the user's knowledge or decision, under the rule on whether to ask below, or an empty list; that an answer opens a choice which would change the plan or the work is not itself a reason to ask about it. The program asks each one after the question the user is answering when your reply arrives, or after the last agreed question if none remains. Give each an id ${FOLLOW_UP_PREFIX}1, ${FOLLOW_UP_PREFIX}2, … that no earlier question of this interview has had, its context, its history, its text, its explanations and its options: the context paragraph as blocks, the history as blocks (an empty list when there is none), the question alone as pieces (without the options and without the default), the explanations its pieces refer to, and each option with a short label and a description as pieces, the default marked in its description; all of them under the rules below.
 ${QUESTION_TEXT_FORMAT}
 unnecessary: the questions already presented or answered that you judge, from the answers, were unnecessary, each with its id and the reason; an empty list otherwise. The program tells the user and changes nothing else.
 complete: false until the program reports that every agreed question has been presented or that the user ended the interview, and false in a reply that asks a follow-up question. Then true, when you need nothing further from the user.
 summary: an empty string while complete is false. When complete is true, the complete requirements document in Markdown: the task; every decision with the id of its question; the further information and constraints that the user gave; and open points, each with the default that will be assumed.
 ${SUMMARY_SKIPPED_RULE}
 ${questionWritingRules()}
-You may ask any follow-up question that the answers make necessary. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
+You may ask a follow-up question where an answer has shown that you need the user's knowledge or decision, as the rule on whether to ask states; settle anything else yourself from the codebase, this project's documentation, the conventions it follows and the practices that apply, and say in your message what you settled. The user may raise any subject and may ask you questions; answer them, and inspect the codebase without changing it where that is needed.
 Do not use the AskUserQuestion tool; the program relays the conversation. Do not modify any file. Do not write a plan.`;
 
 /** Issue #184: the first request of the first interview, sent when it opens. */
