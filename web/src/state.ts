@@ -598,7 +598,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return reshow(relabel({ ...next, phase: bandOf(event.phase, time, countIn(next, event.phase)) }));
     }
     case "PhaseEnded":
-      return reshow({ ...run, activity: "", busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
+      return reshow({ ...withActivity(run, ""), busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
     case "RoundBegan":
       // A decision loop is a loop inside a phase that the progress panel does not show (D12 of the decision-support plan).
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.
@@ -672,42 +672,41 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // issue #184: only the waited call's start, named by its agent and purpose; another call leaves the wait in place.
       const retried = run.retry !== null && waitedBy(run.retry, event);
       return {
-        ...run,
+        ...withActivity(run, run.retry !== null && retried ? `${label} — ${run.retry.text}` : label),
         limitWait: run.limitWait !== null && waitedBy(run.limitWait, event) ? null : run.limitWait,
         retry: run.retry !== null && retried ? { ...run.retry, wait: null } : run.retry,
         calls: [...run.calls, { agent: event.agent, purpose: event.purpose, label, startedAt: time, callId: event.callId }],
-        activity: run.retry !== null && retried ? `${label} — ${run.retry.text}` : label,
         busy: true,
       };
     }
     // W3-R2-1 of issue #184: calls overlap, so an event is labeled by the running call whose id it carries.
     case "ToolUsed":
-      return { ...run, activity: `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, "") };
+      return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${event.tool}: ${event.target}`.replace(/: $/, ""));
     // Issue #26: the SDK's own reconnection during a call, and the program's retry while it lasts; neither is progress.
     case "AgentReconnecting":
-      return { ...run, activity: `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}` };
+      return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}`);
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
       const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } };
-      return { ...run, retry, activity: retryLine(event.agent, text) };
+      return { ...withActivity(run, retryLine(event.agent, text)), retry };
     }
     case "TransportRecovered":
-      return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
+      return { ...withActivity(run, run.calls.at(-1)?.label ?? ""), retry: null };
     // Issue #171: a tracker request's repeat, counted down like an agent's retry and named by its tracker.
     case "TrackerRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
-      return { ...run, retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } }, activity: `${event.tracker} — ${text}` };
+      return { ...withActivity(run, `${event.tracker} — ${text}`), retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } } };
     }
     case "TrackerRecovered":
-      return { ...run, retry: null, activity: run.calls.at(-1)?.label ?? "" };
+      return { ...withActivity(run, run.calls.at(-1)?.label ?? ""), retry: null };
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
     {
       const limitWait: LimitWait = { agent: event.agent, purpose: event.purpose, limitType: event.limitType, basis: event.basis, fromMs: event.fromMs, untilMs: event.untilMs };
-      return { ...run, limitWait, activity: limitWaitLine(limitWait) };
+      return { ...withActivity(run, limitWaitLine(limitWait)), limitWait };
     }
     case "UsageLimitLifted":
-      return { ...run, limitWait: null, activity: run.calls.at(-1)?.label ?? "" };
+      return { ...withActivity(run, run.calls.at(-1)?.label ?? ""), limitWait: null };
     case "AgentCallEnded": {
       // P1-R2-1: a nested call ends and the one it ran in is shown again. Issue #184: calls may overlap and end in any
       // order (the interview's request beside a terms request or a decision), so the call removed is the one whose id
@@ -731,7 +730,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // Issue #53 (P1-R1-1): the end of the execution call itself, a retried attempt's included, leaves no step current;
       // the end of a call nested in it does not.
       const timeline = ended?.purpose === "execution" ? run.timeline.map((e) => (e.currentStep === null ? e : { ...e, currentStep: null })) : run.timeline;
-      return { ...run, calls, activity, busy: calls.length > 0, retry, timeline };
+      return { ...withActivity(run, activity), calls, busy: calls.length > 0, retry, timeline };
     }
     case "ExecutionEnded":
       return run;
@@ -757,7 +756,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       const shown = run.left.some((m) => m.key === key)
         ? { ...run, left: run.left.map((m) => (m.key === key ? { ...m, body: text.trim() } : m)) }
         : withLeft(run, { ...message(run, time, "program", text.trim(), "text"), key });
-      return { ...shown, absorb: [text] };
+      return { ...withInterloqLine(shown, text), absorb: [text] };
     }
     case "DecisionAnalyzed":
       return { ...run, analysis: { event, prompt: null } };
@@ -794,6 +793,19 @@ const answeredAnalysis = (r: RunView, prompt: number, text: string): Pick<RunVie
       ? { analysis: null, dismissed: r.dismissed, explaining: r.analysis }
       : { analysis: null, dismissed: r.analysis, explaining: r.explaining };
 
+/**
+ * The activity line's text set (issue #22): `activity` as before, and the dashboard's status. A text replaces whatever
+ * the status held; an empty one (an ended phase or run, a recovery with no call left) turns an activity into Idle and
+ * leaves Interloq's last line in place.
+ */
+const withActivity = (run: RunView, activity: string): RunView => ({
+  ...run,
+  activity,
+  dashboard: { ...run.dashboard, status: activity !== "" ? { _tag: "Activity", text: activity } : run.dashboard.status._tag === "Activity" ? { _tag: "Idle" } : run.dashboard.status },
+});
+/** Interloq's own line as the status (issue #22): its leading and trailing line breaks removed. */
+const withInterloqLine = (run: RunView, text: string): RunView => ({ ...run, dashboard: { ...run.dashboard, status: { _tag: "Interloq", text: text.replace(/^[\r\n]+|[\r\n]+$/g, "") } } });
+
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
@@ -804,7 +816,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "Started":
         return { ...r, project: event.project, location: event.location, task: event.task, mode: event.mode, item: event.item };
       case "Said":
-        return event.text.trim() === "" ? r : withLeft(r, message(r, time, "program", event.text, "text"));
+        return event.text.trim() === "" ? r : withInterloqLine(withLeft(r, message(r, time, "program", event.text, "text")), event.text);
       case "Asked": {
         const extra = r.questionOptions;
         // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one.
@@ -823,7 +835,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "Notified":
         return notifiedEvent(r, event.event, time);
       case "Ended": {
-        const ended: RunView = { ...r, explaining: null, ended: event.code, pending: null, activity: "", busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...withActivity(r, ""), explaining: null, ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }

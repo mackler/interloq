@@ -13,7 +13,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { emptyDashboard, lastAnswer, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -40,6 +40,11 @@ const fold = (messages: readonly ServerMessage[], from: ViewState = initialState
 const replayed = (events: readonly RunEvent[], run = 1, current: number | null = run, times?: readonly number[]): ViewState => fold([hello(current), { type: "replay", ui: [], runs: [{ id: run, events: stamp(events, times) }] }]);
 /** A shown plan without its stages' rendering keys: the plan it shows. */
 const bare = (p: ShownPlan | null) => (p === null ? null : { stages: p.stages.map(({ key: _key, ...st }) => st) });
+/** The dashboard's status line of the implementation tab's run, as its text (issue #22). */
+const statusOf = (s: ViewState | RunView | null | undefined): string | undefined => {
+  const run = s === null || s === undefined ? undefined : "modes" in s ? s.modes.implementation.run : s;
+  return run === null || run === undefined ? undefined : statusText(run.dashboard.status);
+};
 const bodies = (s: ViewState) => s.modes.implementation.run?.left.map((m) => `${m.author}:${m.body}`) ?? [];
 
 describe("the dashboard (issue #22)", () => {
@@ -52,10 +57,86 @@ describe("the dashboard (issue #22)", () => {
   });
 });
 
+describe("the status line (issue #22)", () => {
+  const call = notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" });
+  const tool = notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" });
+  const phaseEnded = notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" });
+  const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
+
+  test("a Said sets the status and the next Said replaces it; its outer line breaks are removed", () => {
+    for (const s of both([started, said("first")])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "first" });
+    for (const s of both([started, said("first"), said("\nHALTED: second\n")])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "HALTED: second" });
+  });
+
+  test("a blank Said and an absorbed one change nothing", () => {
+    for (const s of both([started, said("first"), said("  \n")])) expect(statusOf(s)).toBe("first");
+    const turn = notified({ _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 });
+    for (const s of both([started, said("first"), turn, said("\nHi\n")])) expect(statusOf(s)).toBe("first");
+  });
+
+  test("a tool use replaces Interloq's line, and Interloq's next line replaces the activity", () => {
+    for (const s of both([started, said("first"), call, tool])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Activity", text: "Codex — review — command: git diff" });
+    for (const s of both([started, call, tool, said("next")])) expect(statusOf(s)).toBe("next");
+  });
+
+  test("PhaseEnded keeps Interloq's line and turns an activity into Idle", () => {
+    for (const s of both([started, call, said("kept"), phaseEnded])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "kept" });
+    for (const s of both([started, said("old"), call, tool, phaseEnded])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Idle" });
+  });
+
+  test("after Ended the run's last line of Interloq stays the status", () => {
+    for (const s of both([started, call, said("Usage: Claude Code 3 calls"), { _tag: "Ended", code: 0 }])) expect(s.modes.implementation.run?.dashboard.status).toEqual({ _tag: "Interloq", text: "Usage: Claude Code 3 calls" });
+  });
+
+  test("a retry's and a usage limit's wait give the status the activity line's text", () => {
+    const retrying = notified({ _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 });
+    for (const s of both([started, call, retrying])) expect(statusOf(s)).toBe("Codex — connection lost, retry 1 of 3 (stream disconnected)");
+    const waiting = notified({ _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 60_000 });
+    for (const s of both([started, waiting])) expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, 60_000)}`);
+  });
+
+  test("property: the status follows the last line or activity, and the replay folds as the live page does", () => {
+    type Step = Readonly<{ _tag: "say"; text: string }> | Readonly<{ _tag: "tool"; target: string }> | Readonly<{ _tag: "start" }> | Readonly<{ _tag: "end" }> | Readonly<{ _tag: "phaseEnd" }>;
+    const step: fc.Arbitrary<Step> = fc.oneof(
+      fc.record({ _tag: fc.constant("say" as const), text: fc.constantFrom("a", "b", "\nc\n", " ", "") }),
+      fc.record({ _tag: fc.constant("tool" as const), target: fc.constantFrom("x", "y") }),
+      fc.constant({ _tag: "start" as const }),
+      fc.constant({ _tag: "end" as const }),
+      fc.constant({ _tag: "phaseEnd" as const }),
+    );
+    const eventOf = (st: Step): RunEvent => {
+      switch (st._tag) {
+        case "say": return said(st.text);
+        case "tool": return notified({ _tag: "ToolUsed", agent: "codex", tool: "Read", target: st.target, callId: "codex-1" });
+        case "start": return call;
+        case "end": return notified({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" });
+        case "phaseEnd": return phaseEnded;
+      }
+    };
+    fc.assert(fc.property(fc.array(step, { maxLength: 12 }), (steps) => {
+      const events = [started, ...steps.map(eventOf)];
+      // The reference: the activity text the page computed before the dashboard, and the last non-blank line.
+      const model = steps.reduce<{ tag: "Idle" | "Activity" | "Interloq"; text: string; calls: number }>((m, st) => {
+        switch (st._tag) {
+          case "say": return st.text.trim() === "" ? m : { ...m, tag: "Interloq", text: st.text.replace(/^[\r\n]+|[\r\n]+$/g, "") };
+          case "tool": return { ...m, tag: "Activity", text: `${m.calls > 0 ? "Codex — review" : "Codex"} — Read: ${st.target}` };
+          case "start": return { tag: "Activity", text: "Codex — review", calls: m.calls + 1 };
+          case "end": return m.calls === 0 ? m : { tag: "Activity", text: m.calls > 1 ? "Codex — review" : "Codex — review — done", calls: m.calls - 1 };
+          case "phaseEnd": return { ...(m.tag === "Activity" ? { tag: "Idle" as const, text: "" } : m), calls: 0 };
+        }
+      }, { tag: "Idle", text: "", calls: 0 });
+      const liveView = fold(live(events));
+      expect(statusOf(liveView)).toBe(model.text);
+      expect(liveView.modes.implementation.run?.dashboard.status._tag).toBe(model.tag);
+      expect(replayed(events).modes.implementation.run?.dashboard).toEqual(liveView.modes.implementation.run?.dashboard);
+    }), { numRuns: 150 });
+  });
+});
+
 describe("ordering and the panels", () => {
-  test("program messages, a prompt and the user's answer appear in order; a blank say is dropped", () => {
+  test("Interloq's line is the status, a blank say changes nothing, and an answered prompt is no longer pending", () => {
     const s = fold(live([started, said("Planning phase 1 ..."), said("\n"), asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }]));
-    expect(bodies(s)).toEqual(["program:Planning phase 1 ...", `program:${prompts.pagePromptText("decision", prompts.decisionPrompt)}`, `user:${prompts.CONTINUE_WITHOUT_DECIDING}`]);
+    expect(statusOf(s)).toBe("Planning phase 1 ...");
     expect(s.modes.implementation.run?.pending).toBe(null);
   });
 
@@ -144,9 +225,9 @@ describe("who speaks in the left panel", () => {
 
   test("the activity line and the page's prompts say Claude", () => {
     const s = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" })]));
-    expect(s.modes.implementation.run?.activity).toBe("Claude — planning");
+    expect(statusOf(s)).toBe("Claude — planning");
     const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x", callId: "claude-1" })]));
-    expect(tool.modes.implementation.run?.activity).toBe("Claude — Read: x");
+    expect(statusOf(tool)).toBe("Claude — Read: x");
   });
 });
 
@@ -208,14 +289,14 @@ test("every prompt is shown in the page's words, without the hint's key conventi
 describe("activity and timeline", () => {
   test("the activity line shows the last agent event and is cleared at the end of a phase", () => {
     const s1 = fold(live([started, notified({ _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" }), notified({ _tag: "ToolUsed", agent: "codex", tool: "command", target: "git diff", callId: "codex-1" })]));
-    expect(s1.modes.implementation.run?.activity).toBe("Codex — review — command: git diff");
+    expect(statusOf(s1)).toBe("Codex — review — command: git diff");
     expect(s1.modes.implementation.run?.busy).toBe(true);
     const s2 = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" }) }], s1);
-    expect(s2.modes.implementation.run?.activity).toBe("");
+    expect(statusOf(s2)).toBe("");
   });
 
   test("the activity line names a call's purpose in the user's words: clarification and implementation (issues #14, #21)", () => {
-    const of = (purpose: string) => fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId: "claude-1" })])).modes.implementation.run?.activity;
+    const of = (purpose: string) => statusOf(fold(live([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose, callId: "claude-1" })])));
     expect(of("interview")).toBe("Claude — clarification");
     expect(of("execution")).toBe("Claude — implementation");
     expect(of("planning")).toBe("Claude — planning");
@@ -956,11 +1037,15 @@ describe("decision support", () => {
   });
 
   // S21 (Q4): while the analysis is prepared, one plain status message, updated in place at every check.
-  test("the analysis's progress is one message, updated in place, live and after a replay", () => {
+  test("the analysis's progress is the status, replaced in place, live and after a replay; the line said for it is absorbed", () => {
     const progress = (check: number): RunEvent => notified({ _tag: "AnalysisProgress", decision: 1, question: 3, check });
-    const events: RunEvent[] = [started, said("a"), progress(0), progress(1), said("b"), progress(2)];
-    for (const s of [fold(live(events)), replayed(events)]) {
-      expect(bodies(s)).toEqual(["program:a", `program:${prompts.analysisProgressLine(1, 3, 2).trim()}`, "program:b"]);
+    const line = (check: number): RunEvent => said(prompts.analysisProgressLine(1, 3, check));
+    const events: RunEvent[] = [started, said("a"), progress(0), line(0), progress(1), line(1), said("b")];
+    for (const s of [fold(live(events)), replayed(events)]) expect(statusOf(s)).toBe("b");
+    const last: RunEvent[] = [...events, progress(2), line(2)];
+    for (const s of [fold(live(last)), replayed(last)]) {
+      expect(statusOf(s)).toBe(prompts.analysisProgressLine(1, 3, 2).trim());
+      expect(s.modes.implementation.run?.dashboard.status._tag).toBe("Interloq");
     }
   });
 
@@ -1166,8 +1251,8 @@ describe("the whole run in the timeline", () => {
       expect(s.modes.implementation.run?.busy).toBe(true);
       expect(s.modes.implementation.run?.calls.some((c) => c.purpose === "execution")).toBe(true);
     }
-    expect(nested.modes.implementation.run?.activity).toBe("Codex — review");
-    expect(resumed.modes.implementation.run?.activity).toBe(executing.modes.implementation.run?.activity);
+    expect(statusOf(nested)).toBe("Codex — review");
+    expect(statusOf(resumed)).toBe(statusOf(executing));
     expect(resumed.modes.implementation.run?.calls.at(-1)?.startedAt).toBe(executing.modes.implementation.run?.calls.at(-1)?.startedAt);
     const ended = fold(live([...prefix, end("claude")]));
     expect([ended.modes.implementation.run?.busy, ended.modes.implementation.run?.calls.length]).toEqual([false, 0]);
@@ -1212,19 +1297,19 @@ describe("transport retries on the activity line", () => {
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a retry shows the agent, the attempt of the retries and the fault, and the retried call keeps it", () => {
-    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(s.modes.implementation.run?.activity).toBe("Codex — connection lost, retry 2 of 3 (stream disconnected)");
-    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call)])) expect(s.modes.implementation.run?.activity).toBe("Codex — review — connection lost, retry 2 of 3 (stream disconnected)");
+    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(statusOf(s)).toBe("Codex — connection lost, retry 2 of 3 (stream disconnected)");
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call)])) expect(statusOf(s)).toBe("Codex — review — connection lost, retry 2 of 3 (stream disconnected)");
   });
 
   test("the retry clears when the call recovers or a call ends well", () => {
-    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(s.modes.implementation.run?.activity).toBe("Codex — review");
-    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" }), notified(call)])) expect(s.modes.implementation.run?.activity).toBe("Codex — review");
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(statusOf(s)).toBe("Codex — review");
+    for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call), notified({ _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" }), notified(call)])) expect(statusOf(s)).toBe("Codex — review");
   });
 
   test("the SDK's own reconnection during a call is shown on the activity line", () => {
     const reconnecting: UiEvent = { _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503, server_error", callId: "claude-1" };
     for (const s of both([started, notified({ _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" }), notified(reconnecting)])) {
-      expect(s.modes.implementation.run?.activity).toBe("Claude — planning — reconnecting 2 of 10 (status 503, server_error)");
+      expect(statusOf(s)).toBe("Claude — planning — reconnecting 2 of 10 (status 503, server_error)");
     }
   });
 
@@ -1232,13 +1317,13 @@ describe("transport retries on the activity line", () => {
   // not by the call started last.
   const interview: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "clarification", callId: "claude-1" };
   const review: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
-  const labelOf = (events: readonly RunEvent[]) => fold(live(events)).modes.implementation.run?.activity;
+  const labelOf = (events: readonly RunEvent[]) => statusOf(fold(live(events)));
 
   test("a tool event of an earlier call that still runs is labeled by that call", () => {
     const interviewLabel = labelOf([started, notified(interview)]);
     const read: UiEvent = { _tag: "ToolUsed", agent: "claude", tool: "Read", target: "src/example.ts", callId: "claude-1" };
     for (const s of both([started, notified(interview), notified(review), notified(read)])) {
-      expect(s.modes.implementation.run?.activity).toBe(`${interviewLabel} — Read: src/example.ts`);
+      expect(statusOf(s)).toBe(`${interviewLabel} — Read: src/example.ts`);
     }
   });
 
@@ -1253,7 +1338,7 @@ describe("transport retries on the activity line", () => {
     const codexFirst: UiEvent = { _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: "stream lost", callId: "codex-1" };
     const reviewLabel = labelOf([started, notified(review)]);
     for (const s of both([started, notified(review), notified(interview), notified(codexFirst)])) {
-      expect(s.modes.implementation.run?.activity).toBe(`${reviewLabel} — reconnecting (stream lost)`);
+      expect(statusOf(s)).toBe(`${reviewLabel} — reconnecting (stream lost)`);
     }
   });
 });
@@ -1268,13 +1353,13 @@ describe("the retry state after the retries are exhausted", () => {
 
   test("a Claude call of Help me decide after the exhausted Codex retries shows no retry text", () => {
     for (const s of both([started, notified(codexCall), notified(codexFailed), notified(retrying), notified(codexCall), notified(codexFailed), notified(claudeCall)])) {
-      expect(s.modes.implementation.run?.activity).toBe("Claude — planning");
+      expect(statusOf(s)).toBe("Claude — planning");
     }
   });
 
   test("a retried call that fails again: the next call of the same agent shows no retry text either", () => {
     for (const s of both([started, notified(codexCall), notified(codexFailed), notified(retrying), notified(codexCall), notified(codexFailed), notified(codexCall)])) {
-      expect(s.modes.implementation.run?.activity).toBe("Codex — review");
+      expect(statusOf(s)).toBe("Codex — review");
     }
   });
 });
@@ -1603,9 +1688,9 @@ describe("a wait for a usage limit", () => {
   test("the wait sets limitWait, and the activity line names the limit and the instant it lifts", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor)])) {
       expect(s.modes.implementation.run?.limitWait).toEqual({ agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL });
-      expect(s.modes.implementation.run?.activity).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`);
-      expect(s.modes.implementation.run?.activity).toContain("five-hour session limit");
-      expect(s.modes.implementation.run?.activity).toContain("08:03 UTC");
+      expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`);
+      expect(statusOf(s)).toContain("five-hour session limit");
+      expect(statusOf(s)).toContain("08:03 UTC");
     }
   });
 
@@ -1613,14 +1698,14 @@ describe("a wait for a usage limit", () => {
   test("the activity line of each basis is usageLimitActivity for it", () => {
     for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: FROM - 60_000 }, { kind: "noKnownEnd", attempt: 2 }] as const) {
       const event: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: null, basis, fromMs: FROM, untilMs: UNTIL };
-      for (const s of both([started, notified(call), notified(failed), notified(event)])) expect(s.modes.implementation.run?.activity).toBe(`Claude — ${prompts.usageLimitActivity(event.limitType, event.basis, event.untilMs)}`);
+      for (const s of both([started, notified(call), notified(failed), notified(event)])) expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity(event.limitType, event.basis, event.untilMs)}`);
     }
   });
 
   test("the lift, the run's end, and the next call's start each clear it", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted)])) expect(s.modes.implementation.run?.limitWait).toBe(null);
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(s.modes.implementation.run?.limitWait).toBe(null);
-    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted), notified(call)])) expect(s.modes.implementation.run?.activity).toBe("Claude — planning");
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted), notified(call)])) expect(statusOf(s)).toBe("Claude — planning");
   });
 
   test("limitWaitView: the fraction elapsed and the time remaining at an instant", () => {
@@ -1896,7 +1981,7 @@ describe("the countdown of a retry's wait", () => {
     for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(s.modes.implementation.run?.retry?.wait).toEqual({ fromMs: 1000, untilMs: 6000 });
     for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call)])) {
       expect(s.modes.implementation.run?.retry?.wait).toBe(null);
-      expect(s.modes.implementation.run?.activity).toBe("Codex — review — connection lost, retry 1 of 3 (stream disconnected)");
+      expect(statusOf(s)).toBe("Codex — review — connection lost, retry 1 of 3 (stream disconnected)");
     }
     for (const s of both([started, notified(call), notified(failed), notified(retrying), notified({ _tag: "TransportRecovered", agent: "codex" })])) expect(s.modes.implementation.run?.retry).toBe(null);
   });
@@ -1905,11 +1990,11 @@ describe("the countdown of a retry's wait", () => {
     const trackerRetrying: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 1000, untilMs: 31_000 };
     for (const s of both([started, notified(trackerRetrying)])) {
       expect(s.modes.implementation.run?.retry).toEqual({ agent: "tracker", purpose: null, text: "connection lost, retry 2 of 5 (no answer)", wait: { fromMs: 1000, untilMs: 31_000 } });
-      expect(s.modes.implementation.run?.activity).toBe("GitHub — connection lost, retry 2 of 5 (no answer)");
+      expect(statusOf(s)).toBe("GitHub — connection lost, retry 2 of 5 (no answer)");
     }
     for (const s of both([started, notified(call), notified(trackerRetrying), notified({ _tag: "TrackerRecovered", tracker: "GitHub" })])) {
       expect(s.modes.implementation.run?.retry).toBe(null);
-      expect(s.modes.implementation.run?.activity).toBe("Codex — review");
+      expect(statusOf(s)).toBe("Codex — review");
     }
   });
   test("countdownView: the fraction elapsed and the time remaining while the wait lasts, nothing at and after its end", () => {
@@ -2153,10 +2238,10 @@ describe("calls that overlap", () => {
   test("two overlapping calls ending in either order each leave the other running and named", () => {
     const first = runOf([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-1")]);
     expect(first?.calls.map((c) => c.purpose)).toEqual(["planning"]);
-    expect(first?.activity).toBe(`Claude — ${prompts.purposeLabel("planning")}`);
+    expect(statusOf(first)).toBe(`Claude — ${prompts.purposeLabel("planning")}`);
     const second = runOf([start("claude-1", "interview"), start("claude-2", "planning"), end("claude-2")]);
     expect(second?.calls.map((c) => c.purpose)).toEqual(["interview"]);
-    expect(second?.activity).toBe(`Claude — ${prompts.purposeLabel("interview")}`);
+    expect(statusOf(second)).toBe(`Claude — ${prompts.purposeLabel("interview")}`);
   });
   test("a nested call's end restores the outer one, and an end of no running call changes nothing", () => {
     expect(runOf([start("claude-1", "execution"), start("claude-2", "decision"), end("claude-2")])?.calls.map((c) => c.purpose)).toEqual(["execution"]);
@@ -2195,26 +2280,26 @@ describe("a wait outlives calls other than the one it waits for", () => {
     for (const s of both([...before, notified(limited), notified(reviewCall)])) expect(s.modes.implementation.run?.limitWait?.untilMs).toBe(UNTIL);
     for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded)])) {
       expect(s.modes.implementation.run?.limitWait?.untilMs).toBe(UNTIL);
-      expect(s.modes.implementation.run?.activity).toBe(limitText);
+      expect(statusOf(s)).toBe(limitText);
     }
   });
 
   test("a Codex review's start and end leave a retry's wait, and the activity line shows the retry again", () => {
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded)])) {
       expect(s.modes.implementation.run?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
-      expect(s.modes.implementation.run?.activity).toBe(retryText);
+      expect(statusOf(s)).toBe(retryText);
     }
-    for (const s of both([...before, notified(retrying), notified(reviewCall)])) expect(s.modes.implementation.run?.activity).toBe("Codex — review");
+    for (const s of both([...before, notified(retrying), notified(reviewCall)])) expect(statusOf(s)).toBe("Codex — review");
   });
 
   test("a Claude call of another purpose leaves the waits too", () => {
     for (const s of both([...before, notified(limited), notified(termsCall), notified(termsEnded)])) {
       expect(s.modes.implementation.run?.limitWait?.untilMs).toBe(UNTIL);
-      expect(s.modes.implementation.run?.activity).toBe(limitText);
+      expect(statusOf(s)).toBe(limitText);
     }
     for (const s of both([...before, notified(retrying), notified(termsCall), notified(termsEnded)])) {
       expect(s.modes.implementation.run?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
-      expect(s.modes.implementation.run?.activity).toBe(retryText);
+      expect(statusOf(s)).toBe(retryText);
     }
   });
 
@@ -2222,7 +2307,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
     for (const s of both([...before, notified(limited), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) expect(s.modes.implementation.run?.limitWait).toBe(null);
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded), notified(interviewAgain)])) {
       expect(s.modes.implementation.run?.retry?.wait).toBe(null);
-      expect(s.modes.implementation.run?.activity).toBe("Claude — clarification — connection lost, retry 1 of 3 (socket hang up)");
+      expect(statusOf(s)).toBe("Claude — clarification — connection lost, retry 1 of 3 (socket hang up)");
     }
     for (const s of both([...before, notified(retrying), notified(interviewAgain), notified(interviewAgainEnded)])) expect(s.modes.implementation.run?.retry).toBe(null);
   });
