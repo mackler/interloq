@@ -13,15 +13,18 @@ import { type Refinement, readRefinement } from "./refinement.ts";
 import { backoffDelays } from "./retry.ts";
 import type { Config } from "./schema.ts";
 import { type Decider, RunConfig, Store, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
-import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import { keyOf } from "./itemComments.ts";
+import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 
 /** A write of a run to its item: the requirements written back, or the item's state set. */
 export type TrackerWrite =
   | Readonly<{ kind: "writeRefinement"; item: ItemId; refinement: Refinement }>
-  | Readonly<{ kind: "setState"; item: ItemId; state: ItemState }>;
+  | Readonly<{ kind: "setState"; item: ItemId; state: ItemState }>
+  /** Issue #186: a comment Interloq writes, its `key` the unique key its marker line carries (src/itemComments.ts). */
+  | Readonly<{ kind: "comment"; item: ItemId; text: string; key: string }>;
 
-/** A request of a run to its tracker: the first read of its item, or one of its writes. */
-export type TrackerOperation = Readonly<{ kind: "read"; item: ItemId }> | TrackerWrite;
+/** A request of a run to its tracker: the first read of its item, the read of its comments (issue #186), or one of its writes. */
+export type TrackerOperation = Readonly<{ kind: "read"; item: ItemId }> | Readonly<{ kind: "comments"; item: ItemId }> | TrackerWrite;
 
 export type TrackerRetrySettings = Pick<Config, "maxTrackerRetries" | "trackerRetryDelaySeconds">;
 
@@ -41,8 +44,15 @@ export const uncertainWrite = (error: TrackerError): boolean => error._tag === "
 /** HeldState and WriteCheck are declared with their schemas in src/errors.ts, where TrackerStepFailed decodes them. */
 export type { HeldState, WriteCheck } from "./errors.ts";
 
+/**
+ * Issue #186: whether a comment is on the item, decided by its key alone (`keyOf`), never by comparing bodies, so two
+ * send-backs with one reason on one day are two comments.
+ */
+export const commentLanded = (key: string, comments: readonly ItemComment[]): Result.Result<void, HeldState> =>
+  comments.some((c) => keyOf(c.body) === key) ? Result.succeed(undefined) : Result.fail({ kind: "noComment" });
+
 /** Success when the item already holds the write's outcome; otherwise what it held. A malformed section is another section. */
-export const landed = (write: TrackerWrite, item: TrackerItem): Result.Result<void, HeldState> => {
+export const landed = (write: Exclude<TrackerWrite, { kind: "comment" }>, item: TrackerItem): Result.Result<void, HeldState> => {
   switch (write.kind) {
     case "writeRefinement": {
       const section = readRefinement(item.body);
@@ -121,18 +131,26 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
   return step(1, 0, null);
 };
 
-/** The run's first read of its item, repeated (requirements Q3); fails with the last tracker failure. */
-export const readWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<TrackerItem, TrackerError | RunError> =>
+/** A read of the run's, repeated; fails with the last tracker failure. */
+const readRetried = <A>(env: TrackerRetryEnv, op: TrackerOperation, read: Effect.Effect<A, TrackerError>): Effect.Effect<A, TrackerError | RunError> =>
   retrying(
     env,
-    prompts.trackerOperationText({ kind: "read", item }),
-    tracker.read(item).pipe(
+    prompts.trackerOperationText(op),
+    read.pipe(
       Effect.map((value) => ({ value, landed: null })),
       Effect.mapError((error) => attemptFailed(error, UNCHECKED)),
     ),
   ).pipe(Effect.mapError((e) => (e._tag === "AttemptFailed" ? e.error : e)));
 
-const sent = (tracker: TrackerShape, write: TrackerWrite): Effect.Effect<void, TrackerError> =>
+/** The run's first read of its item, repeated (requirements Q3); fails with the last tracker failure. */
+export const readWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<TrackerItem, TrackerError | RunError> =>
+  readRetried(env, { kind: "read", item }, tracker.read(item));
+
+/** Issue #186: the item's comments, repeated as the first read is. */
+export const readCommentsWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<readonly ItemComment[], TrackerError | RunError> =>
+  readRetried(env, { kind: "comments", item }, tracker.comments(item));
+
+const sent = (tracker: TrackerShape, write: Exclude<TrackerWrite, { kind: "comment" }>): Effect.Effect<void, TrackerError> =>
   write.kind === "writeRefinement" ? tracker.writeRefinement(write.item, write.refinement) : tracker.setState(write.item, write.state);
 
 /**
@@ -140,7 +158,7 @@ const sent = (tracker: TrackerShape, write: TrackerWrite): Effect.Effect<void, T
  * holds the write's outcome, the write counts as done, said and recorded; otherwise the failure carries what the item
  * held, and a read-back that fails leaves the item unchecked.
  */
-const writeAttempt = (tracker: TrackerShape, write: TrackerWrite, env: TrackerRetryEnv): Effect.Effect<Attempted<void>, AttemptFailed | RunError> =>
+const writeAttempt = (tracker: TrackerShape, write: Exclude<TrackerWrite, { kind: "comment" }>, env: TrackerRetryEnv): Effect.Effect<Attempted<void>, AttemptFailed | RunError> =>
   Effect.catch(
     Effect.map(sent(tracker, write), (): Attempted<void> => ({ value: undefined, landed: null })),
     (error): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => {
@@ -155,9 +173,40 @@ const writeAttempt = (tracker: TrackerShape, write: TrackerWrite, env: TrackerRe
     },
   );
 
+/**
+ * Issue #186 (review P1-R1-1): where a comment write is. A POST is not idempotent, so after any retryable failure of
+ * one, which may have been applied, the write is `reconciling` until a listing of the item's comments settles it.
+ */
+type CommentPhase = "posting" | "reconciling";
+
+/**
+ * One attempt at a comment write, by its phase. Posting: a POST, and after a retryable failure a listing at once. A
+ * listing that finds the key ends the write done; one without it returns to posting (the POST in the same attempt when
+ * the attempt began reconciling, after the backoff otherwise); a listing that fails stays reconciling, so the write lists
+ * again and never POSTs until a successful listing has shown the key absent. Retry again resumes in the phase it was in.
+ */
+const commentAttempt = (tracker: TrackerShape, write: Extract<TrackerWrite, { kind: "comment" }>, env: TrackerRetryEnv, phase: Ref.Ref<CommentPhase>): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => {
+  const done: Attempted<void> = { value: undefined, landed: null };
+  /** The listing after `error`, the failure that sent the write to reconciling, or null when the attempt began there. */
+  const reconcile = (error: TrackerUnreachable | null): Effect.Effect<Attempted<void>, AttemptFailed | RunError> =>
+    Effect.flatMap(Effect.result(tracker.comments(write.item)), (listed): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => {
+      if (Result.isFailure(listed)) return Effect.andThen(Ref.set(phase, "reconciling"), Effect.fail(attemptFailed(error ?? listed.failure, UNCHECKED)));
+      const outcome = commentLanded(write.key, listed.success);
+      if (Result.isFailure(outcome)) return Effect.andThen(Ref.set(phase, "posting"), error === null ? post : Effect.fail(attemptFailed(error, { kind: "held", held: outcome.failure })));
+      if (error === null) return Effect.succeed(done);
+      const line = prompts.trackerWriteLandedLine(error.tracker, prompts.trackerOperationText(write));
+      return env.ui.say(line).pipe(Effect.andThen(env.record(`${line}\n\n`)), Effect.as({ value: undefined, landed: error.tracker }));
+    });
+  const post: Effect.Effect<Attempted<void>, AttemptFailed | RunError> = Effect.catch(
+    Effect.as(tracker.comment(write.item, write.text), done),
+    (error): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => (error._tag === "TrackerUnreachable" ? reconcile(error) : Effect.fail(attemptFailed(error, UNCHECKED))),
+  );
+  return Effect.flatMap(Ref.get(phase), (p) => (p === "posting" ? post : reconcile(null)));
+};
+
 /** A write of the run to its item, repeated; fails with the last failure and the item as the last attempt left it. */
 export const writeWithRetry = (tracker: TrackerShape, write: TrackerWrite, env: TrackerRetryEnv): Effect.Effect<void, TrackerWriteFailed | RunError> =>
-  retrying(env, prompts.trackerOperationText(write), writeAttempt(tracker, write, env)).pipe(
+  Effect.flatMap(Ref.make<CommentPhase>("posting"), (phase) => retrying(env, prompts.trackerOperationText(write), write.kind === "comment" ? commentAttempt(tracker, write, env, phase) : writeAttempt(tracker, write, env))).pipe(
     Effect.mapError((e) => (e._tag === "AttemptFailed" ? new TrackerWriteFailed({ error: e.error, check: e.check }) : e)),
   );
 

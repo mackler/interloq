@@ -1565,6 +1565,8 @@ export function writeCheckText(item: string, check: WriteCheck): string {
       return `After the last attempt, item ${item} held a Refined using Interloq section other than the run's requirements.`;
     case "state":
       return `After the last attempt, item ${item} was in the state ${check.held.state}.`;
+    case "noComment":
+      return `After the last attempt, item ${item} held no comment of the run's.`;
   }
 }
 
@@ -1579,6 +1581,10 @@ export function trackerOperationText(op: TrackerOperation): string {
       return `writing the requirements to item ${op.item}`;
     case "setState":
       return `setting item ${op.item} to ${op.state}`;
+    case "comment":
+      return `adding a comment to item ${op.item}`;
+    case "comments":
+      return `reading the comments of item ${op.item}`;
   }
 }
 /** A repeat of a failed tracker request, as the page and conversation.md show it. */

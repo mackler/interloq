@@ -11,7 +11,8 @@ import { OPENING_LINE, readRefinement, refinementOf } from "../src/refinement.ts
 import * as S from "../src/schema.ts";
 import { Store } from "../src/services.ts";
 import type { ItemId } from "../src/tracker.ts";
-import { heldTrackerEnv, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
+import { commentKeyOf, commentText } from "../src/itemComments.ts";
+import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeFakeTracker, type FakeItem } from "./fakeTracker.ts";
 import { ScriptedUi, tempRepo, testLayer } from "./helpers.ts";
@@ -170,4 +171,82 @@ test("in a run, the question carries the offer of decision support and the recor
   const conversation = fs.readFileSync(`${probe.dir}/conversation.md`, "utf8");
   assert.ok(conversation.includes("retry 1 of 1"));
   assert.ok(conversation.includes(prompts.trackerDecisionLine("stop", "GitHub", "reading item 155")));
+});
+
+// ---- issue #186: a comment write, reconciled by its key ----------------------------------------------------------------
+const commentWrite = (key: string, text = "sent back"): TrackerWrite => ({ kind: "comment", item: ID, text: commentText({ _tag: "SentBack", key: Result.getOrThrow(commentKeyOf(key)), date: "2026-10-29", missing: text }), key });
+/** The fake tracker with its comment POSTs counted. */
+const counting = (t: Awaited<ReturnType<typeof setup>>) => {
+  let posts = 0;
+  let lists = 0;
+  const tracker = { ...t.fake.tracker, comment: (id: ItemId, text: string) => Effect.suspend(() => { posts += 1; return t.fake.tracker.comment(id, text); }), comments: (id: ItemId) => Effect.suspend(() => { lists += 1; return t.fake.tracker.comments(id); }) };
+  return { tracker, posts: () => posts, lists: () => lists, stored: async () => (await t.item()).comments ?? [] };
+};
+
+test("a comment applied and then answered 500 is counted done with no second POST", async () => {
+  const t = await setup();
+  const c = counting(t);
+  await Effect.runPromise(t.fake.failAfterNext("comment", serverError()));
+  await Effect.runPromise(writeWithRetry(c.tracker, commentWrite("r/verdict-1"), t.env));
+  assert.equal(c.posts(), 1);
+  assert.equal((await c.stored()).length, 1);
+});
+
+test("a comment applied whose response was lost is counted done with no second POST", async () => {
+  const t = await setup();
+  const c = counting(t);
+  await Effect.runPromise(t.fake.failAfterNext("comment", unreached()));
+  await Effect.runPromise(writeWithRetry(c.tracker, commentWrite("r/verdict-1"), t.env));
+  assert.equal(c.posts(), 1);
+  assert.equal((await c.stored()).length, 1);
+});
+
+test("a lost comment response whose first listing fails and second succeeds: one POST, one stored comment", async () => {
+  const t = await setup();
+  const c = counting(t);
+  await Effect.runPromise(t.fake.failAfterNext("comment", unreached()));
+  await Effect.runPromise(t.fake.failNext("comments", unreached()));
+  await Effect.runPromise(writeWithRetry(c.tracker, commentWrite("r/verdict-1"), t.env));
+  assert.equal(c.posts(), 1);
+  assert.equal(c.lists(), 2);
+  assert.equal((await c.stored()).length, 1);
+});
+
+test("a comment not applied is POSTed again only after a listing without its key", async () => {
+  const t = await setup();
+  const c = counting(t);
+  await Effect.runPromise(t.fake.failNext("comment", unreached()));
+  await Effect.runPromise(writeWithRetry(c.tracker, commentWrite("r/verdict-1"), t.env));
+  assert.equal(c.posts(), 2);
+  assert.equal(c.lists(), 1);
+  assert.equal((await c.stored()).length, 1);
+});
+
+test("two writes with the same text and different keys leave two comments", async () => {
+  const t = await setup();
+  await Effect.runPromise(writeWithRetry(t.fake.tracker, commentWrite("r/verdict-1"), t.env));
+  await Effect.runPromise(writeWithRetry(t.fake.tracker, commentWrite("s/verdict-1"), t.env));
+  assert.equal(((await t.item()).comments ?? []).length, 2);
+});
+
+test("the repeats used up while reconciling, then Retry again, lists again and does not POST", async () => {
+  const t = await setup(["r"], 1);
+  const c = counting(t);
+  await Effect.runPromise(t.fake.failAfterNext("comment", unreached()));
+  await Effect.runPromise(t.fake.failNext("comments", unreached()));
+  await Effect.runPromise(t.fake.failNext("comments", unreached()));
+  await Effect.runPromise(writeWithRetry(c.tracker, commentWrite("r/verdict-1"), t.env));
+  assert.equal(t.ui.asked.length, 1);
+  assert.equal(c.posts(), 1);
+  assert.equal(c.lists(), 3);
+  assert.equal((await c.stored()).length, 1);
+});
+
+test("the comments' listing is repeated after TrackerUnreachable", async () => {
+  const t = await setup();
+  await Effect.runPromise(writeWithRetry(t.fake.tracker, commentWrite("r/verdict-1"), t.env));
+  await Effect.runPromise(t.fake.failNext("comments", unreached()));
+  const comments = await Effect.runPromise(readCommentsWithRetry(t.fake.tracker, ID, t.env));
+  assert.equal(comments.length, 1);
+  assert.equal(tagged(t.ui.notified, "TrackerRetrying").length, 1);
 });

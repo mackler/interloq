@@ -18,6 +18,10 @@ test("trackerOperationText names a read and each write with its item", () => {
   assert.equal(prompts.trackerOperationText({ kind: "read", item: ID }), "reading item 98");
   assert.equal(prompts.trackerOperationText({ kind: "writeRefinement", item: ID, refinement: Result.getOrThrow(refinementOf("r")) }), "writing the requirements to item 98");
   assert.equal(prompts.trackerOperationText({ kind: "setState", item: ID, state: "refined" }), "setting item 98 to refined");
+  // Issue #186: a comment and the listing of the comments.
+  assert.equal(prompts.trackerOperationText({ kind: "comment", item: ID, text: "t", key: "k" }), "adding a comment to item 98");
+  assert.equal(prompts.trackerOperationText({ kind: "comments", item: ID }), "reading the comments of item 98");
+  assert.equal(prompts.writeCheckText("98", { kind: "held", held: { kind: "noComment" } }), "After the last attempt, item 98 held no comment of the run's.");
 });
 
 test("the retry line names the tracker, the request, the count, the wait and the failure", () => {

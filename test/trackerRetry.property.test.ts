@@ -8,7 +8,8 @@ import { TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerReq
 import { CLOSING_LINE, OPENING_LINE, type Refinement, readRefinement, refinementOf, withRefinement } from "../src/refinement.ts";
 import type { TrackerError } from "../src/services.ts";
 import { ITEM_STATES, type ItemId, type ItemState, type TrackerItem } from "../src/tracker.ts";
-import { landed, retryable, trackerRetryDelays, uncertainWrite } from "../src/trackerRetry.ts";
+import { landed, retryable, trackerRetryDelays, uncertainWrite, commentLanded } from "../src/trackerRetry.ts";
+import { commentKeyOf, commentText, type InterloqComment } from "../src/itemComments.ts";
 
 const RUNS = { numRuns: 200, seed: 20261015 };
 const ID = "98" as ItemId;
@@ -80,4 +81,19 @@ test("a state set has landed exactly when the item is in that state, and otherwi
     }),
     RUNS,
   );
+});
+
+// Issue #186: a comment write is reconciled by its key alone, read from comments commentText wrote (the seam with src/itemComments.ts).
+test("commentLanded holds exactly when some comment carries the key", () => {
+  const key = fc.constantFrom("a/verdict-1", "a/verdict-2", "b/verdict-1", "r").map((k) => Result.getOrThrow(commentKeyOf(k)));
+  const comment: fc.Arbitrary<InterloqComment> = fc.oneof(
+    fc.record({ _tag: fc.constant("SentBack" as const), key, date: fc.constant("2026-10-29"), missing: fc.string() }),
+    fc.record({ _tag: fc.constant("RefinementRecord" as const), key, date: fc.constant("2026-10-29"), asked: fc.boolean() }),
+  );
+  fc.assert(fc.property(key, fc.array(comment, { maxLength: 6 }), fc.array(fc.string(), { maxLength: 3 }), (k, cs, others) => {
+    const items = [...cs.map((c) => ({ body: commentText(c), created: "t" })), ...others.map((body) => ({ body, created: "t" }))];
+    const found = Result.isSuccess(commentLanded(k, items));
+    assert.equal(found, cs.some((c) => c.key === k));
+    if (!found) assert.deepEqual(Result.getFailure(commentLanded(k, items)), Option.some({ kind: "noComment" }));
+  }), RUNS);
 });
