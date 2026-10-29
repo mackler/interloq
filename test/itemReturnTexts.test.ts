@@ -15,6 +15,7 @@ test("itemNotReturnedLine names the item, the cause and, for a check, what the i
   assert.match(unchecked, /\b185\b/);
   assert.ok(unchecked.includes("the tracker could not be reached"));
   assert.ok(unchecked.includes("implementing"));
+  assert.ok(unchecked.includes(listedState("implementation")));
   const check = { kind: "held" as const, held: { kind: "state" as const, state: "implementing" as const } };
   const checked = itemNotReturnedLine("185", "boom", check);
   assert.ok(checked.includes(writeCheckText("185", check)));

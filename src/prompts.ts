@@ -8,7 +8,8 @@ import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
 import type { Skipped, SkipProblem, TurnProblem } from "./premises.ts";
-import { listedState, type RunMode } from "./runMode.ts";
+import type { RunMode } from "./runMode.ts";
+import type { ItemState } from "./tracker.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
@@ -1520,15 +1521,21 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
   return `${(check === null ? unsent : attempted)[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
 }
 /**
+ * Issue #192: the state an item is returned to, the one the Implementation tab lists. A constant, not
+ * `listedState("implementation")`, since a value import of `src/runMode.ts` here closes the import cycle prompts, runMode,
+ * refinement, pieces; `test/itemReturnTexts.test.ts` checks it against `listedState`.
+ */
+const RETURNED_STATE: ItemState = "refined";
+/**
  * Issue #192 (decision Q5): the line said and written when an implementation run that ended without finishing and made
  * no commit had its item labeled refined again.
  */
 export function itemReturnedLine(item: string): string {
-  return `The run made no commit, so Interloq labeled item ${item} ${listedState("implementation")} again; it is listed in the Implementation tab again.`;
+  return `The run made no commit, so Interloq labeled item ${item} ${RETURNED_STATE} again; it is listed in the Implementation tab again.`;
 }
 /** Issue #192: the line said and written when that relabeling failed for good; the item stays implementing. */
 export function itemNotReturnedLine(item: string, cause: string, check: WriteCheck | null): string {
-  return `The run made no commit, but Interloq could not label item ${item} ${listedState("implementation")} again: ${cause}.${check === null ? "" : ` ${writeCheckText(item, check)}`} It stays implementing until it is relabeled by hand.`;
+  return `The run made no commit, but Interloq could not label item ${item} ${RETURNED_STATE} again: ${cause}.${check === null ? "" : ` ${writeCheckText(item, check)}`} It stays implementing until it is relabeled by hand.`;
 }
 /** Issue #171 (requirements Q2): what the item held after the last write of a halted tracker step, or that it could not be checked. */
 export function writeCheckText(item: string, check: WriteCheck): string {
