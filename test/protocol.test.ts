@@ -175,6 +175,8 @@ const uiScope: fc.Arbitrary<UiScope> = fc.oneof(
   fc.record({ _tag: fc.constant("RailBranch" as const), phase: text, branch: text }),
   // Issue #133: a collapsed heading of a decision's page.
   fc.record({ _tag: fc.constant("DecisionSection" as const), decision: nat, section: fc.constantFrom(...DECISION_SECTIONS) }),
+  // Issue #22: the dashboard's heading of every answer.
+  fc.constant({ _tag: "DashboardAnswers" as const }),
 );
 const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, choices: fc.array(fc.record({ scope: uiScope, open: fc.boolean() }), { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(

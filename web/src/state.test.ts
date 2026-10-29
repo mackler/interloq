@@ -13,7 +13,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { emptyDashboard, lastAnswer, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -41,6 +41,16 @@ const replayed = (events: readonly RunEvent[], run = 1, current: number | null =
 /** A shown plan without its stages' rendering keys: the plan it shows. */
 const bare = (p: ShownPlan | null) => (p === null ? null : { stages: p.stages.map(({ key: _key, ...st }) => st) });
 const bodies = (s: ViewState) => s.modes.implementation.run?.left.map((m) => `${m.author}:${m.body}`) ?? [];
+
+describe("the dashboard (issue #22)", () => {
+  test("a fresh run and a run after Started hold the empty dashboard", () => {
+    expect(emptyRun(3).dashboard).toEqual(emptyDashboard);
+    expect(fold(live([started])).modes.implementation.run?.dashboard).toEqual(emptyDashboard);
+    expect(emptyDashboard).toEqual({ models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [] });
+    expect(statusText(emptyDashboard.status)).toBe("");
+    expect(lastAnswer(emptyDashboard)).toBe(null);
+  });
+});
 
 describe("ordering and the panels", () => {
   test("program messages, a prompt and the user's answer appear in order; a blank say is dropped", () => {

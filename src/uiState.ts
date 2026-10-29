@@ -19,7 +19,9 @@ export type UiScope =
   | Readonly<{ _tag: "DecisionEntry"; decision: number; entry: string }>
   | Readonly<{ _tag: "RailPhase"; phase: string }>
   | Readonly<{ _tag: "RailBranch"; phase: string; branch: string }>
-  | Readonly<{ _tag: "DecisionSection"; decision: number; section: DecisionSection }>;
+  | Readonly<{ _tag: "DecisionSection"; decision: number; section: DecisionSection }>
+  /** The dashboard's heading of every answer of the run (issue #22, F1): one per run, closed while untouched. */
+  | Readonly<{ _tag: "DashboardAnswers" }>;
 /** A change the page asks for: open or close one scope. */
 export type UiFlag = Readonly<{ scope: UiScope; open: boolean }>;
 /**
@@ -43,6 +45,8 @@ export const scopeKey = (scope: UiScope): string => {
       return `${scope._tag}:${JSON.stringify(scope.phase)}:${JSON.stringify(scope.branch)}`;
     case "DecisionSection":
       return `${scope._tag}:${scope.decision}:${JSON.stringify(scope.section)}`;
+    case "DashboardAnswers":
+      return scope._tag;
   }
 };
 /** The state after a flag: the version raised, the scope's choice replaced; each scope is held once. */

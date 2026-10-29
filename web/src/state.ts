@@ -115,6 +115,41 @@ export type AgentCall = Readonly<{ agent: "claude" | "codex"; purpose: string; l
  */
 export type Widget = Readonly<{ asked: Asked; options: readonly Choice[]; choices: readonly Choice[]; question: PresentedQuestion | null; presentedAt: string | null; hint: string }>;
 
+/**
+ * The dashboard's one status line (issue #22): what is happening now, each change replacing the one before. `Activity` is
+ * an agent's call, its tool use, a reconnection, a retry or a usage-limit wait; `Interloq` the latest of Interloq's own
+ * lines or a decision analysis's progress. The tag is there because an ended phase or run clears an activity and leaves
+ * Interloq's last line in place: the line at the end of a run stays, since nothing replaces it.
+ */
+export type Status = Readonly<{ _tag: "Idle" }> | Readonly<{ _tag: "Activity"; text: string }> | Readonly<{ _tag: "Interloq"; text: string }>;
+/** Claude Code's latest message (issue #22): its prose while it works, an interview message, a plan's result text; Markdown. */
+export type ClaudeLatest = Readonly<{ heading: string | null; body: string }>;
+/**
+ * What the page showed of the prompt an answer answers: the question as it was presented, the prompt's hint where it
+ * presented none, or nothing where this page never held the prompt pending.
+ */
+export type AskedShown = Readonly<{ _tag: "Question"; question: PresentedQuestion }> | Readonly<{ _tag: "Hint"; hint: string }> | Readonly<{ _tag: "NotShown" }>;
+/** One answer the developer gave, with what it answered; `answer` is the chosen choice's label, else his text, as Markdown. */
+export type AnsweredEntry = Readonly<{ key: string; asked: AskedShown; answer: string }>;
+/**
+ * The "You and Interloq" panel as a dashboard (issue #22, the developer's decision of 11 Oct 2026): every field has a
+ * fixed place and is replaced in place. `answers` is every answer of the run in the order given (F1); the last answered
+ * question is its last entry, derived by `lastAnswer`, never stored twice. The header is the run's item, not stored here.
+ */
+export type Dashboard = Readonly<{
+  models: Readonly<{ claude: string | null; codex: string | null }>;
+  status: Status;
+  claude: ClaudeLatest | null;
+  /** The interview's opening and its help while the interview lasts. */
+  interviewHelp: string | null;
+  answers: readonly AnsweredEntry[];
+}>;
+export const emptyDashboard: Dashboard = { models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [] };
+/** The status line's text: empty while nothing happens. */
+export const statusText = (status: Status): string => (status._tag === "Idle" ? "" : status.text);
+/** The last answer the developer gave, or null before the first. */
+export const lastAnswer = (d: Dashboard): AnsweredEntry | null => d.answers.at(-1) ?? null;
+
 export type RunView = Readonly<{
   id: number;
   /** The run's mode and item from Started (issue #120); null before it. */
@@ -173,6 +208,8 @@ export type RunView = Readonly<{
   foreseen: readonly Phase[];
   /** The shared state of the page for this run (issue #87): which of its decisions' entries are open in every tab. */
   ui: RunUiState;
+  /** The "You and Interloq" panel as a dashboard (issue #22). */
+  dashboard: Dashboard;
 }>;
 
 /** A tab's items (issue #120): not asked yet, being asked for, listed, or the notice of why the tracker could not list them. */
@@ -309,6 +346,7 @@ export const emptyRun = (id: number): RunView => ({
   plan: null,
   foreseen: [],
   ui: emptyUiState,
+  dashboard: emptyDashboard,
 });
 
 /**

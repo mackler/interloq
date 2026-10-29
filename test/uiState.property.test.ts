@@ -11,7 +11,9 @@ const railPhase: fc.Arbitrary<UiScope> = fc.record({ _tag: fc.constant("RailPhas
 const railBranch: fc.Arbitrary<UiScope> = fc.record({ _tag: fc.constant("RailBranch" as const), phase: fc.string({ maxLength: 3 }), branch: fc.string({ maxLength: 3 }) }, { noNullPrototype: true });
 // Issue #133: a decision page's collapsed headings.
 const decisionSection: fc.Arbitrary<Extract<UiScope, { _tag: "DecisionSection" }>> = fc.record({ _tag: fc.constant("DecisionSection" as const), decision: fc.nat({ max: 3 }), section: fc.constantFrom(...DECISION_SECTIONS) }, { noNullPrototype: true });
-const scope: fc.Arbitrary<UiScope> = fc.oneof(decisionEntry, railPhase, railBranch, decisionSection);
+// Issue #22: the dashboard's heading of every answer.
+const dashboardAnswers: fc.Arbitrary<UiScope> = fc.constant({ _tag: "DashboardAnswers" as const });
+const scope: fc.Arbitrary<UiScope> = fc.oneof(decisionEntry, railPhase, railBranch, decisionSection, dashboardAnswers);
 const flag: fc.Arbitrary<UiFlag> = fc.record({ scope, open: fc.boolean() }, { noNullPrototype: true });
 /** A state reached from the empty one by flags, as the server reaches it. */
 const reached: fc.Arbitrary<RunUiState> = fc.array(flag, { maxLength: 8 }).map((flags) => flags.reduce(withFlag, emptyUiState));
