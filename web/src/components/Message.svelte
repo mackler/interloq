@@ -6,11 +6,9 @@
   // the title. It never changes, so the panel's polite live region announces it once, with the message.
   // The side of a message is its author's: Interloq and Claude on the left, the user and Codex on the right (issue #2).
   import { render } from "../markdown.ts";
-  import QuestionText from "./QuestionText.svelte";
+  import AnsweredQuestion from "./AnsweredQuestion.svelte";
   import type { Author, Message } from "../state.ts";
   import { clockTime, fullTime } from "../time.ts";
-  import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, questionTitle } from "../../../src/prompts.ts";
-  import { piecesText } from "../../../src/pieces.ts";
 
   type Props = { message: Message };
   let { message }: Props = $props();
@@ -22,24 +20,7 @@
   {#if message.question !== undefined}
     <!-- S26, S28 (S12 of the task of issue #36): an answered question joins the transcript as it was presented, its
          words that refer to an explanation still carrying it; the options' labels on their own lines (S14). -->
-    {@const q = message.question}
-    <div class="body question m3-font-body-medium">
-      <p><strong>{questionTitle(q.number)}</strong> · <em>{originLine(q.origin, q.decision)}</em></p>
-      <QuestionText class="markdown" blocks={q.context.blocks} explanations={q.explanations} />
-      {#if q.context.by === "program"}<p><em>({CONTEXT_BY_PROGRAM})</em></p>{/if}
-      {#if q.attached !== null}<p class="attached-heading">{attachedHeading(q.attached.kind)}</p><QuestionText class="markdown" blocks={q.attached.blocks} explanations={q.explanations} />{/if}
-      <p><strong><QuestionText class="markdown" pieces={q.question} explanations={q.explanations} /></strong></p>
-      {#if q.options.length > 0}
-        <ul class="options">
-          {#each q.options as option, i (i)}
-            <li>
-              <span class="option-label">{#if "token" in option.answer}{option.answer.token}. {/if}<strong><QuestionText class="markdown" pieces={option.label} explanations={q.explanations} /></strong></span>
-              {#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={q.explanations} /></span>{/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
+    <AnsweredQuestion question={message.question} />
   {:else if message.format === "markdown"}
     <div class="body markdown m3-font-body-medium">{@html render(message.body)}</div>
   {:else}
@@ -61,10 +42,4 @@
   .markdown :global(pre) { overflow-x: auto; }
   .markdown :global(:first-child) { margin-top: 0; }
   .markdown :global(:last-child) { margin-bottom: 0; }
-  .question > :global(*) { margin: 0 0 0.5rem; }
-  .question > :global(*:last-child) { margin-bottom: 0; }
-  .options { padding-inline-start: 1.25rem; }
-  .option-label, .option-description { display: block; }
-  /* Issue #137: the heading of a question's attached material, named by attachedHeading of src/prompts.ts. */
-  .attached-heading { font-weight: 700; margin: 0.5rem 0 0.25rem; }
 </style>

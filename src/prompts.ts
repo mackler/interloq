@@ -2783,6 +2783,20 @@ export const entryToggleName = (label: string, title: string, open: boolean): st
 export const SHOW_CONVERSATION = "Show the conversation";
 /** The page's question pane (S27): back from the conversation to the pending question. */
 export const SHOW_QUESTION = "Back to the question";
+/** Issue #22: the dashboard's status line while nothing happens. */
+export const NO_AGENT_WORKING = "No agent is working.";
+/** Issue #22: the dashboard's label of its status line, Interloq's own place. */
+export const DASHBOARD_INTERLOQ_LABEL = "Interloq";
+/** Issue #22: the dashboard's label of Claude Code's latest message; the page names Claude Code "Claude" (issue #5). */
+export const DASHBOARD_CLAUDE_LABEL = "Claude";
+/** Issue #22: the dashboard's label of the last answered question. */
+export const LAST_ANSWER_LABEL = "Your last answer";
+/** Issue #22: the developer's own answer, as the page names him. */
+export const YOU_LABEL = "You";
+/** Issue #22 (F1): the dashboard's heading of every answer of the run, with their count. */
+export function allAnswersHeading(count: number): string {
+  return `Every answer of this run (${count})`;
+}
 /** The note beside a context paragraph the program wrote, in the page's question pane (S27). */
 export const PROGRAM_CONTEXT_NOTE = "Written by Interloq";
 /** An option answered by typing a number (More cycles at the cycle limit, S8), as the page's pane says it (S27). */
