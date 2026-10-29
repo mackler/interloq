@@ -15,7 +15,8 @@ import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SE
 import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
 import { parkHalted } from "../src/parking.ts";
 import type { StoreShape, UiShape } from "../src/services.ts";
-import { chainParkingText } from "../src/prompts.ts";
+import { chainParkingText, itemReturnedLine } from "../src/prompts.ts";
+import { TrackerUnreachable } from "../src/errors.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
@@ -718,4 +719,71 @@ test("a run started with the mode off that halts with leftovers and no commit is
   assert.equal(await stateOf(h, "1"), "refined");
   assert.ok(fs.existsSync(path.join(h.repo, "left.txt")));
   assert.deepEqual(parkBranches(h, "1"), []);
+});
+
+// Issue #192 (S11): a claimed parking that keeps nothing returns the item to refined before the chain leaves Parking.
+const entryOf = async (h: Harness, item: string) => (await chainOf(h)).chain.history.filter((e) => e.item === item).at(-1);
+const conversationOf = (h: Harness, item: string) => {
+  const root = (async () => (await entryOf(h, item))?.root)();
+  return root.then((r) => fs.readFileSync(path.join(h.repo, "plan-review", r ?? "", "conversation.md"), "utf8"));
+};
+const storeFailure = { _tag: "FileSystemError", operation: "write", path: "parked.json", message: "disk full" } as never;
+
+test("a failed save before the parking: the item returned refined, its leftover kept, the entry Returned, the line after the halt's record", async () => {
+  let failing = false;
+  const repo = identified();
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const h = await harness([halting((r) => (leftOnly(r), (failing = true)))], { repo, tracker: only, persistence: flagged(repo, () => failing) });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal(await stateOf(h, "1"), "refined");
+  assert.ok(fs.existsSync(path.join(repo, "left.txt")));
+  assert.deepEqual((await entryOf(h, "1"))?.returned, { _tag: "Returned" });
+  const record = await conversationOf(h, "1");
+  assert.ok(record.endsWith(`${itemReturnedLine("1")}\n\n`), record.slice(-300));
+  assert.ok(record.lastIndexOf("**Halted") < record.lastIndexOf(itemReturnedLine("1")));
+});
+
+test("ParkFailed before any git write returns the item refined", async () => {
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const h = await harness([halting(leftOnly)], { tracker: only, park: () => Effect.succeed({ _tag: "ParkFailed", message: "refused" }) });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal(await stateOf(h, "1"), "refined");
+  assert.deepEqual((await entryOf(h, "1"))?.returned, { _tag: "Returned" });
+});
+
+test("ParkFailed after the leftovers were committed keeps the item implementing", async () => {
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const park = (store: StoreShape) => store.commitLeftovers("parked leftovers").pipe(Effect.as<ParkNote>({ _tag: "ParkFailed", message: "no branch" }), Effect.orElseSucceed((): ParkNote => ({ _tag: "ParkFailed", message: "x" })));
+  const h = await harness([halting(leftOnly)], { tracker: only, park });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal((await entryOf(h, "1"))?.returned, null);
+});
+
+test("ParkFailed after the reset, the work on its branch, keeps the item implementing", async () => {
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const park = (store: StoreShape, item: ItemId) => parkHalted({ ...store, saveParked: (r) => (r._tag === "Parked" ? Effect.fail(storeFailure) : store.saveParked(r)) }, item);
+  const repo = identified();
+  const start = git(repo, "rev-parse", "HEAD");
+  const h = await harness([halting(leftOnly)], { repo, tracker: only, park });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal(parkBranches(h, "1").length, 1);
+  assert.equal(git(repo, "rev-parse", "HEAD"), start);
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal((await entryOf(h, "1"))?.returned, null);
+});
+
+test("a return whose relabeling is unreachable on every attempt says NotReturned and the chain ends as before", async () => {
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  for (let i = 0; i < 20; i++) await run(only.failNext("setState", new TrackerUnreachable({ tracker: "fake", message: "down", status: null }), "refined"));
+  const quick = (repo: string): TestOptions => ({ ...halting(leftOnly)(repo), config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 } });
+  const h = await harness([quick], { tracker: only, park: () => Effect.succeed({ _tag: "ParkFailed", message: "refused" }) });
+  await begin(h, "1");
+  await idle(h);
+  assert.equal((await entryOf(h, "1"))?.returned?._tag, "NotReturned");
+  assert.equal(await endedReason(h), "ParkFailed");
 });

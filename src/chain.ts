@@ -64,9 +64,23 @@ const ChainRunOutcomeSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Halted"), park: ParkNoteSchema }),
 ]);
 
+/**
+ * Issue #192: whether a halted run's item, whose claimed parking kept nothing, was labeled refined again by the manager,
+ * or why it could not be; null where the manager did not try.
+ */
+export type ItemReturnOutcome = Readonly<{ _tag: "Returned" }> | Readonly<{ _tag: "NotReturned"; cause: string }>;
+const ItemReturnOutcomeSchema = Schema.Union([Schema.Struct({ _tag: Schema.Literal("Returned") }), Schema.Struct({ _tag: Schema.Literal("NotReturned"), cause: Schema.String })]);
+
 /** One run of a chain, kept to show the developer when he returns, so he can find a parked branch. */
-export type ChainEntry = Readonly<{ item: ItemId; title: string; root: RunRoot | null; outcome: ChainRunOutcome }>;
-const ChainEntrySchema = Schema.Struct({ item: ItemIdSchema, title: Schema.String, root: Schema.NullOr(RunRootSchema), outcome: ChainRunOutcomeSchema });
+export type ChainEntry = Readonly<{ item: ItemId; title: string; root: RunRoot | null; outcome: ChainRunOutcome; returned: ItemReturnOutcome | null }>;
+const ChainEntrySchema = Schema.Struct({
+  item: ItemIdSchema,
+  title: Schema.String,
+  root: Schema.NullOr(RunRootSchema),
+  outcome: ChainRunOutcomeSchema,
+  // A chain.json written before issue #192 has no such field.
+  returned: Schema.NullOr(ItemReturnOutcomeSchema).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+});
 
 /** Why a chain ended, one variant per case of the requirements. */
 export type ChainEndReason =
@@ -206,7 +220,7 @@ export const ended = (state: ChainState, run: number, end: RunEnd): Step => {
   if (chain._tag !== "Running" || chain.run !== run) return [state, null];
   const outcome: ChainRunOutcome =
     end.code === 0 ? { _tag: "Finished" } : end.code === 130 ? { _tag: "Stopped" } : { _tag: "Halted", park: end.root === null ? { _tag: "NothingParked" } : { _tag: "Pending" } };
-  const history = [...chain.history, { item: chain.item, title: chain.title, root: end.root, outcome }];
+  const history = [...chain.history, { item: chain.item, title: chain.title, root: end.root, outcome, returned: null }];
   const common: Common = { ...commonOf(chain), history };
   // Issue #192: the end decided while a claimed parking kept the chain going (the mode turned off meanwhile).
   const pending = chain.claim._tag === "Claimed" ? chain.claim.then : null;
@@ -233,6 +247,15 @@ export const parked = (state: ChainState, generation: number, note: ParkNote): S
   if (note._tag === "ParkFailed") return [{ ...state, chain: { _tag: "Idle", ended: { _tag: "ParkFailed", item: chain.item, message: note.message }, history } }, null];
   if (chain.then !== null) return [{ ...state, chain: { _tag: "Idle", ended: chain.then, history } }, null];
   return ready(state, common);
+};
+
+/** Issue #192: the manager's return of a halted item whose parking kept nothing, on its newest halted entry of the generation. */
+export const itemReturned = (state: ChainState, generation: number, item: ItemId, outcome: ItemReturnOutcome): ChainState => {
+  const chain = state.chain;
+  if (!ofGeneration(state, generation) || chain._tag === "Idle") return state;
+  const index = chain.history.reduce((found, e, i) => (e.item === item && e.outcome._tag === "Halted" ? i : found), -1);
+  if (index < 0) return state;
+  return { ...state, chain: { ...chain, history: chain.history.map((e, i) => (i === index ? { ...e, returned: outcome } : e)) } };
 };
 
 /** The next start is due: the limits are checked here, so a restored `Ready` is checked again. */

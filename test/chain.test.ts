@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Result, Schema } from "effect";
 import {
   begun, blocksImplementationStart, type ChainSettings, type ChainState, ChainFileSchema, configured, cutoffOf, DEFAULT_SETTINGS, due, ended, initialState,
-  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand, claimParking,
+  listed, OFF_SETTINGS, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand, claimParking, itemReturned,
 } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
@@ -329,4 +329,19 @@ test("a restored Running chain with a claim ends ServerEnded; a chain.json witho
   delete file.state.chain.claim;
   const decoded = Schema.decodeUnknownSync(ChainFileSchema)(file);
   assert.deepEqual(decoded.state.chain._tag === "Running" && decoded.state.chain.claim, { _tag: "Unclaimed" });
+});
+
+test("itemReturned sets the outcome on the item's newest halted entry of its generation, and nothing else", () => {
+  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const g = gen(p1);
+  const returned = itemReturned(p1, g, id("1"), { _tag: "Returned" });
+  assert.deepEqual(returned.chain.history.map((e) => e.returned), [{ _tag: "Returned" }]);
+  assert.deepEqual({ ...returned, chain: { ...returned.chain, history: [] } }, { ...p1, chain: { ...p1.chain, history: [] } });
+  assert.deepEqual(itemReturned(p1, g + 1, id("1"), { _tag: "Returned" }), p1);
+  assert.deepEqual(itemReturned(p1, g, id("2"), { _tag: "Returned" }), p1);
+  const [after] = parked(returned, g, { _tag: "ParkFailed", message: "m" });
+  assert.deepEqual(after.chain.history[0]?.returned, { _tag: "Returned" });
+  const file = JSON.parse(JSON.stringify({ version: 2, state: p1 }));
+  delete file.state.chain.history[0].returned;
+  assert.equal(Schema.decodeUnknownSync(ChainFileSchema)(file).state.chain.history[0]?.returned, null);
 });

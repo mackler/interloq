@@ -3607,6 +3607,12 @@ export const chainSaveRefusedText = (message: string): string =>
 
 /** One line per run of a chain. */
 export const chainEntryText = (entry: ChainEntry): string => {
+  const outcome = chainOutcomeText(entry);
+  // Issue #192: where the parking kept nothing, the manager's return of the item to refined, or why it failed.
+  const returned = entry.returned;
+  return returned === null ? outcome : `${outcome} ${returned._tag === "Returned" ? itemReturnedLine(entry.item) : itemNotReturnedLine(entry.item, returned.cause, null)}`;
+};
+const chainOutcomeText = (entry: ChainEntry): string => {
   const head = `Item #${entry.item} ${entry.title}`;
   switch (entry.outcome._tag) {
     case "Finished":
@@ -3621,7 +3627,7 @@ export const chainEntryText = (entry: ChainEntry): string => {
         case "Parked":
           return `${head}: halted; its work is on branch ${park.branch}; it stays implementing.`;
         case "NothingParked":
-          return `${head}: halted with no work to keep; it stays where it was.`;
+          return `${head}: halted with no work to keep.`;
         case "ParkFailed":
           return `${head}: halted; its work could not be kept on a branch.`;
       }

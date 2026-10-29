@@ -35,11 +35,11 @@ const chains: readonly Chain[] = [
   { _tag: "Starting", item, title: "seven", ...common },
 ];
 const entries: readonly ChainEntry[] = [
-  { item, title: "t", root: null, outcome: { _tag: "Finished" } },
-  { item, title: "t", root: null, outcome: { _tag: "Stopped" } },
-  ...(["Pending", "NothingParked"] as const).map((t) => ({ item, title: "t", root: null, outcome: { _tag: "Halted" as const, park: { _tag: t } } })),
-  { item, title: "t", root: null, outcome: { _tag: "Halted", park: { _tag: "Parked", branch: "interloq/halted/7/r", commit: "c" } } },
-  { item, title: "t", root: null, outcome: { _tag: "Halted", park: { _tag: "ParkFailed", message: "m" } } },
+  { item, title: "t", root: null, outcome: { _tag: "Finished" }, returned: null },
+  { item, title: "t", root: null, outcome: { _tag: "Stopped" }, returned: null },
+  ...(["Pending", "NothingParked"] as const).map((t) => ({ item, title: "t", root: null, outcome: { _tag: "Halted" as const, park: { _tag: t } }, returned: null })),
+  { item, title: "t", root: null, outcome: { _tag: "Halted", park: { _tag: "Parked", branch: "interloq/halted/7/r", commit: "c" } }, returned: null },
+  { item, title: "t", root: null, outcome: { _tag: "Halted", park: { _tag: "ParkFailed", message: "m" } }, returned: null },
 ];
 
 const all = (): readonly string[] => [

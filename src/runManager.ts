@@ -10,14 +10,16 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, runInProgressText, serverEndingText } from "./prompts.ts";
-import { type StoreShape, Tracker, type TrackerError, type TrackerShape } from "./services.ts";
+import { chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, runInProgressText, serverEndingText } from "./prompts.ts";
+import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
+import { type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
+import { parkBranchOf } from "./park.ts";
 import { type ItemId, itemIdOf } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
 import {
-  begun, blocksImplementationStart, claimParking, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
 import { makeStore } from "./store.ts";
@@ -319,6 +321,53 @@ export const makeRunManager = (
       }),
     );
 
+    /**
+     * Issue #192 (S11): a chained halt whose claimed parking kept nothing gives its item back to refined, before the chain
+     * leaves Parking, so no implementation run can label the item meanwhile. Work counts as kept, and the item stays
+     * implementing, where there is no baseline, HEAD is not the start commit, the parking branch exists or parked.json says
+     * Parked. Only an item still implementing is written, through the tracker retry; the outcome goes on the chain's entry
+     * of the run and to its conversation.md. Never fails and never changes how the chain ends.
+     */
+    const returnUnparked = (generation: number, root: RunRoot, item: ItemId): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        const config = yield* Effect.result(loadConfig(cwd, access.sharedConfig).pipe(Effect.provide(platform)));
+        if (Result.isFailure(config)) return;
+        const opened = yield* Effect.result(makeStore(cwd, root, config.success.ignorePaths).pipe(Effect.provide(platform)));
+        if (Result.isFailure(opened)) return;
+        const store = opened.success;
+        const record = (outcome: ItemReturnOutcome) =>
+          chainStep((s) => [itemReturned(s.chain, generation, item, outcome), null]).pipe(
+            Effect.andThen(store.converse(`${outcome._tag === "Returned" ? itemReturnedLine(item) : itemNotReturnedLine(item, outcome.cause, null)}\n\n`).pipe(Effect.ignore)),
+          );
+        const kept = yield* Effect.result(
+          Effect.gen(function* () {
+            const baseline = yield* store.baseline();
+            if (baseline === null || (yield* store.head()) !== baseline.start_commit) return true;
+            const branch = parkBranchOf(item, root);
+            if (Result.isSuccess(branch) && (yield* store.branchTip(branch.success)) !== null) return true;
+            return (yield* store.loadParked())?._tag === "Parked";
+          }),
+        );
+        if (Result.isFailure(kept)) return yield* record({ _tag: "NotReturned", cause: describe(kept.failure) });
+        if (kept.success) return;
+        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0) };
+        const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop) };
+        const written = yield* withTracker((t) =>
+          t.read(item).pipe(
+            Effect.flatMap((read): Effect.Effect<ItemReturnOutcome | null> =>
+              read.state !== "implementing"
+                ? Effect.succeed(null)
+                : writeWithRetry(t, { kind: "setState", item, state: listedState("implementation") }, env).pipe(
+                    Effect.as<ItemReturnOutcome>({ _tag: "Returned" }),
+                    Effect.catch((e) => Effect.succeed<ItemReturnOutcome>({ _tag: "NotReturned", cause: e._tag === "TrackerWriteFailed" ? trackerFailureText(e.error) : describe(e) })),
+                  ),
+            ),
+          ),
+        );
+        const outcome: ItemReturnOutcome | null = Result.isFailure(written) ? { _tag: "NotReturned", cause: written.failure } : written.success;
+        if (outcome !== null) yield* record(outcome);
+      });
+
     /** Runs one command of the chain, for the generation it was computed for; the next command, or none. */
     const execute = ({ generation, command }: ChainCommand): Effect.Effect<ChainCommand | null> => {
       switch (command._tag) {
@@ -329,6 +378,7 @@ export const makeRunManager = (
               ? Result.fail(describe(config.failure))
               : yield* Effect.result(makeStore(cwd, command.root, config.success.ignorePaths).pipe(Effect.provide(platform)));
             const note: ParkNote = Result.isFailure(store) ? { _tag: "ParkFailed", message: typeof store.failure === "string" ? store.failure : describe(store.failure) } : yield* park(store.success, command.item);
+            if (note._tag !== "Parked") yield* returnUnparked(generation, command.root, command.item);
             return yield* chainStep((s) => parked(s.chain, generation, note));
           });
         case "Due":
@@ -365,7 +415,10 @@ export const makeRunManager = (
         const now = yield* Ref.get(state);
         if (now.closing) return;
         if (saved !== "saved") {
-          if (command.command._tag === "Park") yield* chainStep((s) => [parkingAbandoned(s.chain, command.generation), null]);
+          if (command.command._tag === "Park") {
+            yield* returnUnparked(command.generation, command.command.root, command.command.item);
+            yield* chainStep((s) => [parkingAbandoned(s.chain, command.generation), null]);
+          }
           return;
         }
         if (!commandApplies(now.chain, command)) return;

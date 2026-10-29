@@ -2375,7 +2375,7 @@ describe("chainShown", () => {
     const [stopped] = ended(running, 4, { code: 130, root: null });
     const shown = chainShown(withChain(stopped), time);
     expect(shown?.ended).toBe(prompts.chainEndedText({ _tag: "StoppedByDeveloper", item: "7" as ItemId }, time));
-    expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped" } })]);
+    expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped" }, returned: null })]);
     expect(chainShown(withChain(helloChain), time)?.ended).toBeNull();
   });
 });

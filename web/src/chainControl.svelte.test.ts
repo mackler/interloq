@@ -77,6 +77,18 @@ describe("ChainControl", () => {
   });
 });
 
+// Issue #192 (S11): a chain entry whose item was returned to refined, or could not be, says so.
+describe("ChainControl's returned items", () => {
+  const halted = (returned: NonNullable<ChainState["chain"]["history"][number]["returned"]>) => ({
+    ...initialState(DEFAULT_SETTINGS),
+    chain: { _tag: "Idle" as const, ended: null, history: [{ item: "7" as never, title: "seven", root: null, outcome: { _tag: "Halted" as const, park: { _tag: "ParkFailed" as const, message: "m" } }, returned }] },
+  });
+  test("an entry returned shows itemReturnedLine; one not returned shows itemNotReturnedLine with its cause", () => {
+    expect(control(halted({ _tag: "Returned" })).root.textContent).toContain(prompts.itemReturnedLine("7"));
+    expect(control(halted({ _tag: "NotReturned", cause: "the tracker could not be reached" })).root.textContent).toContain(prompts.itemNotReturnedLine("7", "the tracker could not be reached", null));
+  });
+});
+
 // Work review 1 of issue #147, W1-R1-4: a draft and its error survive an event that leaves the settings as they were.
 describe("ChainControl's drafts", () => {
   const live = () => {
