@@ -541,18 +541,32 @@ test("an edit of plan.json and plan.md after the last report does not survive th
   assert.doesNotMatch(fs.readFileSync(path.join(dir, "plan.md"), "utf8"), /edited/);
 });
 
-test("an interrupted execution leaves its started step unfinished", async () => {
+// Suite run 1 of issue #193: a poll of plan.json bounded at 2 s interrupted the run before S1 was reported started
+// under the whole suite's load. The test waits for the scripted execution's `after`, which runs once the report is
+// written, raced with the test's abort signal under an explicit timeout, and interrupts the fiber in every case.
+test("an interrupted execution leaves its started step unfinished", { timeout: 60_000 }, async (t) => {
+  let reported!: () => void;
+  const started = new Promise<void>((r) => {
+    reported = r;
+  });
+  const aborted = new Promise<never>((_, reject) =>
+    t.signal.addEventListener("abort", () => reject(new Error("the step was never reported started")), { once: true }),
+  );
+  aborted.catch(() => {});
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [{ output: noQuestions, plan: "v1" }],
     reviews: [{ issues: [] }],
-    execScripts: [{ reports: [["S1", "started"]], hang: true }],
+    execScripts: [{ reports: [["S1", "started"]], after: () => reported(), hang: true }],
   });
   const fiber = Effect.runFork(run("task").pipe(Effect.provide(layer)));
-  for (let i = 0; i < 200 && planStatusesOrNull(probe.dir)?.S1 !== "started"; i++) await new Promise((r) => setTimeout(r, 10));
-  await Effect.runPromise(Fiber.interrupt(fiber));
-  assert.deepEqual(planStatuses(probe.dir), { S1: "unfinished" });
+  try {
+    await Promise.race([started, aborted]);
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    assert.deepEqual(planStatuses(probe.dir), { S1: "unfinished" });
+  } finally {
+    await Effect.runPromise(Fiber.interrupt(fiber));
+  }
 });
-const planStatusesOrNull = (dir: string): Record<string, string> | null => (fs.existsSync(path.join(dir, "plan.json")) ? planStatuses(dir) : null);
 
 // Issue #6 ("the whole run from the start"): the phases known of the run, notified before they begin.
 const foreseen = (notified: readonly UiEvent[]): string[] =>
