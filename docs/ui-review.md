@@ -379,3 +379,22 @@ ends (behavior 15 of CLAUDE.md).
 - **Placement.** Above the item list, as the Refinement tab's choice of terms stands, and during a run at the top of the
   progress rail's column in both layouts. The rail's column holds no question, so the question page and the decision
   page keep their room and the question with its first answer stays in view at 450 pixels (CLAUDE.md, User interface).
+
+## A question's countdown, and the button that holds it (issue #185)
+
+While the chain is on, a question of the implementation run it is running waits a configured time (two minutes by
+default) for an answer, after which the run stops waiting for it.
+
+- **Visibility of system status.** Beside the answer controls, the existing `Countdown` (m3-svelte's determinate
+  `LinearProgress` with the time remaining) shows the wait, which the server times and sends with the question, so it
+  asserts the time remaining of a wait whose end is known and nothing more, as it does for a usage-limit wait. Its label
+  says what the end of the wait does: the run stops waiting, moves its work to the item's branch, sets the item's label
+  to `refined` and the chain starts the next item; at a review's limit, the review goes on with more cycles.
+- **User control and freedom.** An M3 text button, "I'm working on this question", stops the countdown for good, and so
+  does the first text typed into the answer field; after either, the question waits as long as it takes. Stop task
+  remains for a press the developer forgets.
+- **Error prevention.** A question whose wait ran out is replaced by a notice saying it expired, with no answer field, and
+  an answer the server receives after the deadline is refused with a notice; a draft of it is withdrawn, its text quoted
+  in the notice. The run's end reads "abandoned".
+- **Recognition rather than recall.** The Implementation tab marks an item whose run in the current chain stopped
+  waiting for an answer, so an item back in the refined list does not look untouched; the mark asserts that alone.
