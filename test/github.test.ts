@@ -271,6 +271,53 @@ test("the four operations in sequence through Tracker, built from the config and
   for (const r of stub.sent()) assert.equal(r.headers.authorization, "Bearer github_pat_SECRET123");
 });
 
+// Issue #186, requirements Q3: a comment on an item, and the listing of its comments.
+const commentOf = (body: string | null, created: string): Record<string, unknown> => ({ id: 1, body, created_at: created, user: { login: "mackler" } });
+
+test("a comment is one POST of its text to the issue's comments, after the issue is read", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [LABELS.implementing])), [`POST ${ISSUES}/7/comments`]: json(commentOf("sent back", "2026-10-29T00:00:00Z"), 201) }));
+  await withTracker(stub, (t) => t.comment(id("7"), "sent back"));
+  const posts = stub.sent().filter((r) => r.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url.pathname, "/repos/mackler/interloq/issues/7/comments");
+  assert.deepEqual(JSON.parse(posts[0].body ?? ""), { body: "sent back" });
+});
+
+test("a comment on an ambiguous issue is TrackerStateAmbiguous and nothing is POSTed", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [LABELS.refined, LABELS.implementing])) }));
+  assert.equal((await failure(stub, (t) => t.comment(id("7"), "x")))._tag, "TrackerStateAmbiguous");
+  assert.ok(stub.sent().every((r) => r.method === "GET"));
+});
+
+test("an issue's comments follow the Link header to the second page, joined in order, a null body read as empty", async () => {
+  const page2 = `${ISSUES}/7/comments?per_page=100&page=2`;
+  const stub = makeStub((r) =>
+    r.url.searchParams.get("page") === "2"
+      ? json([commentOf("third", "2026-10-03T00:00:00Z")])
+      : json([commentOf("first", "2026-10-01T00:00:00Z"), commentOf(null, "2026-10-02T00:00:00Z")], 200, { link: `<${page2}>; rel="next"` }),
+  );
+  const comments = await withTracker(stub, (t) => t.comments(id("7")));
+  assert.deepEqual(comments, [
+    { body: "first", created: "2026-10-01T00:00:00Z" },
+    { body: "", created: "2026-10-02T00:00:00Z" },
+    { body: "third", created: "2026-10-03T00:00:00Z" },
+  ]);
+  assert.equal(stub.sent()[0].url.pathname, "/repos/mackler/interloq/issues/7/comments");
+  assert.equal(stub.sent()[0].url.searchParams.get("per_page"), "100");
+});
+
+test("the comments of an issue GitHub does not have, or of an id outside its format, are TrackerItemNotFound", async () => {
+  const stub = makeStub(route({}));
+  assert.equal((await failure(stub, (t) => t.comments(id("7"))))._tag, "TrackerItemNotFound");
+  assert.equal((await failure(stub, (t) => t.comments(id("x7"))))._tag, "TrackerItemNotFound");
+});
+
+test("a 500 on a comment's POST is TrackerUnreachable with its status", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/7`]: json(issue(7, [])), [`POST ${ISSUES}/7/comments`]: json({ message: "oops" }, 500) }));
+  const error = await failure(stub, (t) => t.comment(id("7"), "x"));
+  assert.deepEqual(error._tag === "TrackerUnreachable" && error.status, 500);
+});
+
 test("the token is in no error the adapter produced", () => {
   assert.ok(errors.length >= 10);
   for (const error of errors) assert.ok(!`${JSON.stringify(error)} ${String(error)} ${error.message}`.includes("SECRET123"), JSON.stringify(error));

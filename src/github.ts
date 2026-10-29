@@ -5,7 +5,7 @@
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
 import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
-import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
+import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import type { GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
@@ -18,6 +18,7 @@ const PAGE_SIZE = "100";
 
 const decodeIssue = Schema.decodeUnknownResult(GithubIssueSchema);
 const decodeIssues = Schema.decodeUnknownResult(Schema.Array(GithubIssueSchema));
+const decodeComments = Schema.decodeUnknownResult(Schema.Array(GithubComment));
 
 /** What a request is for, which decides what a 404 means and what a body that does not decode names. */
 export type Target = Readonly<{ kind: "listing"; what: string }> | Readonly<{ kind: "item"; id: ItemId }>;
@@ -81,14 +82,19 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
         return { json, link: response.headers["link"] };
       });
 
-    /** Every page of a listing, following each answer's Link header until there is none. */
-    const pages = (request: HttpClientRequest.HttpClientRequest, target: Target, before: readonly GithubIssue[]): Effect.Effect<readonly GithubIssue[], TrackerError> =>
-      Effect.flatMap(send(request, target), ({ json, link }): Effect.Effect<readonly GithubIssue[], TrackerError> => {
-        const issues = decodeIssues(json);
-        if (Result.isFailure(issues)) return Effect.fail(new TrackerBodyInvalid({ id: named(target), message: `GitHub's answer is not a list of issues: ${issues.failure.message}` }));
-        const all = [...before, ...issues.success];
-        return Option.match(nextPage(link), { onNone: () => Effect.succeed(all), onSome: (url) => pages(HttpClientRequest.get(url), target, all) });
-      });
+    /** Every page of a listing, following each answer's Link header until there is none; each page decoded by `decode`, its failure naming `what`. */
+    const pagesOf = <A>(decode: (json: unknown) => Result.Result<readonly A[], Readonly<{ message: string }>>, what: string) => {
+      const pages = (request: HttpClientRequest.HttpClientRequest, target: Target, before: readonly A[]): Effect.Effect<readonly A[], TrackerError> =>
+        Effect.flatMap(send(request, target), ({ json, link }): Effect.Effect<readonly A[], TrackerError> => {
+          const decoded = decode(json);
+          if (Result.isFailure(decoded)) return Effect.fail(new TrackerBodyInvalid({ id: named(target), message: `GitHub's answer is not a list of ${what}: ${decoded.failure.message}` }));
+          const all = [...before, ...decoded.success];
+          return Option.match(nextPage(link), { onNone: () => Effect.succeed(all), onSome: (url) => pages(HttpClientRequest.get(url), target, all) });
+        });
+      return pages;
+    };
+    const pages = pagesOf(decodeIssues, "issues");
+    const commentPages = pagesOf(decodeComments, "comments");
 
     /** An issue as an item; a pull request is none, and an issue with no state or two is its typed failure. */
     const itemOfIssue = (issue: GithubIssue, id: string): Result.Result<TrackerItem, TrackerError> =>
@@ -144,9 +150,17 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
     const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> =>
       Effect.flatMap(itemIssueOf(id), ({ issue }) => patch(issue.url, id, { labels: relabeled(labelNamesOf(issue), config.labels, state) }));
 
-    // Issue #186: replaced by the comment requests in its next step.
-    const comment = (_id: ItemId, _text: string): Effect.Effect<void, TrackerError> => Effect.void;
-    const comments = (_id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError> => Effect.succeed([]);
+    /** Issue #186: one POST of the comment, after the issue is read, so that it refuses what read refuses; the answer's JSON is not used. */
+    const comment = (id: ItemId, text: string): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemIssueOf(id), ({ issue }) => Effect.asVoid(send(HttpClientRequest.post(`${issue.url}/comments`).pipe(HttpClientRequest.bodyJsonUnsafe({ body: text })), { kind: "item", id })));
+
+    /** Issue #186: every page of the issue's comments, oldest first as GitHub lists them; an id outside GitHub's format names no item. */
+    const comments = (id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError> =>
+      Option.match(issueNumberOf(id), {
+        onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
+        onSome: (number) =>
+          Effect.map(commentPages(HttpClientRequest.get(`${issuesUrl}/${number}/comments`).pipe(HttpClientRequest.setUrlParams({ per_page: PAGE_SIZE })), { kind: "item", id }, []), (cs) => cs.map(commentOf)),
+      });
     const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
     return tracker;
   });
