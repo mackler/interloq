@@ -11,6 +11,13 @@ import { itemUrlOf, type TrackerItem } from "./tracker.ts";
 import { ATTACHED_KINDS } from "./question.ts";
 import { type ChainSettings, type ChainState, ChainStateSchema, cutoffOf, runLimitOf } from "./chain.ts";
 
+/**
+ * Issue #185: what happens when a question's wait for an answer runs out: the run is abandoned, or (a review's round or
+ * idle limit) the review goes on with more cycles.
+ */
+export const ON_EXPIRIES = ["abandon", "extend"] as const;
+export type OnExpiry = (typeof ON_EXPIRIES)[number];
+
 
 /** A prompt the run waits on, with its widget (src/userPrompts.ts). `prompt` numbers the prompts of a run. */
 export type Asked = Readonly<{ _tag: "Asked"; prompt: number; text: string; kind: PromptKind; mode: "ask" | "message"; choices: readonly Choice[]; free: "none" | "line" | "message" }>;

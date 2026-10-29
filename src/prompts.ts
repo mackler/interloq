@@ -2133,7 +2133,10 @@ export const TITLE_WAITING_MARK = "●";
 /** The title marker of a run that ended while the tab was hidden. */
 export const TITLE_ENDED_MARK = "✓";
 /** How a run ended, by its exit code: the words of "This task has ended (…)" and of the end's notification. */
-export const endedOutcome = (code: number): "finished" | "interrupted" | "halted" => (code === 0 ? "finished" : code === 130 ? "interrupted" : "halted");
+/** Issue #185: the exit code of a run that got no answer within the wait, neither a stop (130) nor a halt (1). */
+export const ABANDONED_EXIT_CODE = 2;
+export const endedOutcome = (code: number): "finished" | "interrupted" | "halted" | "abandoned" =>
+  code === 0 ? "finished" : code === 130 ? "interrupted" : code === ABANDONED_EXIT_CODE ? "abandoned" : "halted";
 /** The desktop notification of a pending prompt, named by the project's own name. */
 export const pauseNotificationTitle = (name: string): string => `${name}: Interloq is waiting for you`;
 export const PAUSE_NOTIFICATION_BODY = "The run is paused until you answer its question.";
@@ -3068,6 +3071,10 @@ export function serverFaultRecord(message: string): string {
 export function haltRecord(reason: string): string {
   return endingRecord(1, reason);
 }
+/** Issue #185: the record of a run that got no answer within the wait; `text` is the one the page shows. */
+export function abandonedRecord(text: string): string {
+  return endingRecord(ABANDONED_EXIT_CODE, text);
+}
 /** Issue #193 (requirements Q2): the record of a run ended by a defect, an error of Interloq that is not a typed error. */
 export function defectRecord(message: string): string {
   return endingRecord(1, `an internal error of Interloq ended the run (${message}).`);
@@ -3860,6 +3867,17 @@ export const notRefinedStoppedText = (item: string | null, reason: "refinementAs
   reason === "noTracker"
     ? `Claude Code declared the task not refined and Codex's review let the verdict stand, but the run has no item in a tracker to send back. What its requirements leave out: ${missing}`
     : `item ${item} was declared not refined, and Codex's review let the verdict stand, but it was not sent back: the refinement that last refined it asked the developer no question, so refining it again with nobody asked could repeat the same requirements. Its work is parked and it stays implementing, with a comment saying what was missing`;
+/** Issue #185: why a run ended without an answer: the wait and the question it waited on. */
+export const noAnswerText = (question: { readonly number: number; readonly text: string } | null, seconds: number): string =>
+  question === null
+    ? `no answer came within ${durationText(seconds * 1000)}, so the run stopped waiting for it`
+    : `no answer came within ${durationText(seconds * 1000)} to question ${question.number}, “${question.text}”, so the run stopped waiting for it`;
+/** Issue #185: a send-back's tracker step whose question went unanswered after its parking. */
+export const sendBackUnansweredText = (item: string, step: "comment" | "label", park: ParkNote, noAnswer: string): string => {
+  const parked = park._tag === "Parked" ? `its work was moved to the branch ${park.branch}` : park._tag === "NothingParked" ? "it had no work to move to a branch" : "the move of its work to a branch did not complete";
+  const what = step === "comment" ? "comment" : "setting of the label `unrefined`";
+  return `item ${item} was being sent back to refinement and ${parked}; the question about the send-back's ${what} went unanswered (${noAnswer}). That step is left undone, and Interloq set no label after it`;
+};
 /** Issue #186 (requirements Q6): the halt of a send-back whose parking failed, naming the git operation and what git reported. */
 export const sendBackNotParkedText = (item: string, message: string): string =>
   `item ${item} was to be sent back to refinement, but its work could not be parked: ${message} The work stays where it is, nothing was reversed, and the item stays implementing`;
