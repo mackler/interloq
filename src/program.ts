@@ -126,7 +126,19 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  * `claimParking` (issue #192) asks the chain to commit to parking this run's halt, and answers whether it did; the run
  * manager gives it as one step of its publisher. Without a chain nothing parks the run.
  */
-export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>, claimParking: Effect.Effect<boolean> = Effect.succeed(false)): Effect.Effect<number, never, Scope.Scope> =>
+/**
+ * `concluded` (work review 2 of issue #192, W2-R1-1) receives the code the run computed once its records exist. The run's
+ * ending is uninterruptible, so a Stop task during it leaves the fiber interrupted when it ends although the program
+ * computed its code; the caller reads the code here rather than from the fiber's exit.
+ */
+export const program = (
+  start: RunStart,
+  wiring: Wiring,
+  signal?: FaultSignal,
+  allocated?: Ref.Ref<Option.Option<RunRoot>>,
+  claimParking: Effect.Effect<boolean> = Effect.succeed(false),
+  concluded?: Ref.Ref<Option.Option<number>>,
+): Effect.Effect<number, never, Scope.Scope> =>
   programWith(
     {
       project: start.project,
@@ -163,6 +175,7 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, a
     signal,
     allocated,
     claimParking,
+    concluded,
   );
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
@@ -174,7 +187,14 @@ export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<n
  * run, from the configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever
  * it is. Without a signal, the run makes one that no one fails.
  */
-const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>, claimParking: Effect.Effect<boolean> = Effect.succeed(false)): Effect.Effect<number, never, Scope.Scope> =>
+const programWith = (
+  start: Started,
+  wiring: Wiring,
+  given?: FaultSignal,
+  allocated?: Ref.Ref<Option.Option<RunRoot>>,
+  claimParking: Effect.Effect<boolean> = Effect.succeed(false),
+  concluded?: Ref.Ref<Option.Option<number>>,
+): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const signal = given ?? (yield* makeFaultSignal);
     const fault = Deferred.await(signal.fault);
@@ -424,6 +444,8 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
             return yield* say(itemNotReturnedLine(start.item, cause, check));
           });
 
+    /** W2-R1-1: the code the run computed, kept for the caller in `concluded` and returned. */
+    const conclude = (code: number): Effect.Effect<number> => (concluded === undefined ? Effect.succeed(code) : Ref.set(concluded, Option.some(code)).pipe(Effect.as(code)));
     const interrupted = Effect.gen(function* () {
       yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${records.dir}.`);
       yield* records.converse("**Interrupted by the user.**\n").pipe(Effect.ignore);
@@ -440,7 +462,10 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
      * An interruption of the whole run from outside: the server's fault's halt if the fault has come (W1-S1-1 of issue
      * #158: haltAll interrupts a faulted run whose body did not end within the grace), otherwise the user's (Stop task).
      */
-    const interruptedFromOutside = faultCome.pipe(Effect.flatMap(Option.match({ onNone: () => returnItem("stopped", false).pipe(Effect.andThen(interrupted)), onSome: (error) => Effect.asVoid(bodyFaulted(error)) })));
+    const interruptedFromOutside = faultCome.pipe(
+      Effect.flatMap(Option.match({ onNone: () => returnItem("stopped", false).pipe(Effect.andThen(interrupted), Effect.as(130)), onSome: bodyFaulted })),
+      Effect.flatMap(conclude),
+    );
     // Issue #120: a refinement run is the question phase alone; an implementation run plans, executes and reviews.
     const kind = start.kind;
     const body: Effect.Effect<RunOutcome, RunError> =
@@ -453,32 +478,39 @@ const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, alloca
             Effect.map((phases) => ({ mode: "implementation", phases }) as const),
           );
     // The race with the server's fault is inside onInterrupt, so a body ended by the fault does not say INTERRUPTED;
-    // only an interruption of the whole run (Stop task) does.
-    const exit = yield* Effect.raceFirst(body, fault).pipe(Effect.onInterrupt(() => interruptedFromOutside), Effect.exit);
-
-    if (Exit.isSuccess(exit)) {
-      if (exit.value.mode === "implementation") {
-        yield* ui.say(taskFinishedLine(exit.value.phases));
-        yield* ui.say(`Plan: ${records.plan}\nConversation record: ${records.dir}/conversation.md`);
-      } else yield* ui.say(`Requirements: ${records.requirements}\nConversation record: ${records.dir}/conversation.md`);
-      yield* tail(yield* sessionId, records);
-      return 0;
-    }
-    const error = Cause.findErrorOption(exit.cause);
-    if (Option.isNone(error)) {
-      // Issue #193 (Q2): a defect of the run is recorded before the fiber dies with it; an interruption is not a defect.
-      if (!Cause.hasInterruptsOnly(exit.cause)) yield* records.converse(defectRecord(defectMessage(Cause.squash(exit.cause)))).pipe(Effect.ignore);
-      return yield* Effect.die(Cause.squash(exit.cause));
-    }
-    // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
-    if (error.value._tag === "UserStopped") {
-      yield* returnItem("stopped", false);
-      yield* interrupted;
-      return 130;
-    }
-    if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value);
-    yield* returnItem("halted", false);
-    return yield* halted(describe(error.value), yield* sessionId, records);
+    // only an interruption of the whole run (Stop task) does. W2-R1-1 of issue #192: the body alone is interruptible;
+    // everything after it (the item's return, the records of the ending, what is said) runs uninterruptibly, so a Stop
+    // task during it cannot leave the item unreturned or a claimed parking unparked, and the code computed is concluded.
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const exit = yield* restore(Effect.raceFirst(body, fault)).pipe(Effect.onInterrupt(() => interruptedFromOutside), Effect.exit);
+        if (Exit.isSuccess(exit)) {
+          if (exit.value.mode === "implementation") {
+            yield* ui.say(taskFinishedLine(exit.value.phases));
+            yield* ui.say(`Plan: ${records.plan}\nConversation record: ${records.dir}/conversation.md`);
+          } else yield* ui.say(`Requirements: ${records.requirements}\nConversation record: ${records.dir}/conversation.md`);
+          yield* tail(yield* sessionId, records);
+          return yield* conclude(0);
+        }
+        const error = Cause.findErrorOption(exit.cause);
+        if (Option.isNone(error)) {
+          // An interruption from outside was ended by interruptedFromOutside, which concluded its code.
+          if (Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.interrupt;
+          // Issue #193 (Q2): a defect of the run is recorded before the fiber dies with it.
+          yield* records.converse(defectRecord(defectMessage(Cause.squash(exit.cause)))).pipe(Effect.ignore);
+          return yield* Effect.die(Cause.squash(exit.cause));
+        }
+        // S24 (the user's decision at the stop of execution phase 1): End the run is an interruption, like Ctrl+C.
+        if (error.value._tag === "UserStopped") {
+          yield* returnItem("stopped", false);
+          yield* interrupted;
+          return yield* conclude(130);
+        }
+        if (error.value._tag === "ServerFault") return yield* bodyFaulted(error.value).pipe(Effect.flatMap(conclude));
+        yield* returnItem("halted", false);
+        return yield* halted(describe(error.value), yield* sessionId, records).pipe(Effect.flatMap(conclude));
+      }),
+    );
   });
 
 /**

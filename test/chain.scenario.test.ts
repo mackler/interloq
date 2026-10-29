@@ -853,3 +853,28 @@ test("W1-R1-2 a configuration unreadable at the return: NotReturned with its cau
   assert.equal(await stateOf(h, "1"), "implementing");
   assert.equal(await endedReason(h), "RunLimitReached");
 });
+
+// Work review 2 of issue #192 (W2-R1-1): once the run's body has ended, its ending runs uninterruptibly, so a Stop task
+// after the parking was claimed leaves the halt a halt and the claimed work parked.
+test("W2-R1-1 Stop task after the claim: the run ends 1 with its halt's record, its work is parked, the item stays implementing", async () => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  const only = fakeTrackerOf(MANAGER_ITEMS.filter((i) => i.id === "1"));
+  const h = await harness([halting(leftover)], { uiOf: holdingHalt(held), settings: settings(1), tracker: only });
+  const id = await begin(h, "1");
+  await until("the claim", async () => {
+    const c = (await chainOf(h)).chain;
+    return c._tag === "Running" && c.claim._tag === "Claimed";
+  });
+  const stopping = run(h.manager.stop("test", id));
+  await sleep(50);
+  release();
+  await stopping;
+  await idle(h);
+  assert.equal(endCode(h, id), 1);
+  const record = await conversationOf(h, "1");
+  assert.ok(record.includes("**Halted (exit code 1):**"), record.slice(-800));
+  assert.equal(parkBranches(h, "1").length, 1);
+  assert.equal(await stateOf(h, "1"), "implementing");
+  assert.equal(await endedReason(h), "RunLimitReached");
+});

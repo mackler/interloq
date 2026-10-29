@@ -460,6 +460,9 @@ export const makeRunManager = (
         const idRef = yield* Ref.make(0);
         // Issue #147: the run's records directory once allocated, which the chain needs at the run's end, however it ends.
         const allocated = yield* Ref.make<Option.Option<RunRoot>>(Option.none());
+        // W2-R1-1 of issue #192: the code the program computed, which a Stop task during its uninterruptible ending
+        // cannot overrule; a run ended before its records or by a defect leaves it empty, and exitCodeOf decides.
+        const concluded = yield* Ref.make(Option.none<number>());
         const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))));
         // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
         // to keep its item implementing rests on the chain's own decision; while closing nothing is granted.
@@ -483,11 +486,11 @@ export const makeRunManager = (
             // onExit is in place before any stop can interrupt it; a run that was never reserved ends as a no-op
             // (idRef is 0, which is no run's id).
             const fiber = yield* Deferred.await(gate).pipe(
-              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal, allocated, claim))),
+              Effect.andThen(Effect.scoped(program(runStart, wiring(ui, mode), signal, allocated, claim, concluded))),
               // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
               Effect.onExit((exit: Exit.Exit<number>) =>
-                Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated)]).pipe(
-                  Effect.flatMap(([rid, faulted, root]) => end(rid, faulted ? 1 : exitCodeOf(exit), Option.getOrNull(root))),
+                Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated), Ref.get(concluded)]).pipe(
+                  Effect.flatMap(([rid, faulted, root, code]) => end(rid, faulted ? 1 : Option.getOrElse(code, () => exitCodeOf(exit)), Option.getOrNull(root))),
                 ),
               ),
               Effect.forkDetach({ startImmediately: true }),

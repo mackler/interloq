@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
-import { Deferred, Effect, Fiber, Option } from "effect";
+import { Deferred, Effect, Fiber, Option, Ref } from "effect";
 import { ServerFault, TrackerUnreachable } from "../src/errors.ts";
 import { exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { haltRecord, itemReturnedLine, serverFaultRecord, sessionTooLongText } from "../src/prompts.ts";
@@ -241,4 +241,77 @@ test("(j) a refinement run's halt leaves its item unrefined", async () => {
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project, "refinement"), wiring))), 1);
   assert.equal(await stateOf(probe), "unrefined");
   assert.ok(!said(probe).includes(itemReturnedLine(item)));
+});
+
+// Work review 2 (W2-R1-1): once the body has ended, the run's ending runs uninterruptibly, and the code it computes
+// reaches the caller through `concluded`, although the fiber ends interrupted.
+const retrying = (probe: WiringProbe): Promise<void> =>
+  new Promise<void>((resolve) => {
+    const tick = setInterval(() => {
+      if (probe.ui.notified.some((e) => e._tag === "TrackerRetrying")) {
+        clearInterval(tick);
+        resolve();
+      }
+    }, 5);
+  });
+const interruptedDuringRelabel = async (probe: WiringProbe, wiring: Wiring, signal?: FaultSignal) => {
+  const concluded = Effect.runSync(Ref.make(Option.none<number>()));
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring, signal, undefined, undefined, concluded)));
+  return { concluded, fiber };
+};
+
+test("W2-R1-1 (k) Stop task during the relabel's wait: the item is returned, the halt's record is written, the code stays 1", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  Effect.runSync(tracker.failNext("setState", unreachable(), "refined"));
+  const { wiring, probe } = testWiring(tempRepo(), { ...haltsAtPlanning, tracker, config: { maxTrackerRetries: 2, trackerRetryDelaySeconds: 0.3 } });
+  const { concluded, fiber } = await interruptedDuringRelabel(probe, wiring);
+  await retrying(probe);
+  Effect.runFork(Fiber.interrupt(fiber));
+  await Effect.runPromise(Fiber.await(fiber));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some(1));
+  assert.equal(await stateOf(probe), "refined");
+  const record = conversation(probe);
+  assert.ok(record.includes(itemReturnedLine(item)), record);
+  assert.ok(record.endsWith(haltRecord(sessionTooLongText("Prompt is too long"))), record.slice(-400));
+  assert.ok(!record.includes("**Interrupted by the user.**"), record);
+});
+
+test("W2-R1-1 (k2) Stop task during the relabel's wait, the tracker unreachable throughout: itemNotReturnedLine, then the halt's record, code 1", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  for (let i = 0; i < 4; i++) Effect.runSync(tracker.failNext("setState", unreachable(), "refined"));
+  const { wiring, probe } = testWiring(tempRepo(), { ...haltsAtPlanning, tracker, config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.3 } });
+  const { concluded, fiber } = await interruptedDuringRelabel(probe, wiring);
+  await retrying(probe);
+  Effect.runFork(Fiber.interrupt(fiber));
+  await Effect.runPromise(Fiber.await(fiber));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some(1));
+  assert.ok(said(probe).includes("could not label item"), said(probe));
+  const record = conversation(probe);
+  assert.ok(record.includes("could not label item"), record);
+  assert.ok(record.endsWith(haltRecord(sessionTooLongText("Prompt is too long"))), record.slice(-400));
+});
+
+test("W2-R1-1 (k3) after the server's fault, an interruption during the relabel leaves its 5 s bound: no answer within 5 s, code 1", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  for (let i = 0; i < 10; i++) Effect.runSync(tracker.failNext("setState", unreachable(), "refined"));
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ hang: true }], tracker, config: { maxTrackerRetries: 5, trackerRetryDelaySeconds: 2 } });
+  const signal = Effect.runSync(makeFaultSignal);
+  const { concluded, fiber } = await interruptedDuringRelabel(probe, wiring, signal);
+  await new Promise<void>((resolve) => {
+    const tick = setInterval(() => {
+      if (probe.planner.prompts.length > 0) {
+        clearInterval(tick);
+        resolve();
+      }
+    }, 5);
+  });
+  await sleep(10);
+  await Effect.runPromise(Deferred.fail(signal.fault, new ServerFault({ message: "write EPIPE" })));
+  await retrying(probe);
+  const started = Date.now();
+  Effect.runFork(Fiber.interrupt(fiber));
+  await Effect.runPromise(Fiber.await(fiber));
+  assert.deepEqual(Effect.runSync(Ref.get(concluded)), Option.some(1));
+  assert.ok(said(probe).includes("no answer within 5 s"), said(probe));
+  assert.ok(Date.now() - started < 10_000, "the relabeling after the fault was not bounded");
 });
