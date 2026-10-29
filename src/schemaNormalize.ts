@@ -40,7 +40,9 @@ export type ReportVariant =
   | (ReportCommon & Readonly<{ kind: "finished" }>)
   | (ReportCommon & Readonly<{ kind: "continuing" }>)
   | (ReportCommon & Readonly<{ kind: "awaiting_input"; question: string }>)
-  | (ReportCommon & Readonly<{ kind: "blocked"; description: string }>);
+  | (ReportCommon & Readonly<{ kind: "blocked"; description: string }>)
+  /** Issue #186: the verdict that the item is not refined, with what the requirements leave out. */
+  | (ReportCommon & Readonly<{ kind: "not_refined"; missing: string }>);
 export const normalizeReport = (report: ExecReport): ReportVariant => {
   const common = { summary: report.summary, remainingWork: report.remaining_work, checks: report.checks };
   switch (report.status) {
@@ -52,6 +54,8 @@ export const normalizeReport = (report: ExecReport): ReportVariant => {
       return { kind: "awaiting_input", question: report.question, ...common };
     case "blocked":
       return { kind: "blocked", description: report.question, ...common };
+    case "not_refined":
+      return { kind: "not_refined", missing: report.missing, ...common };
   }
 };
 

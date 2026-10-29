@@ -115,7 +115,7 @@ const planWithoutOutput = (_plan: string): Script => () => (async function* () {
   yield init("s-1");
   yield success(null, "forgot the output");
 })();
-const report = { status: "finished", summary: "done", question: "", remaining_work: "", checks: [] };
+const report = { status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] };
 
 /** The five services with a real Claude Code adapter over a fake SDK and a scripted reviewer. */
 const withClaude = (repo: string, sdk: FakeSdk, reviewer: ScriptedReviewer): Layer.Layer<Services> => {

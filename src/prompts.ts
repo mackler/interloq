@@ -1164,6 +1164,7 @@ ${EXECUTION_COMMIT_SENTENCE}
 ${BACKGROUND_SUITE_SENTENCE}
 ${CONTINUING_STATUS_SENTENCE}
 ${BLOCKED_STATUS_SENTENCE}
+${NOT_REFINED_STATUS_SENTENCE}
 When every step is completed and verified, return status 'finished'.
 In every case put a summary of the work done in summary and a description of the steps not yet completed in remaining_work.
 Task: ${task}`;

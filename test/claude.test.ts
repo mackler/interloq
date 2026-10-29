@@ -212,7 +212,7 @@ test("the planning call passes the agent JSON Schema of the given Effect schema 
 // Issue #78: every call carries the inherited environment with BASH_MAX_TIMEOUT_MS set to the ceiling, the same value the
 // planning prompts' rule states.
 test("a planning call and an execution call carry the inherited environment with the command ceiling", async () => {
-  const fake = await planner([messages(init(), success({ questions_for_user: [] })), messages(init(), success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] }))]);
+  const fake = await planner([messages(init(), success({ questions_for_user: [] })), messages(init(), success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] }))]);
   await run(fake.planner.planning("write the plan", schema));
   await run(fake.planner.executing("implement the plan", noReporter));
   const expected = claudeEnv(fake.sdk.inheritedEnv, prompts.COMMAND_CEILING_MS);
@@ -222,7 +222,7 @@ test("a planning call and an execution call carry the inherited environment with
 });
 
 test("the execution call passes the agent JSON Schema of ExecReport as outputFormat", async () => {
-  const fake = await planner([messages(init(), success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] }))]);
+  const fake = await planner([messages(init(), success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] }))]);
   await run(fake.planner.executing("implement the plan", noReporter));
   assert.deepEqual(fake.sdk.calls[0].options.outputFormat, { type: "json_schema", schema: agentJsonSchema(S.ExecReport) });
 });
@@ -256,7 +256,7 @@ test("after a stop, the hook denies tools but permits the final structured outpu
     seen.push(decision(await runHook(call.options, "Write")));
     seen.push(decision(await runHook(call.options, "Bash")));
     seen.push(decision(await runHook(call.options, "StructuredOutput")));
-    yield success({ status: "needs_input", summary: "s", question: "", remaining_work: "w", checks: [] });
+    yield success({ status: "needs_input", summary: "s", question: "", remaining_work: "w", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["A"]);
   await run(fake.planner.executing("implement the plan", noReporter));
@@ -328,14 +328,14 @@ test("a second execution call cannot see the first call's stop", async () => {
     await permission(call.options)("AskUserQuestion", { questions }, callContext());
     stopped();
     await secondChecked;
-    yield success({ status: "needs_input", summary: "s", question: "", remaining_work: "w", checks: [] });
+    yield success({ status: "needs_input", summary: "s", question: "", remaining_work: "w", missing: "", checks: [] });
   })();
   const second: Script = (call) => (async function* () {
     yield init("s-2");
     await firstStopped;
     seen.push(decision(await runHook(call.options, "Write")));
     checked();
-    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] });
+    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] });
   })();
   const fake = await planner([first, second], ["A"]);
   const [one, two] = await run(Effect.all([fake.planner.executing("first", noReporter), fake.planner.executing("second", noReporter)], { concurrency: "unbounded" }));
@@ -350,7 +350,7 @@ test("an execution permission request asks the user; y allows, anything else den
     yield init();
     results.push((await permission(call.options)("Bash", { command: "rm -rf /" }, callContext()))?.behavior ?? "none");
     results.push((await permission(call.options)("Bash", { command: "ls" }, callContext()))?.behavior ?? "none");
-    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] });
+    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["y", "n"]);
   const outcome = await run(fake.planner.executing("implement the plan", noReporter));
@@ -384,7 +384,7 @@ test("a UserStopped inside canUseTool ends the call with UserStopped", async () 
       // The adapter answers the SDK; the failure reaches the caller of the call.
     }
     if (call.options.abortController !== undefined) await aborted(call.options);
-    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] });
+    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["q"]);
   await assert.rejects(run(fake.planner.executing("implement the plan", noReporter)), (e: unknown) => tag(e) === "UserStopped");
@@ -564,7 +564,7 @@ test("a relayed question says no line of its own: it is presented as an event", 
 });
 
 test("an execution call notifies its start with the purpose execution", async () => {
-  const fake = await planner([messages(init(), success({ status: "finished", summary: "s", question: "", remaining_work: "", checks: [] }))]);
+  const fake = await planner([messages(init(), success({ status: "finished", summary: "s", question: "", remaining_work: "", missing: "", checks: [] }))]);
   await run(fake.planner.executing("go", noReporter));
   assert.deepEqual(activity(fake.ui)[0], { _tag: "AgentCallStarted", agent: "claude", purpose: "execution", callId: "claude-1" });
   assert.deepEqual(activity(fake.ui).at(-1), { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-1" });
@@ -647,7 +647,7 @@ test("an execution permission request offers Help me decide over Allow and Deny"
   const script: Script = (call) => (async function* () {
     yield init();
     results.push((await permission(call.options)("Bash", { command: "rm -rf build" }, callContext()))?.behavior ?? "none");
-    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] });
+    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["/decide", "y"]);
   const { decider, requests, explained } = recordingDecider();
@@ -697,7 +697,7 @@ test("a blank answer to a relayed question presents it again before the retry, w
 // Issue #6 (Q2, Q3, P1-R1-4): an execution call offers report_step, answered by the reporter of its phase; the tool
 // needs no permission, is denied after a stop like every other tool, is absent from planning calls, and the plan's
 // files cannot be edited by a tool during execution.
-const report = { status: "finished", summary: "done", question: "", remaining_work: "", checks: [] };
+const report = { status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] };
 /** Every PreToolUse hook of a call whose matcher admits the tool, in order; the first decision that is given. */
 const runHooks = async (options: Options, toolName: string, toolInput: Record<string, unknown> = {}): Promise<string | undefined> => {
   for (const entry of options.hooks?.PreToolUse ?? []) {
@@ -963,7 +963,7 @@ test("a relayed question in the shape is presented from its own parts, with no c
   const script: Script = (call) => (async function* () {
     yield init();
     await permission(call.options)("AskUserQuestion", { questions }, callContext());
-    yield success({ status: "needs_input", summary: "s", question: "q", remaining_work: "r", checks: [] });
+    yield success({ status: "needs_input", summary: "s", question: "q", remaining_work: "r", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["1"]);
   const { decider, explained } = recordingDecider();
@@ -984,7 +984,7 @@ test("a relayed question without the shape is not denied: a context call writes 
   const script: Script = (call) => (async function* () {
     yield init();
     await permission(call.options)("AskUserQuestion", { questions }, callContext());
-    yield success({ status: "needs_input", summary: "s", question: "q", remaining_work: "r", checks: [] });
+    yield success({ status: "needs_input", summary: "s", question: "q", remaining_work: "r", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["2"]);
   fs.writeFileSync(path.join(fake.dir, "plan.md"), "# The plan\n\n1. Build it.\n");
@@ -1021,7 +1021,7 @@ const permissionAsked = async (tool: string, input: Record<string, unknown>, exp
   const script: Script = (call) => (async function* () {
     yield init();
     await permission(call.options)(tool, input, callContext());
-    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", checks: [] });
+    yield success({ status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] });
   })();
   const fake = await planner([script], ["n"]);
   const { decider } = recordingDecider();
@@ -1283,7 +1283,7 @@ const blockOf = (output: HookJSONOutput): string | undefined => (output as { dec
 /** "pending" while the promise has not settled after a short real wait. */
 const stillPending = async (promise: Promise<unknown>): Promise<boolean> => (await Promise.race([promise.then(() => "settled"), sleep(150).then(() => "pending")])) === "pending";
 const SUITE = "sbt testFull > /tmp/full.log";
-const finishedReport = { status: "finished", summary: "done", question: "", remaining_work: "", checks: [] };
+const finishedReport = { status: "finished", summary: "done", question: "", remaining_work: "", missing: "", checks: [] };
 const endOf = (id: string, file: string) => ({ taskId: id, status: "completed" as const, outputFile: file, summary: `summary of ${id}` });
 /** An end named as the fake messages announce its task (`started` describes task id as `task <id>`; issue #161). */
 const namedEndOf = (id: string, file: string): NamedEnd => ({ end: endOf(id, file), name: `task ${id}` });

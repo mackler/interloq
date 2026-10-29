@@ -356,16 +356,22 @@ export const StepCheckRun = Schema.Struct({ step: Schema.String, command: Schema
 export type StepCheckRun = typeof StepCheckRun.Type;
 
 export const ExecReport = Schema.Struct({
-  status: Schema.Literals(["finished", "continuing", "needs_input", "blocked"]),
+  status: Schema.Literals(["finished", "continuing", "needs_input", "blocked", "not_refined"]),
   summary: Schema.String,
   question: Schema.String,
   remaining_work: Schema.String,
   /** Issue #162: every check command the call ran, with its step and its duration. */
   checks: Schema.Array(StepCheckRun),
+  /** Issue #186: with status not_refined, what the requirements leave out (NOT_REFINED_STATUS_SENTENCE); "" otherwise. */
+  missing: Schema.String,
 });
 
+/**
+ * A phase's outcome. `question` is the question with needs_input, the failure's description with blocked and aborted,
+ * and, since issue #186, what the requirements leave out with not_refined, the verdict Codex then reviews.
+ */
 export const ExecOutcome = Schema.Struct({
-  status: Schema.Literals(["finished", "needs_input", "blocked", "aborted"]),
+  status: Schema.Literals(["finished", "needs_input", "blocked", "aborted", "not_refined"]),
   summary: Schema.String,
   question: Schema.String,
   remainingWork: Schema.String,

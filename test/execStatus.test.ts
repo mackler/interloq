@@ -11,7 +11,7 @@ const statuses = S.ExecReport.fields.status.literals;
 
 test("executePrompt names every status the report's schema accepts, and no other beside the plan's step statuses", () => {
   const prompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
-  assert.deepEqual([...statuses].sort(), ["blocked", "continuing", "finished", "needs_input"]);
+  assert.deepEqual([...statuses].sort(), ["blocked", "continuing", "finished", "needs_input", "not_refined"]);
   for (const status of statuses) assert.ok(prompt.includes(`status '${status}'`), status);
   const named = [...prompt.matchAll(/status '([a-z_]+)'/g)].map((m) => m[1]).filter((s) => !(S.StepStatus.literals as readonly string[]).includes(s));
   assert.deepEqual([...new Set(named)].sort(), [...statuses].sort());
@@ -26,4 +26,12 @@ test("executePrompt describes continuing as work left with nothing for the user,
   assert.match(prompts.CONTINUING_STATUS_SENTENCE, /without asking the user/);
   assert.match(prompts.BLOCKED_STATUS_SENTENCE, /'blocked'/);
   assert.match(prompts.BLOCKED_STATUS_SENTENCE, /needs the user/);
+});
+
+// Issue #186: the execution's verdict that the item is not refined, named by the status and its field from the schema.
+test("executePrompt carries the not_refined sentence, which names the status and the report's field for what is missing", () => {
+  const prompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
+  assert.ok(prompt.includes(prompts.NOT_REFINED_STATUS_SENTENCE));
+  assert.ok("missing" in S.ExecReport.fields);
+  assert.match(prompts.NOT_REFINED_STATUS_SENTENCE, /'not_refined' with 'missing'/);
 });

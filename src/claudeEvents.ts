@@ -107,6 +107,8 @@ export const reduceMessages = (messages: readonly SDKMessage[], streamError: str
 };
 
 const decodeExecReport = Schema.decodeUnknownResult(S.ExecReport);
+/** Issue #186: why a not_refined report with nothing in 'missing' is treated as no report. */
+export const NOT_REFINED_BLANK_REASON = "the status report is 'not_refined' with nothing in 'missing'";
 /** The status report of an execution call, or null if there is none or it does not match its schema. */
 export const execReport = (structured: unknown): ExecReport | null => {
   const decoded = decodeExecReport(structured);
@@ -124,9 +126,11 @@ export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, tran
     return { status: "needs_input", summary: report?.summary ?? "", question: stop.question, remainingWork: report?.remaining_work ?? "", userInput: stop.input, checks: report?.checks ?? [] };
   }
   // A valid report delivered before a transport fault stands (issue #26, P1-R1-3): it is the call's last act.
-  const reportStands = report !== null && (outcome.error === null || transport);
+  // Issue #186: a verdict that names nothing missing is an invalid report, since an execution report gets no repair turn.
+  const blankVerdict = report !== null && report.status === "not_refined" && report.missing.trim() === "";
+  const reportStands = report !== null && !blankVerdict && (outcome.error === null || transport);
   if (!reportStands) {
-    const reason = outcome.error ?? (outcome.structured === null || outcome.structured === undefined ? "no structured output" : "the status report does not match its schema");
+    const reason = outcome.error ?? (outcome.structured === null || outcome.structured === undefined ? "no structured output" : blankVerdict ? NOT_REFINED_BLANK_REASON : "the status report does not match its schema");
     return { status: "aborted", summary: outcome.resultText, question: `The execution call ended without a status report: ${reason}`, remainingWork: "", userInput: null, checks: [] };
   }
   const variant = normalizeReport(report);
@@ -139,6 +143,8 @@ export const interpretExecution = (outcome: CallOutcome, stop: Stop | null, tran
       return { status: "needs_input", summary: variant.summary, question: variant.question, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
     case "blocked":
       return { status: "blocked", summary: variant.summary, question: variant.description, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
+    case "not_refined":
+      return { status: "not_refined", summary: variant.summary, question: variant.missing, remainingWork: variant.remainingWork, userInput: null, checks: variant.checks };
   }
 };
 

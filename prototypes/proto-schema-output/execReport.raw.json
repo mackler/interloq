@@ -7,7 +7,8 @@
         "finished",
         "continuing",
         "needs_input",
-        "blocked"
+        "blocked",
+        "not_refined"
       ]
     },
     "summary": {
@@ -41,6 +42,9 @@
         ],
         "additionalProperties": false
       }
+    },
+    "missing": {
+      "type": "string"
     }
   },
   "required": [
@@ -48,7 +52,8 @@
     "summary",
     "question",
     "remaining_work",
-    "checks"
+    "checks",
+    "missing"
   ],
   "additionalProperties": false
 }

@@ -446,8 +446,9 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         // Issue #181 (Q6, Q7): a stop is not put to the user. A question Claude Code relayed and the user answered during
         // the call is recorded as his decision; any other stop is revised from Claude Code's own account, which the
         // revision prompt carries, after the work review, with nothing recorded as a decision of his.
+        // Issue #186: a verdict that the item is not refined is no stop; Codex reviews it in place of the work review.
         const stop: ExecStop | null =
-          outcome.status === "finished" ? null : outcome.userInput !== null ? { _tag: "Answered" } : { _tag: "Unanswered", status: outcome.status, summary: outcome.summary, question: outcome.question, remainingWork: outcome.remainingWork };
+          outcome.status === "finished" || outcome.status === "not_refined" ? null : outcome.userInput !== null ? { _tag: "Answered" } : { _tag: "Unanswered", status: outcome.status, summary: outcome.summary, question: outcome.question, remainingWork: outcome.remainingWork };
         if (stop !== null) yield* ui.say(`Remaining work: ${outcome.remainingWork || "not reported"}`);
         if (stop?._tag === "Answered" && outcome.userInput !== null) {
           const question = outcome.question.replace(/\s+/g, " ");
@@ -459,6 +460,31 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         return { stopped, stop, work: { outcome, plan: ended === null ? "(no plan recorded)" : renderPlanMarkdown(ended) } satisfies WorkExecution };
       }).pipe(inPhase({ kind: "execution", n: k }));
       const { stopped } = execution;
+
+      // Issue #186 (requirements Q1, Q2): an execution that reports the item not refined has its verdict reviewed by
+      // Codex in Code review K, in a session of its own, in place of the work review. A verdict that stands sends the
+      // item back, this run's work parked; one withdrawn is followed by planning phase K+1, revised from it, whose next
+      // work review covers this phase's work, since its diff runs from the baseline.
+      const executed = execution.work.outcome;
+      if (executed.status === "not_refined") {
+        verdicts += 1;
+        const n = verdicts;
+        const judged = yield* Effect.gen(function* () {
+          yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "work", n: k } });
+          yield* store.saveVerdict(n, { missing: executed.question, phase: { kind: "execution", n: k }, origin: "execution" });
+          yield* sayAndWrite(verdictGivenLine(label("work", k)));
+          const origin = { _tag: "Execution", phase: k, task, summary: executed.summary, remainingWork: executed.remainingWork } as const;
+          return yield* reviewLoop(verdictSubject(n, k, { kind: "execution", n: k }, origin, withRequirements));
+        }).pipe(ownSession, inPhase({ kind: "work", n: k }));
+        yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "work", n: k }, result: judged.result });
+        if (judged.result !== "revise") {
+          yield* sayAndWrite(verdictStandsLine(n));
+          return { _tag: "NotRefined", missing: (yield* store.loadVerdict(n)).missing, verdict: n } as const;
+        }
+        yield* sayAndWrite(verdictWithdrawnLine(n));
+        previous = { _tag: "VerdictWithdrawn", verdict: n };
+        continue;
+      }
 
       // Work review K, after every execution phase whatever its status (behaviour 12).
       const work = yield* Effect.gen(function* () {
