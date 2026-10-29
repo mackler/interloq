@@ -12,6 +12,7 @@ import { type ClaudeFailure, classifyClaude, errorCode, type ProcessEnd, process
 import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
 import type { ExecCallOutcome } from "./schema.ts";
+import { failureLineOf, secretsOf } from "./callFailureRecord.ts";
 import { askOffering, numberedOptions, permissionDraft, programContext, type QuestionDraft } from "./offer.ts";
 import { plainPieces } from "./pieces.ts";
 import { parseRelayedQuestion, type QuestionOrigin } from "./question.ts";
@@ -119,6 +120,8 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
   /** The model Claude Code last announced for the session; the announcement is repeated only when it changes. */
   const announcedModel = yield* Ref.make<string | null>(null);
   const callCount = yield* Ref.make(0);
+  /** The values of the inherited environment's credential-named variables, which no failure line may contain (issue #192). */
+  const secrets = secretsOf(sdk.inheritedEnv);
 
   /**
    * The real location of a path that may not exist yet: its nearest existing ancestor resolved through
@@ -333,10 +336,23 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
       full.env = claudeEnv(sdk.inheritedEnv, prompts.COMMAND_CEILING_MS);
 
       const failed = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+      /**
+       * Issue #192 (requirements Q1): a failed request's facts are written to usage.jsonl, its credentials redacted,
+       * before the outcome is classified. A failure of Interloq's own (a callback's) and an interruption never get here.
+       */
+      const recorded = (outcome: CallOutcome): Effect.Effect<CallOutcome, CallbackError> => {
+        const message = outcome.error;
+        return message === null
+          ? Effect.succeed(outcome)
+          : Ref.get(session).pipe(
+              Effect.flatMap((id) => store.recordCallFailure(failureLineOf({ session: id, purpose, callId, message, failure: outcome.failure }, secrets))),
+              Effect.as(outcome),
+            );
+      };
       // Starting the call can throw synchronously (for example when the SDK cannot start its CLI);
       // that is a call error like a failure of the stream, not a defect.
       const started = yield* Effect.try({ try: () => sdk.query({ prompt, options: full })[Symbol.asyncIterator](), catch: failed }).pipe(Effect.result);
-      if (Result.isFailure(started)) return reduceMessages([], started.failure);
+      if (Result.isFailure(started)) return yield* recorded(reduceMessages([], started.failure));
       const iterator = started.success;
       const seen: SDKMessage[] = [];
       let streamError: string | null = null;
@@ -407,7 +423,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
       });
       yield* consume.pipe(Effect.ensuring(close));
       if (yield* Deferred.isDone(callbackFailure)) return yield* Deferred.await(callbackFailure);
-      return reduceMessages(seen, streamError, streamCode, processEnd);
+      return yield* recorded(reduceMessages(seen, streamError, streamCode, processEnd));
     }).pipe(
       // Every exit ends the activity: a call error, a typed failure and an interruption are ok: false.
       Effect.onExit((exit) => ui.notify({ _tag: "AgentCallEnded", agent: "claude", ok: Exit.isSuccess(exit) && exit.value.error === null, callId })),

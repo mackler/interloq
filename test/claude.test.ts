@@ -32,11 +32,11 @@ import { timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 const run = <A, E>(effect: Effect.Effect<A, E, Decider>, decider: DeciderShape = noDecider): Promise<A> => Effect.runPromise(effect.pipe(Effect.provideService(Decider, decider)));
 
 /** A Claude Code planner over a fake SDK, a scripted Ui and a store on a temporary repository. */
-const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}, backgroundBoundMs: number = prompts.BACKGROUND_WAIT_BOUND_MS): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig | RunKind> }> => {
+const planner = async (scripts: Script[], answers: string[] = [], config: Partial<typeof S.Config.Type> = {}, storeOverride: Partial<StoreShape> = {}, backgroundBoundMs: number = prompts.BACKGROUND_WAIT_BOUND_MS, env: Readonly<Record<string, string | undefined>> = {}): Promise<{ planner: PlannerShape; sdk: FakeSdk; ui: ScriptedUi; dir: string; project: string; deps: Layer.Layer<Store | Ui | Sdk | RunConfig | RunKind> }> => {
   const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   await run(store.init("task"));
   const ui = new ScriptedUi(answers);
-  const sdk = new FakeSdk(scripts);
+  const sdk = new FakeSdk(scripts, [], env);
   const deps = Layer.mergeAll(Layer.succeed(Store, { ...store, ...storeOverride }), Layer.succeed(Ui, ui), Layer.succeed(Sdk, sdk), Layer.succeed(RunConfig, { ...S.defaultConfig, ...config }), Layer.succeed(RunKind, { mode: "implementation" }));
   return { planner: await run(makeClaudePlannerWith({ backgroundBoundMs }).pipe(Effect.provide(deps))), sdk, ui, dir: store.dir, project: store.project, deps };
 };
@@ -1877,4 +1877,92 @@ test("a process ending after the call was interrupted is no process ending: inte
   assert.ok(Exit.isFailure(exit));
   assert.equal(fake.sdk.calls.length, 1);
   assert.equal(fake.ui.notified.filter((e) => e._tag === "TransportRetrying").length, 0);
+});
+
+// Issue #192 (requirements Q1): every failed Claude Code request leaves a claude_call_failed line in usage.jsonl.
+const failedLines = (dir: string): Record<string, unknown>[] =>
+  fs.existsSync(path.join(dir, "usage.jsonl"))
+    ? fs.readFileSync(path.join(dir, "usage.jsonl"), "utf8").trim().split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.kind === "claude_call_failed")
+    : [];
+const authRefused = (text: string): SDKMessage =>
+  ({ type: "result", subtype: "success", is_error: true, api_error_status: 401, terminal_reason: "api_error", result: text, structured_output: null, total_cost_usd: 0, num_turns: 1 }) as unknown as SDKMessage;
+
+test("a planning call refused with 401 still fails with ClaudeCallFailed, and leaves one line with its facts", async () => {
+  const fake = await planner([messages(init("session-401"), authRefused("Invalid API key · Please run /login"))]);
+  assert.equal(await failedTag(fake), "ClaudeCallFailed");
+  const lines = failedLines(fake.dir);
+  assert.equal(lines.length, 1);
+  const [line] = lines;
+  assert.equal(line?.purpose, "planning");
+  assert.equal(line?.session, "session-401");
+  assert.match(String(line?.call_id), /^claude-\d+$/);
+  assert.equal(line?.api_status, 401);
+  assert.equal(line?.subtype, "success");
+  assert.equal(line?.result_text, "Invalid API key · Please run /login");
+  assert.equal(line?.failure_known, true);
+});
+
+test("a stream that throws ECONNRESET records its code for each attempt", async () => {
+  const econn = () => Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+  const fake = await planner([throwing(econn()), throwing(econn())], ["s"], quickRetry);
+  await run(Effect.result(planningCall("write the plan", schema)).pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps)));
+  const lines = failedLines(fake.dir);
+  assert.ok(lines.length >= 2, `expected a line per attempt, found ${lines.length}`);
+  for (const line of lines) assert.equal(line.stream_code, "ECONNRESET");
+});
+
+test("an SDK that fails to start records one line with the start error as its message", async () => {
+  const failing: Script = () => {
+    throw new Error("spawn claude ENOENT");
+  };
+  const fake = await planner([failing]);
+  assert.equal(await failedTag(fake), "ClaudeCallFailed");
+  const lines = failedLines(fake.dir);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0]?.message, "spawn claude ENOENT");
+  assert.equal(lines[0]?.session, null);
+});
+
+test("an execution call whose process ends records its ending on each attempt", async () => {
+  const fake = await planner([endingThen(sdkSignal), endingThen(sdkSignal)], [], quickRetry);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  const lines = failedLines(fake.dir);
+  assert.equal(lines.length, 2);
+  for (const line of lines) {
+    assert.equal(line.purpose, "execution");
+    assert.deepEqual(line.process_end, { kind: "signal", signal: "SIGBUS" });
+  }
+});
+
+test("a successful call, an interrupted call and a callback failure record no failure line", async () => {
+  const ok = await planner([messages(init(), success({ questions_for_user: [] }))]);
+  await run(ok.planner.planning("write the plan", schema));
+  assert.deepEqual(failedLines(ok.dir), []);
+
+  const script: Script = (call) => (async function* () {
+    yield init();
+    await aborted(call.options);
+    throw new Error("The operation was aborted");
+  })();
+  const stopped = await planner([script]);
+  const reached = stopped.sdk.nextCall();
+  const fiber = Effect.runFork(stopped.planner.planning("write the plan", schema).pipe(Effect.provideService(Decider, noDecider)));
+  await reached;
+  await sleep(10);
+  await run(Fiber.interrupt(fiber));
+  assert.deepEqual(failedLines(stopped.dir), []);
+
+  const failingUsage: Partial<StoreShape> = { recordUsage: () => Effect.fail(new FileSystemError({ operation: "append to", path: "usage.jsonl", message: "disk full" })) };
+  const callback = await planner([messages(init(), success({}))], [], {}, failingUsage);
+  await assert.rejects(run(callback.planner.planning("write the plan", schema)));
+  assert.deepEqual(failedLines(callback.dir), []);
+});
+
+test("a credential of the inherited environment named in the error result is redacted from the line and the file", async () => {
+  const token = "sk-ant-oat01-the-secret-value";
+  const fake = await planner([messages(init(), authRefused(`OAuth token ${token} has expired`))], [], {}, {}, prompts.BACKGROUND_WAIT_BOUND_MS, { CLAUDE_CODE_OAUTH_TOKEN: token });
+  assert.equal(await failedTag(fake), "ClaudeCallFailed");
+  const [line] = failedLines(fake.dir);
+  assert.equal(line?.result_text, "OAuth token [redacted] has expired");
+  assert.ok(!fs.readFileSync(path.join(fake.dir, "usage.jsonl"), "utf8").includes(token));
 });

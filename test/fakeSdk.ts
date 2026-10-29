@@ -78,7 +78,7 @@ export const rejecting = (value: unknown): TurnAnswer => () =>
 export class FakeSdk implements AgentSdk {
   readonly calls: Call[] = [];
   /** A made-up environment, so that a test sees exactly what each call carries (issue #78). */
-  readonly inheritedEnv: Readonly<Record<string, string | undefined>> = { PATH: "/fake/bin", HOME: "/fake/home", BASH_MAX_TIMEOUT_MS: "1" };
+  readonly inheritedEnv: Readonly<Record<string, string | undefined>>;
   readonly threads: { options: ThreadOptions | undefined; calls: ThreadCall[] }[] = [];
   private readonly scripts: Script[];
   private readonly turns: TurnAnswer[];
@@ -93,7 +93,8 @@ export class FakeSdk implements AgentSdk {
     for (const resolve of current) resolve();
   }
 
-  constructor(scripts: Script[] = [], turns: TurnAnswer[] = []) {
+  constructor(scripts: Script[] = [], turns: TurnAnswer[] = [], env: Readonly<Record<string, string | undefined>> = {}) {
+    this.inheritedEnv = { PATH: "/fake/bin", HOME: "/fake/home", BASH_MAX_TIMEOUT_MS: "1", ...env };
     this.scripts = [...scripts];
     this.turns = [...turns];
   }
