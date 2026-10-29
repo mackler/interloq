@@ -106,3 +106,28 @@ test("a parked send-back still takes the path of issue #186: the first-step rule
   const { probe } = await implement(repo, { steps: [{ output: { questions_for_user: [] }, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
   assert.ok(probe.planner.prompts[0]!.includes(prompts.parkedBranchFirstStepRule(BRANCH)));
 });
+
+// Work review 2 of issue #185 (W2-R1-2): a merge the developer left unfinished halts the later run before its own merge,
+// the developer's merge untouched and no step reset.
+test("a merge left unfinished in the repository halts the later run, MERGE_HEAD unchanged, no step reset", async () => {
+  const repo = tempRepo();
+  parkedRun(repo, "abandoned");
+  g(repo, "checkout", "-q", "-b", "theirs");
+  fs.writeFileSync(path.join(repo, "b.txt"), "theirs\n");
+  g(repo, "add", "b.txt");
+  g(repo, "commit", "-qm", "theirs");
+  g(repo, "checkout", "-q", "-");
+  fs.writeFileSync(path.join(repo, "b.txt"), "ours\n");
+  g(repo, "add", "b.txt");
+  g(repo, "commit", "-qm", "ours");
+  try { g(repo, "merge", "-q", "theirs"); } catch { /* the conflict is the point */ }
+  const mergeHead = g(repo, "rev-parse", "MERGE_HEAD");
+  const { probe, exit } = await implement(repo, { steps: [{ output: revision(PLAN) }], reviews: [{ issues: [] }, { issues: [] }], execs: [finished] });
+  assert.ok(Exit.isFailure(exit), "the run did not halt");
+  const refused = prompts.parkedMergeRefusedText(BRANCH, { _tag: "State", state: { _tag: "InProgress", operation: "merge" } });
+  assert.ok(Cause.pretty(exit.cause).includes(refused), Cause.pretty(exit.cause));
+  assert.equal(g(repo, "rev-parse", "MERGE_HEAD"), mergeHead);
+  const plan = path.join(probe.dir, "plan.json");
+  if (fs.existsSync(plan)) assert.notDeepEqual(statusesAt(probe.dir)(), ["S1:pending", "S2:pending"]);
+  assert.deepEqual(probe.planner.prompts, []);
+});

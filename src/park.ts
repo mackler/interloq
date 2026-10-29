@@ -69,6 +69,12 @@ export type GitState =
   | Readonly<{ _tag: "Detached" }>
   | Readonly<{ _tag: "InProgress"; operation: "rebase" | "merge" | "cherry-pick" | "revert" }>;
 
+/**
+ * Work review 2 of issue #185 (W2-R1-2): why a parked branch was not merged at a later run's start: the repository not
+ * ready (a detached HEAD, or an operation in progress), or an index that already holds unresolved conflicts.
+ */
+export type MergeRefusal = Readonly<{ _tag: "State"; state: Exclude<GitState, { _tag: "Ready" }> }> | Readonly<{ _tag: "Unmerged" }>;
+
 /** Issue #185 (F1): what merging a parked run's branch did: merged at a commit, or a content conflict with git's message. */
 export type MergeOutcome = Readonly<{ _tag: "Merged"; commit: string }> | Readonly<{ _tag: "Conflicted"; message: string }>;
 

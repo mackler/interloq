@@ -1106,3 +1106,20 @@ test("earlierPlanPrompt carries the sentence of its merge, and neither without o
   const plain = prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS);
   for (const sentence of Object.values(prompts.PARKED_MERGE_SENTENCES)) assert.ok(!plain.includes(sentence));
 });
+
+// Work review 2 of issue #185 (W2-R1-2): a later run that finds the repository not clean merges nothing and says why.
+test("parkedMergeRefusedText names the branch and its own case, says nothing was changed, and never says give up", () => {
+  const branch = "interloq/halted/1/earlier";
+  const cases = [
+    [{ _tag: "State", state: { _tag: "Detached" } }, "detached HEAD"],
+    [{ _tag: "State", state: { _tag: "InProgress", operation: "merge" } }, "git merge is in progress"],
+    [{ _tag: "State", state: { _tag: "InProgress", operation: "rebase" } }, "git rebase is in progress"],
+    [{ _tag: "Unmerged" }, "unresolved conflicts"],
+  ] as const;
+  for (const [refusal, words] of cases) {
+    const text = prompts.parkedMergeRefusedText(branch, refusal);
+    assert.ok(text.includes(branch) && text.includes(words), text);
+    assert.ok(text.includes("changed nothing"), text);
+    assert.ok(!/give up/i.test(text), text);
+  }
+});

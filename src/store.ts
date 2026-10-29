@@ -20,7 +20,8 @@ import { carriedPlan, type EarlierPlan, type EarlierRunRecords, latestQualifying
 import type { ItemId } from "./tracker.ts";
 import type { CallFailure, LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
 import { callFailedFields, callFailureOf } from "./callFailureRecord.ts";
-import { PARK_NO_VERIFY, ParkRecordSchema } from "./park.ts";
+import { type GitState, type MergeRefusal, PARK_NO_VERIFY, ParkRecordSchema } from "./park.ts";
+import { parkedMergeRefusedText } from "./prompts.ts";
 
 /**
  * The store of one run of one project (issue #120): its records are under <project>/plan-review/<root>/, a root that
@@ -250,6 +251,24 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         Effect.map((out) => out.trim()),
         Effect.orElseSucceed(() => null),
       );
+    /** Issue #185 (G-R1-1): whether the repository is ready, on a detached HEAD, or part way through an operation. */
+    const gitStateOf = (): Effect.Effect<GitState, StoreError> =>
+      Effect.gen(function* () {
+        const onBranch = yield* git(["symbolic-ref", "-q", "HEAD"]).pipe(
+          Effect.as(true),
+          Effect.catchTag("GitError", () => Effect.succeed(false)),
+        );
+        if (!onBranch) return { _tag: "Detached" } as const;
+        const operations = [
+          ["rebase-merge", "rebase"],
+          ["rebase-apply", "rebase"],
+          ["MERGE_HEAD", "merge"],
+          ["CHERRY_PICK_HEAD", "cherry-pick"],
+          ["REVERT_HEAD", "revert"],
+        ] as const;
+        for (const [name, operation] of operations) if (yield* exists(yield* gitPath(name))) return { _tag: "InProgress", operation } as const;
+        return { _tag: "Ready" } as const;
+      });
     const baselineFile = at({ kind: "baseline" });
     const parkedFile = at({ kind: "parked" });
     const readBaseline = () => readText(baselineFile).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(baselineFile, Baseline, text))));
@@ -397,36 +416,28 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         ),
       mergeParked: (branch) =>
         Effect.gen(function* () {
-          const merged = yield* Effect.result(git(["merge", "--no-edit", "--no-verify", "-q", branch]));
-          if (merged._tag === "Success") return { _tag: "Merged", commit: (yield* git(["rev-parse", "--verify", "HEAD"])).trim() } as const;
-          const failure = merged.failure;
-          // A content conflict leaves unmerged entries in the index; only that is Conflicted, after the merge is aborted.
-          const unmerged = (yield* git(["ls-files", "-u"])).trim() !== "";
-          const inMerge = yield* git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).pipe(
+          const args = ["merge", "--no-edit", "--no-verify", "-q", branch];
+          const unmergedEntries = git(["ls-files", "-u"]).pipe(Effect.map((out) => out.trim() !== ""));
+          const mergeHeadExists = git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).pipe(
             Effect.as(true),
             Effect.catchTag("GitError", () => Effect.succeed(false)),
           );
-          if (inMerge) yield* git(["merge", "--abort"]);
+          // Work review 2 of issue #185 (W2-R1-2): a repository not ready, or an index already holding unresolved
+          // conflicts, is refused before any git write, so the developer's own unfinished operation is never touched.
+          const state = yield* gitStateOf();
+          const refusal: MergeRefusal | null = state._tag !== "Ready" ? { _tag: "State", state } : (yield* unmergedEntries) ? { _tag: "Unmerged" } : null;
+          if (refusal !== null) return yield* Effect.fail(new GitError({ args, message: parkedMergeRefusedText(branch, refusal) }));
+          const merged = yield* Effect.result(git(args));
+          if (merged._tag === "Success") return { _tag: "Merged", commit: (yield* git(["rev-parse", "--verify", "HEAD"])).trim() } as const;
+          const failure = merged.failure;
+          // Neither MERGE_HEAD nor an unmerged entry existed before the command, so both are this merge's own: a content
+          // conflict is Conflicted after this merge is aborted.
+          const unmerged = yield* unmergedEntries;
+          if (yield* mergeHeadExists) yield* git(["merge", "--abort"]);
           if (unmerged) return { _tag: "Conflicted", message: describe(failure) } as const;
           return yield* Effect.fail(failure);
         }),
-      gitState: () =>
-        Effect.gen(function* () {
-          const onBranch = yield* git(["symbolic-ref", "-q", "HEAD"]).pipe(
-            Effect.as(true),
-            Effect.catchTag("GitError", () => Effect.succeed(false)),
-          );
-          if (!onBranch) return { _tag: "Detached" } as const;
-          const operations = [
-            ["rebase-merge", "rebase"],
-            ["rebase-apply", "rebase"],
-            ["MERGE_HEAD", "merge"],
-            ["CHERRY_PICK_HEAD", "cherry-pick"],
-            ["REVERT_HEAD", "revert"],
-          ] as const;
-          for (const [name, operation] of operations) if (yield* exists(yield* gitPath(name))) return { _tag: "InProgress", operation } as const;
-          return { _tag: "Ready" } as const;
-        }),
+      gitState: () => gitStateOf(),
       createBranch: (branch) => git(["branch", branch, "HEAD"]).pipe(Effect.asVoid),
       resetTo: (start) => git(["reset", "-q", "--keep", start]).pipe(Effect.asVoid),
       saveParked: (record) => writeJson(parkedFile, record),

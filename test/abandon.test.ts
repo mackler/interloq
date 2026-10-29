@@ -21,7 +21,7 @@ const branch = Result.getOrThrow(parkBranchOf(scriptedItem.id, TEST_ROOT));
 const serverError = (message: string) => new TrackerUnreachable({ tracker: "GitHub", message, status: 502 });
 const unreached = (message: string) => new TrackerUnreachable({ tracker: "GitHub", message, status: null });
 
-const setup = (tracker: FakeTracker, options: { work?: boolean; leftover?: boolean; lock?: boolean; failWrites?: boolean } = {}) => {
+const setup = (tracker: FakeTracker, options: { work?: boolean; leftover?: boolean; lock?: boolean; failWrites?: boolean | "exceptParking" } = {}) => {
   const repo = tempRepo();
   git(repo, "config", "user.email", "t@t");
   git(repo, "config", "user.name", "t");
@@ -29,7 +29,9 @@ const setup = (tracker: FakeTracker, options: { work?: boolean; leftover?: boole
   let armed = false;
   const store = (s: StoreShape): StoreShape => ({
     ...s,
-    converse: (markdown) => (armed ? Effect.fail(new FileSystemError({ operation: "append", path: "conversation.md", message: "disk full" })) : s.converse(markdown)),
+    // W2-R1-1: "exceptParking" lets the parking's own line through, so the parking completes and the label's
+    // repeats are what meets the failing writes.
+    converse: (markdown) => (armed && !(options.failWrites === "exceptParking" && markdown.includes(prompts.parkedLineOpening("abandoned"))) ? Effect.fail(new FileSystemError({ operation: "append", path: "conversation.md", message: "disk full" })) : s.converse(markdown)),
   });
   const { layer, probe } = testLayer(repo, { tracker, config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, store });
   const start = git(repo, "rev-parse", "HEAD");
@@ -44,7 +46,7 @@ const setup = (tracker: FakeTracker, options: { work?: boolean; leftover?: boole
       if (options.leftover ?? true) fs.writeFileSync(path.join(repo, "left.txt"), "l\n");
     }
     if (options.lock === true) fs.writeFileSync(path.join(repo, ".git", "index.lock"), "");
-    if (options.failWrites === true) armed = true;
+    if (options.failWrites !== undefined && options.failWrites !== false) armed = true;
   });
   const runIt = () =>
     Effect.runPromiseExit(Effect.andThen(prepared, abandonRun(scriptedItem.id)).pipe(Effect.provide(Layer.merge(layer as Layer.Layer<Services>, Layer.succeed(Tracker, tracker.tracker)))));
@@ -164,4 +166,23 @@ test("an abandonment whose run committed everything itself does not say the hook
   const abandoned = success(await s.runIt());
   assert.equal(abandoned.park._tag, "Parked");
   assert.ok(!s.probe.ui.said.some((l) => l.includes(prompts.PARK_UNCHECKED_SENTENCE)));
+});
+
+// Work review 2 of issue #185 (W2-R1-1): a write to conversation.md that fails never cuts the label's repeats short.
+test("a label request failing once while conversation.md cannot be written is repeated and sets the label", async () => {
+  const tracker = fakeTrackerOf([implementing]);
+  const s = setup(tracker, { failWrites: "exceptParking" });
+  await Effect.runPromise(tracker.failNext("setState", serverError("GitHub answered with status 502, once")));
+  const abandoned = success(await s.runIt());
+  assert.deepEqual(abandoned.label, { _tag: "SetRefined" });
+  assert.equal((await held(tracker)).state, "refined");
+});
+
+test("a label request failing for good while conversation.md cannot be written is StillHeld with the last error", async () => {
+  const tracker = fakeTrackerOf([implementing]);
+  const s = setup(tracker, { failWrites: "exceptParking" });
+  await Effect.runPromise(tracker.failNext("setState", serverError("GitHub answered with status 502, first")));
+  await Effect.runPromise(tracker.failNext("setState", serverError("GitHub answered with status 502, last")));
+  const abandoned = success(await s.runIt());
+  assert.ok(abandoned.label._tag === "StillHeld" && abandoned.label.state === "implementing" && abandoned.label.cause.includes("502, last"), JSON.stringify(abandoned.label));
 });

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Cause, Effect, Exit, Fiber, Option, Ref, Result } from "effect";
-import { TrackerAuthRefused, TrackerRequestRefused, TrackerUnreachable } from "../src/errors.ts";
+import { FileSystemError, TrackerAuthRefused, TrackerRequestRefused, TrackerUnreachable } from "../src/errors.ts";
 import * as prompts from "../src/prompts.ts";
 import { OPENING_LINE, readRefinement, refinementOf } from "../src/refinement.ts";
 import * as S from "../src/schema.ts";
@@ -273,4 +273,28 @@ test("the run's environment still asks when the repeats are used up", async () =
   await t.failNext("setState", unreached(), 2);
   failureOf(await Effect.runPromiseExit(writeWithRetry(t.fake.tracker, setRefined, t.env)));
   assert.equal(t.ui.asked.length, 1);
+});
+
+// Work review 2 of issue #185 (W2-R1-1): a record write that fails never cuts the unattended repeats short.
+const failingRecord = () => Effect.fail(new FileSystemError({ operation: "append", path: "conversation.md", message: "disk full" }));
+
+test("an unattended environment whose record write fails still repeats a write and succeeds", async () => {
+  const t = await setup([], 2);
+  const env = unattendedTrackerEnv({ ...t.env, record: failingRecord });
+  await t.failNext("setState", unreached());
+  const attempts = { n: 0 };
+  const tracker = { ...t.fake.tracker, setState: (...args: Parameters<typeof t.fake.tracker.setState>) => Effect.andThen(Effect.sync(() => attempts.n++), t.fake.tracker.setState(...args)) };
+  await Effect.runPromise(writeWithRetry(tracker, setRefined, env));
+  assert.equal(attempts.n, 2);
+  assert.equal((await t.item()).state, "refined");
+});
+
+test("an unattended environment whose record write fails ends with the tracker's last failure, not the record's", async () => {
+  const t = await setup([], 1);
+  const env = unattendedTrackerEnv({ ...t.env, record: failingRecord });
+  await t.failNext("setState", unreached(), 2);
+  await t.failNext("read", unreached(), 2);
+  const failed: unknown = failureOf(await Effect.runPromiseExit(writeWithRetry(t.fake.tracker, setRefined, env)));
+  assert.ok(failed instanceof TrackerWriteFailed, String(failed));
+  assert.equal(failed.error.message, unreached().message);
 });

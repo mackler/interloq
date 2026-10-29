@@ -1,7 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
-import { type GitState, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
+import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
@@ -3811,6 +3811,16 @@ export const parkGitStateText = (state: Exclude<GitState, { _tag: "Ready" }>): s
   state._tag === "Detached"
     ? "the repository is on a detached HEAD, so there is no working branch to return to the commit the run began at; nothing was committed and no branch was created."
     : `a git ${state.operation} is in progress in the repository, so nothing was committed and no branch was created; finish or abort the ${state.operation} first.`;
+/** Work review 2 of issue #185 (W2-R1-2): why a later run did not merge a parked run's branch, the repository untouched. */
+export const parkedMergeRefusedText = (branch: string, refusal: MergeRefusal): string => {
+  const why =
+    refusal._tag === "Unmerged"
+      ? "the repository's index holds unresolved conflicts; resolve or reset them first"
+      : refusal.state._tag === "Detached"
+        ? "the repository is on a detached HEAD; check out the working branch first"
+        : `a git ${refusal.state.operation} is in progress in the repository; finish or abort the ${refusal.state.operation} first`;
+  return `Interloq did not merge the branch ${branch} and changed nothing: ${why}. The run can be started again once the repository is clean.`;
+};
 export const PARK_NO_START_COMMIT = "the run's baseline.json records no commit the run began at, so there is no commit to return the working branch to.";
 
 // Issue #186: the words of the comments Interloq leaves on an item (src/itemComments.ts adds the marker line).

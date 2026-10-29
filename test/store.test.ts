@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { Cause, Effect, Exit, Option, Result } from "effect";
 import { branchNameOf, type ParkRecord } from "../src/park.ts";
 import { GitError } from "../src/errors.ts";
+import * as prompts from "../src/prompts.ts";
 import { platformLayer } from "../src/platform.ts";
 import type { StoreShape } from "../src/services.ts";
 import { allocateRunRoot, makeStore } from "../src/store.ts";
@@ -663,4 +664,71 @@ test("mergeParked: a pre-commit hook that refuses commits does not stop a non-fa
   const outcome = await Effect.runPromise((await mergeStore(repo)).mergeParked("parked"));
   assert.equal(outcome._tag, "Merged");
   assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "the parked run's change\n");
+});
+
+// Work review 2 of issue #185 (W2-R1-2): a repository that is not clean is refused before the merge, and a merge the
+// developer left unfinished is never aborted.
+/** A merge of the developer's own, conflicting, left unfinished on the working branch: MERGE_HEAD names `theirs`. */
+const developersMerge = (resolve: boolean) => {
+  const m = mergeRepo();
+  m.g("checkout", "-q", "-b", "theirs");
+  fs.writeFileSync(path.join(m.repo, "b.txt"), "theirs\n");
+  m.g("add", "b.txt");
+  m.g("commit", "-qm", "theirs");
+  m.g("checkout", "-q", "-");
+  fs.writeFileSync(path.join(m.repo, "b.txt"), "ours\n");
+  m.g("add", "b.txt");
+  m.g("commit", "-qm", "ours");
+  try { m.g("merge", "-q", "theirs"); } catch { /* the conflict is the point */ }
+  if (resolve) {
+    fs.writeFileSync(path.join(m.repo, "b.txt"), "resolved by hand\n");
+    m.g("add", "b.txt");
+  }
+  return { ...m, mergeHead: m.g("rev-parse", "MERGE_HEAD") };
+};
+const refusedWith = async (repo: string, refusal: Parameters<typeof prompts.parkedMergeRefusedText>[1]) => {
+  const exit = await Effect.runPromiseExit((await mergeStore(repo)).mergeParked("parked"));
+  assert.ok(Exit.isFailure(exit), "the merge was not refused");
+  const error = Cause.findErrorOption(exit.cause);
+  assert.ok(Option.isSome(error) && error.value._tag === "GitError", Cause.pretty(exit.cause));
+  assert.equal(error.value.message, prompts.parkedMergeRefusedText("parked", refusal));
+};
+
+test("mergeParked: a merge the developer resolved by hand and left unfinished is refused, his resolution and MERGE_HEAD kept", async () => {
+  const m = developersMerge(true);
+  const staged = m.g("ls-files", "-s", "b.txt");
+  await refusedWith(m.repo, { _tag: "State", state: { _tag: "InProgress", operation: "merge" } });
+  assert.equal(m.g("rev-parse", "MERGE_HEAD"), m.mergeHead);
+  assert.equal(fs.readFileSync(path.join(m.repo, "b.txt"), "utf8"), "resolved by hand\n");
+  assert.equal(m.g("ls-files", "-s", "b.txt"), staged);
+});
+
+test("mergeParked: a merge left with its conflict unresolved is refused, not Conflicted, MERGE_HEAD kept", async () => {
+  const m = developersMerge(false);
+  await refusedWith(m.repo, { _tag: "State", state: { _tag: "InProgress", operation: "merge" } });
+  assert.equal(m.g("rev-parse", "MERGE_HEAD"), m.mergeHead);
+  assert.notEqual(m.g("ls-files", "-u"), "");
+});
+
+test("mergeParked: a rebase in progress and a detached HEAD are refused, the repository untouched", async () => {
+  const r = mergeRepo();
+  const rebaseDir = path.join(r.repo, ".git", "rebase-merge");
+  fs.mkdirSync(rebaseDir);
+  await refusedWith(r.repo, { _tag: "State", state: { _tag: "InProgress", operation: "rebase" } });
+  assert.ok(fs.existsSync(rebaseDir));
+  const d = mergeRepo();
+  d.g("checkout", "-q", "--detach");
+  const head = d.g("rev-parse", "HEAD");
+  await refusedWith(d.repo, { _tag: "State", state: { _tag: "Detached" } });
+  assert.equal(d.g("rev-parse", "HEAD"), head);
+});
+
+test("mergeParked: unmerged entries with no MERGE_HEAD are refused", async () => {
+  const m = developersMerge(false);
+  // Keep the conflicted index and drop MERGE_HEAD, as a conflicted stash pop leaves it.
+  fs.rmSync(path.join(m.repo, ".git", "MERGE_HEAD"));
+  fs.rmSync(path.join(m.repo, ".git", "MERGE_MSG"), { force: true });
+  fs.rmSync(path.join(m.repo, ".git", "MERGE_MODE"), { force: true });
+  await refusedWith(m.repo, { _tag: "Unmerged" });
+  assert.notEqual(m.g("ls-files", "-u"), "");
 });

@@ -234,8 +234,16 @@ export const runTrackerEnv: Effect.Effect<TrackerRetryEnv, never, Ui | Store | R
   };
 });
 
-/** Issue #185 (G-R1-1): the environment's repeats and read-backs, ended with no question when they are used up. */
-export const unattendedTrackerEnv = (env: TrackerRetryEnv): TrackerRetryEnv => ({ ...env, exhausted: "stop" });
+/**
+ * Issue #185 (G-R1-1): the environment's repeats and read-backs, ended with no question when they are used up. Work
+ * review 2 of issue #185 (W2-R1-1): a record write that fails is ignored, since the developer is away and nothing he
+ * could do depends on the record, so a failed write to conversation.md never cuts the repeats short.
+ */
+export const unattendedTrackerEnv = (env: TrackerRetryEnv): TrackerRetryEnv => ({
+  ...env,
+  exhausted: "stop",
+  record: (markdown) => env.record(markdown).pipe(Effect.ignore),
+});
 
 /**
  * The environment of the run's first read (requirements Q3, the developer's decision of 15 Oct 2026): its lines and its
