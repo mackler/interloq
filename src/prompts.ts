@@ -3669,3 +3669,18 @@ export const parkBranchTakenText = (branch: string, tip: string, head: string): 
   `the branch ${branch} already exists at commit ${tip}, not at the halted run's last commit ${head}; Interloq does not overwrite it.`;
 /** Why a halted run's work was not parked: its baseline records no commit to return the working branch to. */
 export const PARK_NO_START_COMMIT = "the run's baseline.json records no commit the run began at, so there is no commit to return the working branch to.";
+
+// Issue #186: the words of the comments Interloq leaves on an item (src/itemComments.ts adds the marker line).
+/** A send-back's comment: the date, why the item was sent back, and what its requirements left out. */
+export const sentBackCommentText = (date: string, missing: string): string =>
+  `Sent back to refinement by Interloq on ${date}: its requirements did not hold enough to plan and implement it without asking the developer. What they left out:\n\n${missing}`;
+/** A guard stop's comment (requirements Q5): declared not refined, and kept implementing because its last refinement asked the developer nothing. */
+export const stoppedUnrefinedCommentText = (date: string, missing: string): string =>
+  `Declared not refined by Interloq on ${date}, and not sent back: the refinement that last refined this item asked the developer no question, so refining it again with nobody asked could repeat the same requirements. It stays implementing for the developer. What its requirements left out:\n\n${missing}`;
+/** A refinement run's record on its item (requirements Q5): whether it asked the developer any question. */
+export const refinementRecordCommentText = (date: string, asked: boolean): string =>
+  `Refined by Interloq on ${date}. ${asked ? "The developer was asked at least one question." : "The developer was asked no question."}`;
+/** The heading of the item's comments in a refinement run's task (requirements Q3). */
+export const COMMENTS_TASK_HEADING = "Comments on this item, oldest first:";
+/** The line above one comment in a refinement run's task. */
+export const commentTaskLine = (date: string): string => `Comment of ${date}:`;
