@@ -234,7 +234,8 @@ export const makeRunManager = (
      * of its run's end, unless the server is ending after a fault (issue #158), when the chain is left as it is, so that
      * the restart finds the run cut off and starts nothing.
      */
-    const end = (id: number, code: number, root: RunRoot | null = null): Effect.Effect<void> =>
+    /** Issue #186: `parked`, the run's own parking (its Conclusion), which the chain takes as given. */
+    const end = (id: number, code: number, root: RunRoot | null = null, parked: ParkNote | null = null): Effect.Effect<void> =>
       now.pipe(
         Effect.flatMap((time) =>
           step((s): readonly [Readonly<{ changed: boolean; command: ChainCommand | null }>, readonly Broadcast[], State] => {
@@ -243,7 +244,7 @@ export const makeRunManager = (
             if (mode === null || run === null) return [{ changed: false, command: null }, [], s];
             const event: RunEvent = { _tag: "Ended", code };
             const moved = withSlot(s, mode, endedIn(mode, s.runs[mode], id, (r) => ({ ...r, events: [...r.events, { time, event }] })));
-            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root, parked: null });
+            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root, parked });
             return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
           }).pipe(Effect.flatMap(({ changed, command }) => (changed ? settle(command) : Effect.void))),
         ),
@@ -505,7 +506,9 @@ export const makeRunManager = (
               // A run halted by the server's fault ends with 1 (issue #158), even when haltAll had to interrupt it.
               Effect.onExit((exit: Exit.Exit<number>) =>
                 Effect.all([Ref.get(idRef), Deferred.isDone(signal.fault), Ref.get(allocated), Ref.get(concluded)]).pipe(
-                  Effect.flatMap(([rid, faulted, root, conclusion]) => end(rid, faulted ? 1 : Option.getOrElse(Option.map(conclusion, (c) => c.code), () => exitCodeOf(exit)), Option.getOrNull(root))),
+                  Effect.flatMap(([rid, faulted, root, conclusion]) =>
+                    end(rid, faulted ? 1 : Option.getOrElse(Option.map(conclusion, (c) => c.code), () => exitCodeOf(exit)), Option.getOrNull(root), Option.getOrNull(Option.map(conclusion, (c) => c.parked))),
+                  ),
                 ),
               ),
               Effect.forkDetach({ startImmediately: true }),

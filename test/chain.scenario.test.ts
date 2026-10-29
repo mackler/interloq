@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { test } from "node:test";
+import { describe as suite, test } from "node:test";
 import { Deferred, Effect, Fiber, Layer, Result, Scope } from "effect";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
@@ -18,6 +18,7 @@ import type { StoreShape, UiShape } from "../src/services.ts";
 import { chainParkingText, itemNotReturnedLine, itemReturnedLine } from "../src/prompts.ts";
 import { loadConfig } from "../src/config.ts";
 import { describe } from "../src/errors.ts";
+import { commentText, parseComment, runCommentKey } from "../src/itemComments.ts";
 import { TrackerUnreachable } from "../src/errors.ts";
 import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
@@ -877,4 +878,65 @@ test("W2-R1-1 Stop task after the claim: the run ends 1 with its halt's record, 
   assert.equal(parkBranches(h, "1").length, 1);
   assert.equal(await stateOf(h, "1"), "implementing");
   assert.equal(await endedReason(h), "RunLimitReached");
+});
+
+// Issue #186: a send-back's parking ran inside the run, while the manager's implementation slot was held; the chain
+// takes it as given and starts the next refined item.
+suite("issue #186: a send-back in a chain", () => {
+  const MISSING = "The requirements do not say how long a note is kept.";
+  const verdict: TestOptions = { steps: [{ output: { reply: { kind: "notRefined", missing: MISSING } } }], reviews: [{ issues: [] }] };
+  const record = (asked: boolean) => ({ body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
+  /** The refined items, each refined by a run that asked the developer nothing: a verdict on one is the guard's stop. */
+  const unasked = () => fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.state === "refined" ? { ...i, comments: [record(false)] } : i)));
+  const itemOf = async (h: Harness, id: string) => (await run(h.tracker.items)).find((i) => i.id === id);
+  const sendBacks = async (h: Harness, id: string) => ((await itemOf(h, id))?.comments ?? []).filter((c) => parseComment(c.body)?._tag === "SentBack").length;
+
+  test("a verdict that stands sends the first item back with one comment, and the chain starts the second", async () => {
+    const h = await harness([verdict, converging], { settings: settings(2) });
+    const order = await refinedOrder(h.tracker);
+    await begin(h, order[0]!);
+    await idle(h);
+    assert.equal((await itemOf(h, order[0]!))?.state, "unrefined");
+    assert.equal(await sendBacks(h, order[0]!), 1);
+    assert.deepEqual(startedRuns(h).map((r) => r.item), [order[0], order[1]]);
+    const history = (await chainOf(h)).chain.history;
+    assert.equal(history[0]?.outcome._tag, "SentBack");
+  });
+
+  test("a guard stop keeps the item implementing with its work parked by the run, and the chain starts the second", async () => {
+    const h = await harness([verdict, converging], { settings: settings(2), tracker: unasked() });
+    const order = await refinedOrder(h.tracker);
+    const id = await begin(h, order[0]!);
+    await idle(h);
+    assert.equal(endCode(h, id), 1);
+    assert.equal((await itemOf(h, order[0]!))?.state, "implementing");
+    assert.deepEqual(startedRuns(h).map((r) => r.item), [order[0], order[1]]);
+    const history = (await chainOf(h)).chain.history;
+    assert.deepEqual(history[0]?.outcome, { _tag: "Halted", park: { _tag: "NothingParked" } });
+    assert.equal(history[0]?.returned, null, "the manager did not try to return the item");
+  });
+
+  test("a send-back whose parking fails ends the chain with ParkFailed and starts nothing", async () => {
+    // A repository on an unborn branch: the baseline has no start commit to return the working branch to.
+    const repo = tempDir("pr-unborn-");
+    git(repo, "init", "-q");
+    const h = await harness([verdict, converging], { settings: settings(2), repo });
+    const order = await refinedOrder(h.tracker);
+    await begin(h, order[0]!);
+    await idle(h);
+    assert.equal(await endedReason(h), "ParkFailed");
+    assert.equal(startedRuns(h).length, 1);
+    assert.equal((await itemOf(h, order[0]!))?.state, "implementing");
+  });
+
+  test("with the mode off a send-back still parks and relabels, and nothing starts", async () => {
+    const h = await harness([verdict, converging], { settings: OFF_SETTINGS });
+    const order = await refinedOrder(h.tracker);
+    await begin(h, order[0]!);
+    await until("the run to end", async () => (await run(h.manager.current)).implementation === null);
+    await sleep(100);
+    assert.equal((await itemOf(h, order[0]!))?.state, "unrefined");
+    assert.equal(await sendBacks(h, order[0]!), 1);
+    assert.equal(startedRuns(h).length, 1);
+  });
 });
