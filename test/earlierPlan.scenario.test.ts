@@ -108,8 +108,9 @@ test("a qualifying run whose plan.json holds a later revision never agreed: that
 // from it, and its first plan starts by bringing that run's branch onto the working branch. One whose parking did not
 // complete plans from the working branch, with no rule about the branch, and says so.
 const BRANCH = "interloq/halted/1/earlier";
+// Issue #185: the branch path of issue #186 is a send-back's; a halt's or an abandonment's parking is merged (test/parkedMerge.scenario.test.ts).
 const parkedRecord = (repo: string, record: object) => fs.writeFileSync(path.join(repo, "plan-review", EARLIER_ROOT, "parked.json"), JSON.stringify(record));
-const completed = { _tag: "Parked", version: 2, branch: BRANCH, commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" };
+const completed = { _tag: "Parked", version: 2, branch: BRANCH, commit: "c", start_commit: "s", committed: [], recorded: true, time: "t", ending: "sentBack" };
 const intended = { _tag: "Intended", version: 2, branch: BRANCH, start_commit: "s", time: "t" };
 const baselineTime = (dir: string): string => JSON.parse(fs.readFileSync(path.join(dir, "baseline.json"), "utf8")).time;
 

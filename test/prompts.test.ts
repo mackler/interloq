@@ -1094,3 +1094,15 @@ test("the second row's texts: the items' tab, its name, a run's tab named by its
   assert.ok(long.endsWith("…"));
   assert.ok(prompts.itemHeadline("131", "a title much longer than any tab label should be").startsWith(long.slice(0, -1)));
 });
+
+// Issue #185 (F1): the revision of a parked run's plan says what the merge of its branch did; a plan taken as issue #180
+// takes one says neither.
+test("earlierPlanPrompt carries the sentence of its merge, and neither without one", () => {
+  for (const merge of ["merged", "conflicted"] as const) {
+    const text = prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS, merge);
+    assert.ok(text.includes(prompts.PARKED_MERGE_SENTENCES[merge]));
+    assert.ok(!text.includes(prompts.PARKED_MERGE_SENTENCES[merge === "merged" ? "conflicted" : "merged"]));
+  }
+  const plain = prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS);
+  for (const sentence of Object.values(prompts.PARKED_MERGE_SENTENCES)) assert.ok(!plain.includes(sentence));
+});

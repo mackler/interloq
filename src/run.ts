@@ -12,8 +12,8 @@ import { describe, NotRefinedStopped, type RunError, SuiteStopped, TrackerStepFa
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
-import type { EarlierPlan } from "./earlierPlan.ts";
-import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
+import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -140,11 +140,20 @@ const planStartOf = (earlier: EarlierPlan): Effect.Effect<PlanStart, StoreError,
       return sayAndWrite(earlierPlanTakenLine(earlier.root)).pipe(Effect.as({ _tag: "Earlier", root: earlier.root, plan: earlier.plan, baseline: earlier.baseline } as const));
     case "EarlierPlanSetAside":
       return sayAndWrite(earlierPlanSetAsideLine(earlier.root)).pipe(Effect.as({ _tag: "Fresh" } as const));
-    case "EarlierRunParked":
-      // Issue #186 (Q6, review P1-R2-1): a completed parking's branch is where the plan starts; an incomplete one's is not trusted.
-      return earlier.parking === "complete"
-        ? sayAndWrite(earlierRunParkedLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "ParkedBranch", root: earlier.root, branch: earlier.branch } as const))
-        : sayAndWrite(earlierParkingIncompleteLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "Fresh" } as const));
+    case "EarlierRunParked": {
+      // Issue #186 (Q6, review P1-R2-1): an incomplete parking's branch is not trusted.
+      if (earlier.parking === "incomplete") return sayAndWrite(earlierParkingIncompleteLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "Fresh" } as const));
+      switch (earlier.ending) {
+        // Issue #185 (F1): a halted or abandoned run's branch is merged at the start, and its agreed plan taken.
+        case "halted":
+        case "abandoned":
+          return Effect.succeed({ _tag: "ParkedMerge", root: earlier.root, branch: earlier.branch, plan: earlier.plan } as const);
+        // Issue #186 (Q6): a sent-back item was refined again, so its plan starts afresh from the branch.
+        case "sentBack":
+        case "stoppedUnrefined":
+          return sayAndWrite(earlierRunParkedLine(earlier.root, earlier.branch)).pipe(Effect.as({ _tag: "ParkedBranch", root: earlier.root, branch: earlier.branch } as const));
+      }
+    }
   }
 };
 
@@ -163,7 +172,12 @@ export type PlanStart =
   | Readonly<{ _tag: "Fresh" }>
   | Readonly<{ _tag: "Earlier"; root: RunRoot; plan: S.RecordedPlan; baseline: Baseline }>
   /** Issue #186 (Q6): from nothing, with this run's own baseline, the plan's first step bringing the earlier run's parked branch onto the working branch. */
-  | Readonly<{ _tag: "ParkedBranch"; root: RunRoot; branch: string }>;
+  | Readonly<{ _tag: "ParkedBranch"; root: RunRoot; branch: string }>
+  /**
+   * Issue #185 (F1): a halted or abandoned run's parked branch, merged into the working branch after this run's own
+   * baseline is written, with that run's agreed plan, or null where its plan review did not agree.
+   */
+  | Readonly<{ _tag: "ParkedMerge"; root: RunRoot; branch: string; plan: S.RecordedPlan | null }>;
 /** Why a planning phase writes or revises the plan: the first plan, a plan taken from an earlier run (issue #180), or a revision. */
 export type PlanningCause = FirstPlanCause | RevisionCause;
 /** The prompt of planning phase k for its cause. */
@@ -172,7 +186,7 @@ const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, 
     case "FirstPlan":
       return initialPlanPrompt(root, task, withRequirements, checks);
     case "EarlierPlan":
-      return earlierPlanPrompt(root, task, withRequirements, cause.root, checks);
+      return earlierPlanPrompt(root, task, withRequirements, cause.root, checks, cause.merge);
     case "ParkedBranch":
       return initialPlanPrompt(root, task, withRequirements, checks, parkedBranchFirstStepRule(cause.branch));
     case "ExecutionEnded":
@@ -263,11 +277,31 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       Effect.flatMap(planner.fresh, (session) => Effect.provideService(body, Planner, session));
     // The baseline of the work reviews (Q7); a refinement run, which has none, writes none (issue #120). A run that takes
     // an earlier run's plan adopts that run's baseline (issue #180, Q4) and starts from that plan (Q3).
-    if (start._tag !== "Earlier") yield* store.writeBaseline();
-    else {
-      yield* store.adoptBaseline(start.baseline);
-      yield* store.savePlan(start.plan);
-    }
+    const firstCause: PlanningCause = yield* Effect.gen(function* () {
+      switch (start._tag) {
+        case "Fresh":
+          yield* store.writeBaseline();
+          return { _tag: "FirstPlan" } as const;
+        case "Earlier":
+          yield* store.adoptBaseline(start.baseline);
+          yield* store.savePlan(start.plan);
+          return { _tag: "EarlierPlan", root: start.root } as const;
+        case "ParkedBranch":
+          yield* store.writeBaseline();
+          return { _tag: "ParkedBranch", root: start.root, branch: start.branch } as const;
+        case "ParkedMerge": {
+          // Issue #185 (G-R1-2): the baseline before the merge, so the diff covers the merged work and this run's own and
+          // no other item's, and the commit a later abandonment of this run returns to is its own start.
+          yield* store.writeBaseline();
+          const merged = yield* store.mergeParked(start.branch);
+          if (merged._tag === "Merged") yield* sayAndWrite(parkedMergedLine(start.root, start.branch));
+          else yield* sayAndWrite(parkedMergeConflictLine(start.root, start.branch, merged.message));
+          if (start.plan === null) return { _tag: "FirstPlan" } as const;
+          yield* store.savePlan(merged._tag === "Merged" ? start.plan : undonePlan(start.plan));
+          return { _tag: "EarlierPlan", root: start.root, merge: merged._tag === "Merged" ? "merged" : "conflicted" } as const;
+        }
+      }
+    });
     // The SDK does not report which model answered a Codex turn; the configured one is all that can be said.
     yield* ui.notify({ _tag: "ModelNamed", model: { agent: "codex", name: config.codexModel } });
     // Issue #6: the run's shape is known from the start, and each further iteration as soon as it is known.
@@ -367,7 +401,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     /** The verdicts given so far, numbered across the run (issue #186). */
     let verdicts = 0;
     /** Why the plan is revised after the previous iteration; the next plan revision is written from it. */
-    let previous: PlanningCause = start._tag === "Fresh" ? { _tag: "FirstPlan" } : start._tag === "Earlier" ? { _tag: "EarlierPlan", root: start.root } : { _tag: "ParkedBranch", root: start.root, branch: start.branch };
+    let previous: PlanningCause = firstCause;
     for (let k = 1; ; k++) {
       // The plan as this planning phase begins (issue #6, G-R1-1): its done steps and statuses do not change within the phase.
       const before = Option.getOrNull(yield* store.loadPlan());

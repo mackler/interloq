@@ -3566,20 +3566,32 @@ export const PLAN_FILE_LABEL = "plan.json";
  * reviews it, Claude Code revises the steps not done for the project and the requirements as they stand at this run's
  * start, in a session of its own.
  */
-export function earlierPlanPrompt(root: RunRoot, task: string, withRequirements: boolean, earlier: RunRoot, checks: StepChecks): string {
+export function earlierPlanPrompt(root: RunRoot, task: string, withRequirements: boolean, earlier: RunRoot, checks: StepChecks, merge?: ParkedMergeResult): string {
   const requirements = withRequirements ? ` This run's requirements are the item's as they stand now, and may differ from those the plan was written for.` : "";
+  const merged = merge === undefined ? "" : `\n${PARKED_MERGE_SENTENCES[merge]}`;
   return planRevisionPrompt(
     root,
     task,
     withRequirements,
     `Interloq took this run's plan from an earlier implementation run of the same item, whose records are in ${RECORDS_DIR}/${earlier}/, and wrote it to ${runDir(root)}/plan.json. The steps that run recorded as done are kept done, and those it left running are marked unfinished.
 The project may have changed since the plan was written: that run's own changes may be in the working tree, committed or not, and other commits may have followed.${requirements}
-This request runs in a Claude Code session of its own, which has not seen the earlier run: read the files named here.`,
+This request runs in a Claude Code session of its own, which has not seen the earlier run: read the files named here.${merged}`,
     `Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', and change, add, or remove the other steps as the current state of the codebase and the requirements require.`,
     checks,
     true,
   );
 }
+/** Issue #185 (F1): what the revision of a parked run's plan is told of the merge of its branch. */
+export const PARKED_MERGE_SENTENCES: Readonly<Record<ParkedMergeResult, string>> = {
+  merged: "Interloq merged that run's branch into the working branch before this request, so the steps it recorded as done are present in the project.",
+  conflicted: "Interloq's merge of that run's branch into the working branch conflicted and was abandoned: that run's work is not in the project, and every step is marked to be implemented again.",
+};
+/** Issue #185 (F1): said and written where a later run merged a parked run's branch. */
+export const parkedMergedLine = (earlier: RunRoot, branch: string): string =>
+  `The earlier implementation run in ${RECORDS_DIR}/${earlier} left its work on the branch ${branch}; Interloq merged that branch into the working branch, and this run continues from that run's plan, its done steps kept.`;
+/** Issue #185 (F1): said and written where that merge conflicted. */
+export const parkedMergeConflictLine = (earlier: RunRoot, branch: string, message: string): string =>
+  `The earlier implementation run in ${RECORDS_DIR}/${earlier} left its work on the branch ${branch}, but merging that branch into the working branch conflicted (${message}). Interloq abandoned the merge, so that work is not in the project, and every step of the plan is to be implemented again; the branch is left in place.`;
 /** Said and written where the run took an earlier run's plan (issue #180). */
 export const earlierPlanTakenLine = (earlier: RunRoot): string =>
   `This run starts from the plan of the earlier implementation run in ${RECORDS_DIR}/${earlier}, whose plan review ended with Codex raising no further issue. Claude Code revises it for the project and the requirements as they are now, and Codex reviews the revision.`;
@@ -3852,7 +3864,12 @@ Do not modify any file.${embedded}`;
 }
 
 /** The first planning call's cause, of which planAfterVerdictPrompt follows the rules (issue #186, review P1-R1-5). */
-export type FirstPlanCause = Readonly<{ _tag: "FirstPlan" }> | Readonly<{ _tag: "EarlierPlan"; root: RunRoot }> | Readonly<{ _tag: "ParkedBranch"; root: RunRoot; branch: string }>;
+/**
+ * Issue #185 (F1): `merge` on a plan taken from a parked run: its branch was merged into the working branch, or the
+ * merge conflicted and was abandoned; absent for a plan taken as issue #180 takes one.
+ */
+export type ParkedMergeResult = "merged" | "conflicted";
+export type FirstPlanCause = Readonly<{ _tag: "FirstPlan" }> | Readonly<{ _tag: "EarlierPlan"; root: RunRoot; merge?: ParkedMergeResult }> | Readonly<{ _tag: "ParkedBranch"; root: RunRoot; branch: string }>;
 
 /**
  * Issue #186 (requirements Q6): the rule of a plan that starts from a parked earlier run's branch: its first step
