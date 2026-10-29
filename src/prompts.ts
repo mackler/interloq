@@ -1,7 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
-import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
+import { type GitState, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
@@ -3596,8 +3596,13 @@ const endingWords = (ending: ParkedEnding): Readonly<{ adjective: string; clause
       return { adjective: "sent-back", clause: "sent its item back to refinement" };
     case "stoppedUnrefined":
       return { adjective: "stopped", clause: "declared its item not refined and stopped" };
+    case "abandoned":
+      return { adjective: "abandoned", clause: "stopped waiting for an answer that did not come" };
   }
 };
+
+/** Issue #185 (G-R1-1): the sentence the park commit's message and the conversation.md line share. */
+export const PARK_UNCHECKED_SENTENCE = "The committed work was not checked: this commit skipped the project's hooks.";
 
 /** The message of the commit that keeps a parked run's leftovers on its branch; its last line is the trailer. */
 export const parkCommitMessage = (item: string, root: RunRoot, branch: string, ending: ParkedEnding = "halted"): string =>
@@ -3606,13 +3611,17 @@ export const parkCommitMessage = (item: string, root: RunRoot, branch: string, e
     "",
     `Interloq made this commit after the run ${endingWords(ending).clause}, with ${PARK_NO_VERIFY}, skipping the repository's hooks, so the run's work is kept on the branch ${branch}.`,
     "",
+    PARK_UNCHECKED_SENTENCE,
+    "",
     parkTrailerOf(root),
   ].join("\n");
 
 /** The line written to the halted run's conversation.md once its work is on its branch. */
 export const parkedRecordLine = (record: ParkedRecord, ending: ParkedEnding = "halted"): string => {
   const paths = record.committed.length === 0 ? "no files were left uncommitted" : `the files it left uncommitted were committed with ${PARK_NO_VERIFY}, skipping the repository's hooks: ${record.committed.join(", ")}`;
-  return `**Parked:** this run ${endingWords(ending).clause}; ${paths}. Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began.${ending === "sentBack" ? "" : " The item keeps the label implementing."}`;
+  const keeps = ending === "halted" || ending === "stoppedUnrefined" ? " The item keeps the label implementing." : "";
+  const unchecked = record.committed.length === 0 ? "" : ` ${PARK_UNCHECKED_SENTENCE}`;
+  return `**Parked:** this run ${endingWords(ending).clause}; ${paths}.${unchecked} Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began.${keeps}`;
 };
 
 /** The line written to the halted run's conversation.md where there was nothing to keep. */
@@ -3741,6 +3750,14 @@ export const earlierParkingIncompleteLine = (earlier: RunRoot, branch: string): 
 export const parkBranchTakenText = (branch: string, tip: string, head: string): string =>
   `the branch ${branch} already exists at commit ${tip}, not at the halted run's last commit ${head}; Interloq does not overwrite it.`;
 /** Why a halted run's work was not parked: its baseline records no commit to return the working branch to. */
+/** Issue #185 (G-R1-1): a parking whose branch exists but whose reset failed; nothing is lost. */
+export const parkResetFailedText = (branch: string, gitText: string): string =>
+  `the branch ${branch} was created and holds the work, but returning the working branch to the commit the run began at failed (${gitText}); the work is still on the working branch as well, so nothing is lost.`;
+/** Issue #185 (G-R1-1): a repository in a state no parking starts from. */
+export const parkGitStateText = (state: Exclude<GitState, { _tag: "Ready" }>): string =>
+  state._tag === "Detached"
+    ? "the repository is on a detached HEAD, so there is no working branch to return to the commit the run began at; nothing was committed and no branch was created."
+    : `a git ${state.operation} is in progress in the repository, so nothing was committed and no branch was created; finish or abort the ${state.operation} first.`;
 export const PARK_NO_START_COMMIT = "the run's baseline.json records no commit the run began at, so there is no commit to return the working branch to.";
 
 // Issue #186: the words of the comments Interloq leaves on an item (src/itemComments.ts adds the marker line).

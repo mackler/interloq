@@ -576,7 +576,7 @@ test("a reset that would overwrite an uncommitted change fails with GitError and
 test("parked.json round-trips", async () => {
   const store = await begun(identified());
   assert.equal(await run(store.loadParked()), null);
-  const record: ParkRecord = { _tag: "Parked", version: 2, branch: "b", commit: "c", start_commit: "s", committed: ["a.txt"], recorded: true, time: "t" };
+  const record: ParkRecord = { _tag: "Parked", version: 2, branch: "b", commit: "c", start_commit: "s", committed: ["a.txt"], recorded: true, time: "t", ending: "abandoned" };
   await run(store.saveParked(record));
   assert.deepEqual(await run(store.loadParked()), record);
   assert.ok(fs.existsSync(path.join(store.dir, "parked.json")));

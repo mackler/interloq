@@ -9,10 +9,11 @@ import { Effect, Result } from "effect";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import type { StoreShape } from "../src/services.ts";
-import { parkHalted } from "../src/parking.ts";
+import { parkHalted, parkWork } from "../src/parking.ts";
 import type { ParkNote } from "../src/chain.ts";
 import { parkBranchOf, parkTrailerOf } from "../src/park.ts";
-import { parkCommitMessage, parkedRecordLine } from "../src/prompts.ts";
+import { PARK_UNCHECKED_SENTENCE, parkCommitMessage, parkedRecordLine, parkGitStateText, parkResetFailedText } from "../src/prompts.ts";
+import { describe, GitError } from "../src/errors.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { tempRepo, TEST_ROOT } from "./helpers.ts";
 
@@ -54,7 +55,7 @@ const assertParked = async ({ repo, store, start }: Halted, note: ParkNote) => {
   const record = await parked(store);
   assert.ok(record?._tag === "Parked" && record.recorded);
   assert.deepEqual(record?._tag === "Parked" && record.committed, ["left.txt"]);
-  assert.ok(record?._tag === "Parked" && conversation(store).includes(parkedRecordLine({ ...record, recorded: false })));
+  assert.ok(record?._tag === "Parked" && conversation(store).includes(parkedRecordLine({ ...record, recorded: false }, record.ending ?? "halted")));
 };
 
 test("a halted run's commits and leftovers go to its branch, HEAD returns to the start, and the record and line are written", async () => {
@@ -95,7 +96,7 @@ test("a branch of that name at another commit is refused, not overwritten", asyn
 });
 
 // The restart boundaries: the phases run by hand up to each, then parkHalted called again.
-const intended = async (h: Halted) => run(h.store.saveParked({ _tag: "Intended", version: 2, branch, start_commit: h.start, time: "t" }));
+const intended = async (h: Halted) => run(h.store.saveParked({ _tag: "Intended", version: 2, branch, start_commit: h.start, time: "t", ending: "halted" }));
 const committedLeftovers = async (h: Halted) => {
   await intended(h);
   await run(h.store.commitLeftovers(parkCommitMessage(item, TEST_ROOT, branch)));
@@ -110,7 +111,7 @@ const reset = async (h: Halted) => {
 };
 const unrecorded = async (h: Halted) => {
   await reset(h);
-  await run(h.store.saveParked({ _tag: "Parked", version: 2, branch, commit: git(h.repo, "rev-parse", branch), start_commit: h.start, committed: ["left.txt"], recorded: false, time: "t" }));
+  await run(h.store.saveParked({ _tag: "Parked", version: 2, branch, commit: git(h.repo, "rev-parse", branch), start_commit: h.start, committed: ["left.txt"], recorded: false, time: "t", ending: "halted" }));
 };
 
 for (const [name, upTo] of [["Intended", intended], ["the commit", committedLeftovers], ["the branch", branched], ["the reset", reset], ["Parked unrecorded", unrecorded]] as const) {
@@ -127,4 +128,85 @@ test("a parking already recorded returns its note and changes nothing", async ()
   const text = conversation(h.store);
   assert.deepEqual(await run(parkHalted(h.store, item)), first);
   assert.equal(conversation(h.store), text);
+});
+
+// ---- Issue #185: the abandoned ending, the commit message, and the git cases that refuse the parking (G-R1-1) ----
+
+test("an abandoned run's work is parked like a halt's, its ending recorded and its line naming the branch and the unchecked work", async () => {
+  const h = await halted();
+  await assertParked(h, await run(parkWork(h.store, item, "abandoned")));
+  const record = await parked(h.store);
+  assert.equal(record?._tag === "Parked" && record.ending, "abandoned");
+  const text = conversation(h.store);
+  assert.ok(text.includes(branch) && text.includes("--no-verify") && text.includes(PARK_UNCHECKED_SENTENCE), text);
+});
+
+for (const ending of ["halted", "abandoned"] as const) {
+  test(`the park commit's message of a ${ending} run says the hooks were skipped and the work was not checked`, async () => {
+    const h = await halted();
+    const note = await run(parkWork(h.store, item, ending));
+    const message = git(h.repo, "log", "-1", "--format=%B", note._tag === "Parked" ? note.commit : "HEAD");
+    assert.ok(message.includes("--no-verify") && message.includes(PARK_UNCHECKED_SENTENCE), message);
+  });
+}
+
+test("a project pre-commit hook that refuses every commit does not stop the parking commit", async () => {
+  const h = await halted();
+  const hook = path.join(h.repo, ".git", "hooks", "pre-commit");
+  fs.writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  await assertParked(h, await run(parkWork(h.store, item, "abandoned")));
+});
+
+/** The parking refused before any git write: no commit, no branch, no parked.json, the work where it was. */
+const assertUntouched = async (h: Halted, head: string) => {
+  assert.equal(git(h.repo, "rev-parse", "HEAD"), head);
+  assert.equal(git(h.repo, "branch", "--list", branch), "");
+  assert.equal(await parked(h.store), null);
+  assert.ok(fs.existsSync(path.join(h.repo, "left.txt")));
+};
+
+test("a detached HEAD refuses the parking, naming the case", async () => {
+  const h = await halted();
+  git(h.repo, "checkout", "-q", "--detach");
+  const head = git(h.repo, "rev-parse", "HEAD");
+  const note = await run(parkWork(h.store, item, "abandoned"));
+  assert.deepEqual(note, { _tag: "ParkFailed", message: parkGitStateText({ _tag: "Detached" }) });
+  await assertUntouched(h, head);
+});
+
+for (const [operation, make] of [
+  ["rebase", (gitDir: string) => fs.mkdirSync(path.join(gitDir, "rebase-merge"))],
+  ["merge", (gitDir: string) => fs.writeFileSync(path.join(gitDir, "MERGE_HEAD"), "0000000000000000000000000000000000000000\n")],
+] as const) {
+  test(`a ${operation} in progress refuses the parking, naming the case`, async () => {
+    const h = await halted();
+    make(path.join(h.repo, ".git"));
+    const head = git(h.repo, "rev-parse", "HEAD");
+    const note = await run(parkWork(h.store, item, "abandoned"));
+    assert.deepEqual(note, { _tag: "ParkFailed", message: parkGitStateText({ _tag: "InProgress", operation }) });
+    await assertUntouched(h, head);
+  });
+}
+
+test("a held index.lock is ParkFailed quoting git's message, the work unchanged", async () => {
+  const h = await halted();
+  fs.writeFileSync(path.join(h.repo, ".git", "index.lock"), "");
+  const head = git(h.repo, "rev-parse", "HEAD");
+  const note = await run(parkWork(h.store, item, "abandoned"));
+  assert.equal(note._tag, "ParkFailed");
+  assert.match(note._tag === "ParkFailed" ? note.message : "", /index\.lock/);
+  assert.equal(git(h.repo, "rev-parse", "HEAD"), head);
+  assert.equal(git(h.repo, "branch", "--list", branch), "");
+  assert.ok(fs.existsSync(path.join(h.repo, "left.txt")));
+});
+
+test("a reset that fails leaves the branch created and the work on the working branch, and says so", async () => {
+  const h = await halted();
+  const failure = new GitError({ args: ["reset", "-q", "--keep", h.start], message: "fatal: could not reset" });
+  const store: StoreShape = { ...h.store, resetTo: () => Effect.fail(failure) };
+  const note = await run(parkWork(store, item, "abandoned"));
+  const tip = git(h.repo, "rev-parse", `refs/heads/${branch}`);
+  assert.deepEqual(note, { _tag: "ParkFailed", message: parkResetFailedText(branch, describe(failure)) });
+  assert.equal(git(h.repo, "rev-parse", "HEAD"), tip);
+  assert.ok(fs.existsSync(path.join(h.repo, "committed.txt")) && fs.existsSync(path.join(h.repo, "left.txt")));
 });

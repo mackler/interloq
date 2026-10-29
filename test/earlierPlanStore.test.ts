@@ -97,8 +97,8 @@ const parkedIn = (repo: string, root: RunRoot, record: ParkRecord) => fs.writeFi
 
 test("parked: a newest run parked, or with its parking intended, gives EarlierRunParked and no older run is tried", async () => {
   const records: readonly ParkRecord[] = [
-    { _tag: "Parked", version: 2, branch: "interloq/halted/80/x", commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" },
-    { _tag: "Intended", version: 2, branch: "interloq/halted/80/x", start_commit: "s", time: "t" },
+    { _tag: "Parked", version: 2, branch: "interloq/halted/80/x", commit: "c", start_commit: "s", committed: [], recorded: true, time: "t", ending: "halted" },
+    { _tag: "Intended", version: 2, branch: "interloq/halted/80/x", start_commit: "s", time: "t", ending: "halted" },
   ];
   for (const record of records) {
     const repo = tempRepo();
@@ -114,7 +114,7 @@ test("parked: a newest run parked, or with its parking intended, gives EarlierRu
 test("a newest run whose parking found nothing to keep is read as before", async () => {
   const repo = tempRepo();
   earlier(repo, NEW, {});
-  parkedIn(repo, NEW, { _tag: "Nothing", version: 2, time: "t" });
+  parkedIn(repo, NEW, { _tag: "Nothing", version: 2, time: "t", ending: "halted" });
   assert.equal((await run((await storeOf(repo)).earlierPlan(item("80"))))._tag, "EarlierPlanTaken");
 });
 

@@ -388,6 +388,23 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           Effect.map((out) => out.trim()),
           Effect.catchTag("GitError", () => Effect.succeed(null)),
         ),
+      gitState: () =>
+        Effect.gen(function* () {
+          const onBranch = yield* git(["symbolic-ref", "-q", "HEAD"]).pipe(
+            Effect.as(true),
+            Effect.catchTag("GitError", () => Effect.succeed(false)),
+          );
+          if (!onBranch) return { _tag: "Detached" } as const;
+          const operations = [
+            ["rebase-merge", "rebase"],
+            ["rebase-apply", "rebase"],
+            ["MERGE_HEAD", "merge"],
+            ["CHERRY_PICK_HEAD", "cherry-pick"],
+            ["REVERT_HEAD", "revert"],
+          ] as const;
+          for (const [name, operation] of operations) if (yield* exists(yield* gitPath(name))) return { _tag: "InProgress", operation } as const;
+          return { _tag: "Ready" } as const;
+        }),
       createBranch: (branch) => git(["branch", branch, "HEAD"]).pipe(Effect.asVoid),
       resetTo: (start) => git(["reset", "-q", "--keep", start]).pipe(Effect.asVoid),
       saveParked: (record) => writeJson(parkedFile, record),

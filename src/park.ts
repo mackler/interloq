@@ -1,8 +1,9 @@
 // Parking a halted implementation run's work (issue #147, requirements Q1): the branch it is kept on, the trailer that
 // marks the commit of its leftovers, and the record of the parking in the run's records directory. Pure.
-import { type Brand, Result, Schema } from "effect";
+import { type Brand, Effect, Result, Schema } from "effect";
 import { itemInRoot, type RunRoot } from "./artifacts.ts";
 import type { ItemId } from "./tracker.ts";
+import { PARKED_ENDINGS } from "./runEnding.ts";
 
 /** A branch name git accepts (`git check-ref-format --branch`), built by parkBranchOf alone. */
 export type BranchName = Brand.Branded<string, "BranchName">;
@@ -38,8 +39,11 @@ const Version = Schema.Literal(2);
  * `parked.json` in the halted run's records directory: the parking intended (written before any git write), done (with
  * the paths committed and whether the run's conversation.md holds its line), or nothing needed keeping.
  */
+// Issue #185: the ending whose work is parked; null in a parked.json written before the field, which src/earlierPlan.ts
+// classifies from its run's conversation.md.
+const Ending = Schema.NullOr(Schema.Literals(PARKED_ENDINGS)).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null)));
 export const ParkRecordSchema = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Intended"), version: Version, branch: Schema.String, start_commit: Schema.String, time: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("Intended"), version: Version, branch: Schema.String, start_commit: Schema.String, time: Schema.String, ending: Ending }),
   Schema.Struct({
     _tag: Schema.Literal("Parked"),
     version: Version,
@@ -49,11 +53,21 @@ export const ParkRecordSchema = Schema.Union([
     committed: Schema.Array(Schema.String),
     recorded: Schema.Boolean,
     time: Schema.String,
+    ending: Ending,
   }),
-  Schema.Struct({ _tag: Schema.Literal("Nothing"), version: Version, time: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("Nothing"), version: Version, time: Schema.String, ending: Ending }),
 ]);
 export type ParkRecord = typeof ParkRecordSchema.Type;
 export type ParkedRecord = Extract<ParkRecord, { _tag: "Parked" }>;
+
+/**
+ * Issue #185 (G-R1-1): the state of the repository before a parking: ready, on a detached HEAD, or part way through an
+ * operation, each of which refuses the parking with a text of its own.
+ */
+export type GitState =
+  | Readonly<{ _tag: "Ready" }>
+  | Readonly<{ _tag: "Detached" }>
+  | Readonly<{ _tag: "InProgress"; operation: "rebase" | "merge" | "cherry-pick" | "revert" }>;
 
 /** What committing a halted run's leftovers did: nothing was left, or the commit it made. */
 export type LeftoverCommit = Readonly<{ _tag: "NothingLeft" }> | Readonly<{ _tag: "Committed"; commit: string }>;

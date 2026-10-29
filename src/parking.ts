@@ -7,7 +7,7 @@ import { Clock, Effect, Result } from "effect";
 import type { ParkNote } from "./chain.ts";
 import { describe } from "./errors.ts";
 import { type BranchName, type ParkedRecord, parkBranchOf, parkTrailerOf } from "./park.ts";
-import { nothingParkedLine, PARK_NO_START_COMMIT, parkBranchTakenText, parkCommitMessage, parkedRecordLine } from "./prompts.ts";
+import { nothingParkedLine, PARK_NO_START_COMMIT, parkBranchTakenText, parkCommitMessage, parkedRecordLine, parkGitStateText, parkResetFailedText } from "./prompts.ts";
 import type { StoreError, StoreShape } from "./services.ts";
 import type { ItemId } from "./tracker.ts";
 import type { ParkedEnding } from "./runEnding.ts";
@@ -28,7 +28,7 @@ export const parkHalted = (store: StoreShape, item: ItemId): Effect.Effect<ParkN
 export const parkWork = (store: StoreShape, item: ItemId, ending: ParkedEnding): Effect.Effect<ParkNote> => {
   const time = Clock.currentTimeMillis.pipe(Effect.map((ms) => new Date(ms).toISOString()));
   const nothing = Effect.gen(function* () {
-    yield* store.saveParked({ _tag: "Nothing", version: 2, time: yield* time });
+    yield* store.saveParked({ _tag: "Nothing", version: 2, time: yield* time, ending });
     yield* store.converse(`${nothingParkedLine(ending)}\n\n`);
     return yield* early({ _tag: "NothingParked" });
   });
@@ -50,14 +50,19 @@ export const parkWork = (store: StoreShape, item: ItemId, ending: ParkedEnding):
     const branchResult = parkBranchOf(item, store.root);
     if (Result.isFailure(branchResult)) return yield* failed(`the branch name ${branchResult.failure.text} is not one git accepts.`);
     const branch: BranchName = branchResult.success;
-    if (previous === null) yield* store.saveParked({ _tag: "Intended", version: 2, branch, start_commit: start, time: yield* time });
+    if (previous === null) {
+      // Issue #185 (G-R1-1): a detached HEAD or an operation in progress is no clean base; refused before any git write.
+      const state = yield* store.gitState();
+      if (state._tag !== "Ready") return yield* failed(parkGitStateText(state));
+      yield* store.saveParked({ _tag: "Intended", version: 2, branch, start_commit: start, time: yield* time, ending });
+    }
     yield* store.commitLeftovers(parkCommitMessage(item, store.root, branch, ending));
     const tip = yield* store.branchTip(branch);
     const head = yield* store.head();
     if (tip === null && head === start) return yield* nothing;
     if (tip === null) yield* store.createBranch(branch);
     else if (tip !== head && head !== start) return yield* failed(parkBranchTakenText(branch, tip, head ?? "(none)"));
-    if (head !== start) yield* store.resetTo(start);
+    if (head !== start) yield* store.resetTo(start).pipe(Effect.catch((e) => failed(parkResetFailedText(branch, describe(e)))));
     const commit = yield* store.branchTip(branch);
     if (commit === null) return yield* failed(`the branch ${branch} was not created.`);
     const record: ParkedRecord = {
@@ -69,6 +74,7 @@ export const parkWork = (store: StoreShape, item: ItemId, ending: ParkedEnding):
       committed: yield* store.parkedPaths(start, branch, parkTrailerOf(store.root)),
       recorded: false,
       time: yield* time,
+      ending,
     };
     yield* store.saveParked(record);
     return yield* recorded(record);

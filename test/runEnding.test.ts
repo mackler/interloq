@@ -4,15 +4,17 @@ import { runCommentKey } from "../src/itemComments.ts";
 import { chainContinues, commentAfterParking, labelAfterParking, type ParkedEnding } from "../src/runEnding.ts";
 
 // Issue #186: the three endings that park a run's work differ only in the item's label and the comment.
-const ENDINGS: readonly ParkedEnding[] = ["halted", "sentBack", "stoppedUnrefined"];
+// Issue #185: the fourth, a run abandoned for want of an answer.
+const ENDINGS: readonly ParkedEnding[] = ["halted", "sentBack", "stoppedUnrefined", "abandoned"];
 const key = runCommentKey("r", "verdict-1");
 
 test("each ending's label: a send-back unrefined, a halt and a guard stop unchanged", () => {
-  assert.deepEqual(ENDINGS.map(labelAfterParking), [null, "unrefined", null]);
+  assert.deepEqual(ENDINGS.map(labelAfterParking), [null, "unrefined", null, "refined"]);
 });
 
 test("each ending's comment: a send-back's and a guard stop's with the reason, a halt none", () => {
   assert.equal(commentAfterParking("halted", key, "2026-10-29", "m"), null);
+  assert.equal(commentAfterParking("abandoned", key, "2026-10-29", "m"), null);
   assert.deepEqual(commentAfterParking("sentBack", key, "2026-10-29", "m"), { _tag: "SentBack", key, date: "2026-10-29", missing: "m" });
   assert.deepEqual(commentAfterParking("stoppedUnrefined", key, "2026-10-29", "m"), { _tag: "StoppedUnrefined", key, date: "2026-10-29", missing: "m" });
 });
