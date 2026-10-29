@@ -12,7 +12,7 @@ import * as S from "../src/schema.ts";
 import { Store } from "../src/services.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { commentKeyOf, commentText } from "../src/itemComments.ts";
-import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
+import { heldTrackerEnv, unattendedTrackerEnv, readCommentsWithRetry, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { makeFakeTracker, type FakeItem } from "./fakeTracker.ts";
 import { ScriptedUi, tempRepo, testLayer } from "./helpers.ts";
@@ -249,4 +249,28 @@ test("the comments' listing is repeated after TrackerUnreachable", async () => {
   const comments = await Effect.runPromise(readCommentsWithRetry(t.fake.tracker, ID, t.env));
   assert.equal(comments.length, 1);
   assert.equal(tagged(t.ui.notified, "TrackerRetrying").length, 1);
+});
+
+// Issue #185 (G-R1-1): after an abandonment the developer is away, so the repeats end with no question and no decision.
+test("an unattended environment makes every repeat, asks nothing, records the last failure and fails with the check", async () => {
+  const t = await setup([], 1);
+  const env = unattendedTrackerEnv(t.env);
+  await t.failNext("setState", serverError(), 2);
+  await t.failNext("read", unreached(), 2);
+  const failed: unknown = failureOf(await Effect.runPromiseExit(writeWithRetry(t.fake.tracker, setRefined, env)));
+  assert.ok(failed instanceof TrackerWriteFailed);
+  assert.equal(failed.error.message, serverError().message);
+  assert.deepEqual(failed.check, { kind: "unchecked" });
+  assert.deepEqual(t.ui.asked, []);
+  const exhausted = prompts.trackerRepeatsExhaustedLine("GitHub", prompts.trackerOperationText(setRefined), 2, serverError().message);
+  assert.ok(t.held().some((r) => r.includes(exhausted)), t.held().join("|"));
+  assert.ok(t.ui.said.includes(exhausted));
+  assert.ok(!t.held().some((r) => r.includes("**User decision:**")));
+});
+
+test("the run's environment still asks when the repeats are used up", async () => {
+  const t = await setup(["s"], 1);
+  await t.failNext("setState", unreached(), 2);
+  failureOf(await Effect.runPromiseExit(writeWithRetry(t.fake.tracker, setRefined, t.env)));
+  assert.equal(t.ui.asked.length, 1);
 });

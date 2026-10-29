@@ -4,14 +4,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option } from "effect";
-import { TrackerRequestRefused } from "../src/errors.ts";
+import { TrackerRequestRefused, TrackerUnreachable } from "../src/errors.ts";
 import { commentText, parseComment, runCommentKey } from "../src/itemComments.ts";
 import { parkBranchOf } from "../src/park.ts";
 import { sendBack } from "../src/sendBack.ts";
 import { type Services, Store, type StoreShape, Tracker } from "../src/services.ts";
 import type { ItemComment } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, scriptedItem, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
+import { fakeTrackerOf, type ScriptedAnswer, scriptedItem, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
 import { Result } from "effect";
 
 // Issue #186: an item whose verdict stood is sent back (parked, commented, unrefined), or stopped by the guard of
@@ -23,11 +23,11 @@ const itemWith = (comments: readonly ItemComment[]): FakeItem => ({ ...scriptedI
 const branch = Result.getOrThrow(parkBranchOf(scriptedItem.id, TEST_ROOT));
 
 /** A run that began, committed one change and left another uncommitted (`work`), then gave a verdict that stood. */
-const setup = (tracker: FakeTracker, options: { work?: boolean; store?: (s: StoreShape) => StoreShape } = {}) => {
+const setup = (tracker: FakeTracker, options: { work?: boolean; store?: (s: StoreShape) => StoreShape; answers?: readonly ScriptedAnswer[] } = {}) => {
   const repo = tempRepo();
   git(repo, "config", "user.email", "t@t");
   git(repo, "config", "user.name", "t");
-  const { layer, probe } = testLayer(repo, { tracker, ...(options.store === undefined ? {} : { store: options.store }) });
+  const { layer, probe } = testLayer(repo, { tracker, answers: options.answers ?? [], config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, ...(options.store === undefined ? {} : { store: options.store }) });
   const prepared = Effect.gen(function* () {
     const store = yield* Store;
     yield* store.init("task");
@@ -145,3 +145,18 @@ test("an interruption while the leftovers are committed lets the parking complet
   assert.ok(git(t.repo, "branch", "--list", branch).includes(branch));
   assert.equal((await held(tracker)).state, "implementing", "the interruption took effect before the comment and the label");
 });
+
+// Issue #185: a send-back's tracker step whose exhaustion question goes unanswered is its own ending, carrying the step
+// and the parking's note; no write sets the label refined.
+for (const [step, op, work] of [["label", "setState", true], ["label", "setState", false], ["comment", "comment", true]] as const) {
+  test(`a send-back whose ${step} step's question goes unanswered${work ? "" : " with nothing to park"} fails with SendBackUnanswered`, async () => {
+    const tracker = fakeTrackerOf([itemWith([record(true)])]);
+    const { runIt } = setup(tracker, { work, answers: [{ noAnswer: true }] });
+    for (let i = 0; i < 2; i++) await Effect.runPromise(tracker.failNext(op, new TrackerUnreachable({ tracker: "GitHub", message: "no answer", status: null })));
+    const error = failure(await runIt(sendBack(scriptedItem.id, 1, "The retention period.")));
+    assert.equal(error._tag, "SendBackUnanswered");
+    assert.ok(error._tag === "SendBackUnanswered" && error.step === step);
+    assert.equal(error._tag === "SendBackUnanswered" && error.park._tag, work ? "Parked" : "NothingParked");
+    assert.notEqual((await held(tracker)).state, "refined");
+  });
+}

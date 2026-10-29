@@ -3918,6 +3918,21 @@ export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", adde
     ? `No answer came to the question at ${limit} of ${heading}, so the review goes on for ${cycles}.`
     : `${heading} reached ${limit} again; Interloq gave it ${cycles} without asking, because an earlier limit went unanswered.`;
 };
+/** Issue #185 (G-R1-1): the tracker's repeats used up after an abandonment, where nothing is asked. */
+export const trackerRepeatsExhaustedLine = (tracker: string, what: string, attempts: number, fault: string): string =>
+  `Interloq made its last repeat of ${what} on ${tracker} (${attempts} attempts; last failure: ${fault}) and asked nothing, because the run was abandoned for want of an answer.`;
+/** Issue #185 (G-R1-1): an abandoned run's work could not be moved to a branch; nothing was sent to the tracker. */
+export const abandonParkFailedLine = (item: string, message: string): string =>
+  `Moving the work of item ${item} to a branch failed: ${message} The work stays where it is, Interloq did not change the item's label, so it keeps the label \`implementing\`, and the chain ends.`;
+/** Issue #185 (requirements Q1): the label of an abandoned run's item set to refined, with where its work is. */
+export const abandonLabelSetLine = (item: string, branch: string | null): string =>
+  `Interloq set the label of item ${item} to \`refined\`; ${branch === null ? "the run left no work to keep" : `its work is on the branch ${branch}`}.`;
+/** Issue #185 (G-R1-1): setting the label to refined failed for good; never a label Interloq has not confirmed. */
+export const abandonLabelFailedLine = (item: string, branch: string | null, held: ItemState | null, cause: string): string =>
+  `Setting the label of item ${item} to \`refined\` failed${branch === null ? "" : `; its work is on the branch ${branch}`}. ${held === null ? "Its label could not be confirmed as `refined`" : `It still carries the label \`${held}\``}; the tracker last reported: ${cause}. Set the item's label by hand.`;
+/** Issue #185: a send-back's tracker step whose question went unanswered after its parking. */
+export const abandonAfterSendBackLine = (item: string, branch: string | null, step: "comment" | "label"): string =>
+  `The run ${branch === null ? "found nothing to keep" : `had moved its work to the branch ${branch}`} to send item ${item} back to refinement; no answer came to the question about the send-back's ${step === "comment" ? "comment" : "setting of the label `unrefined`"}. That step is left undone, and Interloq set no label after it.`;
 /** The refusal of an answer to a prompt that no longer waits. */
 export const ALREADY_ANSWERED_TEXT = "that question has already been answered";
 /** Issue #185: the refusal of an answer that arrived after its question's wait ran out and ended the run. */

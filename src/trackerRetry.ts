@@ -80,6 +80,11 @@ export type TrackerRetryEnv = Readonly<{
   settings: TrackerRetrySettings;
   record: (markdown: string) => Effect.Effect<void, RunError>;
   ask: (draft: QuestionDraft) => Effect.Effect<string, RunError>;
+  /**
+   * Issue #185 (G-R1-1): what the repeats do when they are used up: ask Retry again or Stop, or, after a run was
+   * abandoned for want of an answer and the developer is away, stop with no question and no decision recorded.
+   */
+  exhausted: "ask" | "stop";
 }>;
 
 /** One attempt's success: its value, and the tracker whose read-back found a write applied after a server error, or null. */
@@ -121,6 +126,10 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
         return yield* step(n + 1, total + 1, error.tracker);
       }
       const attempts = total + 1;
+      if (env.exhausted === "stop") {
+        yield* say(prompts.trackerRepeatsExhaustedLine(error.tracker, what, attempts, error.message));
+        return yield* Effect.fail(failed);
+      }
       const origin: QuestionOrigin = { kind: "tracker", tracker: error.tracker, what, attempts, fault: error.message };
       const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.trackerExhaustedQuestion(error.tracker, what)), options: trackerOptions(), attached: attachedOf("fault", prompts.transportDetails(attempts, error.message)), decision: null };
       const choice = parseTransportAnswer(yield* env.ask(draft)) ?? "stop";
@@ -221,8 +230,12 @@ export const runTrackerEnv: Effect.Effect<TrackerRetryEnv, never, Ui | Store | R
     settings,
     record: (markdown) => store.converse(markdown),
     ask: (draft) => askOffering((p) => ui.ask(p), prompts.transportPrompt, draft, acceptable).pipe(Effect.provideContext(context)),
+    exhausted: "ask",
   };
 });
+
+/** Issue #185 (G-R1-1): the environment's repeats and read-backs, ended with no question when they are used up. */
+export const unattendedTrackerEnv = (env: TrackerRetryEnv): TrackerRetryEnv => ({ ...env, exhausted: "stop" });
 
 /**
  * The environment of the run's first read (requirements Q3, the developer's decision of 15 Oct 2026): its lines and its
@@ -230,7 +243,7 @@ export const runTrackerEnv: Effect.Effect<TrackerRetryEnv, never, Ui | Store | R
  */
 export const heldTrackerEnv = (ui: UiShape, settings: TrackerRetrySettings, held: Ref.Ref<readonly string[]>): TrackerRetryEnv => {
   const record = (markdown: string) => Ref.update(held, (rs) => [...rs, markdown]);
-  return { ui, settings, record, ask: (draft) => askUnoffered((p) => ui.ask(p), ui, record, prompts.transportPrompt, draft, acceptable) };
+  return { ui, settings, record, ask: (draft) => askUnoffered((p) => ui.ask(p), ui, record, prompts.transportPrompt, draft, acceptable), exhausted: "ask" };
 };
 
 const acceptable = (answer: string): boolean => parseTransportAnswer(answer) !== null;

@@ -471,7 +471,7 @@ const programWith = (
             if (Result.isFailure(facts)) return yield* say(itemNotReturnedLine(start.item, describe(facts.failure), null));
             if (itemReturnOf(facts.success)._tag !== "Return") return;
             // Its waits and read-back recorded as any tracker write's, a record that fails ignored so it cuts no retry short.
-            const env: TrackerRetryEnv = { ui, settings: config, record: (markdown) => records.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop) };
+            const env: TrackerRetryEnv = { ui, settings: config, record: (markdown) => records.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
             const write = Effect.flatMap(Tracker, (t) => writeWithRetry(t, { kind: "setState", item: start.item, state: listedState("implementation") }, env)).pipe(Effect.provide(tracker));
             const outcome = yield* (bounded ? write.pipe(Effect.timeoutOption(`${RETURN_AFTER_FAULT_MS} millis`)) : write.pipe(Effect.map(Option.some))).pipe(Effect.exit);
             if (Exit.isSuccess(outcome)) {

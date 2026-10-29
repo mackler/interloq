@@ -5,7 +5,7 @@
 // src/runEnding.ts, so the three endings that park are stated once.
 import { Clock, Effect } from "effect";
 import type { ParkNote } from "./chain.ts";
-import { NotRefinedStopped, type RunError, SendBackIncomplete, SendBackNotParked, TrackerStepFailed, trackerFailureText, describe } from "./errors.ts";
+import { NotRefinedStopped, type RunError, SendBackIncomplete, SendBackNotParked, SendBackUnanswered, TrackerStepFailed, trackerFailureText, describe } from "./errors.ts";
 import { commentDateOf, commentText, lastRefinementAsked, runCommentKey, sentBackCount } from "./itemComments.ts";
 import { rootName } from "./park.ts";
 import { parkWork } from "./parking.ts";
@@ -39,10 +39,20 @@ export const sendBack = (item: ItemId, n: number, missing: string): Effect.Effec
     const ending: ParkedEnding = lastRefinementAsked(comments) ? "sentBack" : "stoppedUnrefined";
     const park = yield* Effect.uninterruptible(parkWork(store, item, ending));
     if (park._tag === "ParkFailed") return yield* Effect.fail(new SendBackNotParked({ item, message: park.message, park }));
-    // A stop by the developer during a tracker step's question stays a stop (130); every other failure is incomplete.
-    const incomplete = (error: RunError): RunError => (error._tag === "UserStopped" ? error : new SendBackIncomplete({ item, ending, park, cause: describe(error) }));
+    // A stop by the developer during a tracker step's question stays a stop (130), and one left unanswered (issue #185)
+    // stays its own ending; every other failure is incomplete.
+    const incomplete = (error: RunError): RunError => (error._tag === "UserStopped" || error._tag === "SendBackUnanswered" ? error : new SendBackIncomplete({ item, ending, park, cause: describe(error) }));
     const sayAndWrite = (line: string) => Effect.andThen(ui.say(line), store.converse(`${line}\n\n`));
-    const write = (write: TrackerWrite, step: TrackerStep) => writeWithRetry(tracker, write, env).pipe(Effect.mapError((e) => (e._tag === "TrackerWriteFailed" ? new TrackerStepFailed({ item, step, cause: trackerFailureText(e.error), done: null, check: e.check }) : e)));
+    const write = (write: TrackerWrite, step: TrackerStep) =>
+      writeWithRetry(tracker, write, env).pipe(
+        Effect.mapError((e): RunError =>
+          e._tag === "TrackerWriteFailed"
+            ? new TrackerStepFailed({ item, step, cause: trackerFailureText(e.error), done: null, check: e.check })
+            : e._tag === "NoAnswer"
+              ? new SendBackUnanswered({ item, step: write.kind === "comment" ? "comment" : "label", park, where: e.where, seconds: e.seconds, question: e.question, then: e.then })
+              : e,
+        ),
+      );
     yield* Effect.gen(function* () {
       const key = runCommentKey(rootName(store.root), `verdict-${n}`);
       const comment = commentAfterParking(ending, key, commentDateOf(yield* Clock.currentTimeMillis), missing);
