@@ -239,9 +239,7 @@ test("every prompt that may return questions_for_user says how to fill a questio
     prompts.requirementsRespondPrompt(TEST_ROOT, 1),
     prompts.questionRespondPrompt(TEST_ROOT, 1),
     prompts.workRespondPrompt(TEST_ROOT, 1, 1, { review: { issues: [] }, log: [], records: null }, workExecution, "t"),
-    prompts.initialPlanPrompt(TEST_ROOT, "t", false, NO_STEP_CHECKS),
     prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stop: null, workReview: "converged" }, NO_STEP_CHECKS),
-    prompts.earlierPlanPrompt(TEST_ROOT, "t", false, EARLIER_ROOT, NO_STEP_CHECKS),
   ];
   for (const text of texts) {
     assert.ok(text.includes(prompts.QUESTION_OPTIONS_RULE), text.slice(0, 80));

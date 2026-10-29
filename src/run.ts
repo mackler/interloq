@@ -13,7 +13,7 @@ import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
 import type { EarlierPlan } from "./earlierPlan.ts";
-import { continuingLine, earlierPlanPrompt, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -152,7 +152,7 @@ const sayAndWrite = (line: string): Effect.Effect<void, StoreError, Ui | Store> 
  */
 export type PlanStart = Readonly<{ _tag: "Fresh" }> | Readonly<{ _tag: "Earlier"; root: RunRoot; plan: S.RecordedPlan; baseline: Baseline }>;
 /** Why a planning phase writes or revises the plan: the first plan, a plan taken from an earlier run (issue #180), or a revision. */
-export type PlanningCause = Readonly<{ _tag: "FirstPlan" }> | Readonly<{ _tag: "EarlierPlan"; root: RunRoot }> | RevisionCause;
+export type PlanningCause = FirstPlanCause | RevisionCause;
 /** The prompt of planning phase k for its cause. */
 const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, k: number, cause: PlanningCause, checks: S.StepChecks): string => {
   switch (cause._tag) {
@@ -160,9 +160,12 @@ const planningPrompt = (root: RunRoot, task: string, withRequirements: boolean, 
       return initialPlanPrompt(root, task, withRequirements, checks);
     case "EarlierPlan":
       return earlierPlanPrompt(root, task, withRequirements, cause.root, checks);
+    case "ParkedBranch":
+      return initialPlanPrompt(root, task, withRequirements, checks, parkedBranchFirstStepRule(cause.branch));
     case "ExecutionEnded":
     case "SuiteFailed":
     case "Uncommitted":
+    case "VerdictWithdrawn":
       return revisePlanAfterExecutionPrompt(root, task, withRequirements, k - 1, cause, checks);
   }
 };

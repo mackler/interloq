@@ -32,6 +32,7 @@ import {
   SkipConditionInvalid,
   StateFileInvalid,
   SuiteStopped,
+  VerdictInvalid,
   TrackerStepFailed,
   UserStopped,
 } from "../src/errors.ts";
@@ -89,6 +90,7 @@ const samples: { readonly [K in RunError["_tag"]]: Extract<RunError, { _tag: K }
   TrackerStepFailed: new TrackerStepFailed({ item: "193", step: "setImplementing", cause: "refused", done: null, check: null }),
   ServerFault: new ServerFault({ message: "boom" }),
   SuiteStopped: new SuiteStopped({ command: "npm test", suite: 2, stops: 2, reason: "timedOut" }),
+  VerdictInvalid: new VerdictInvalid({ problem: "blankMissing" }),
   Interrupted: new Interrupted({ where: "planning" }),
 };
 

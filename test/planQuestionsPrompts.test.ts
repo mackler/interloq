@@ -8,14 +8,24 @@ import * as prompts from "../src/prompts.ts";
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import { EARLIER_ROOT, TEST_ROOT } from "./helpers.ts";
 
-test("every prompt that asks for the whole plan or amends it in response to a review carries the rule on questions", () => {
+test("every prompt that amends the plan or revises it after an execution carries the rule on questions", () => {
   const plans = {
-    initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     revisePlanAfterExecutionPrompt: prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", true, 1, { _tag: "ExecutionEnded", stop: null, workReview: "converged" }, NO_STEP_CHECKS),
-    earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, NO_STEP_CHECKS),
   };
   for (const [name, text] of Object.entries(plans)) assert.ok(text.includes(prompts.PLAN_QUESTIONS_RULE), name);
+});
+
+// Issue #186: the run's first plan asks no question; it settles how to build the work and may give the verdict instead.
+test("the first plan's prompts carry the rule on how to build the work and the verdict's rule, and no questions_for_user", () => {
+  const firsts = {
+    initialPlanPrompt: prompts.initialPlanPrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
+    earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, NO_STEP_CHECKS),
+  };
+  for (const [name, text] of Object.entries(firsts)) {
+    assert.ok(text.includes(prompts.PLAN_BUILD_RULE) && text.includes(prompts.NOT_REFINED_RULE), name);
+    assert.ok(!text.includes("questions_for_user"), name);
+  }
 });
 
 test("the plan review's first round gives Codex the rule and the criterion; a later round in the continued thread neither", () => {

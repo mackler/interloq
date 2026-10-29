@@ -3,7 +3,7 @@
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { ChainEndReason, ChainEntry, ChainState } from "./chain.ts";
-import { FILE_CHANGE_FIELD, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -580,7 +580,7 @@ ${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}`;
 
 /** Rules for Claude Code's answer to a review. 'amendment' names what an accepted issue requires. */
-function respondRules(root: RunRoot, amendment: string): string {
+function respondRules(root: RunRoot, amendment: string, questions = true): string {
   return `${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed.
 Evaluate each issue critically against the codebase; do not assume the reviewer is correct.
 Choose one action for each issue.
@@ -598,8 +598,8 @@ Use new_action 'accepted' with the id of an issue that you rejected earlier and 
 Use new_action 'rejected' with the id of an accepted issue whose correction you now consider wrong; do not act on it, the user will decide.
 Use new_action 'plan_error' with an empty id for an error that concerns no issue; correct it.
 Return an empty self_corrections array when there is none.
-Return exactly one disposition per issue id. Put in questions_for_user only the questions the rule on whether to ask, below, allows.
-${QUESTION_OPTIONS_RULE}
+Return exactly one disposition per issue id. ${questions ? `Put in questions_for_user only the questions the rule on whether to ask, below, allows.
+${QUESTION_OPTIONS_RULE}` : "Return an empty questions_for_user array: a point the developer must settle is what the verdict states."}
 Do not use the AskUserQuestion tool.`;
 }
 
@@ -954,8 +954,11 @@ export const COMMIT_STEP_REVIEW_CRITERION = "Raise an issue for a plan whose rem
  * the requirements and the user's decisions leave it open, goes to the user. Claude Code's judgment decides which kind
  * a question is.
  */
+/** Issue #186: the first sentence of PLAN_QUESTIONS_RULE, which the prompts with no questions_for_user carry alone. */
+export const PLAN_BUILD_RULE =
+  "Settle yourself every question about how to build the work (a design, a module, a data type, a test, the order of the steps) and state the assumption you settled in the text of the step it concerns, where the plan review checks it.";
 export const PLAN_QUESTIONS_RULE =
-  "Settle yourself every question about how to build the work (a design, a module, a data type, a test, the order of the steps) and state the assumption you settled in the text of the step it concerns, where the plan review checks it. Put in questions_for_user only a question about what the work should achieve, where the task, the requirements and the user's decisions leave it open, and only as the rule on whether to ask allows.";
+  `${PLAN_BUILD_RULE} Put in questions_for_user only a question about what the work should achieve, where the task, the requirements and the user's decisions leave it open, and only as the rule on whether to ask allows.`;
 /** Issue #181: the plan review's criterion, the counterpart of PLAN_QUESTIONS_RULE. */
 export const PLAN_QUESTIONS_REVIEW_CRITERION =
   "Raise an issue for a remaining step whose text rests on a choice of how to build the work that it does not state, and for a question the plan writer put to the user about how to build the work rather than what it should achieve.";
@@ -989,19 +992,19 @@ export const requirementsSentence = (root: RunRoot): string => `${runDir(root)}/
 /** The user's decisions as an execution call is told of them; the file exists from the start of a run. */
 export const userDecisionsSentence = (root: RunRoot): string => `${runDir(root)}/user-decisions.md contains input and decisions by the user, which must be followed.`;
 
-export function initialPlanPrompt(root: RunRoot, task: string, withRequirements: boolean, checks: StepChecks): string {
+export function initialPlanPrompt(root: RunRoot, task: string, withRequirements: boolean, checks: StepChecks, extra: string | null = null): string {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   return `Produce an implementation plan for the task below. Investigate the codebase as needed.
 ${requirements}${userDecisionsSentence(root)}
+${FIRST_PLAN_REPLY_SHAPE}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
-${planIdRule(root)}
+${planIdRule(root)}${extra === null ? "" : `\n${extra}`}
 Do not modify any file. Do not implement anything.
-${PLAN_QUESTIONS_RULE}
-Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
-${QUESTION_OPTIONS_RULE}
+${PLAN_BUILD_RULE}
+${NOT_REFINED_RULE}
 Task: ${task}`;
 }
 
@@ -1758,7 +1761,9 @@ export type ExecStop =
 export type RevisionCause =
   | Readonly<{ _tag: "ExecutionEnded"; stop: ExecStop | null; workReview: WorkReviewEnd }>
   | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: WorkFailure; tail: string; log: string }>
-  | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: CommandLine | null }>;
+  | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: CommandLine | null }>
+  /** Issue #186: Claude Code's verdict at the end of execution phase k was withdrawn after Codex's review of it. */
+  | Readonly<{ _tag: "VerdictWithdrawn"; verdict: number }>;
 
 /** A suite run's failure in words (issue #162): its exit code, the signal that ended it, the bound, or why it did not start. */
 export function suiteFailureText(reason: SuiteFailure): string {
@@ -1816,6 +1821,8 @@ Revise the plan with steps that correct this failure; each step still checks its
 ${cause.paths.map((p) => `- ${codeSpan(p)}`).join("\n")}
 The run is not finished while they are uncommitted. Revise the plan with steps that commit them as the project's own instructions direct; Interloq checks again after the next review of the work finds nothing left to correct${suiteAgain}.`;
     }
+    case "VerdictWithdrawn":
+      return `\nExecution phase ${phase} ended with your verdict that the item's requirements did not hold enough to go on (${runDir(root)}/${pathOf({ kind: "verdict", verdict: cause.verdict })}). Codex's review of it showed that the task, the requirements, the user's decisions or the codebase settle what it named, and the verdict was withdrawn: follow the accepted issues of verdict ${cause.verdict} in ${runDir(root)}/${pathOf({ kind: "log", subject: { verdict: cause.verdict } })} and the last entries of ${runDir(root)}/user-decisions.md. The work that phase did is in the project, and the next review of the work covers it.`;
   }
 };
 
@@ -1835,21 +1842,26 @@ This request runs in a Claude Code session of its own, which has not seen the ea
  * The rules every revision of the whole plan in a session of its own carries, around its opening and its instruction
  * (issue #180): revisePlanAfterExecutionPrompt and earlierPlanPrompt share them, so the two cannot diverge.
  */
-const planRevisionPrompt = (root: RunRoot, task: string, withRequirements: boolean, opening: string, revise: string, checks: StepChecks): string => {
+const planRevisionPrompt = (root: RunRoot, task: string, withRequirements: boolean, opening: string, revise: string, checks: StepChecks, firstReply = false): string => {
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
+  // Issue #186: the run's first planning call returns a plan or the verdict, and has no questions_for_user.
+  const questions = firstReply
+    ? `${PLAN_BUILD_RULE}
+${NOT_REFINED_RULE}`
+    : `${PLAN_QUESTIONS_RULE}
+Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
+${QUESTION_OPTIONS_RULE}`;
   return `${opening}
 ${requirements}${userDecisionsSentence(root)}
 ${revise}
-${planStatuses(root)} An unfinished step counts as remaining.
+${planStatuses(root)} An unfinished step counts as remaining.${firstReply ? `\n${FIRST_PLAN_REPLY_SHAPE}` : ""}
 ${planFormat(root)}
 ${planStepCheckRule(checks)}
 ${planStepSelfContainedRule(root)}
 ${PLAN_COMMIT_STEP_RULE}
 ${planIdRule(root)}
 If no change to the plan is required, return it as it is. Do not modify any file. Do not implement anything.
-${PLAN_QUESTIONS_RULE}
-Put in questions_for_user only the questions the rule on whether to ask, below, allows; otherwise return an empty array.
-${QUESTION_OPTIONS_RULE}
+${questions}
 Task: ${task}`;
 };
 
@@ -3534,6 +3546,7 @@ The project may have changed since the plan was written: that run's own changes 
 This request runs in a Claude Code session of its own, which has not seen the earlier run: read the files named here.`,
     `Revise the plan in ${runDir(root)}/plan.json: keep the steps with status 'done', and change, add, or remove the other steps as the current state of the codebase and the requirements require.`,
     checks,
+    true,
   );
 }
 /** Said and written where the run took an earlier run's plan (issue #180). */
@@ -3692,3 +3705,107 @@ export const refinementRecordCommentText = (date: string, asked: boolean): strin
 export const COMMENTS_TASK_HEADING = "Comments on this item, oldest first:";
 /** The line above one comment in a refinement run's task. */
 export const commentTaskLine = (date: string): string => `Comment of ${date}:`;
+
+// ---- the verdict that an item is not refined (issue #186) ------------------------------------------------------------
+
+/** The kinds of the first planning call's reply, from the schema, as the prompts name them (the seam of S10). */
+const [PLAN_KIND, NOT_REFINED_KIND] = FIRST_PLAN_KINDS;
+/** The shape of the run's first planning call's reply (issue #186): a plan, or the verdict, under 'reply'. */
+export const FIRST_PLAN_REPLY_SHAPE = `Return your reply in the field 'reply': either { "kind": "${PLAN_KIND}", "plan": … } with the plan as described below, or, only as the rule on the verdict below allows, { "kind": "${NOT_REFINED_KIND}", "missing": … }.`;
+/**
+ * Issue #186 (the developer's instruction of 19 Oct 2026, requirements Q1): in place of the first plan, Claude Code may
+ * declare the item not refined, only where what the work should achieve is left open.
+ */
+export const NOT_REFINED_RULE = `In place of a plan you may return the verdict that the item is not refined, with kind '${NOT_REFINED_KIND}': only where the task, the requirements, the user's decisions, the codebase and the conventions it follows leave open what the work should achieve, and you cannot responsibly settle it yourself. A refined item holds enough for Interloq to plan and implement it without asking the developer anything, so such an item is not refined: Interloq then sends it back to refinement, after Codex has reviewed the verdict, and starts the next item. A question of how to build the work is never a reason for the verdict: settle it and state it in its step. In 'missing', state in Markdown each thing the requirements leave out, why none of those sources settles it, and what a refinement of the item would have to ask the developer.`;
+/** Issue #186: the execution report's status for a point of what the work should achieve that the sources leave open. */
+export const NOT_REFINED_STATUS_SENTENCE = `If, while you work, you find that the task, the requirements, the user's decisions and the codebase leave open what the work should achieve, so that the item cannot be implemented without asking the developer, return status 'not_refined' with 'missing' stating each thing left out, why those sources do not settle it, and what a refinement would have to ask; Codex reviews that verdict, and where it stands the item is sent back to refinement. Never use 'not_refined' for a failure, and give 'missing' as an empty string for every other status.`;
+
+/** Where a verdict was given (issue #186): in place of the run's first plan, or at the end of an execution phase, with what that session reported. */
+export type VerdictOrigin =
+  | Readonly<{ _tag: "FirstPlan" }>
+  | Readonly<{ _tag: "Execution"; phase: number; task: string; summary: string; remainingWork: string }>;
+
+/** Codex's review of verdict n (issue #186, requirements Q2), its first round and later rounds as the other reviews' are. */
+export function verdictReviewPrompt(root: RunRoot, n: number, round: number, withRequirements: boolean, thread: ReviewThread): string {
+  const prefix = `V${n}`;
+  const log = pathOf({ kind: "log", subject: { verdict: n } });
+  const file = pathOf({ kind: "verdict", verdict: n });
+  const requirements = withRequirements ? `${runDir(root)}/requirements.md contains the user's confirmed answers and decisions for this item.\n` : "";
+  return byThread(round, thread, log, root, () => laterRound(root, file, log, prefix, round), () => `Claude Code, the planner, declared that this item is not refined: its requirements leave open what the work should achieve, so it cannot be planned and implemented without asking the developer. Its verdict, with what it says is missing, is the field 'verdict' of ${runDir(root)}/${file}. Where the verdict stands, Interloq sends the item back to refinement. Do not modify any file.
+${requirements}${runDir(root)}/user-decisions.md contains input and decisions by the user. The task text is in ${runDir(root)}/conversation.md.
+Raise one issue for each point of the verdict that the task, the requirements, the user's decisions, the codebase or the conventions it follows do settle, naming the source and what it says in the evidence field; a point about how to build the work, which the planner settles itself, is also an issue. Raise nothing where the verdict stands: a review with no counted issue means that the item is sent back.
+Put the point of the verdict in the location field.
+${logRules(root, log, prefix, round)}`);
+}
+
+/** Claude Code's response to a review of verdict n (issue #186): an accepted issue withdraws the verdict. */
+export function verdictRespondPrompt(root: RunRoot, n: number, round: number, origin: VerdictOrigin): string {
+  const embedded =
+    origin._tag === "FirstPlan"
+      ? ""
+      : `\nThis response runs in a Claude Code session of its own, which has not seen the execution in which the verdict was given; the task and that execution's report follow, and the requirements, the user's decisions and the plan are in ${runDir(root)}/.
+The task:
+${origin.task}
+
+The report of execution phase ${origin.phase}:
+Summary: ${origin.summary || "none"}
+Remaining work: ${origin.remainingWork || "not reported"}
+The plan: ${runDir(root)}/plan.md`;
+  return `${runDir(root)}/${pathOf({ kind: "review", subject: { verdict: n }, round })} contains Codex's review of your verdict that the item is not refined, ${runDir(root)}/${pathOf({ kind: "verdict", verdict: n })}.
+${respondRules(root, "the source it names settles the point; once you accept an issue the verdict is withdrawn and you will write the plan instead, so do not accept an issue whose source does not settle its point", false)}
+Return in 'missing' the verdict as it now stands: each thing still left out, in Markdown.
+Do not modify any file.${embedded}`;
+}
+
+/** The first planning call's cause, of which planAfterVerdictPrompt follows the rules (issue #186, review P1-R1-5). */
+export type FirstPlanCause = Readonly<{ _tag: "FirstPlan" }> | Readonly<{ _tag: "EarlierPlan"; root: RunRoot }> | Readonly<{ _tag: "ParkedBranch"; root: RunRoot; branch: string }>;
+
+/**
+ * Issue #186 (requirements Q6): the rule of a plan that starts from a parked earlier run's branch: its first step
+ * brings the branch's commits onto the working branch, which the later steps build on.
+ */
+export const parkedBranchFirstStepRule = (branch: string): string =>
+  `An earlier run of this item parked its work on the branch ${codeSpan(branch)}. The plan's first step brings that branch's commits onto the working branch's current HEAD: it rebases them onto it and fast-forwards the working branch, resolves any conflict in favor of the item's requirements, and leaves the branch ${codeSpan(branch)} itself in place; the later steps build on that work.`;
+
+/** Issue #186: the plan Claude Code writes after its verdict was withdrawn, with every rule its first plan had. */
+export function planAfterVerdictPrompt(root: RunRoot, task: string, withRequirements: boolean, n: number, cause: FirstPlanCause, checks: StepChecks): string {
+  const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
+  const start =
+    cause._tag === "EarlierPlan"
+      ? `\n${runDir(root)}/plan.json holds the plan Interloq took from an earlier implementation run of the same item, whose records are in ${RECORDS_DIR}/${cause.root}/: revise it, keeping the steps with status 'done'.`
+      : cause._tag === "ParkedBranch"
+        ? `\n${parkedBranchFirstStepRule(cause.branch)}`
+        : "";
+  return `Codex's review of your verdict that the item is not refined (${runDir(root)}/${pathOf({ kind: "verdict", verdict: n })}) showed that the sources settle what it named, and the verdict is withdrawn. Write the implementation plan for the task below instead, following the accepted issues of verdict ${n} in ${runDir(root)}/${pathOf({ kind: "log", subject: { verdict: n } })}.
+${requirements}${userDecisionsSentence(root)}${start}
+${planFormat(root)}
+${planStepCheckRule(checks)}
+${planStepSelfContainedRule(root)}
+${PLAN_COMMIT_STEP_RULE}
+${planIdRule(root)}
+Do not modify any file. Do not implement anything.
+${PLAN_BUILD_RULE}
+Task: ${task}`;
+}
+
+/** Said and written when Claude Code gives its verdict (issue #186): where, and that Codex reviews it. */
+export const verdictGivenLine = (label: string): string => `${label}: Claude Code declares that the item is not refined: its requirements leave open what the work should achieve. Codex reviews the verdict.`;
+/** Said and written when Codex raised nothing against verdict n. */
+export const verdictStandsLine = (n: number): string => `Verdict ${n} stands: Codex found that nothing available settles what it names.`;
+/** Said and written when Claude Code withdrew verdict n after Codex's review. */
+export const verdictWithdrawnLine = (n: number): string => `Verdict ${n} is withdrawn: Codex showed that the sources settle what it named, and Claude Code accepted it. The run goes on with a plan.`;
+/** Said and written when the item was sent back (issue #186): unrefined, with its comment, `count` times in all. */
+export const sentBackLine = (item: string, count: number): string =>
+  `Item ${item} is sent back to refinement: Interloq labeled it unrefined and added a comment saying what its requirements left out. It has been sent back ${count === 1 ? "once" : `${count} times`}.`;
+/** Said and written when the guard of requirements Q5 stopped the item rather than sending it back. */
+export const stoppedUnrefinedLine = (item: string): string =>
+  `Item ${item} is not sent back: the refinement that last refined it asked you no question, so refining it again with nobody asked could repeat the same requirements. It stays implementing, its work parked, with a comment saying what was missing.`;
+/** The count of send-backs beside an item in the tabs' lists (issue #186, F1). */
+export const sentBackCountText = (n: number): string => `Sent back ${n === 1 ? "once" : `${n} times`}`;
+/** Why a verdict reply is refused (issue #186), one line each. */
+export const VERDICT_PROBLEMS = { blankMissing: "the field 'missing' is blank", questionsAsked: "questions_for_user is not empty" } as const;
+export type VerdictProblem = keyof typeof VERDICT_PROBLEMS;
+export const verdictInvalidText = (problem: VerdictProblem): string => `Claude Code's verdict that the item is not refined cannot be accepted: ${VERDICT_PROBLEMS[problem]}`;
+/** The validation repair turn of a verdict (issue #186). */
+export const verdictRepairPrompt = (problem: VerdictProblem): string =>
+  validationRepairPrompt([VERDICT_PROBLEMS[problem]], [problem === "blankMissing" ? "State in 'missing' each thing the requirements leave out, why the sources do not settle it, and what a refinement would have to ask." : "Return an empty questions_for_user array: a point the developer must settle is what the verdict states."]);

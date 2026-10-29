@@ -7,7 +7,7 @@ import type { LimitReset } from "./limitReset.ts";
 import { ItemState } from "./tracker.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
-import { TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -154,6 +154,8 @@ export class ServerFault extends Data.TaggedError("ServerFault")<{ readonly mess
  * by its limit or unable to start, after the one automatic repeat. `stops` counts the stops in a row.
  */
 export class SuiteStopped extends Data.TaggedError("SuiteStopped")<{ readonly command: string; readonly suite: number; readonly stops: number; readonly reason: string }> {}
+/** Issue #186: Claude Code's verdict that the item is not refined was refused after its validation repair turn. */
+export class VerdictInvalid extends Data.TaggedError("VerdictInvalid")<{ readonly problem: VerdictProblem }> {}
 /**
  * A step of the tracker at the start or the end of a run failed (issue #120): the records stand, and the halt says what
  * was done and what was not, so that no state that was not written is claimed. `cause` is the tracker's failure as
@@ -225,6 +227,7 @@ export type RunError =
   | TrackerStepFailed
   | ServerFault
   | SuiteStopped
+  | VerdictInvalid
   | Interrupted;
 
 const indent = (changes: readonly Change[]): string => changes.map((change) => `\n  ${renderChange(change)}`).join("");
@@ -307,6 +310,8 @@ export const describe = (error: RunErrorFields): string => {
       return serverFaultText(error.message);
     case "SuiteStopped":
       return suiteStoppedText(error.command, error.suite, error.stops, error.reason);
+    case "VerdictInvalid":
+      return verdictInvalidText(error.problem);
     case "Interrupted":
       return `interrupted during ${error.where}`;
   }
@@ -371,6 +376,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),
   Schema.Struct({ _tag: Schema.Literal("ServerFault"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("SuiteStopped"), command: Schema.String, suite: Schema.Number, stops: Schema.Number, reason: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("VerdictInvalid"), problem: Schema.Literals(["blankMissing", "questionsAsked"]) }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);
 /** The fields of one of the program's errors; every `RunError` instance is one. */
