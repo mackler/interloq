@@ -36,10 +36,14 @@ const chains: readonly Chain[] = [
 ];
 const entries: readonly ChainEntry[] = [
   { item, title: "t", root: null, outcome: { _tag: "Finished" }, returned: null },
-  { item, title: "t", root: null, outcome: { _tag: "Stopped" }, returned: null },
+  { item, title: "t", root: null, outcome: { _tag: "Stopped", park: null }, returned: null },
   ...(["Pending", "NothingParked"] as const).map((t) => ({ item, title: "t", root: null, outcome: { _tag: "Halted" as const, park: { _tag: t } }, returned: null })),
   { item, title: "t", root: null, outcome: { _tag: "Halted", park: { _tag: "Parked", branch: "interloq/halted/7/r", commit: "c" } }, returned: null },
   { item, title: "t", root: null, outcome: { _tag: "Halted", park: { _tag: "ParkFailed", message: "m" } }, returned: null },
+  // Issue #186: a send-back with its branch or nothing parked, and a stop after the run's own parking.
+  { item, title: "t", root: null, outcome: { _tag: "SentBack", park: { _tag: "Parked", branch: "interloq/halted/7/r", commit: "c" } }, returned: null },
+  { item, title: "t", root: null, outcome: { _tag: "SentBack", park: { _tag: "NothingParked" } }, returned: null },
+  { item, title: "t", root: null, outcome: { _tag: "Stopped", park: { _tag: "Parked", branch: "interloq/halted/7/r", commit: "c" } }, returned: null },
 ];
 
 const all = (): readonly string[] => [
@@ -74,4 +78,15 @@ test("a running chain names its count, and the limit where one is set", () => {
   const running = chains[1]!;
   assert.ok(chainStatusText({ settings: DEFAULT_SETTINGS, chain: running, generation: 1 }).startsWith("Run 2 of the chain"));
   assert.ok(chainStatusText({ settings: { enabled: true, limits: { runs: 3 as RunLimit, cutoff: null } }, chain: running, generation: 1 }).startsWith("Run 2 of 3"));
+});
+
+// Issue #186: a send-back's entry says the item went back to refinement and names its branch where work was parked.
+test("a send-back's entry names the send-back and its branch, and a stop after its own parking names the branch", () => {
+  const [sentParked, sentNothing, stoppedParked] = entries.slice(-3).map(chainEntryText);
+  assert.match(sentParked!, /sent back to refinement/);
+  assert.ok(sentParked!.includes("interloq/halted/7/r"));
+  assert.match(sentNothing!, /sent back to refinement/);
+  assert.ok(!sentNothing!.includes("branch"));
+  assert.ok(stoppedParked!.includes("interloq/halted/7/r") && /Stop task/.test(stoppedParked!));
+  assert.equal(chainEntryText(entries[1]!), "Item #7 t: stopped with Stop task.");
 });

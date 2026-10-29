@@ -26,7 +26,7 @@ const drive = (limit: number | null, ends: readonly { code: number; rooted: bool
   };
   for (const end of ends) {
     if (state.chain._tag !== "Running") break;
-    let c = record("ended", ended(state, run, { code: end.code, root: end.rooted ? (`runs/r${run}` as RunRoot) : null }));
+    let c = record("ended", ended(state, run, { code: end.code, root: end.rooted ? (`runs/r${run}` as RunRoot) : null, parked: null }));
     while (c !== null) {
       const g = c.generation;
       switch (c.command._tag) {
@@ -138,9 +138,9 @@ test("property: no run starts after the mode is turned off, whatever the claims"
         else if (op === "off") {
           s = configured(s, OFF_SETTINGS, null);
           turnedOff = true;
-        } else if (op === "end0") [s, command] = ended(s, run, { code: 0, root: null });
-        else if (op === "end1") [s, command] = ended(s, run, { code: 1, root: null });
-        else if (op === "end1root") [s, command] = ended(s, run, { code: 1, root: `runs/r${run}` as RunRoot });
+        } else if (op === "end0") [s, command] = ended(s, run, { code: 0, root: null, parked: null });
+        else if (op === "end1") [s, command] = ended(s, run, { code: 1, root: null, parked: null });
+        else if (op === "end1root") [s, command] = ended(s, run, { code: 1, root: `runs/r${run}` as RunRoot, parked: null });
         else if (op === "parked") [s, command] = parked(s, g, { _tag: "NothingParked" });
         else if (op === "due") [s, command] = due(s, g, 0);
         else [s, command] = listed(s, g, { item: "2" as ItemId, title: "t" });
@@ -168,7 +168,7 @@ const arbEntry = fc.record({
   item: arbItemId,
   title: fc.string(),
   root: fc.constant(null),
-  outcome: fc.constantFrom({ _tag: "Finished" as const }, { _tag: "Stopped" as const }, { _tag: "Halted" as const, park: { _tag: "NothingParked" as const } }),
+  outcome: fc.constantFrom({ _tag: "Finished" as const }, { _tag: "Stopped" as const, park: null }, { _tag: "Halted" as const, park: { _tag: "NothingParked" as const } }),
   returned: fc.constant(null),
 });
 const arbSettings = fc.record({
@@ -223,6 +223,33 @@ test("W1-R1-1 property: saveFailed ends every chain that is neither Parking nor 
       const s = saveFailed(state, message);
       assert.deepEqual(s.chain, { _tag: "Idle", ended: { _tag: "SaveFailed", message }, history: state.chain.history });
       assert.deepEqual(s.settings, state.settings);
+    }),
+    RUNS,
+  );
+});
+
+// Issue #186: an end with the run's own parking never yields a Park command, and a ParkFailed note always ends the chain.
+const arbOwnNote = fc.oneof(
+  fc.constant({ _tag: "NothingParked" as const }),
+  fc.record({ _tag: fc.constant("Parked" as const), branch: fc.constant("interloq/halted/1/r"), commit: fc.constant("c") }),
+  fc.string().map((message) => ({ _tag: "ParkFailed" as const, message })),
+);
+test("property: an end with its own parking never yields a Park command, and a ParkFailed note ends the chain", () => {
+  fc.assert(
+    fc.property(fc.array(fc.record({ code: fc.constantFrom(0, 1, 130), note: arbOwnNote, rooted: fc.boolean() }), { minLength: 1, maxLength: 6 }), (ends) => {
+      let s: ChainState = begun(initialState({ enabled: true, limits: { runs: null, cutoff: null } }), 1, "1" as ItemId, "t");
+      let run = 1;
+      for (const end of ends) {
+        if (s.chain._tag !== "Running") return;
+        const [next, command] = ended(s, run, { code: end.code, root: end.rooted ? (`runs/r${run}` as RunRoot) : null, parked: end.note });
+        assert.notEqual(command?.command._tag, "Park");
+        if (end.code === 1 && end.note._tag === "ParkFailed") assert.deepEqual(next.chain._tag === "Idle" && next.chain.ended?._tag, "ParkFailed");
+        s = next;
+        if (s.chain._tag === "Ready") {
+          run += 1;
+          s = started(s, s.chain.generation, run, "1" as ItemId, "t");
+        }
+      }
     }),
     RUNS,
   );

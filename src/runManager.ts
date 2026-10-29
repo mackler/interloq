@@ -243,7 +243,7 @@ export const makeRunManager = (
             if (mode === null || run === null) return [{ changed: false, command: null }, [], s];
             const event: RunEvent = { _tag: "Ended", code };
             const moved = withSlot(s, mode, endedIn(mode, s.runs[mode], id, (r) => ({ ...r, events: [...r.events, { time, event }] })));
-            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root });
+            const [chain, command] = s.closing ? [s.chain, null] : chainEnded(s.chain, id, { code, root, parked: null });
             return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
           }).pipe(Effect.flatMap(({ changed, command }) => (changed ? settle(command) : Effect.void))),
         ),

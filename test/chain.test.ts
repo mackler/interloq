@@ -32,7 +32,7 @@ test("a start with the mode on begins a chain counting the developer's own run; 
 });
 
 test("a finished run makes the next start due; due lists; listed starts the first item given", () => {
-  const [r, c] = ended(startedChain(), 1, { code: 0, root: root("1") });
+  const [r, c] = ended(startedChain(), 1, { code: 0, root: root("1"), parked: null });
   assert.equal(r.chain._tag, "Ready");
   assert.deepEqual(c?.command, { _tag: "Due" });
   const [d, dc] = due(r, gen(r), 0);
@@ -45,7 +45,7 @@ test("a finished run makes the next start due; due lists; listed starts the firs
 });
 
 test("an empty listing ends the chain with NoItems; the mode stays on", () => {
-  const [r] = ended(startedChain(), 1, { code: 0, root: root("1") });
+  const [r] = ended(startedChain(), 1, { code: 0, root: root("1"), parked: null });
   const [l, c] = listed(r, gen(r), null);
   assert.deepEqual(l.chain._tag === "Idle" && l.chain.ended, { _tag: "NoItems" });
   assert.equal(c, null);
@@ -53,13 +53,13 @@ test("an empty listing ends the chain with NoItems; the mode stays on", () => {
 });
 
 test("Stop task (130) ends the chain", () => {
-  const [s, c] = ended(startedChain(), 1, { code: 130, root: root("1") });
+  const [s, c] = ended(startedChain(), 1, { code: 130, root: root("1"), parked: null });
   assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "StoppedByDeveloper", item: "1" });
   assert.equal(c, null);
 });
 
 test("a halt with a records directory parks, then continues", () => {
-  const [p, c] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p, c] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   assert.equal(p.chain._tag, "Parking");
   assert.deepEqual(c?.command, { _tag: "Park", item: "1", root: root("1") });
   assert.equal(blocksImplementationStart(p), true);
@@ -71,24 +71,24 @@ test("a halt with a records directory parks, then continues", () => {
 });
 
 test("a failed parking ends the chain", () => {
-  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   const [s] = parked(p, gen(p), { _tag: "ParkFailed", message: "m" });
   assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "ParkFailed", item: "1", message: "m" });
 });
 
 test("a halt before the records existed starts the item again; the second halt ends the chain", () => {
-  const [r, c] = ended(startedChain(), 1, { code: 1, root: null });
+  const [r, c] = ended(startedChain(), 1, { code: 1, root: null, parked: null });
   assert.equal(r.chain._tag, "Ready");
   assert.deepEqual(c?.command, { _tag: "Due" });
   const again = chainStart(r, 2, "1");
-  const [s] = ended(again, 2, { code: 1, root: null });
+  const [s] = ended(again, 2, { code: 1, root: null, parked: null });
   assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "HaltedTwice", item: "1" });
 });
 
 test("the same item halting twice with records is still parked before the chain ends", () => {
-  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   const [r] = parked(p1, gen(p1), { _tag: "Parked", branch: "b", commit: "c" });
-  const [p2, c] = ended(chainStart(r, 2, "1"), 2, { code: 1, root: root("1b") });
+  const [p2, c] = ended(chainStart(r, 2, "1"), 2, { code: 1, root: root("1b"), parked: null });
   assert.equal(p2.chain._tag, "Parking");
   assert.deepEqual(c?.command._tag, "Park");
   const [s] = parked(p2, gen(p2), { _tag: "Parked", branch: "b2", commit: "c2" });
@@ -96,13 +96,13 @@ test("the same item halting twice with records is still parked before the chain 
 });
 
 test("a run limit of 1 starts nothing after the developer's run; of 3, two more", () => {
-  const [r1] = ended(startedChain(withRuns(1)), 1, { code: 0, root: root("1") });
+  const [r1] = ended(startedChain(withRuns(1)), 1, { code: 0, root: root("1"), parked: null });
   const [s1] = due(r1, gen(r1), 0);
   assert.deepEqual(s1.chain._tag === "Idle" && s1.chain.ended, { _tag: "RunLimitReached", limit: 1 });
   let s = startedChain(withRuns(3));
   let starts = 0;
   for (let run = 1; ; run++) {
-    const [r] = ended(s, run, { code: 0, root: root(String(run)) });
+    const [r] = ended(s, run, { code: 0, root: root(String(run)), parked: null });
     const [d, c] = due(r, gen(r), 0);
     if (c === null) {
       assert.deepEqual(d.chain._tag === "Idle" && d.chain.ended, { _tag: "RunLimitReached", limit: 3 });
@@ -115,7 +115,7 @@ test("a run limit of 1 starts nothing after the developer's run; of 3, two more"
 });
 
 test("a halt at the run limit is parked before the limit ends the chain", () => {
-  const [p, c] = ended(startedChain(withRuns(1)), 1, { code: 1, root: root("1") });
+  const [p, c] = ended(startedChain(withRuns(1)), 1, { code: 1, root: root("1"), parked: null });
   assert.equal(c?.command._tag, "Park");
   const [r] = parked(p, gen(p), { _tag: "Parked", branch: "b", commit: "c" });
   const [s] = due(r, gen(r), 0);
@@ -124,7 +124,7 @@ test("a halt at the run limit is parked before the limit ends the chain", () => 
 
 test("a passed cutoff ends the chain at due and refuses a start in flight", () => {
   const settings: ChainSettings = { enabled: true, limits: { runs: null, cutoff: cutoff("2026-10-20T07:00:00.000Z") } };
-  const [r] = ended(startedChain(settings), 1, { code: 0, root: root("1") });
+  const [r] = ended(startedChain(settings), 1, { code: 0, root: root("1"), parked: null });
   const at = Date.parse("2026-10-20T07:00:00.000Z");
   const [s] = due(r, gen(r), at);
   assert.equal(s.chain._tag === "Idle" && s.chain.ended?._tag, "CutoffPassed");
@@ -135,7 +135,7 @@ test("a passed cutoff ends the chain at due and refuses a start in flight", () =
 });
 
 test("startGuard refuses at the limit, after the mode was turned off, and for another generation", () => {
-  const [r] = ended(startedChain(withRuns(2)), 1, { code: 0, root: root("1") });
+  const [r] = ended(startedChain(withRuns(2)), 1, { code: 0, root: root("1"), parked: null });
   const [l] = listed(r, gen(r), { item: id("2"), title: "two" });
   assert.equal(startGuard(l, gen(l), id("2"), 0), null);
   const atLimit = configured(l, withRuns(1), null);
@@ -151,7 +151,7 @@ test("turning the mode off ends a going chain saying which run goes on; during p
   const off = (s: ChainState, running: string | null) => configured(s, OFF_SETTINGS, running === null ? null : id(running));
   const s = off(startedChain(), "1");
   assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "TurnedOff", running: "1" });
-  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   const po = off(p, null);
   assert.equal(po.chain._tag, "Parking");
   const [after, c] = parked(po, gen(po), { _tag: "NothingParked" });
@@ -164,8 +164,8 @@ test("turning the mode off ends a going chain saying which run goes on; during p
 
 test("an end of another run, and a stale generation, do nothing", () => {
   const s = startedChain();
-  assert.deepEqual(ended(s, 2, { code: 0, root: null }), [s, null]);
-  const [r] = ended(s, 1, { code: 0, root: null });
+  assert.deepEqual(ended(s, 2, { code: 0, root: null, parked: null }), [s, null]);
+  const [r] = ended(s, 1, { code: 0, root: null, parked: null });
   assert.deepEqual(due(r, gen(r) + 1, 0), [r, null]);
   assert.deepEqual(listed(r, gen(r) - 1, null), [r, null]);
   assert.deepEqual(parked(r, gen(r), { _tag: "NothingParked" }), [r, null]);
@@ -176,17 +176,17 @@ test("a restart: running and starting end with ServerEnded, parking parks again,
   const [rr, rc] = restored(run);
   assert.deepEqual(rr.chain._tag === "Idle" && rr.chain.ended, { _tag: "ServerEnded", item: "1" });
   assert.equal(rc, null);
-  const [r] = ended(run, 1, { code: 0, root: null });
+  const [r] = ended(run, 1, { code: 0, root: null, parked: null });
   const [l] = listed(r, gen(r), { item: id("2"), title: "two" });
   assert.deepEqual(restored(l)[0].chain._tag === "Idle" && restored(l)[0].chain, { _tag: "Idle", ended: { _tag: "ServerEnded", item: "2" }, history: r.chain.history });
   assert.deepEqual(restored(r)[1]?.command, { _tag: "Due" });
-  const [p] = ended(run, 1, { code: 1, root: root("1") });
+  const [p] = ended(run, 1, { code: 1, root: root("1"), parked: null });
   assert.deepEqual(restored(p)[1]?.command, { _tag: "Park", item: "1", root: root("1") });
   assert.deepEqual(restored(initialState(DEFAULT_SETTINGS)), [initialState(DEFAULT_SETTINGS), null]);
 });
 
 test("a failed save ends the chain keeping the settings and the history", () => {
-  const [r] = ended(startedChain(withRuns(3)), 1, { code: 0, root: null });
+  const [r] = ended(startedChain(withRuns(3)), 1, { code: 0, root: null, parked: null });
   const s = saveFailed(r, "disk full");
   assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "SaveFailed", message: "disk full" });
   assert.equal(s.settings.limits.runs, 3);
@@ -194,7 +194,7 @@ test("a failed save ends the chain keeping the settings and the history", () => 
 });
 
 test("a manual start after a chain ended begins a new chain with a new generation and fresh halts", () => {
-  const [h] = ended(startedChain(), 1, { code: 1, root: null });
+  const [h] = ended(startedChain(), 1, { code: 1, root: null, parked: null });
   const [, c] = due(h, gen(h), 0);
   assert.notEqual(c, null);
   const again = begun(h, 5, id("9"), "nine");
@@ -211,7 +211,7 @@ test("the limits and the cutoff are constructed only from valid values", () => {
 });
 
 test("a saved state round-trips through the file's schema", () => {
-  const [p] = ended(startedChain(withRuns(2)), 1, { code: 1, root: root("1") });
+  const [p] = ended(startedChain(withRuns(2)), 1, { code: 1, root: root("1"), parked: null });
   const file = { version: 2 as const, state: p };
   const decode = Schema.decodeUnknownSync(ChainFileSchema);
   assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
@@ -220,7 +220,7 @@ test("a saved state round-trips through the file's schema", () => {
 
 test("a failed save during parking keeps Parking, its exclusion, and ends the chain SaveFailed once parked (W1-R1-5)", () => {
   const notes = [{ _tag: "Parked", branch: "b", commit: "c" }, { _tag: "NothingParked" }] as const;
-  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   for (const before of [p, configured(p, OFF_SETTINGS, null)]) {
     const f = saveFailed(before, "disk full");
     assert.equal(f.chain._tag, "Parking");
@@ -235,9 +235,9 @@ test("a failed save during parking keeps Parking, its exclusion, and ends the ch
     const [pf] = parked(f, gen(f), { _tag: "ParkFailed", message: "m" });
     assert.deepEqual(pf.chain._tag === "Idle" && pf.chain.ended, { _tag: "ParkFailed", item: "1", message: "m" });
   }
-  const [h1] = ended(startedChain(), 1, { code: 1, root: null });
+  const [h1] = ended(startedChain(), 1, { code: 1, root: null, parked: null });
   const twice = chainStart(h1, 2, "1");
-  const [p2] = ended(twice, 2, { code: 1, root: root("2") });
+  const [p2] = ended(twice, 2, { code: 1, root: root("2"), parked: null });
   assert.deepEqual(p2.chain._tag === "Parking" && p2.chain.then, { _tag: "HaltedTwice", item: "1" });
   const f2 = saveFailed(p2, "x");
   assert.deepEqual(f2.chain._tag === "Parking" && f2.chain.then, { _tag: "SaveFailed", message: "x" });
@@ -245,7 +245,7 @@ test("a failed save during parking keeps Parking, its exclusion, and ends the ch
 
 test("a failed save outside parking ends the chain as before", () => {
   const run = startedChain();
-  const [r] = ended(run, 1, { code: 0, root: null });
+  const [r] = ended(run, 1, { code: 0, root: null, parked: null });
   const [l] = listed(r, gen(r), { item: id("2"), title: "two" });
   for (const s of [run, r, l]) {
     const f = saveFailed(s, "m");
@@ -254,7 +254,7 @@ test("a failed save outside parking ends the chain as before", () => {
 });
 
 test("parkingAbandoned ends a Parking of its generation with its end, else SaveFailed; another generation unchanged", () => {
-  const [p] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   const a = parkingAbandoned(p, gen(p));
   assert.deepEqual(a.chain._tag === "Idle" && a.chain.ended, { _tag: "SaveFailed", message: "" });
   assert.deepEqual(a.chain.history, p.chain.history);
@@ -263,13 +263,13 @@ test("parkingAbandoned ends a Parking of its generation with its end, else SaveF
   const f = parkingAbandoned(saveFailed(p, "disk full"), gen(p));
   assert.deepEqual(f.chain._tag === "Idle" && f.chain.ended, { _tag: "SaveFailed", message: "disk full" });
   assert.deepEqual(parkingAbandoned(p, gen(p) + 1), p);
-  const [r] = ended(startedChain(), 1, { code: 0, root: null });
+  const [r] = ended(startedChain(), 1, { code: 0, root: null, parked: null });
   assert.deepEqual(parkingAbandoned(r, gen(r)), r);
 });
 
 test("commandApplies: each command in its own state and generation, never another", () => {
-  const [p, park] = ended(startedChain(), 1, { code: 1, root: root("1") });
-  const [r, dueC] = ended(startedChain(), 1, { code: 0, root: null });
+  const [p, park] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
+  const [r, dueC] = ended(startedChain(), 1, { code: 0, root: null, parked: null });
   const [, list] = due(r, gen(r), 0);
   const [l, start] = listed(r, gen(r), { item: id("2"), title: "two" });
   const cases: readonly [ChainState, ChainCommand][] = [[p, park!], [r, dueC!], [r, list!], [l, start!]];
@@ -293,7 +293,7 @@ test("claimParking grants and records the claim exactly for the chain's running 
   assert.deepEqual(claimParking(s, 2), [s, false]);
   const idle = initialState(DEFAULT_SETTINGS);
   assert.deepEqual(claimParking(idle, 1), [idle, false]);
-  const [ready] = ended(s, 1, { code: 0, root: root("1") });
+  const [ready] = ended(s, 1, { code: 0, root: root("1"), parked: null });
   assert.deepEqual(claimParking(ready, 1), [ready, false]);
 });
 
@@ -302,7 +302,7 @@ test("the mode turned off after a claim keeps the run's chain until its parking,
   const off = configured(claimed, OFF_SETTINGS, id("1"));
   assert.equal(off.chain._tag, "Running");
   assert.deepEqual(off.chain._tag === "Running" && off.chain.claim, { _tag: "Claimed", then: { _tag: "TurnedOff", running: id("1") } });
-  const [parking, command] = ended(off, 1, { code: 1, root: root("1") });
+  const [parking, command] = ended(off, 1, { code: 1, root: root("1"), parked: null });
   assert.equal(parking.chain._tag, "Parking");
   assert.deepEqual(parking.chain._tag === "Parking" && parking.chain.then, { _tag: "TurnedOff", running: id("1") });
   assert.equal(command?.command._tag, "Park");
@@ -313,11 +313,11 @@ test("the mode turned off after a claim keeps the run's chain until its parking,
 });
 
 test("a claimed run halted the second time parks and then ends HaltedTwice", () => {
-  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   const [r1] = parked(p1, gen(p1), { _tag: "NothingParked" });
   const again = chainStart(r1, 2, "1");
   const [claimed] = claimParking(configured(again, again.settings, null), 2);
-  const [p2] = ended(configured(claimed, OFF_SETTINGS, id("1")), 2, { code: 1, root: root("2") });
+  const [p2] = ended(configured(claimed, OFF_SETTINGS, id("1")), 2, { code: 1, root: root("2"), parked: null });
   assert.deepEqual(p2.chain._tag === "Parking" && p2.chain.then, { _tag: "HaltedTwice", item: id("1") });
 });
 
@@ -332,7 +332,7 @@ test("a restored Running chain with a claim ends ServerEnded; a chain.json witho
 });
 
 test("itemReturned sets the outcome on the item's newest halted entry of its generation, and nothing else", () => {
-  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1") });
+  const [p1] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null });
   const g = gen(p1);
   const returned = itemReturned(p1, g, id("1"), { _tag: "Returned" });
   assert.deepEqual(returned.chain.history.map((e) => e.returned), [{ _tag: "Returned" }]);
@@ -369,13 +369,50 @@ test("W1-R1-1 saveFailed still ends an unclaimed Running chain", () => {
 
 test("W1-R1-1 after a failed save of a claimed chain, the halt is parked and the chain ends SaveFailed", () => {
   const f = saveFailed(claimParking(startedChain(), 1)[0], "disk full");
-  const [p, c] = ended(f, 1, { code: 1, root: root("1") });
+  const [p, c] = ended(f, 1, { code: 1, root: root("1"), parked: null });
   assert.equal(p.chain._tag, "Parking");
   assert.deepEqual(p.chain._tag === "Parking" && p.chain.then, { _tag: "SaveFailed", message: "disk full" });
   assert.deepEqual(c?.command, { _tag: "Park", item: "1", root: root("1") });
   const [done, none] = parked(p, gen(p), { _tag: "NothingParked" });
   assert.equal(none, null);
   assert.deepEqual(done.chain._tag === "Idle" && done.chain.ended, { _tag: "SaveFailed", message: "disk full" });
-  const [noRoot] = ended(f, 1, { code: 1, root: null });
+  const [noRoot] = ended(f, 1, { code: 1, root: null, parked: null });
   assert.deepEqual(noRoot.chain._tag === "Idle" && noRoot.chain.ended, { _tag: "SaveFailed", message: "disk full" });
+});
+
+// Issue #186: a send-back (0 with the run's own parking) continues as a finished run and counts no halt; a halt or a
+// stop the run parked itself is never parked again; a parking that failed ends the chain.
+const ownParking = { _tag: "Parked" as const, branch: "interloq/halted/1/r", commit: "c" };
+test("a send-back is recorded with its parking, makes the next start due and counts no halt", () => {
+  const [r, c] = ended(startedChain(), 1, { code: 0, root: root("1"), parked: ownParking });
+  assert.equal(r.chain._tag, "Ready");
+  assert.deepEqual(c?.command, { _tag: "Due" });
+  assert.deepEqual(r.chain._tag === "Ready" && r.chain.history[0]?.outcome, { _tag: "SentBack", park: ownParking });
+  assert.deepEqual(r.chain._tag === "Ready" && r.chain.halts, []);
+  // Sent back however many times (requirements Q5): the same item sent back again does not end the chain.
+  const [again] = ended(chainStart(r, 2, "1"), 2, { code: 0, root: root("1b"), parked: ownParking });
+  assert.equal(again.chain._tag, "Ready");
+});
+
+test("a halt that parked its own work issues no Park command and counts toward HaltedTwice", () => {
+  const [r, c] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: { _tag: "NothingParked" } });
+  assert.equal(r.chain._tag, "Ready");
+  assert.deepEqual(c?.command, { _tag: "Due" });
+  assert.deepEqual(r.chain._tag === "Ready" && r.chain.history[0]?.outcome, { _tag: "Halted", park: { _tag: "NothingParked" } });
+  const [s, sc] = ended(chainStart(r, 2, "1"), 2, { code: 1, root: root("1b"), parked: ownParking });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "HaltedTwice", item: "1" });
+  assert.equal(sc, null);
+});
+
+test("a halt whose own parking failed ends the chain with ParkFailed and parks nothing", () => {
+  const [s, c] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: { _tag: "ParkFailed", message: "m" } });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "ParkFailed", item: "1", message: "m" });
+  assert.equal(c, null);
+});
+
+test("a stop after the run's own parking ends the chain, the entry recording the parking", () => {
+  const [s, c] = ended(startedChain(), 1, { code: 130, root: root("1"), parked: ownParking });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "StoppedByDeveloper", item: "1" });
+  assert.deepEqual(s.chain._tag === "Idle" && s.chain.history[0]?.outcome, { _tag: "Stopped", park: ownParking });
+  assert.equal(c, null);
 });

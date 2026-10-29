@@ -2376,10 +2376,10 @@ describe("chainShown", () => {
   test("each chain gives its status, and an ended chain its reason and its runs", () => {
     const running = begun(helloChain, 4, "7" as ItemId, "seven");
     expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, effective: { enabled: running.settings.enabled, runs: running.settings.limits.runs, cutoff: null }, reset: { version: 0, fields: [] }, status: prompts.chainStatusText(running), ended: null, runs: [] });
-    const [stopped] = ended(running, 4, { code: 130, root: null });
+    const [stopped] = ended(running, 4, { code: 130, root: null, parked: null });
     const shown = chainShown(withChain(stopped), time);
     expect(shown?.ended).toBe(prompts.chainEndedText({ _tag: "StoppedByDeveloper", item: "7" as ItemId }, time));
-    expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped" }, returned: null })]);
+    expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped", park: null }, returned: null })]);
     expect(chainShown(withChain(helloChain), time)?.ended).toBeNull();
   });
 });

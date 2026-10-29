@@ -57,10 +57,19 @@ export const ParkNoteSchema = Schema.Union([
 ]);
 
 /** How a run of the chain ended (behavior 11): finished (0), stopped by the developer (130), or halted (1). */
-export type ChainRunOutcome = Readonly<{ _tag: "Finished" }> | Readonly<{ _tag: "Stopped" }> | Readonly<{ _tag: "Halted"; park: ParkNote }>;
+/**
+ * Issue #186: a run that sent its item back to refinement (0, its own parking), and a stopped run's own parking, if it
+ * parked before the stop (null otherwise, and in a chain.json written before the field).
+ */
+export type ChainRunOutcome =
+  | Readonly<{ _tag: "Finished" }>
+  | Readonly<{ _tag: "SentBack"; park: ParkNote }>
+  | Readonly<{ _tag: "Stopped"; park: ParkNote | null }>
+  | Readonly<{ _tag: "Halted"; park: ParkNote }>;
 const ChainRunOutcomeSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Finished") }),
-  Schema.Struct({ _tag: Schema.Literal("Stopped") }),
+  Schema.Struct({ _tag: Schema.Literal("SentBack"), park: ParkNoteSchema }),
+  Schema.Struct({ _tag: Schema.Literal("Stopped"), park: Schema.NullOr(ParkNoteSchema).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))) }),
   Schema.Struct({ _tag: Schema.Literal("Halted"), park: ParkNoteSchema }),
 ]);
 
@@ -182,7 +191,8 @@ export type ChainCommand = Readonly<{ generation: number; command: Command }>;
 export type Step = readonly [ChainState, ChainCommand | null];
 
 /** What the manager knows of a run's end: its code (behavior 11) and its records directory where one was allocated. */
-export type RunEnd = Readonly<{ code: number; root: RunRoot | null }>;
+/** Issue #186: `parked`, the parking the run did itself (a send-back's or a guard stop's), which the chain takes as given. */
+export type RunEnd = Readonly<{ code: number; root: RunRoot | null; parked: ParkNote | null }>;
 
 /** The first refined item of the listing, in the tracker's order. */
 export type Listed = Readonly<{ item: ItemId; title: string }>;
@@ -218,18 +228,29 @@ export const begun = (state: ChainState, run: number, item: ItemId, title: strin
 export const ended = (state: ChainState, run: number, end: RunEnd): Step => {
   const chain = state.chain;
   if (chain._tag !== "Running" || chain.run !== run) return [state, null];
+  // Issue #186: a run that parked its own work (a send-back, a guard stop) is taken as parked: no Park command follows.
+  const own = end.parked;
   const outcome: ChainRunOutcome =
-    end.code === 0 ? { _tag: "Finished" } : end.code === 130 ? { _tag: "Stopped" } : { _tag: "Halted", park: end.root === null ? { _tag: "NothingParked" } : { _tag: "Pending" } };
+    end.code === 0
+      ? own === null
+        ? { _tag: "Finished" }
+        : { _tag: "SentBack", park: own }
+      : end.code === 130
+        ? { _tag: "Stopped", park: own }
+        : { _tag: "Halted", park: own ?? (end.root === null ? { _tag: "NothingParked" } : { _tag: "Pending" }) };
   const history = [...chain.history, { item: chain.item, title: chain.title, root: end.root, outcome, returned: null }];
   const common: Common = { ...commonOf(chain), history };
   // Issue #192: the end decided while a claimed parking kept the chain going (the mode turned off meanwhile).
   const pending = chain.claim._tag === "Claimed" ? chain.claim.then : null;
-  if (outcome._tag === "Finished") return pending !== null ? [{ ...state, chain: { _tag: "Idle", ended: pending, history } }, null] : ready(state, common);
+  // A send-back continues as a finished run and counts no halt, so an item sent back however many times (Q5) never ends the chain.
+  if (outcome._tag === "Finished" || outcome._tag === "SentBack") return pending !== null ? [{ ...state, chain: { _tag: "Idle", ended: pending, history } }, null] : ready(state, common);
   if (outcome._tag === "Stopped") return [{ ...state, chain: { _tag: "Idle", ended: { _tag: "StoppedByDeveloper", item: chain.item }, history } }, null];
+  // Issue #186 (requirements Q6): the run's own parking failed, its work where it was: the chain ends.
+  if (own?._tag === "ParkFailed") return [{ ...state, chain: { _tag: "Idle", ended: { _tag: "ParkFailed", item: chain.item, message: own.message }, history } }, null];
   const times = (chain.halts.find((h) => h.item === chain.item)?.times ?? 0) + 1;
   const halts = [...chain.halts.filter((h) => h.item !== chain.item), { item: chain.item, times }];
   const endsAfter: ChainEndReason | null = times >= 2 ? { _tag: "HaltedTwice", item: chain.item } : pending;
-  if (end.root !== null)
+  if (end.root !== null && own === null)
     return [
       { ...state, chain: { _tag: "Parking", item: chain.item, root: end.root, then: endsAfter, ...common, halts } },
       { generation: chain.generation, command: { _tag: "Park", item: chain.item, root: end.root } },

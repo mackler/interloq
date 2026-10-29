@@ -3683,8 +3683,13 @@ const chainOutcomeText = (entry: ChainEntry): string => {
   switch (entry.outcome._tag) {
     case "Finished":
       return `${head}: finished.`;
+    case "SentBack":
+      // Issue #186: the verdict that the item is not refined stood.
+      return entry.outcome.park._tag === "Parked"
+        ? `${head}: sent back to refinement, its requirements not enough to go on; its work is on branch ${entry.outcome.park.branch}.`
+        : `${head}: sent back to refinement, its requirements not enough to go on.`;
     case "Stopped":
-      return `${head}: stopped with Stop task.`;
+      return entry.outcome.park?._tag === "Parked" ? `${head}: stopped with Stop task; its work is on branch ${entry.outcome.park.branch}.` : `${head}: stopped with Stop task.`;
     case "Halted": {
       const park = entry.outcome.park;
       switch (park._tag) {
