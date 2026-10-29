@@ -60,7 +60,7 @@ describe("ChatPanel while hidden", () => {
 describe("ChatPanel's phase bands", () => {
   const T = (s: number) => new Date(Date.UTC(2026, 8, 27, 14, 0, s)).toISOString();
   const band = (kind: Band["kind"], n: number, s: number): Band => ({ key: `${kind}-${n}`, kind, name: `${kind === "planning" ? "Planning" : "Execution"} ${n}`, began: T(s) });
-  const inBand = (i: number, b: Band | null): Message => ({ ...message(i), author: "program", band: b });
+  const inBand = (i: number, b: Band | null): Message => ({ ...message(i), author: "codex", band: b });
 
   test("consecutive messages of a band are one band element with its label; messages before any phase are outside", () => {
     const [p1, e1, p2] = [band("planning", 1, 10), band("execution", 1, 20), band("planning", 2, 30)];

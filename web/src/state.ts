@@ -1,5 +1,8 @@
-// The page's state (plan step 4.2): one pure reducer folds the server's messages into the two panels, the pending
-// prompt with its widget, the activity line and the timeline rail. Replay and live events use the same fold.
+// The page's state (plan step 4.2): one pure reducer folds the server's messages into the dashboard (issue #22: the
+// "You and Interloq" panel, every piece of it in a fixed place, its status line what is happening now), the "Claude
+// and Codex" panel's messages, the pending prompt with its widget, and the timeline rail. Replay and live events use
+// the same fold, so a tab that joins mid-run shows what a tab that watched from the start shows. The dashboard keeps no
+// timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
 import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, ChainFrameSettings, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
@@ -19,16 +22,13 @@ import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
 import type { ChainSettings, ChainState } from "../../src/chain.ts";
 import { acknowledged, type ChainField, differingFields, effective, type InFlight, NO_IN_FLIGHT, sameFrame, sameSettings, sent, withdrawn } from "./chainPending.ts";
 
-export type Author = "program" | "user" | "codex" | "claude";
+/** The authors of the "Claude and Codex" panel, the one panel of messages (issue #22). */
+export type Author = "codex" | "claude";
 /**
  * One chat message. `markdown` is rendered and sanitised; a program's plain text is shown as it is. `time` is the ISO
  * time its event was published (issue #1); `showTime` whether the time is shown, or only given to assistive technology.
  */
-/**
- * `question`: an answered question as it was presented (S26, S28; S12 of the task of issue #36), which the message shows
- * whole, its pieces carrying their explanations; its `body` is the question's words, for search and announcements.
- */
-export type Message = Readonly<{ key: string; author: Author; heading: string | null; body: string; format: "text" | "markdown"; time: string; showTime: boolean; band: Band | null; question?: PresentedQuestion }>;
+export type Message = Readonly<{ key: string; author: Author; heading: string | null; body: string; format: "text" | "markdown"; time: string; showTime: boolean; band: Band | null }>;
 /**
  * The phase a message belongs to, as its panel shows it (issue #15): a band of one tone per kind of phase, opened by a
  * label with the phase's name and the time it began. `key` is unique per phase of a run; null before any phase.
@@ -160,12 +160,10 @@ export type RunView = Readonly<{
   location: string;
   task: string;
   nextSeq: number;
-  left: readonly Message[];
   right: readonly Message[];
   pending: Widget | null;
   /** The prompts answered so far, in order (finding 5): what a draft is reconciled against, live and after a replay. */
   answered: readonly number[];
-  activity: string;
   /** Whether an agent call runs: `calls` is not empty. */
   busy: boolean;
   /** The agent calls that run, the innermost last (P1-R2-1). */
@@ -187,8 +185,8 @@ export type RunView = Readonly<{
   presented: Readonly<{ question: PresentedQuestion; time: string }> | null;
   /** The band of the phase the next message belongs to (issue #15): set when a phase begins, kept until the next one. */
   phase: Band | null;
-  /** The last time each panel displays, a message's or a band label's: what the next message's time is measured from. */
-  lastShown: Readonly<{ left: string | null; right: string | null }>;
+  /** The last time the right panel displays, a message's or a band label's: what its next message's time is measured from. */
+  lastShown: string | null;
   /**
    * The analysis of the last decision (decision support), shown until the prompt asked again after it is answered:
    * `prompt` is that prompt's number, null until it is asked.
@@ -324,11 +322,9 @@ export const emptyRun = (id: number): RunView => ({
   location: "",
   task: "",
   nextSeq: 0,
-  left: [],
   right: [],
   pending: null,
   answered: [],
-  activity: "",
   busy: false,
   calls: [],
   retry: null,
@@ -339,7 +335,7 @@ export const emptyRun = (id: number): RunView => ({
   questionOptions: [],
   presented: null,
   phase: null,
-  lastShown: { left: null, right: null },
+  lastShown: null,
   analysis: null,
   dismissed: null,
   explaining: null,
@@ -379,18 +375,13 @@ export const showsTime = (previous: Message | undefined, lastShown: string | nul
 /** A message before it is placed in its panel, which decides whether it shows its time. */
 type Unplaced = Omit<Message, "showTime">;
 const message = (run: RunView, time: string, author: Author, body: string, format: Message["format"], heading: string | null = null): Unplaced => ({ key: `${run.id}-${run.nextSeq}`, author, heading, body, format, time, band: run.phase });
-/** The run with the message placed in a panel, and the panel's last displayed time after it. */
-const place = (run: RunView, side: "left" | "right", m: Unplaced): RunView => {
-  const panel = run[side];
-  const previous = panel[panel.length - 1];
-  const last = run.lastShown[side];
-  const showTime = showsTime(previous, last, m);
-  const shownLast = showTime ? m.time : opensBand(previous, m.band) ? m.band.began : last;
-  const next: readonly Message[] = [...panel, { ...m, showTime }];
-  return side === "left" ? { ...run, left: next, lastShown: { ...run.lastShown, left: shownLast } } : { ...run, right: next, lastShown: { ...run.lastShown, right: shownLast } };
+/** The run with the message placed in the right panel, and the panel's last displayed time after it. */
+const withRight = (run: RunView, m: Unplaced): RunView => {
+  const previous = run.right[run.right.length - 1];
+  const showTime = showsTime(previous, run.lastShown, m);
+  const lastShown = showTime ? m.time : opensBand(previous, m.band) ? m.band.began : run.lastShown;
+  return { ...run, right: [...run.right, { ...m, showTime }], lastShown };
 };
-const withLeft = (run: RunView, m: Unplaced): RunView => place(run, "left", m);
-const withRight = (run: RunView, m: Unplaced): RunView => place(run, "right", m);
 
 /** The key of a phase: of its band, and of its entry in the rail. */
 export const bandKey = (phase: Phase): string => (phase.kind === "questions" ? "questions" : `${phase.kind}-${phase.n}`);
@@ -399,15 +390,15 @@ const bandOf = (phase: Phase, time: string, count: number): Band => ({ key: band
 /** How many phases of the kind the run holds, begun or foreseen: the timeline holds both (issue #6). */
 const countIn = (run: RunView, phase: Phase): number => Math.max(1, countOfKind(run.timeline.map((e) => e.phase), phase.kind));
 /**
- * The run with every phase's name derived from the one count (issue #6): the timeline's labels and the bands of both
- * panels. Run after an event that adds a phase, so that "Planning" becomes "Planning 1" everywhere when Planning 2 appears.
+ * The run with every phase's name derived from the one count (issue #6): the timeline's labels and the right panel's
+ * bands. Run after an event that adds a phase, so that "Planning" becomes "Planning 1" everywhere when Planning 2 appears.
  */
 const relabel = (run: RunView): RunView => {
   const nameOf = (phase: Phase) => phaseName(phase, countIn(run, phase));
   const byKey = new Map(run.timeline.map((e) => [bandKey(e.phase), nameOf(e.phase)]));
   const band = (b: Band | null): Band | null => (b === null || byKey.get(b.key) === undefined || byKey.get(b.key) === b.name ? b : { ...b, name: byKey.get(b.key) ?? b.name });
   const messages = (list: readonly Message[]) => (list.some((m) => band(m.band) !== m.band) ? list.map((m) => ({ ...m, band: band(m.band) })) : list);
-  return { ...run, timeline: run.timeline.map((e) => ({ ...e, label: nameOf(e.phase) })), left: messages(run.left), right: messages(run.right), phase: band(run.phase) };
+  return { ...run, timeline: run.timeline.map((e) => ({ ...e, label: nameOf(e.phase) })), right: messages(run.right), phase: band(run.phase) };
 };
 const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
   phase,
@@ -634,10 +625,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "PlanWritten": {
       // Issue #46 (S19): the plan writer's questions are presented one by one after this message, never listed in it.
-      const body = `**${planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase })))}**${event.resultText === "" ? "" : `\n\n${event.resultText}`}`;
-      const shown = withLeft(run, message(run, time, "program", body, "markdown"));
       // Issue #22: the plan has its place in the rail; only its result text is Claude Code's latest message.
-      return event.resultText === "" ? shown : withClaude(shown, { heading: planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }))), body: event.resultText });
+      return event.resultText === "" ? run : withClaude(run, { heading: planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }))), body: event.resultText });
     }
     case "InterviewTurn": {
       const turn = event.summary === null ? { kind: "continuing" as const, message: event.message } : { kind: "summary_proposed" as const, message: event.message, summary: event.summary };
@@ -645,7 +634,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // Issue #5: the interview's turns are Claude's words, so they are Claude's messages.
       // Issue #21: the turn's count is the active clarification step's.
       const timeline = counted(run.timeline, { answered: event.answered, total: event.total });
-      return { ...withClaude(withLeft({ ...run, timeline }, message(run, time, "claude", body, "markdown", event.heading)), { heading: event.heading, body }), absorb: interviewSays(turn) };
+      return { ...withClaude({ ...run, timeline }, { heading: event.heading, body }), absorb: interviewSays(turn) };
     }
     case "InterviewCounted":
       // Issue #184: Interloq counts each answer as it is given; the count alone changes, and no message is added.
@@ -667,9 +656,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       };
       const timeline = inQuestionPhase(run.timeline, opened);
       // The page's own help (finding 8).
-      const help = interviewHelp(event.heading);
-      const shown = withLeft({ ...run, timeline }, message(run, time, "program", help, "text"));
-      return { ...shown, dashboard: { ...shown.dashboard, interviewHelp: help } };
+      return { ...run, timeline, dashboard: { ...run.dashboard, interviewHelp: interviewHelp(event.heading) } };
     }
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
@@ -755,11 +742,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // S21 (Q4): one plain status while the analysis is prepared, updated in place; the line said for it that
       // follows is absorbed.
       const text = analysisProgressLine(event.decision, event.question, event.check);
-      const key = `${run.id}-analysis-${event.decision}`;
-      const shown = run.left.some((m) => m.key === key)
-        ? { ...run, left: run.left.map((m) => (m.key === key ? { ...m, body: text.trim() } : m)) }
-        : withLeft(run, { ...message(run, time, "program", text.trim(), "text"), key });
-      return { ...withInterloqLine(shown, text), absorb: [text] };
+      return { ...withInterloqLine(run, text), absorb: [text] };
     }
     case "DecisionAnalyzed":
       return { ...run, analysis: { event, prompt: null } };
@@ -781,7 +764,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "ClaudeSaid":
       // Issue #5: Claude's prose is attributed as data, not by a prefix in its text.
-      return withClaude(withLeft(run, message(run, time, "claude", event.text, "markdown")), { heading: null, body: event.text });
+      return withClaude(run, { heading: null, body: event.text });
     case "ModelNamed":
       // Issue #22: the agent's model line, in its place at the dashboard's top; a later model of the agent replaces it.
       return { ...run, dashboard: { ...run.dashboard, models: { ...run.dashboard.models, [event.model.agent]: modelLine(event.model) } } };
@@ -800,13 +783,12 @@ const answeredAnalysis = (r: RunView, prompt: number, text: string): Pick<RunVie
       : { analysis: null, dismissed: r.analysis, explaining: r.explaining };
 
 /**
- * The activity line's text set (issue #22): `activity` as before, and the dashboard's status. A text replaces whatever
- * the status held; an empty one (an ended phase or run, a recovery with no call left) turns an activity into Idle and
+ * The dashboard's status set from an activity (issue #22): an agent's call, its tool use, a reconnection, a retry or a
+ * usage-limit wait. A text replaces whatever the status held; an empty one (an ended phase or run, a recovery with no call left) turns an activity into Idle and
  * leaves Interloq's last line in place.
  */
 const withActivity = (run: RunView, activity: string): RunView => ({
   ...run,
-  activity,
   dashboard: { ...run.dashboard, status: activity !== "" ? { _tag: "Activity", text: activity } : run.dashboard.status._tag === "Activity" ? { _tag: "Idle" } : run.dashboard.status },
 });
 /** Interloq's own line as the status (issue #22): its leading and trailing line breaks removed. */
@@ -826,7 +808,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "Started":
         return { ...r, project: event.project, location: event.location, task: event.task, mode: event.mode, item: event.item };
       case "Said":
-        return event.text.trim() === "" ? r : withInterloqLine(withLeft(r, message(r, time, "program", event.text, "text")), event.text);
+        return event.text.trim() === "" ? r : withInterloqLine(r, event.text);
       case "Asked": {
         const extra = r.questionOptions;
         // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one.
@@ -837,14 +819,11 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
-        // S26: the question joins the transcript with its answer, as an ordinary exchange.
+        // S26; issue #22 (F1): every answer, of every kind, with what the page showed of its prompt, in the order given.
         const own = r.pending !== null && r.pending.asked.prompt === event.prompt ? r.pending : null;
-        const asked = own === null ? r : own.question !== null ? withLeft(r, { ...message(r, own.presentedAt ?? time, "program", piecesText(own.question.question), "text"), key: `${r.id}-${r.nextSeq}-question`, question: own.question }) : withLeft(r, { ...message(r, own.presentedAt ?? time, "program", own.hint, "text"), key: `${r.id}-${r.nextSeq}-question` });
-        // Issue #22 (F1): every answer, of every kind, with what the page showed of its prompt, in the order given.
         const shownAsked: AskedShown = own === null ? { _tag: "NotShown" } : own.question !== null ? { _tag: "Question", question: own.question } : { _tag: "Hint", hint: own.hint };
         const entry: AnsweredEntry = { key: `${r.id}-${r.nextSeq}`, asked: shownAsked, answer: chosen?.label ?? event.text };
-        const recorded = withLeft(asked, message(asked, time, "user", entry.answer, "markdown"));
-        return { ...recorded, dashboard: { ...recorded.dashboard, answers: [...recorded.dashboard.answers, entry] }, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
+        return { ...r, dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] }, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
       }
       case "Notified":
         return notifiedEvent(r, event.event, time);

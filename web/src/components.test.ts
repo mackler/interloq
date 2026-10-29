@@ -15,6 +15,7 @@ import TimelineRail from "./components/TimelineRail.svelte";
 import CircularIndeterminate from "./components/CircularIndeterminate.svelte";
 import StatusLine from "./components/StatusLine.svelte";
 import Dashboard from "./components/Dashboard.svelte";
+import AnsweredQuestion from "./components/AnsweredQuestion.svelte";
 import { decodeServer, listedItemOf, type ServerMessage } from "../../src/protocol.ts";
 import { Result, Schema } from "effect";
 import { GithubIssue, itemOf } from "../../src/githubIssues.ts";
@@ -135,15 +136,9 @@ describe("Claude's messages", () => {
   });
 });
 
-// Issue #7: the user's answer in the left panel is rendered as Markdown.
-test("a user message in Markdown renders its emphasis", () => {
-  const root = show(MessageView, { message: { key: "1-1", author: "user", heading: null, body: "use **x**", format: "markdown", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null } });
-  expect(one(root, ".body strong").textContent).toBe("x");
-});
-
 // Issue #2: each author's article carries the class and data-author that its side rule in Message.svelte selects.
 test("every author's message carries its author as class and data-author", () => {
-  for (const author of ["claude", "codex", "user", "program"] as const) {
+  for (const author of ["claude", "codex"] as const) {
     const root = show(MessageView, { message: { key: `1-${author}`, author, heading: null, body: "x", format: "text", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null } });
     const article = one(root, "article");
     expect(article.classList.contains(author)).toBe(true);
@@ -2457,12 +2452,12 @@ test("the question pane and the scripted Ui both take endingOf from src/input.ts
   for (const source of [pane, scripted]) expect(source).toMatch(/import \{[^}]*\bendingOf\b[^}]*\} from "(\.\.\/\.\.\/\.\.\/src|\.\.\/src)\/input\.ts"/);
 });
 
-// S28: the words of an answered question in the transcript, and of the question beside its analysis, carry their
-// explanations; the transcript shows the question whole, its options' labels on their own lines (S14).
-test("an answered question in the transcript marks its words; the question beside an analysis marks its words", async () => {
+// S28: the words of an answered question on the dashboard, and of the question beside its analysis, carry their
+// explanations; the dashboard shows the question whole, its options' labels on their own lines (S14; issue #22).
+test("an answered question on the dashboard marks its words; the question beside an analysis marks its words", async () => {
   const zod = [shownOf({ id: "z", term: "zod", senses: ["A library."] })];
   const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, history: [], explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), answer: { token: "1" } }], attached: null, decision: null };
-  const root = show(MessageView, { message: { key: "k", author: "program", heading: null, body: "Use zod?", format: "text", time: "2026-09-27T14:00:00.000Z", showTime: true, band: null, question: asked } });
+  const root = show(AnsweredQuestion, { question: asked });
   expect([...root.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["Zod", "zod"]);
   expect(one(root, ".option-label").textContent).toContain("Yes");
   expect(one(root, ".option-description").textContent).toBe("declare it");
@@ -2510,8 +2505,8 @@ describe("the shared rule for code in rendered Markdown", () => {
     const event = { _tag: "DecisionAnalyzed", decision: 1, question: "Q?", presented, options: [], analysis: { decision: "Q?", columns: [], recommendation: { option: "", reason: "" } } } as never;
     // Issue #133: beside an analysis the attached material is read once its heading is opened.
     const beside = one(show(DecisionView, { event, narrow: false, open: () => true, onToggle: () => undefined, onShowConversation: () => undefined, openSection: "attached", onSection: () => undefined, answers: noAnswers }), ".body");
-    const message = show(MessageView, { message: { key: "1-1", author: "program", heading: "", body: "Q?", format: "text", time: "2026-09-30T10:00:00.000Z", showTime: false, band: null, question: presented } });
-    for (const [what, root] of [["the pane", pane], ["beside an analysis", beside], ["the transcript", message]] as const) {
+    const answered = show(AnsweredQuestion, { question: presented });
+    for (const [what, root] of [["the pane", pane], ["beside an analysis", beside], ["the dashboard's answer", answered]] as const) {
       const codes = [...root.querySelectorAll("code")].filter((c) => c.textContent === " a ");
       expect(codes.length, what).toBe(1);
       expect(codes[0].closest(".markdown"), what).not.toBe(null);

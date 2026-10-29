@@ -4,24 +4,20 @@
   // (issue #1) [visibility of system status]: shown in the header, small and low-emphasis, unless the message is grouped
   // with the one before it (decision Q3) [aesthetic and minimalist design]; then it stays for assistive technology and
   // the title. It never changes, so the panel's polite live region announces it once, with the message.
-  // The side of a message is its author's: Interloq and Claude on the left, the user and Codex on the right (issue #2).
+  // The side of a message is its author's: Claude on the left, Codex on the right (issue #2). Since issue #22 the
+  // "Claude and Codex" panel is the one panel of messages, so these are its two authors.
   import { render } from "../markdown.ts";
-  import AnsweredQuestion from "./AnsweredQuestion.svelte";
   import type { Author, Message } from "../state.ts";
   import { clockTime, fullTime } from "../time.ts";
 
   type Props = { message: Message };
   let { message }: Props = $props();
-  const AUTHOR: Record<Author, string> = { program: "Interloq", user: "You", codex: "Codex", claude: "Claude" };
+  const AUTHOR: Record<Author, string> = { codex: "Codex", claude: "Claude" };
 </script>
 
 <article class="message {message.author}" data-author={message.author}>
   <header class="m3-font-label-medium">{AUTHOR[message.author]}{#if message.heading !== null} · {message.heading}{/if}<time class="time m3-font-label-small" class:visually-hidden={!message.showTime} datetime={message.time} title={fullTime(message.time)}>{clockTime(message.time)}</time></header>
-  {#if message.question !== undefined}
-    <!-- S26, S28 (S12 of the task of issue #36): an answered question joins the transcript as it was presented, its
-         words that refer to an explanation still carrying it; the options' labels on their own lines (S14). -->
-    <AnsweredQuestion question={message.question} />
-  {:else if message.format === "markdown"}
+  {#if message.format === "markdown"}
     <div class="body markdown m3-font-body-medium">{@html render(message.body)}</div>
   {:else}
     <div class="body text m3-font-body-medium">{message.body.replace(/^\n+|\n+$/g, "")}</div>
@@ -30,9 +26,7 @@
 
 <style>
   .message { position: relative; max-width: 85%; padding: 0.5rem 0.875rem; border-radius: var(--m3-shape-large); margin: 0.25rem 0; overflow-wrap: anywhere; }
-  .program { align-self: flex-start; background: var(--m3c-surface-container-high); color: var(--m3c-on-surface); }
-  .user { align-self: flex-end; background: var(--m3c-primary-container); color: var(--m3c-on-primary-container); }
-  /* Issue #2: Claude speaks from the left in both panels (beside Interloq in the left one), Codex from the right. */
+  /* Issue #2: Claude speaks from the left, Codex from the right. */
   .claude { align-self: flex-start; background: var(--m3c-secondary-container); color: var(--m3c-on-secondary-container); }
   .codex { align-self: flex-end; background: var(--m3c-tertiary-container); color: var(--m3c-on-tertiary-container); }
   header { opacity: 0.8; margin-bottom: 0.25rem; }

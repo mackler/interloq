@@ -1,4 +1,5 @@
 import fc from "fast-check";
+import type { SubjectId } from "../../src/artifacts.ts";
 import { shownOf } from "./test-setup.ts";
 import { describe, expect, test } from "vitest";
 import * as prompts from "../../src/prompts.ts";
@@ -51,7 +52,6 @@ const lastAnswerOf = (s: ViewState) => {
   const d = s.modes.implementation.run?.dashboard;
   return d === undefined ? undefined : lastAnswer(d);
 };
-const bodies = (s: ViewState) => s.modes.implementation.run?.left.map((m) => `${m.author}:${m.body}`) ?? [];
 
 describe("the dashboard (issue #22)", () => {
   test("a fresh run and a run after Started hold the empty dashboard", () => {
@@ -878,151 +878,140 @@ describe("a replay of a question phase", () => {
 });
 
 // Issue #1: each message carries the time its event was published; a time is shown when the author changes or more
-// than 2 minutes lie between a message and the one before it in the same panel (decision Q3).
+// than 2 minutes lie between a message and the one before it in the panel (decision Q3). Issue #22: the dashboard has
+// no timed list, so this is the "Claude and Codex" panel's.
 describe("the time of a message", () => {
   const review = notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 });
-  const shown = (s: ViewState, panel: "left" | "right" = "left") => s.modes.implementation.run?.[panel].map((m) => m.showTime) ?? [];
+  const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
+  const shown = (s: ViewState) => s.modes.implementation.run?.right.map((m) => m.showTime) ?? [];
 
   test("a message carries its event's time, live and after a replay, and the first of a panel shows it", () => {
-    for (const s of [fold(live([started, said("a")], 1, [0, 5])), replayed([started, said("a")], 1, 1, [0, 5])]) {
-      expect(s.modes.implementation.run?.left[0]?.time).toBe(at(5));
-      expect(s.modes.implementation.run?.left[0]?.showTime).toBe(true);
+    for (const s of [fold(live([started, review], 1, [0, 5])), replayed([started, review], 1, 1, [0, 5])]) {
+      expect(s.modes.implementation.run?.right[0]?.time).toBe(at(5));
+      expect(s.modes.implementation.run?.right[0]?.showTime).toBe(true);
     }
   });
 
   test("the same author within 2 minutes is grouped; exactly 2 minutes too; more than 2 minutes shows the time", () => {
-    expect(shown(fold(live([started, said("a"), said("b")], 1, [0, 0, 60])))).toEqual([true, false]);
-    expect(shown(fold(live([started, said("a"), said("b")], 1, [0, 0, 120])))).toEqual([true, false]);
-    expect(shown(fold(live([started, said("a"), said("b")], 1, [0, 0, 121])))).toEqual([true, true]);
+    expect(shown(fold(live([started, review, review], 1, [0, 0, 60])))).toEqual([true, false]);
+    expect(shown(fold(live([started, review, review], 1, [0, 0, 120])))).toEqual([true, false]);
+    expect(shown(fold(live([started, review, review], 1, [0, 0, 121])))).toEqual([true, true]);
   });
 
   test("another author shows the time, however close", () => {
-    const s = fold(live([started, asked(1, prompts.permissionPrompt), { _tag: "Answered", prompt: 1, text: "y" }, said("c")], 1, [0, 0, 1, 2]));
-    expect(s.modes.implementation.run?.left.map((m) => m.author)).toEqual(["program", "user", "program"]);
+    const s = fold(live([started, review, response, review], 1, [0, 0, 1, 2]));
+    expect(s.modes.implementation.run?.right.map((m) => m.author)).toEqual(["codex", "claude", "codex"]);
     expect(shown(s)).toEqual([true, true, true]);
-  });
-
-  test("each panel groups on its own: a review between two program lines does not separate them, nor a line two reviews", () => {
-    const s = fold(live([started, said("a"), review, said("b"), review], 1, [0, 0, 10, 20, 30]));
-    expect(shown(s, "left")).toEqual([true, false]);
-    expect(shown(s, "right")).toEqual([true, false]);
   });
 
   // Issue #15: the gap is measured from the last time shown in the panel, so no long span goes unmarked.
   test("thirty messages 90 s apart show a time whenever more than 2 minutes lie since the last time shown", () => {
-    const lines = Array.from({ length: 30 }, (_, i) => said(`line ${i}`));
-    const times = [0, ...lines.map((_, i) => i * 90)];
-    const expected = lines.map((_, i) => i % 2 === 0);
-    expect(shown(fold(live([started, ...lines], 1, times)))).toEqual(expected);
-    expect(shown(replayed([started, ...lines], 1, 1, times))).toEqual(expected);
+    const reviews = Array.from({ length: 30 }, () => review);
+    const times = [0, ...reviews.map((_, i) => i * 90)];
+    const expected = reviews.map((_, i) => i % 2 === 0);
+    expect(shown(fold(live([started, ...reviews], 1, times)))).toEqual(expected);
+    expect(shown(replayed([started, ...reviews], 1, 1, times))).toEqual(expected);
   });
 
   test("a message just inside 2 minutes of the last time shown stays grouped", () => {
-    expect(shown(fold(live([started, said("a"), said("b"), said("c")], 1, [0, 0, 60, 119])))).toEqual([true, false, false]);
+    expect(shown(fold(live([started, review, review, review], 1, [0, 0, 60, 119])))).toEqual([true, false, false]);
   });
 
-  test("an event that makes no message (a blank line, an absorbed line, Ended) does not count as the message before", () => {
-    const blank = fold(live([started, said("a"), said("\n"), said("b")], 1, [0, 0, 60, 170]));
-    expect(shown(blank)).toEqual([true, true]);
-    const turn = notified({ _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 });
-    const absorbed = fold(live([started, turn, said("\nHi\n"), said("b")], 1, [0, 0, 100, 150]));
-    expect(absorbed.modes.implementation.run?.left.map((m) => m.body)).toEqual(["Hi", "b"]);
-    expect(shown(absorbed)).toEqual([true, true]);
-    const ended = fold(live([started, said("a"), { _tag: "Ended", code: 0 }], 1, [0, 0, 500]));
-    expect(ended.modes.implementation.run?.left.map((m) => [m.time, m.showTime])).toEqual([[at(0), true]]);
+  test("an event that makes no message there (a line of Interloq, Ended) does not count as the message before", () => {
+    const between = fold(live([started, review, said("a"), review], 1, [0, 0, 60, 170]));
+    expect(shown(between)).toEqual([true, true]);
+    const ended = fold(live([started, review, { _tag: "Ended", code: 0 }], 1, [0, 0, 500]));
+    expect(ended.modes.implementation.run?.right.map((m) => [m.time, m.showTime])).toEqual([[at(0), true]]);
   });
 
   test("a tab that joins late or reconnects folds the replay to the same messages, times and grouping as a live tab", () => {
-    const events = [started, said("a"), review, said("b"), asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" } as RunEvent, said("c")];
+    const events = [started, review, said("a"), review, asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" } as RunEvent, response];
     const times = [0, 1, 2, 30, 200, 210, 400];
     const liveView = fold(live(events, 1, times));
     const late = replayed(events, 1, 1, times);
     const again = fold([hello(1), { type: "replay", ui: [], runs: [{ id: 1, events: stamp(events, times) }] }], late);
-    for (const s of [late, again]) {
-      expect(s.modes.implementation.run?.left).toEqual(liveView.modes.implementation.run?.left);
-      expect(s.modes.implementation.run?.right).toEqual(liveView.modes.implementation.run?.right);
-    }
-    expect(liveView.modes.implementation.run?.left.map((m) => [m.time, m.showTime])).toEqual([[at(1), true], [at(30), false], [at(200), true], [at(210), true], [at(400), true]]);
+    for (const s of [late, again]) expect(s.modes.implementation.run?.right).toEqual(liveView.modes.implementation.run?.right);
+    expect(liveView.modes.implementation.run?.right.map((m) => [m.time, m.showTime])).toEqual([[at(1), true], [at(30), false], [at(400), true]]);
   });
 
   test("showsTime: no message before, another author, more than 120 s since the last time shown, or a time that cannot be read", () => {
-    const m = { key: "1-1", author: "program" as const, heading: null, body: "a", format: "text" as const, time: at(0), showTime: true, band: null };
-    const next = (author: "program" | "user", time: string, band: Band | null = null) => ({ author, band, time });
-    expect(showsTime(undefined, null, next("program", at(0)))).toBe(true);
-    expect(showsTime(m, at(0), next("user", at(1)))).toBe(true);
-    expect(showsTime(m, at(0), next("program", at(120)))).toBe(false);
-    expect(showsTime(m, at(0), next("program", at(121)))).toBe(true);
+    const m = { key: "1-1", author: "codex" as const, heading: null, body: "a", format: "markdown" as const, time: at(0), showTime: true, band: null };
+    const next = (author: "codex" | "claude", time: string, band: Band | null = null) => ({ author, band, time });
+    expect(showsTime(undefined, null, next("codex", at(0)))).toBe(true);
+    expect(showsTime(m, at(0), next("claude", at(1)))).toBe(true);
+    expect(showsTime(m, at(0), next("codex", at(120)))).toBe(false);
+    expect(showsTime(m, at(0), next("codex", at(121)))).toBe(true);
     // Measured from the last time shown, not from the message just before (issue #15).
-    expect(showsTime({ ...m, time: at(100) }, at(0), next("program", at(121)))).toBe(true);
-    expect(showsTime(m, at(0), next("program", "not a time"))).toBe(true);
-    expect(showsTime(m, "not a time", next("program", at(1)))).toBe(true);
+    expect(showsTime({ ...m, time: at(100) }, at(0), next("codex", at(121)))).toBe(true);
+    expect(showsTime(m, at(0), next("codex", "not a time"))).toBe(true);
+    expect(showsTime(m, "not a time", next("codex", at(1)))).toBe(true);
     // The first message of a band: measured from the band's label, whoever wrote it (G-R1-1).
     const band: Band = { key: "planning-1", kind: "planning", name: "Planning 1", began: at(100) };
-    expect(showsTime(m, at(0), next("user", at(130), band))).toBe(false);
-    expect(showsTime(undefined, null, next("user", at(221), band))).toBe(true);
-    expect(showsTime({ ...m, band, time: at(130), showTime: false }, at(100), next("program", at(200), band))).toBe(false);
+    expect(showsTime(m, at(0), next("claude", at(130), band))).toBe(false);
+    expect(showsTime(undefined, null, next("claude", at(221), band))).toBe(true);
+    expect(showsTime({ ...m, band, time: at(130), showTime: false }, at(100), next("codex", at(200), band))).toBe(false);
   });
 });
 
-// Issue #15: each phase is a band in each panel where it places a message, opened by a label with its name and the
-// time it began; the label's time counts as shown (G-R1-1).
+// Issue #15: each phase is a band in the "Claude and Codex" panel where it places a message, opened by a label with its
+// name and the time it began; the label's time counts as shown (G-R1-1). Issue #22: the dashboard has no bands.
 describe("phase bands", () => {
   const began = (phase: UiEvent extends infer E ? (E extends { _tag: "PhaseBegan"; phase: infer P } ? P : never) : never): RunEvent => notified({ _tag: "PhaseBegan", phase });
   const planning = (n: number) => began({ kind: "planning", n });
   const execution = (n: number) => began({ kind: "execution", n });
-  const review = notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 });
+  const reviewOf = (subject: SubjectId) => notified({ _tag: "ReviewReceived", subject, round: 1, review: { issues: [] }, counted: 0 });
+  const review = reviewOf({ plan: 1 });
+  const response = notified({ _tag: "ResponseReceived", subject: { plan: 1 }, round: 1, response: { dispositions: [], self_corrections: [], reviewer_feedback: "", questions_for_user: [] }, resultText: "" });
   const views = (events: readonly RunEvent[], times: readonly number[]) => [fold(live(events, 1, times)), replayed(events, 1, 1, times)];
-  const shown = (s: ViewState, panel: "left" | "right" = "left") => s.modes.implementation.run?.[panel].map((m) => m.showTime) ?? [];
+  const shown = (s: ViewState) => s.modes.implementation.run?.right.map((m) => m.showTime) ?? [];
 
   test("a message before any phase has no band and shows its time as the first of its panel", () => {
-    for (const s of views([started, said("a")], [0, 5])) {
-      expect(s.modes.implementation.run?.left.map((m) => [m.band, m.showTime])).toEqual([[null, true]]);
+    for (const s of views([started, review], [0, 5])) {
+      expect(s.modes.implementation.run?.right.map((m) => [m.band, m.showTime])).toEqual([[null, true]]);
     }
   });
 
   test("the first message after a label shows no time within 2 minutes of it, although it is the first of its panel", () => {
-    for (const s of views([started, planning(1), said("a"), said("b"), said("c")], [0, 100, 130, 200, 260])) {
-      expect(s.modes.implementation.run?.left[0]?.band).toEqual({ key: "planning-1", kind: "planning", name: "Planning", began: at(100) });
+    for (const s of views([started, planning(1), review, review, review], [0, 100, 130, 200, 260])) {
+      expect(s.modes.implementation.run?.right[0]?.band).toEqual({ key: "planning-1", kind: "planning", name: "Planning", began: at(100) });
       expect(shown(s)).toEqual([false, false, true]);
     }
   });
 
   test("the first message after a label shows its time more than 2 minutes after it, whoever wrote it", () => {
-    for (const s of views([started, said("a"), planning(1), said("b")], [0, 0, 10, 131])) {
+    for (const s of views([started, review, planning(1), review], [0, 0, 10, 131])) {
       expect(shown(s)).toEqual([true, true]);
     }
-    const answered: RunEvent = { _tag: "Answered", prompt: 1, text: "y" };
-    for (const s of views([started, said("a"), planning(1), asked(1, prompts.permissionPrompt), answered], [0, 0, 10, 20, 30])) {
-      // The prompt is exempt from the change of author, being the band's first; the answer after it is not.
+    for (const s of views([started, review, planning(1), review, response], [0, 0, 10, 20, 30])) {
+      // The review is exempt from the change of author, being the band's first; the response after it is not.
       expect(shown(s)).toEqual([true, false, true]);
     }
   });
 
-  test("a message of the right panel opens the phase's band there; a phase without a message there makes none", () => {
+  test("a phase without a message in the panel makes no band there", () => {
     for (const s of views([started, planning(1), said("a"), review, execution(1), said("x")], [0, 0, 1, 300, 310, 311])) {
       expect(s.modes.implementation.run?.right.map((m) => [m.band?.key, m.showTime])).toEqual([["planning-1", true]]);
       expect(bandsOf(s.modes.implementation.run?.right ?? []).map((g) => g.band?.key)).toEqual(["planning-1"]);
-      expect(bandsOf(s.modes.implementation.run?.left ?? []).map((g) => g.band?.key)).toEqual(["planning-1", "execution-1"]);
     }
   });
 
-  test("the lines after a phase ends stay in its band until the next phase begins", () => {
+  test("the messages after a phase ends stay in its band until the next phase begins", () => {
     const ended = notified({ _tag: "PhaseEnded", phase: { kind: "planning", n: 1 }, result: "converged" });
-    for (const s of views([started, planning(1), said("a"), ended, said("b")], [0, 0, 1, 2, 3])) {
-      expect(s.modes.implementation.run?.left.map((m) => m.band?.key)).toEqual(["planning-1", "planning-1"]);
+    for (const s of views([started, planning(1), review, ended, review], [0, 0, 1, 2, 3])) {
+      expect(s.modes.implementation.run?.right.map((m) => m.band?.key)).toEqual(["planning-1", "planning-1"]);
     }
   });
 
-  test("bandsOf groups consecutive messages of a band: before any phase, execution, planning, execution", () => {
-    const events = [started, said("m0"), execution(1), said("e1"), planning(2), said("p1"), said("p2"), execution(2), said("e2")];
+  test("bandsOf groups consecutive messages of a band: before any phase, a work review, planning, a work review", () => {
+    const work = (k: number) => began({ kind: "work", n: k });
+    const events = [started, review, work(1), reviewOf({ work: 1 }), planning(2), reviewOf({ plan: 2 }), reviewOf({ plan: 2 }), work(2), reviewOf({ work: 2 })];
     for (const s of views(events, events.map((_, i) => i))) {
-      const groups = bandsOf(s.modes.implementation.run?.left ?? []);
-      expect(groups.map((g) => [g.band?.kind ?? null, g.band?.name ?? null, g.messages.map((m) => m.body)])).toEqual([
-        [null, null, ["m0"]],
-        ["execution", "Implementation 1", ["e1"]],
-        // Issue #6: one planning phase in the run carries no number; the two executions are renumbered when the second begins.
-        ["planning", "Planning", ["p1", "p2"]],
-        ["execution", "Implementation 2", ["e2"]],
+      const groups = bandsOf(s.modes.implementation.run?.right ?? []);
+      expect(groups.map((g) => [g.band?.kind ?? null, g.messages.length])).toEqual([
+        [null, 1],
+        ["work", 1],
+        ["planning", 2],
+        ["work", 1],
       ]);
     }
   });
@@ -1032,7 +1021,6 @@ describe("phase bands", () => {
     const times = [0, 1, 2, 3, 4, 200, 201, 202];
     const liveView = fold(live(events, 1, times));
     const late = replayed(events, 1, 1, times);
-    expect(late.modes.implementation.run?.left).toEqual(liveView.modes.implementation.run?.left);
     expect(late.modes.implementation.run?.right).toEqual(liveView.modes.implementation.run?.right);
     expect(liveView.modes.implementation.run?.right.map((m) => [m.band?.key, m.showTime])).toEqual([["questions", false], ["planning-1", false]]);
   });
@@ -1183,12 +1171,12 @@ describe("the whole run in the timeline", () => {
   });
 
   test("the seam of the labels: Planning becomes Planning 1 in the rail and in its band the moment Planning 2 is foreseen", () => {
-    const before = [started, foreseen(false, 1), began({ kind: "planning", n: 1 }), said("a")];
+    const before = [started, foreseen(false, 1), began({ kind: "planning", n: 1 }), notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 1, review: { issues: [] }, counted: 0 })];
     const one = fold(live(before));
-    expect([one.modes.implementation.run?.timeline[0].label, one.modes.implementation.run?.left[0].band?.name]).toEqual([phaseName({ kind: "planning", n: 1 }, 1), phaseName({ kind: "planning", n: 1 }, 1)]);
+    expect([one.modes.implementation.run?.timeline[0].label, one.modes.implementation.run?.right[0].band?.name]).toEqual([phaseName({ kind: "planning", n: 1 }, 1), phaseName({ kind: "planning", n: 1 }, 1)]);
     for (const s of [fold(live([...before, foreseen(false, 2)])), replayed([...before, foreseen(false, 2)])]) {
       expect(s.modes.implementation.run?.timeline[0].label).toBe(phaseName({ kind: "planning", n: 1 }, 2));
-      expect(s.modes.implementation.run?.left[0].band?.name).toBe(s.modes.implementation.run?.timeline[0].label);
+      expect(s.modes.implementation.run?.right[0].band?.name).toBe(s.modes.implementation.run?.timeline[0].label);
       expect(entries(s).map(([label]) => label)).toEqual(["Planning 1", "Implementation 1", "Code review 1", "Planning 2", "Implementation 2", "Code review 2"]);
     }
   });
