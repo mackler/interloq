@@ -26,6 +26,7 @@ const arbConfig = record<S.Config>({
   costWarningUsd: fc.double({ min: Number.MIN_VALUE, max: 1e6, noNaN: true, noDefaultInfinity: true }),
   codexTurnInputLimit: positiveInt,
   suiteTimeoutMinutes: fc.integer({ min: 1, max: S.SUITE_TIMEOUT_MAX_MINUTES }),
+  answerTimeoutSeconds: fc.integer({ min: 1, max: 100_000 }),
   countMinor: fc.boolean(),
   execPermissionMode: fc.constantFrom("auto", "acceptEdits", "bypassPermissions", "default"),
   claudeModel: fc.option(fc.string(), { nil: null }),

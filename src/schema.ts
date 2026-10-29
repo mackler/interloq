@@ -520,6 +520,8 @@ export const Config = Schema.Struct({
    * in minutes, apart from COMMAND_CEILING_MS, which bounds one shell command a step runs.
    */
   suiteTimeoutMinutes: PositiveInt.check(Schema.isLessThanOrEqualTo(SUITE_TIMEOUT_MAX_MINUTES)),
+  /** Issue #185 (requirements Q4): the time a question of an implementation run in a chain waits for an answer, in seconds. */
+  answerTimeoutSeconds: PositiveInt,
   countMinor: Schema.Boolean,
   execPermissionMode: Schema.Literals(["auto", "acceptEdits", "bypassPermissions", "default"]),
   claudeModel: Schema.NullOr(Schema.String),
@@ -774,6 +776,7 @@ export const defaultConfig: Config = {
   costWarningUsd: 5,
   codexTurnInputLimit: 500_000,
   suiteTimeoutMinutes: 40,
+  answerTimeoutSeconds: 120,
   countMinor: true,
   execPermissionMode: "auto",
   claudeModel: null,
