@@ -1084,8 +1084,12 @@ test("issue #180: the lines of a taken plan and of one set aside name the earlie
 
 // Issue #191: the Refinement tab's second row.
 test("the second row's texts: the items' tab, its name, a run's tab named by its item, the in-progress mark and Close", () => {
-  assert.equal(prompts.REFINEMENT_LIST_TAB, "Items");
+  assert.equal(prompts.LIST_TAB, "Items");
   assert.equal(prompts.RUN_TABS_LABEL, "Refinement runs");
+  // Issue #144: the Implementation tab's second row.
+  assert.equal(prompts.IMPLEMENTATION_RUN_TABS_LABEL, "Implementation run");
+  assert.equal(prompts.runTabsLabel("refinement"), prompts.RUN_TABS_LABEL);
+  assert.equal(prompts.runTabsLabel("implementation"), prompts.IMPLEMENTATION_RUN_TABS_LABEL);
   assert.equal(prompts.ITEM_IN_PROGRESS, "being refined");
   assert.equal(prompts.CLOSE_RUN_TAB, "Close this run");
   assert.equal(prompts.runTabName({ id: "131", title: "short" }), prompts.itemHeadline("131", "short"));

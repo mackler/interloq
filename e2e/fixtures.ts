@@ -2,7 +2,7 @@
 // in any page of the test's context fails the test, the second tab of a scenario included.
 
 import { test as base, expect, type Page } from "@playwright/test";
-import { endedOutcome, REFINEMENT_LIST_TAB, RUN_TABS_LABEL, TAB_TEXTS } from "../src/prompts.ts";
+import { endedOutcome, LIST_TAB, runTabsLabel, TAB_TEXTS } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 
 export const test = base.extend<{ pageErrors: string[] }>({
@@ -33,12 +33,12 @@ export const toHaveEnded = (page: Page, code: number) => expect(page.getByText(`
 // Issue #120: a run is started from an item of a tab's list; there is no form.
 /** The label of a mode's tab, whose radio input m3-svelte's Tabs hides. */
 export const tabOf = (page: Page, mode: RunMode) => page.locator("nav.tabs label", { hasText: TAB_TEXTS[mode].tab });
-/** Issue #191: the Refinement tab's second row, one tab per refinement run after the items' tab. */
-export const runTabsOf = (page: Page) => page.locator(`nav[aria-label="${RUN_TABS_LABEL}"]`);
+/** Issue #191: a tab's second row (issue #144: the Implementation tab's too), its runs' tabs after the items' tab. */
+export const runTabsOf = (page: Page, mode: RunMode = "refinement") => page.locator(`nav[aria-label="${runTabsLabel(mode)}"]`);
 /** The second row's tab of the run of that item, whose name begins with the item's headline (a waiting mark before it). */
-export const runTabOf = (page: Page, item: string) => runTabsOf(page).locator("label", { hasText: `#${item} ` });
-/** The second row's tab of the Refinement items. */
-export const listTabOf = (page: Page) => runTabsOf(page).locator("label", { hasText: REFINEMENT_LIST_TAB });
+export const runTabOf = (page: Page, item: string, mode: RunMode = "refinement") => runTabsOf(page, mode).locator("label", { hasText: `#${item} ` });
+/** The second row's tab of a mode's items. */
+export const listTabOf = (page: Page, mode: RunMode = "refinement") => runTabsOf(page, mode).locator("label", { hasText: LIST_TAB });
 /** A mode's list of items, shown in its tab when it has no run to show. */
 export const listOf = (page: Page) => page.locator("section.items");
 

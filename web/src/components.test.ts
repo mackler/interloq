@@ -1555,7 +1555,7 @@ describe("App: several refinement runs", () => {
   test("the second row shows the items and each run in start order; a waiting run's tab and the Refinement tab are marked", async () => {
     const { root, ws } = await open();
     ws.receive(twoRuns);
-    expect(runTabNames(root)).toEqual([prompts.REFINEMENT_LIST_TAB, prompts.runTabName({ id: "11", title: "title 11" }), prompts.waitingTabName(prompts.runTabName({ id: "12", title: "title 12" }))]);
+    expect(runTabNames(root)).toEqual([prompts.LIST_TAB, prompts.runTabName({ id: "11", title: "title 11" }), prompts.waitingTabName(prompts.runTabName({ id: "12", title: "title 12" }))]);
     expect([...root.querySelectorAll("nav.tabs label")].map((l) => l.textContent?.trim())[0]).toBe(prompts.waitingTabName(prompts.TAB_TEXTS.refinement.tab));
     expect(headline(root)).toBe(prompts.itemHeadline("12", "title 12"));
   });
@@ -3117,5 +3117,121 @@ describe("ItemList: an item abandoned in the chain (issue #185)", () => {
     const marks = [...root.querySelectorAll("[data-abandoned]")];
     expect(marks.length).toBe(1);
     expect(marks[0]!.textContent).toBe(prompts.ABANDONED_IN_CHAIN);
+  });
+});
+
+// Issue #144: the Implementation tab's list is reachable while its run is in progress, through the same second row.
+describe("App: the Implementation tab's list during a run (issue #144)", () => {
+  class FakeWebSocket {
+    static last: FakeWebSocket | null = null;
+    sent: string[] = [];
+    onopen: ((e: unknown) => void) | null = null;
+    onmessage: ((e: { data: unknown }) => void) | null = null;
+    onclose: ((e: unknown) => void) | null = null;
+    onerror: ((e: unknown) => void) | null = null;
+    constructor(_url: string) {
+      FakeWebSocket.last = this;
+    }
+    send(data: string) {
+      this.sent.push(data);
+    }
+    close() {
+      this.onclose?.({});
+    }
+    receive(m: unknown) {
+      this.onmessage?.({ data: JSON.stringify(m) });
+      flushSync();
+    }
+  }
+  const TIME = "2026-09-27T14:00:00.000Z";
+  const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
+  const sentOf = (ws: FakeWebSocket) => ws.sent.map((m) => JSON.parse(m) as ClientMessage);
+  const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id, title: `title ${id}` } });
+  const question = (text: string) => ({ _tag: "Notified", event: { _tag: "QuestionPresented", question: { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(text), options: [], attached: null, decision: null } } });
+  const askedOf = (prompt: number) => ({ _tag: "Asked", prompt, ...promptOf(prompts.interviewMessagePrompt), countdown: null, deciding: null });
+  const secondRow = (root: HTMLElement) => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.IMPLEMENTATION_RUN_TABS_LABEL}"]`);
+  const runTabNames = (root: HTMLElement) => [...(secondRow(root)?.querySelectorAll("label") ?? [])].map((l) => l.textContent?.trim());
+  const clickRunTab = (root: HTMLElement, value: string) => {
+    (one(secondRow(root)!, `input[type=radio][value="${value}"]`) as HTMLInputElement).click();
+    flushSync();
+  };
+  const select = (root: HTMLElement, mode: RunMode) => {
+    (one(root, `nav.tabs input[type=radio][value=${mode}]`) as HTMLInputElement).click();
+    flushSync();
+  };
+  const headline = (root: HTMLElement) => root.querySelector("h2.header")?.textContent?.trim();
+  const field = (root: HTMLElement) => one(root, "[name=answer]") as HTMLTextAreaElement;
+  const runName = prompts.runTabName({ id: "21", title: "title 21" });
+  const listed = { _tag: "Listed", items: [{ id: "22", title: "the next refined item", excerpt: "", url: null, sentBack: 0 }] };
+  const open = async (events: readonly unknown[], current: number | null = 1) => {
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    const { default: App } = await import("./components/App.svelte");
+    const root = show(App, {});
+    const ws = FakeWebSocket.last!;
+    ws.onopen?.({});
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp(events) }] });
+    return { root, ws };
+  };
+
+  test("a run in progress shows the second row, the items then the run; the items' tab shows the list and the run's tab the run", async () => {
+    const { root } = await open([startedOf("21")]);
+    expect(runTabNames(root)).toEqual([prompts.LIST_TAB, runName]);
+    expect(headline(root)).toBe(prompts.itemHeadline("21", "title 21"));
+    clickRunTab(root, "list");
+    expect(root.querySelector("section.items")).not.toBe(null);
+    clickRunTab(root, "run-1");
+    expect(root.querySelector("section.items")).toBe(null);
+    expect(headline(root)).toBe(prompts.itemHeadline("21", "title 21"));
+  });
+
+  test("the list is asked for afresh when the items' tab is clicked, and again when the tab is revisited", async () => {
+    const { root, ws } = await open([startedOf("21")]);
+    const before = ws.sent.length;
+    clickRunTab(root, "list");
+    expect(sentOf(ws).slice(before)).toEqual([{ type: "items", mode: "implementation" }]);
+    select(root, "refinement");
+    const again = ws.sent.length;
+    select(root, "implementation");
+    expect(sentOf(ws).slice(again)).toEqual([{ type: "items", mode: "implementation" }]);
+  });
+
+  test("a prompt arriving while the list is shown keeps the list, marks both tabs, and the run's tab shows the question", async () => {
+    const { root, ws } = await open([startedOf("21")]);
+    clickRunTab(root, "list");
+    ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: question("Which database?") });
+    ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: askedOf(1) });
+    expect(root.querySelector("section.items")).not.toBe(null);
+    expect([...root.querySelectorAll("nav.tabs label")].map((l) => l.textContent?.trim())[1]).toBe(prompts.waitingTabName(prompts.TAB_TEXTS.implementation.tab));
+    expect(runTabNames(root)).toEqual([prompts.LIST_TAB, prompts.waitingTabName(runName)]);
+    clickRunTab(root, "run-1");
+    expect(root.textContent).toContain("Which database?");
+  });
+
+  test("text typed in the answer field survives showing the list and coming back", async () => {
+    const { root } = await open([startedOf("21"), question("Which database?"), askedOf(1)]);
+    field(root).value = "half an answer";
+    field(root).dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    clickRunTab(root, "list");
+    clickRunTab(root, "run-1");
+    expect(field(root).value).toBe("half an answer");
+  });
+
+  test("while the run is in progress the listed items are readable and their starts disabled", async () => {
+    const { root, ws } = await open([startedOf("21")]);
+    clickRunTab(root, "list");
+    ws.receive({ type: "items", mode: "implementation", result: listed });
+    expect(root.querySelector("section.items")?.textContent).toContain("the next refined item");
+    expect((one(root, 'button[name=start][data-item="22"]') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("on an ended run, Back to the list shows the list and the run's tab stays", async () => {
+    const { root } = await open([startedOf("21"), { _tag: "Ended", code: 0 }], null);
+    select(root, "implementation");
+    one(root, "button[name=new]").click();
+    flushSync();
+    expect(root.querySelector("section.items")).not.toBe(null);
+    expect(runTabNames(root)).toEqual([prompts.LIST_TAB, runName]);
   });
 });

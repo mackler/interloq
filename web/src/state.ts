@@ -8,7 +8,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { REFINEMENT_LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -255,15 +255,15 @@ export type RunView = Readonly<{
 /** A tab's items: not asked, loading, or the server's answer; the Refinement tab's listing carries the configured choice of terms (issue #142). */
 export type ItemsView = Readonly<{ _tag: "Unasked" }> | Readonly<{ _tag: "Loading" }> | ItemsResult | RefinementItemsResult;
 /**
- * What the Refinement tab's second row shows (issue #191, requirements Q1): its items, or one of its runs. The
- * implementation tab ignores it.
+ * What a tab's second row shows: its items, or one of its runs (issue #191, requirements Q1, for the Refinement tab;
+ * issue #144 for the Implementation tab, whose focus is always its items or its newest held run).
  */
 export type Focus = Readonly<{ _tag: "List" }> | Readonly<{ _tag: "Run"; run: number }>;
 const LIST: Focus = { _tag: "List" };
 /**
  * What the page holds of one mode, the content of its tab (issue #120): the ids of its runs in progress on the server;
  * every run the page holds of it, ascending by id (issue #191: for the implementation tab at most its two newest, for the
- * Refinement tab every run replayed or started less those closed in this page); what the Refinement tab shows; the item
+ * Refinement tab every run replayed or started less those closed in this page); what its second row shows; the item
  * whose start this page asked for, until its Started or refusal; its items; and the refusal of its last action, which its
  * next items frame or Started clears.
  */
@@ -363,13 +363,27 @@ const unchosenTab = (state: ViewState): RunMode => {
  */
 const replayedFocus = (state: ViewState, mode: ModeView): Focus => {
   const named = (id: number | undefined): Focus => (id === undefined ? LIST : { _tag: "Run", run: id });
-  if (state.chosen) return mode.focus._tag === "Run" && mode.runs.some((r) => r.id === (mode.focus as Extract<Focus, { _tag: "Run" }>).run) ? mode.focus : LIST;
+  const focus = mode.focus;
+  if (state.chosen) return focus._tag === "Run" && mode.runs.some((r) => r.id === focus.run) ? focus : LIST;
   return named((mode.runs.find(waits) ?? mode.runs.find((r) => r.ended === null) ?? mode.runs.at(-1))?.id);
 };
-/** The Refinement tab shows one of its runs, the user's choice [user control and freedom]. */
-export const focusRun = (state: ViewState, run: number): ViewState => ({ ...withMode(state, "refinement", (m) => ({ ...m, focus: { _tag: "Run", run } })), chosen: true });
-/** The Refinement tab shows its items, the user's choice. */
-export const focusList = (state: ViewState): ViewState => ({ ...withMode(state, "refinement", (m) => ({ ...m, focus: LIST })), chosen: true });
+/** A tab shows one of its runs, the user's choice [user control and freedom]. */
+export const focusRun = (state: ViewState, mode: RunMode, run: number): ViewState => ({ ...withMode(state, mode, (m) => ({ ...m, focus: { _tag: "Run", run } })), chosen: true });
+/** A tab shows its items, the user's choice. */
+export const focusList = (state: ViewState, mode: RunMode): ViewState => ({ ...withMode(state, mode, (m) => ({ ...m, focus: LIST })), chosen: true });
+/** A mode's newest held run (issue #144): the implementation run its draft, notifications and waiting mark follow, whatever the focus. */
+const newestRun = (m: ModeView): RunView | null => m.runs.at(-1) ?? null;
+/** The Implementation tab's focus on a run (issue #144): always its newest held run, the list where it holds none. */
+const newestFocus = (m: ModeView): Focus => {
+  const run = newestRun(m);
+  return run === null ? LIST : { _tag: "Run", run: run.id };
+};
+/**
+ * The Implementation tab's focus after a replay (issue #144): before the user has chosen, its newest held run; once he
+ * has, a focus on a run moves to the newest held run, and the list stays the list unless the mode held no run before.
+ */
+const replayedImplementationFocus = (state: ViewState, before: ModeView, after: ModeView): Focus =>
+  !state.chosen || before.focus._tag === "Run" || before.runs.length === 0 ? newestFocus(after) : LIST;
 /** An ended refinement run closed in this page: its tab leaves the second row and the items are shown; any other run, unchanged. */
 export const closeRun = (state: ViewState, run: number): ViewState => {
   const held = state.modes.refinement.runs.find((r) => r.id === run);
@@ -386,7 +400,6 @@ export const itemsRequested = (state: ViewState, mode: RunMode): ViewState => wi
 export type Shown = Readonly<{ incarnation: string | null; run: RunView | null }>;
 export const shownRun = (state: ViewState, mode: RunMode = state.selected): Shown => {
   const m = state.modes[mode];
-  if (mode === "implementation") return { incarnation: state.incarnation, run: m.runs.at(-1) ?? null };
   const focus = m.focus;
   return { incarnation: state.incarnation, run: focus._tag === "Run" ? (m.runs.find((r) => r.id === focus.run) ?? null) : null };
 };
@@ -396,18 +409,27 @@ export const shownRun = (state: ViewState, mode: RunMode = state.selected): Show
  */
 export type Presented = Readonly<{ key: string; mode: RunMode; shown: Shown }>;
 export const presented = (state: ViewState): readonly Presented[] => [
-  { key: "implementation", mode: "implementation", shown: shownRun(state, "implementation") },
+  { key: "implementation", mode: "implementation", shown: { incarnation: state.incarnation, run: newestRun(state.modes.implementation) } },
   ...state.modes.refinement.runs.map((run): Presented => ({ key: `refinement-${run.id}`, mode: "refinement", shown: { incarnation: state.incarnation, run } })),
 ];
-/** Whether a mode's tab carries the waiting mark: the implementation tab's shown run waits, or any refinement run does. */
-export const modeWaiting = (state: ViewState, mode: RunMode): boolean => {
-  const runs = mode === "implementation" ? [shownRun(state, mode).run].flatMap((r) => (r === null ? [] : [r])) : state.modes.refinement.runs;
-  return runs.some(waits);
+/** The runs a mode's tab answers for: the implementation tab's newest held run (issue #144), every refinement run. */
+const tabRuns = (state: ViewState, mode: RunMode): readonly RunView[] => {
+  switch (mode) {
+    case "implementation":
+      return state.modes.implementation.runs.slice(-1);
+    case "refinement":
+      return state.modes.refinement.runs;
+  }
 };
-/** The Refinement tab's second row: the items first, then one tab per run in start order, a waiting run's name marked. */
-export const runTabs = (state: ViewState): readonly Readonly<{ value: string; name: string }>[] => [
-  { value: "list", name: REFINEMENT_LIST_TAB },
-  ...state.modes.refinement.runs.map((r) => {
+/** Whether a mode's tab carries the waiting mark: the implementation tab's newest run waits, or any refinement run does. */
+export const modeWaiting = (state: ViewState, mode: RunMode): boolean => tabRuns(state, mode).some(waits);
+/**
+ * A tab's second row: the items first, then one tab per run in start order (the Implementation tab its newest held run
+ * alone, issue #144), a waiting run's name marked.
+ */
+export const runTabs = (state: ViewState, mode: RunMode): readonly Readonly<{ value: string; name: string }>[] => [
+  { value: "list", name: LIST_TAB },
+  ...tabRuns(state, mode).map((r) => {
     const name = runTabName(r.item ?? { id: `${r.id}`, title: "" });
     return { value: `run-${r.id}`, name: waits(r) ? waitingTabName(name) : name };
   }),
@@ -1078,6 +1100,22 @@ const normalizedFocus = (focus: Focus, before: readonly RunView[], after: readon
   return dropped !== undefined && dropped.item !== null && dropped.item.id === started.item?.id ? { _tag: "Run", run: started.id } : LIST;
 };
 
+/**
+ * A tab's focus after a run's Started: shown where this page asked for its item, or where the tab shows its list and
+ * holds no run; otherwise the focus stands (a page viewing something never switches away from it, issue #191 Q1),
+ * except that the Implementation tab's focus on a run moves to the started run, its newest (issue #144).
+ */
+const startedFocus = (mode: RunMode, before: ModeView, runs: readonly RunView[], started: RunView, asked: boolean): Focus => {
+  const shown: Focus = { _tag: "Run", run: started.id };
+  if (asked || (before.focus._tag === "List" && before.runs.length === 0)) return shown;
+  switch (mode) {
+    case "implementation":
+      return before.focus._tag === "Run" ? shown : LIST;
+    case "refinement":
+      return normalizedFocus(before.focus, before.runs, runs, started);
+  }
+};
+
 /** A mode after a hello of the same incarnation, a reconnection: everything kept, the items as `afterHello` leaves them. */
 const reconnectedMode = (mode: ModeView, current: readonly number[]): ModeView => ({ ...mode, current, items: afterHello(mode.items) });
 /** A mode's runs in progress as a hello gives them (issue #191). */
@@ -1115,7 +1153,11 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // Issue #142 (W1-R1-2): a refinement first seen in a replay used the choice, as one whose Started arrives live does.
       const termsChoice = views.some((v) => v.mode !== null && startsRefinement(state, v.id, v.mode)) ? null : state.termsChoice;
       const replayed: ViewState = { ...state, modes, runModes, termsChoice };
-      const focused = withMode(replayed, "refinement", (m) => ({ ...m, focus: replayedFocus(replayed, m) }));
+      const focused = withMode(
+        withMode(replayed, "refinement", (m) => ({ ...m, focus: replayedFocus(replayed, m) })),
+        "implementation",
+        (m) => ({ ...m, focus: replayedImplementationFocus(replayed, state.modes.implementation, m) }),
+      );
       return { ...focused, selected: unchosenTab(focused) };
     }
     case "items":
@@ -1161,9 +1203,8 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       return withMode({ ...state, runModes, termsChoice }, mode, (m) => {
         const kept = mode === "refinement" && item !== null ? m.runs.filter((r) => r.ended === null || r.item?.id !== item) : m.runs;
         const asked = item !== null && m.starting === item;
-        const chosen: Focus = mode === "refinement" && (asked || (m.focus._tag === "List" && m.runs.length === 0)) ? { _tag: "Run", run: message.run } : m.focus;
         const runs = held(mode, [...kept, run]);
-        const focus = normalizedFocus(chosen, m.runs, runs, run);
+        const focus = startedFocus(mode, m, runs, run, asked);
         return { ...m, current, runs, focus, starting: asked ? null : m.starting, refusal: message.event._tag === "Started" ? null : m.refusal };
       });
     }

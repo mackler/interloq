@@ -1498,9 +1498,21 @@ export const ITEMS_LOADING = "Asking the issue tracker for the items …";
 export const BACK_TO_LIST = "Back to the list";
 /** An item's headline in a tab: its id and its title. */
 export const itemHeadline = (id: string, title: string): string => `#${id} ${title}`;
-/** Issue #191: the Refinement tab's second row (M3 secondary tabs): its accessible name and its items' tab. */
+/** Issue #191: the Refinement tab's second row (M3 secondary tabs): its accessible name. */
 export const RUN_TABS_LABEL = "Refinement runs";
-export const REFINEMENT_LIST_TAB = "Items";
+/** Issue #144: the Implementation tab's second row: its accessible name. */
+export const IMPLEMENTATION_RUN_TABS_LABEL = "Implementation run";
+/** The accessible name of a mode's second row. */
+export const runTabsLabel = (mode: RunMode): string => {
+  switch (mode) {
+    case "refinement":
+      return RUN_TABS_LABEL;
+    case "implementation":
+      return IMPLEMENTATION_RUN_TABS_LABEL;
+  }
+};
+/** The items' tab of either second row (issues #191 and #144). */
+export const LIST_TAB = "Items";
 /** The longest name of a run's tab; the dashboard shows the whole headline. */
 export const RUN_TAB_NAME_LENGTH = 32;
 /** A run's tab, named by its item, cut to RUN_TAB_NAME_LENGTH with an ellipsis. */

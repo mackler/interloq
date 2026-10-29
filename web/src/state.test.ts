@@ -2492,12 +2492,12 @@ describe("several refinement runs", () => {
 
   test("the user's choice of a run or of the list; a start this page asked for moves the focus to its run", () => {
     const two = fold([...eventsOf(1, a), ...eventsOf(2, b)], empty);
-    expect(runOf(focusRun(two, 2), "refinement")?.id).toBe(2);
-    expect(focusRun(two, 2).chosen).toBe(true);
-    const list = focusList(two);
+    expect(runOf(focusRun(two, "refinement", 2), "refinement")?.id).toBe(2);
+    expect(focusRun(two, "refinement", 2).chosen).toBe(true);
+    const list = focusList(two, "refinement");
     expect(list.modes.refinement.focus).toEqual({ _tag: "List" });
     expect(runOf(list, "refinement")).toBe(null);
-    const asked3 = startRequested(focusRun(two, 1), "refinement", "13");
+    const asked3 = startRequested(focusRun(two, "refinement", 1), "refinement", "13");
     expect(asked3.modes.refinement.starting).toBe("13");
     const third = fold(eventsOf(3, [refining("13")]), asked3);
     expect(third.modes.refinement.focus).toEqual({ _tag: "Run", run: 3 });
@@ -2527,19 +2527,19 @@ describe("several refinement runs", () => {
 
   test("W1-R1-3: the focused ended run replaced by another page's start of its item moves the focus to the replacing run", () => {
     const ended = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3)], empty);
-    const viewing = focusRun(ended, 1);
+    const viewing = focusRun(ended, "refinement", 1);
     expect(viewing.modes.refinement.starting).toBe(null);
     const replaced = fold(eventsOf(2, a), viewing);
     expect(replaced.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
     expect(runOf(replaced, "refinement")?.id).toBe(2);
-    const values = runTabs(replaced).map((t) => t.value);
+    const values = runTabs(replaced, "refinement").map((t) => t.value);
     expect(values).toContain("run-2");
     expect(values).not.toContain("run-1");
   });
 
   test("W1-R1-3: a focused running run of another item keeps the focus when the ended run of an item is replaced", () => {
     const s = fold([...eventsOf(1, a), ...eventsOf(1, [{ _tag: "Ended", code: 130 }], 3), ...eventsOf(2, b)], empty);
-    const viewing = focusRun(s, 2);
+    const viewing = focusRun(s, "refinement", 2);
     const replaced = fold(eventsOf(3, a), viewing);
     expect(replaced.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
     expect(runOf(replaced, "refinement")?.id).toBe(2);
@@ -2550,7 +2550,7 @@ describe("several refinement runs", () => {
     const s = fold([helloOf([1, 2]), replay]);
     expect(s.selected).toBe("refinement");
     expect(s.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
-    const chosen = reduce(focusRun(s, 1), replay);
+    const chosen = reduce(focusRun(s, "refinement", 1), replay);
     expect(chosen.modes.refinement.focus).toEqual({ _tag: "Run", run: 1 });
   });
 
@@ -2593,14 +2593,14 @@ describe("the presented runs", () => {
 
   test("modeWaiting: the Refinement tab is marked while any of its runs waits", () => {
     expect(modeWaiting(two, "refinement")).toBe(true);
-    expect(modeWaiting(focusRun(two, 1), "refinement")).toBe(true);
+    expect(modeWaiting(focusRun(two, "refinement", 1), "refinement")).toBe(true);
     expect(modeWaiting(two, "implementation")).toBe(false);
     expect(modeWaiting(fold(eventsOf(2, [{ _tag: "Ended", code: 130 }], 2), two), "refinement")).toBe(false);
   });
 
   test("runTabs: the items first, then each run named by its item, a waiting run's name marked", () => {
-    expect(runTabs(two)).toEqual([
-      { value: "list", name: prompts.REFINEMENT_LIST_TAB },
+    expect(runTabs(two, "refinement")).toEqual([
+      { value: "list", name: prompts.LIST_TAB },
       { value: "run-1", name: prompts.runTabName({ id: "11", title: "item 11" }) },
       { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
     ]);
@@ -2769,6 +2769,119 @@ describe("a question kept while its analysis is prepared", () => {
           if (r?.pending?.asked.prompt === 2 && r.pending.question?.number !== 1) return false;
         }
         return true;
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// Issue #144: the Implementation tab's list is reachable while its run is in progress; its focus is the list or its newest held run.
+describe("issue #144: the Implementation tab's list during a run", () => {
+  const implementing = (item: string): RunEvent => ({ ...started, item: { id: item, title: `item ${item}` } } as RunEvent);
+  const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
+  const helloOf = (implementation: number | null, incarnation = "a"): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation }, incarnation });
+  const replayOf = (runs: readonly Readonly<{ id: number; events: readonly RunEvent[] }>[]): ServerMessage => ({ type: "replay", ui: [], runs: runs.map((r) => ({ id: r.id, events: stamp(r.events) })) });
+  const empty = fold([helloOf(null), replayOf([])]);
+  const question = asked(1, prompts.interviewMessagePrompt);
+  const ended: RunEvent = { _tag: "Ended", code: 0 };
+  const a = [implementing("11"), said("working")];
+  const b = [implementing("12"), said("working")];
+  const implFocus = (s: ViewState) => s.modes.implementation.focus;
+  const presentedImpl = (s: ViewState) => presented(s).find((p) => p.key === "implementation")?.shown.run?.id ?? null;
+
+  test("focusList hides the run in progress; focusRun shows it again", () => {
+    const s = fold(eventsOf(1, a), empty);
+    expect(runOf(s, "implementation")?.id).toBe(1);
+    const list = focusList(s, "implementation");
+    expect(runOf(list, "implementation")).toBe(null);
+    expect(list.chosen).toBe(true);
+    expect(runOf(focusRun(list, "implementation", 1), "implementation")?.id).toBe(1);
+  });
+
+  test("while the list is shown, presented and modeWaiting still follow the newest run", () => {
+    const list = focusList(fold(eventsOf(1, [...a, question]), empty), "implementation");
+    expect(presentedImpl(list)).toBe(1);
+    expect(modeWaiting(list, "implementation")).toBe(true);
+    expect(modeWaiting(focusList(fold(eventsOf(1, a), empty), "implementation"), "implementation")).toBe(false);
+  });
+
+  test("runTabs: the items alone with no run; with two held runs, the items and the newest run, marked while it waits", () => {
+    expect(runTabs(empty, "implementation")).toEqual([{ value: "list", name: prompts.LIST_TAB }]);
+    const two = fold([...eventsOf(1, [...a, ended]), ...eventsOf(2, [...b, question])], empty);
+    expect(two.modes.implementation.runs.map((r) => r.id)).toEqual([1, 2]);
+    expect(runTabs(two, "implementation")).toEqual([
+      { value: "list", name: prompts.LIST_TAB },
+      { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
+    ]);
+  });
+
+  test("a Started is shown where asked, where the previous run was shown, or where the list holds no run; else the list stays", () => {
+    const first = fold(eventsOf(1, [...a, ended]), empty);
+    expect(implFocus(first)).toEqual({ _tag: "Run", run: 1 });
+    expect(implFocus(fold(eventsOf(2, b), first))).toEqual({ _tag: "Run", run: 2 });
+    const listing = focusList(first, "implementation");
+    expect(implFocus(fold(eventsOf(2, b), listing))).toEqual({ _tag: "List" });
+    const asking = startRequested(listing, "implementation", "12");
+    const started2 = fold(eventsOf(2, b), asking);
+    expect(implFocus(started2)).toEqual({ _tag: "Run", run: 2 });
+    expect(started2.modes.implementation.starting).toBe(null);
+  });
+
+  test("a replay: before a choice the newest held run; once chosen a Run focus moves to the newest, a List focus stays unless the mode held none", () => {
+    expect(implFocus(fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])]))).toEqual({ _tag: "Run", run: 2 });
+    expect(implFocus(fold([helloOf(null), replayOf([])]))).toEqual({ _tag: "List" });
+    const viewingA = focusRun(fold(eventsOf(1, a), empty), "implementation", 1);
+    expect(implFocus(fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])], viewingA))).toEqual({ _tag: "Run", run: 2 });
+    expect(implFocus(fold([helloOf(null, "b"), replayOf([])], viewingA))).toEqual({ _tag: "List" });
+    const listing = focusList(fold(eventsOf(1, a), empty), "implementation");
+    expect(implFocus(fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])], listing))).toEqual({ _tag: "List" });
+    const chosenEmpty = selectMode(empty, "implementation");
+    expect(implFocus(fold([replayOf([{ id: 1, events: a }])], chosenEmpty))).toEqual({ _tag: "Run", run: 1 });
+    expect(implFocus(fold([helloOf(1, "b"), replayOf([{ id: 1, events: a }])], listing))).toEqual({ _tag: "Run", run: 1 });
+  });
+
+  test("P1-R1-1: a reconnection whose replay holds a newer run moves a Run focus to it; the shown run, its tab and presented agree", () => {
+    const viewingA = focusRun(fold(eventsOf(1, a), empty), "implementation", 1);
+    const s = fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])], viewingA);
+    expect(runOf(s, "implementation")?.id).toBe(2);
+    expect(runTabs(s, "implementation").filter((t) => t.value !== "list").map((t) => t.value)).toEqual(["run-2"]);
+    expect(presentedImpl(s)).toBe(2);
+    const listing = focusList(fold(eventsOf(1, a), empty), "implementation");
+    expect(implFocus(fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])], listing))).toEqual({ _tag: "List" });
+  });
+
+  test("property: the focus is the list or the newest held run, and presented and modeWaiting follow that run", () => {
+    type Op = "start" | "ask" | "end" | "reconnect" | "list" | "run";
+    fc.assert(
+      fc.property(fc.array(fc.constantFrom<Op>("start", "ask", "end", "reconnect", "list", "run"), { maxLength: 30 }), (ops) => {
+        let s = empty;
+        const events = new Map<number, RunEvent[]>();
+        let next = 1;
+        const newest = () => s.modes.implementation.runs.at(-1) ?? null;
+        const push = (run: number, event: RunEvent) => {
+          const list = events.get(run) ?? [];
+          s = reduce(s, { type: "event", run, seq: list.length, time: at(list.length), event });
+          events.set(run, [...list, event]);
+        };
+        for (const op of ops) {
+          const last = next - 1;
+          const open = last > 0 && !(events.get(last) ?? []).some((e) => e._tag === "Ended");
+          if (op === "start" && !open) push(next++, implementing(`${next}`));
+          if (op === "ask" && open) push(last, asked((events.get(last) ?? []).length, prompts.interviewMessagePrompt));
+          if (op === "end" && open) push(last, ended);
+          if (op === "reconnect") {
+            const ids = [...events.keys()].sort((x, y) => x - y).slice(-2);
+            s = fold([helloOf(open ? last : null), replayOf(ids.map((id) => ({ id, events: events.get(id) ?? [] })))], s);
+          }
+          if (op === "list") s = focusList(s, "implementation");
+          const n = newest();
+          if (op === "run" && n !== null) s = focusRun(s, "implementation", n.id);
+          const top = newest();
+          expect(presentedImpl(s)).toBe(top?.id ?? null);
+          expect(modeWaiting(s, "implementation")).toBe(top !== null && top.pending !== null && top.pending.decision === "none" && top.ended === null);
+          const focus = implFocus(s);
+          expect(focus._tag === "List" || (top !== null && focus.run === top.id)).toBe(true);
+        }
       }),
       { numRuns: 100 },
     );

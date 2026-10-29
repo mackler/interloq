@@ -16,7 +16,7 @@
   // Each run keeps its own draft and its own notifications, keyed by `presented` (web/src/state.ts).
   import { Button, ConnectedButtons, Tabs } from "m3-svelte";
   import { untrack } from "svelte";
-  import { BACK_TO_LIST, CLOSE_RUN_TAB, RUN_TABS_LABEL, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { BACK_TO_LIST, CLOSE_RUN_TAB, runTabsLabel, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
@@ -68,8 +68,6 @@
     if (terms !== null) send(startFrame({ mode, item, terms }));
   };
   let connection: Connection | null = null;
-  // Issue #120: after a tab's run has ended, its list is shown again once the user asks for it.
-  let listWanted = $state<Record<RunMode, boolean>>({ refinement: false, implementation: false });
   // The unsent text of each presented run's pending prompt (finding 5), reconciled with its run after every message, live
   // or replayed: an answer belongs to the run it was typed in (issue #120; issue #191: one per refinement run).
   let drafts = $state<Record<string, Draft | null>>({});
@@ -109,7 +107,6 @@
       onMessage: (m) => {
         view = reduce(view, m);
         reconcileDrafts();
-        if (m.type === "event" && m.event._tag === "Started") listWanted = { ...listWanted, [m.event.mode]: false };
         if (view.needsReconnect) connection?.reconnect();
       },
       onState: (s) => (view = { ...view, connection: s }),
@@ -163,12 +160,9 @@
   let conversationForPrompt = $state<string | null>(null);
   const promptKey = $derived(JSON.stringify(pendingKey(shownTab)));
   const asking = $derived(run?.pending != null && conversationForPrompt !== promptKey);
-  // Issue #120: a tab shows its run while one is in progress, or its ended run until the user goes back to its list.
-  // Issue #191: the Refinement tab shows its items whenever its second row's focus is the list.
-  const showsList = (m: RunMode): boolean => {
-    const r = shownRun(view, m).run;
-    return r === null || (m === "implementation" && r.ended !== null && listWanted[m]);
-  };
+  // Issue #191 and issue #144: a tab shows its items whenever its second row's focus is the list, a run in progress
+  // or not; the run goes on, since the page only chooses what to draw.
+  const showsList = (m: RunMode): boolean => shownRun(view, m).run === null;
   const showList = $derived(showsList(mode));
   // Issue #147: the chain's control, on the Implementation tab alone.
   const chain = $derived(mode === "implementation" ? chainShown(view, (iso) => fullTime(iso)) : null);
@@ -194,31 +188,29 @@
   });
   /** The tabs, each name with the waiting mark while its run waits for the user [visibility of system status]. */
   const tabItems = $derived(RUN_MODES.map((m) => ({ name: modeWaiting(view, m) ? waitingTabName(TAB_TEXTS[m].tab) : TAB_TEXTS[m].tab, value: m })));
-  // Issue #191: the Refinement tab's second row, shown while it holds a run; its value names what the tab shows.
-  const secondRow = $derived(mode === "refinement" && view.modes.refinement.runs.length > 0 ? [...runTabs(view)] : null);
-  const focusValue = $derived(view.modes.refinement.focus._tag === "Run" ? `run-${view.modes.refinement.focus.run}` : "list");
-  /** The items, asked for again as a revisited list is (S15). */
-  const toRefinementList = () => {
+  // Issue #191 and issue #144: each tab's second row, shown while it holds a run; its value names what the tab shows.
+  const secondRow = $derived(view.modes[mode].runs.length > 0 ? [...runTabs(view, mode)] : null);
+  const focusValue = $derived.by(() => {
+    const focus = view.modes[mode].focus;
+    return focus._tag === "Run" ? `run-${focus.run}` : "list";
+  });
+  /** A tab's items, asked for again as a revisited list is (S15). */
+  const toList = (m: RunMode) => {
     noticesSeen = view.notices.length;
-    view = focusList(view);
-    if (view.connection === "open") requestItems("refinement");
+    view = focusList(view, m);
+    if (view.connection === "open") requestItems(m);
   };
   const selectRunTab = (value: string) => {
-    if (value === "list") return toRefinementList();
+    if (value === "list") return toList(mode);
     const id = Number(value.slice("run-".length));
-    if (Number.isInteger(id)) view = focusRun(view, id);
+    if (Number.isInteger(id)) view = focusRun(view, mode, id);
   };
-  /** Back to the list from an ended run: the Refinement tab keeps the run's tab in its second row. */
-  const backToList = () => {
-    if (mode === "refinement") return toRefinementList();
-    listWanted = { ...listWanted, [mode]: true };
-    noticesSeen = view.notices.length;
-    requestItems(mode);
-  };
+  /** Back to the list from an ended run: the tab keeps the run's tab in its second row. */
+  const backToList = () => toList(mode);
   /** Closes an ended refinement run's tab in this page and shows the items. */
   const closeRunTab = (id: number) => {
     view = closeRun(view, id);
-    toRefinementList();
+    toList("refinement");
     reconcileDrafts();
   };
   // Decision support: a decision's analysis covers both chat columns until its question is answered; the user may
@@ -361,7 +353,7 @@
     <Tabs items={tabItems} bind:tab={() => mode, (value) => selectTab(value as RunMode)} />
   </nav>
   {#if secondRow !== null}
-    <nav class="run-tabs" aria-label={RUN_TABS_LABEL}>
+    <nav class="run-tabs" aria-label={runTabsLabel(mode)}>
       <Tabs secondary items={secondRow} bind:tab={() => focusValue, (value) => selectRunTab(value)} />
     </nav>
   {/if}

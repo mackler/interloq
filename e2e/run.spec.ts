@@ -894,6 +894,23 @@ test.describe("the tests of the twoModes server, in order", () => {
     await expect(runTabOf(page, second)).toHaveCount(0);
     await expect(runTabOf(page, first)).toHaveCount(1);
   });
+
+  // Issue #144: the Implementation tab's list is reachable while its run is in progress, and the run's tab returns to it.
+  test("(34) with an implementation run waiting, its list is reachable and readable, and the run's tab returns to the question", async ({ page }) => {
+    const id = await startFromTab(page, url("twoModes"), "implementation");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await listTabOf(page, "implementation").click();
+    await expect(listOf(page)).toBeVisible();
+    const row = listOf(page).locator("li", { hasText: "Refined item" }).first();
+    await expect(row).toBeVisible();
+    await expect(row.locator("button[name=start]")).toBeDisabled();
+    await expect(tabOf(page, "implementation")).toHaveText(waitingTabName(TAB_TEXTS.implementation.tab));
+    await runTabOf(page, id, "implementation").click();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await page.locator("button[name=stop]").click();
+    await confirmEnd(page);
+    await toHaveEnded(page, 130);
+  });
 });
 
 // Issue #120: a tracker that cannot be reached is a notice in the tab, not a failure of the page.
