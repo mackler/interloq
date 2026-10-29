@@ -4,10 +4,12 @@ import { Effect, Ref, Result } from "effect";
 import { TrackerBodyInvalid, TrackerItemNotFound } from "../src/errors.ts";
 import { withRefinement } from "../src/refinement.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
-import type { ItemId, ItemState, TrackerItem } from "../src/tracker.ts";
+import type { ItemComment, ItemId, ItemState, TrackerItem } from "../src/tracker.ts";
 
-/** An item as the fake holds it: what the port shows, and whether it is open in the tracker. */
-export type FakeItem = TrackerItem & Readonly<{ open: boolean }>;
+/** An item as the fake holds it: what the port shows, whether it is open in the tracker, and its comments (issue #186; none where absent). */
+export type FakeItem = TrackerItem & Readonly<{ open: boolean; comments?: readonly ItemComment[] }>;
+/** The instant the fake gives every comment it adds. */
+export const FAKE_COMMENT_TIME = "2026-10-29T12:00:00Z";
 export type TrackerOperation = keyof TrackerShape;
 export type FakeTracker = Readonly<{
   tracker: TrackerShape;
@@ -18,7 +20,7 @@ export type FakeTracker = Readonly<{
   /** The next call of `operation` fails with `error`, once; with `state`, only a `setState` to that state matches. */
   failNext: (operation: TrackerOperation, error: TrackerError, state?: ItemState) => Effect.Effect<void>;
   /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied); with `state`, only a `setState` to that state matches (W1-R1-1). */
-  failAfterNext: (operation: "writeRefinement" | "setState", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
+  failAfterNext: (operation: "writeRefinement" | "setState" | "comment", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
 }>;
 
 /** A scripted failure: before the operation changes anything, or after a write applied its change (issue #171). */
@@ -44,7 +46,7 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
         return item === undefined ? Effect.fail(new TrackerItemNotFound({ id })) : Effect.succeed(item);
       });
     const replace = (item: FakeItem): Effect.Effect<void> => Ref.update(ref, (s) => ({ ...s, items: s.items.map((i) => (i.id === item.id ? item : i)) }));
-    const shown = ({ open: _open, ...item }: FakeItem): TrackerItem => item;
+    const shown = ({ open: _open, comments: _comments, ...item }: FakeItem): TrackerItem => item;
     const tracker: TrackerShape = {
       list: (state) => Effect.andThen(scripted("list"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.state === state).map(shown))),
       read: (id) => Effect.andThen(Ref.update(ref, (s) => ({ ...s, reads: [...s.reads, id] })), Effect.andThen(scripted("read"), Effect.map(find(id), shown))),
@@ -58,6 +60,12 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
           yield* after("writeRefinement");
         }),
       setState: (id, state) => Effect.andThen(scripted("setState", state), Effect.flatMap(find(id), (item) => Effect.andThen(replace({ ...item, state }), after("setState", state)))),
+      comment: (id, text) =>
+        Effect.andThen(
+          scripted("comment"),
+          Effect.flatMap(find(id), (item) => Effect.andThen(replace({ ...item, comments: [...(item.comments ?? []), { body: text, created: FAKE_COMMENT_TIME }] }), after("comment"))),
+        ),
+      comments: (id) => Effect.andThen(scripted("comments"), Effect.map(find(id), (item) => item.comments ?? [])),
     };
     return {
       tracker,

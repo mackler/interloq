@@ -110,6 +110,8 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     read: (id) => Effect.andThen(Ref.update(reads, (rs) => [...rs, id]), Effect.andThen(scripted("read"), adapter.read(id))),
     writeRefinement: (id, refinement) => Effect.andThen(scripted("writeRefinement"), Effect.andThen(adapter.writeRefinement(id, refinement), after("writeRefinement"))),
     setState: (id, state) => Effect.andThen(scripted("setState"), Effect.andThen(adapter.setState(id, state), after("setState"))),
+    comment: (id, text) => Effect.andThen(scripted("comment"), Effect.andThen(adapter.comment(id, text), after("comment"))),
+    comments: (id) => Effect.andThen(scripted("comments"), adapter.comments(id)),
   };
   const items = Effect.sync((): readonly FakeItem[] =>
     [...server.issues().values()].flatMap((issue) => {

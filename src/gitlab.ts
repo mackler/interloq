@@ -36,7 +36,7 @@ import {
 import { OPENING_LINE, type Refinement } from "./refinement.ts";
 import type { GitlabTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import { type Environment, type GitlabToken, gitlabCredential } from "./trackerConfig.ts";
 
 const TRACKER = "GitLab";
@@ -167,7 +167,10 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
         return issue.state === "closed" ? closedRefusal(id, issue, `its state was not set to ${state}`) : put(url, id, relabelBody(config.labels, state));
       });
 
-    const tracker: TrackerShape = { list, read, writeRefinement, setState };
+    // Issue #186: replaced by the comment requests in its next step.
+    const comment = (_id: ItemId, _text: string): Effect.Effect<void, TrackerError> => Effect.void;
+    const comments = (_id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError> => Effect.succeed([]);
+    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
     return tracker;
   });
 

@@ -19,7 +19,7 @@ import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
 import type { LimitWait, LimitWaitBegan, CallFailure, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
-import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 
@@ -109,9 +109,11 @@ export class Reviewer extends Context.Service<Reviewer, ReviewerShape>()("plan-r
 /** What the tracker port can fail with (issue #120, part 1; the fifth, an ambiguous state, by requirements Q3). */
 export type TrackerError = TrackerUnreachable | TrackerRequestRefused | TrackerAuthRefused | TrackerItemNotFound | TrackerBodyInvalid | TrackerStateAmbiguous;
 /**
- * The project's issue tracker (issue #120, part 1): the four operations are the whole common type (developer's
- * decision). Nothing here names a label, a list or a status: how a state is stored is the adapter's (GitHub and
- * GitLab: a label name). Beside the six services, not one of them: no run requires it yet.
+ * The project's issue tracker (issue #120, part 1): its operations are the whole common type (developer's decision).
+ * Issue #186 (requirements Q3, the developer's decision in its refinement) adds the comment, and with it the listing
+ * of an item's comments, which the send-back's guard, the retry's reconciliation of a comment and the count of
+ * send-backs in the lists read; both trackers have both. Nothing here names a label, a list or a status: how a state
+ * is stored is the adapter's (GitHub and GitLab: a label name). Beside the services, not one of them.
  */
 export interface TrackerShape {
   /** The open items in a state (requirements, Q2: an item closed in the tracker is in no list). */
@@ -120,6 +122,10 @@ export interface TrackerShape {
   /** Writes the item's `Refined using Interloq` section: appended once, replaced later; the rest of the body is kept. */
   writeRefinement(id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError>;
   setState(id: ItemId, state: ItemState): Effect.Effect<void, TrackerError>;
+  /** Adds a comment to the item (issue #186). Not idempotent: a repeat adds a second comment. */
+  comment(id: ItemId, text: string): Effect.Effect<void, TrackerError>;
+  /** The item's comments, oldest first (issue #186); a tracker's own notes of a change are not comments. */
+  comments(id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError>;
 }
 export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-review/Tracker") {}
 

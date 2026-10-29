@@ -40,6 +40,12 @@ export const itemUrlFrom = (text: string | undefined): Option.Option<ItemUrl> =>
 export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState; url: Option.Option<ItemUrl> }>;
 
 /**
+ * A comment on an item (issue #186, requirements Q3): its text as the tracker holds it and `created`, the ISO-8601
+ * instant the tracker reports. Interloq writes its own send-backs and refinement records as comments (src/itemComments.ts).
+ */
+export type ItemComment = Readonly<{ body: string; created: string }>;
+
+/**
  * A positive decimal integer without leading zeros that is a safe integer, or none: the one rule of a GitHub issue
  * number, a GitLab issue number (iid) and GitLab's next page.
  */

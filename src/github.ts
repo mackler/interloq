@@ -8,7 +8,7 @@ import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, 
 import { type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import type { GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
 import { OPENING_LINE, type Refinement, withRefinement } from "./refinement.ts";
 
@@ -144,7 +144,10 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
     const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> =>
       Effect.flatMap(itemIssueOf(id), ({ issue }) => patch(issue.url, id, { labels: relabeled(labelNamesOf(issue), config.labels, state) }));
 
-    const tracker: TrackerShape = { list, read, writeRefinement, setState };
+    // Issue #186: replaced by the comment requests in its next step.
+    const comment = (_id: ItemId, _text: string): Effect.Effect<void, TrackerError> => Effect.void;
+    const comments = (_id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError> => Effect.succeed([]);
+    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
     return tracker;
   });
 
