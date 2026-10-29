@@ -13,7 +13,7 @@ import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
 import type { ExecCallOutcome } from "./schema.ts";
 import { failureLineOf, secretsOf } from "./callFailureRecord.ts";
-import { askOffering, numberedOptions, permissionDraft, programContext, type QuestionDraft } from "./offer.ts";
+import { askOffering, byLine, numberedOptions, permissionDraft, programContext, type QuestionDraft } from "./offer.ts";
 import { plainPieces } from "./pieces.ts";
 import { parseRelayedQuestion, type QuestionOrigin } from "./question.ts";
 import { chooseOption } from "./input.ts";
@@ -158,7 +158,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
 
   /** An ask with the offer of decision support (D2), run inside a callback: the services it needs are provided here. */
   const offering = (decider: DeciderShape, hint: string, draft: QuestionDraft, acceptable?: (answer: string) => boolean): Effect.Effect<string, CallbackError> =>
-    askOffering((p) => ui.ask(p), hint, draft, acceptable).pipe(Effect.provideService(Decider, decider), Effect.provideService(Store, store), Effect.provideService(Ui, ui));
+    askOffering(byLine((p) => ui.ask(p)), hint, draft, acceptable).pipe(Effect.provideService(Decider, decider), Effect.provideService(Store, store), Effect.provideService(Ui, ui));
 
   /**
    * A relayed question as the user is shown it (S14): from its own parts when its text has the shape of RELAYED_SHAPE

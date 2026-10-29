@@ -2,7 +2,7 @@
 // carries it, whatever interface asks. Separate from src/decision.ts, which runs the loop, so that the places that ask
 // (src/review.ts, src/conversation.ts, src/claude.ts) do not import the loop (no import cycle).
 
-import { Effect } from "effect";
+import { Effect, Fiber, Ref } from "effect";
 import type { RunError } from "./errors.ts";
 import { answerOf, chooseOption, isDecide, isTermsRequest, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
@@ -10,8 +10,8 @@ import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, t
 import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
-import { attachedMarkdown, renderChoice, renderQuestionRecord, termItem } from "./render.ts";
-import { Decider, Store, Ui, type UiShape } from "./services.ts";
+import { attachedMarkdown, renderChoice, renderDecisionAbandoned, renderQuestionRecord, termItem } from "./render.ts";
+import { type AskKind, Decider, Store, Ui, type UiShape } from "./services.ts";
 
 // ---- the offer (D2) ------------------------------------------------------------------------------------
 
@@ -246,6 +246,16 @@ export const askUnoffered = <E>(
   });
 
 /**
+ * Issue #153: how a caller asks: its own `ask` (with its expiry and its parsing) and the kind of answer it reads, with
+ * which a question open beside its decision is read the same way.
+ */
+export type Asking<E> = Readonly<{ kind: AskKind; ask: (prompt: string) => Effect.Effect<string, E> }>;
+/** A one-line prompt ("q" ends the run). */
+export const byLine = <E>(ask: (prompt: string) => Effect.Effect<string, E>): Asking<E> => ({ kind: "line", ask });
+/** An interview message ("/quit" ends the run). */
+export const byMessage = <E>(ask: (prompt: string) => Effect.Effect<string, E>): Asking<E> => ({ kind: "message", ask });
+
+/**
  * Asks a question (S7), the one way a question reaches the user: it takes the question's number in the run, presents
  * the question (the page's event) and records it in conversation.md, then asks with the
  * kind's input hint. With two or more options the hint carries the offer of decision support (D2): "/decide" runs a
@@ -257,28 +267,39 @@ export const askUnoffered = <E>(
  * yields the same draft with them. While it has not run, the hint carries its line outermost; "/terms" runs it, presents the same question again
  * under the same number with its explanations (QuestionExplained, then QuestionPresented), and asks again without the
  * line. "/terms" is never returned or recorded as a choice; without a request it is an answer like any other.
+ * Issue #153 (requirements Q1, G-R1-1): the asking enters its question's frame (`UiShape.enterQuestion`) before it
+ * presents the question, and "/decide" forks the decision and keeps the question open beside it, with neither the offer
+ * nor the terms line. An answer the question accepts given then abandons the decision: the loop is interrupted, and
+ * where it had allocated decision k the answer is recorded as k's choice, with the abandoned line, and returned. A
+ * "/decide", a "/terms" or an answer `acceptable` rejects is rejected and the question stays open. Abandoning an outer
+ * decision abandons every decision nested in it, and none is open then: a question asked inside a decision blocks the
+ * question beneath it for its whole asking (S2), so each nested decision has recorded its choice before the outer
+ * question can be answered.
  */
 export const askOffering = <E, R = never>(
-  ask: (prompt: string) => Effect.Effect<string, E>,
+  asking: Asking<E>,
   hint: string,
   draft: QuestionDraft,
   acceptable: (answer: string) => boolean = () => true,
   terms: ((question: number) => Effect.Effect<QuestionDraft, E | RunError, R>) | null = null,
   resolve: ((answer: string, options: readonly OfferedOption[]) => string) | null = null,
 ): Effect.Effect<string, E | RunError, Decider | Store | Ui | R> =>
-  Effect.gen(function* () {
+  Effect.scoped(Effect.gen(function* () {
     const ui = yield* Ui;
     const store = yield* Store;
     // The question as it is shown: replaced, under its number, when its explanations arrive on request (issue #142).
     let explained = draft.explain === undefined ? draft : withContext(draft, yield* explain(draft, draft.explain));
     let question = yield* Effect.fromResult(presentedQuestion(explained, yield* ui.nextQuestion));
     let request = terms;
+    // Issue #153: this asking's frame, entered before the question is presented, so that a question being prepared
+    // beneath it (this question asked inside its decision) is neither shown nor answerable until this asking returns.
+    const frame = yield* ui.enterQuestion(question.number);
     const present = Effect.suspend(() => ui.notify({ _tag: "QuestionPresented", question }));
     yield* present;
     yield* store.converse(renderQuestionRecord(question));
     // The page keeps a decision's analysis for the question asked again (W3-R1-1).
     const rejected = ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present));
-    const askOffered = (prompt: string) => ask(request === null ? prompt : prompts.withTermsOffer(prompt));
+    const askOffered = (prompt: string) => asking.ask(request === null ? prompt : prompts.withTermsOffer(prompt));
     /** Whether the answer asked for the terms, which then are written and presented: the question is asked again. */
     const requested = (answer: string) =>
       Effect.gen(function* () {
@@ -314,7 +335,29 @@ export const askOffering = <E, R = never>(
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
         const shown = { context: blocksMarkdown(explained.context.blocks), history: blocksMarkdown(explained.history), terms: question.explanations.map((e) => termItem(e, "")).join("\n"), details: attachedMarkdown(explained.attached ?? null) };
-        const outcome = yield* decider.decide({ question: asked, options, number: question.number, shown });
+        // Issue #153 (Q1): the decision runs beside the question, which stays open, without the offer or the terms line.
+        const opened = yield* Ref.make<number | null>(null);
+        const fiber = yield* Effect.forkScoped(decider.decide({ question: asked, options, number: question.number, shown, opened: (k) => Ref.set(opened, k) }));
+        let during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
+        while (during._tag === "Answered" && (isDecide(during.text) || isTermsRequest(during.text) || !acceptable(during.text))) {
+          yield* rejected;
+          during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
+        }
+        if (during._tag === "Answered") {
+          const answer = during.text;
+          // The loop is interrupted first, so it writes nothing after the record.
+          yield* Fiber.interrupt(fiber);
+          const k = yield* Ref.get(opened);
+          if (k !== null) {
+            const option = explained.options.find((o) => o.matches(answer))?.label ?? null;
+            yield* store.saveChoice(k, { answer, option });
+            yield* store.converse(renderDecisionAbandoned(k));
+            yield* store.converse(renderChoice(k, answer, option));
+            yield* ui.say(prompts.decisionAbandonedLine(k));
+          }
+          return resolve === null ? answer : resolve(answer, explained.options);
+        }
+        const outcome = during.value;
         decisions.push(outcome.decision);
         yield* ui.notify({ _tag: "DecisionAnalyzed", decision: outcome.decision, question: asked, presented: question, options, analysis: outcome.analysis });
         yield* present;
@@ -331,4 +374,4 @@ export const askOffering = <E, R = never>(
       }
       return resolve === null ? answer : resolve(answer, explained.options);
     }
-  });
+  }));

@@ -36,6 +36,11 @@ export type Asked = Readonly<{
   choices: readonly Choice[];
   free: "none" | "line" | "message";
   countdown: Countdown | null;
+  /**
+   * Issue #153: the number of the presented question this prompt asks while its decision's analysis is prepared, null for
+   * every other prompt (and in a record written before it).
+   */
+  deciding: number | null;
 }>;
 /** What happened in a run, in order: the run's Ui calls and its start and end. */
 export type RunEvent =
@@ -60,6 +65,8 @@ export type RunEvent =
   | Readonly<{ _tag: "CountdownStopped"; prompt: number; reason: "held" | "chainOff" }>
   /** Issue #185: the wait ran out; the prompt is withdrawn. */
   | Readonly<{ _tag: "AnswerExpired"; prompt: number; seconds: number; then: OnExpiry }>
+  /** Issue #153: the prompt open beside a decision is withdrawn unanswered, because the analysis is ready. */
+  | Readonly<{ _tag: "PromptWithdrawn"; prompt: number }>
   | Readonly<{ _tag: "Notified"; event: UiEvent }>
   | Readonly<{ _tag: "Ended"; code: number }>;
 /**
@@ -261,10 +268,12 @@ export const RunEventSchema = Schema.Union([
     choices: Schema.Array(ChoiceSchema),
     free: Schema.Literals(["none", "line", "message"]),
     countdown: Schema.NullOr(Schema.Struct({ fromMs: Schema.Finite, untilMs: Schema.Finite, then: OnExpirySchema })).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+    deciding: Schema.NullOr(Int).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   }),
   tagged("Answered", { prompt: Int, text: Str }),
   tagged("CountdownStopped", { prompt: Int, reason: Schema.Literals(["held", "chainOff"]) }),
   tagged("AnswerExpired", { prompt: Int, seconds: Int, then: OnExpirySchema }),
+  tagged("PromptWithdrawn", { prompt: Int }),
   tagged("Notified", { event: UiEventSchema }),
   tagged("Ended", { code: Int }),
 ]);

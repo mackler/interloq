@@ -14,7 +14,7 @@ import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
 import { correctiveValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
-import { agentContext, askOffering, decisionAnswerOf, limitOptions, numberedOptions, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
+import { agentContext, askOffering, byLine, decisionAnswerOf, limitOptions, numberedOptions, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
 import { parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import type { OnExpiry } from "./protocol.ts";
@@ -112,7 +112,7 @@ export const askDecisionQuestion = (draft: QuestionDraft, onExpiry: OnExpiry = "
   Effect.gen(function* () {
     const ui = yield* Ui;
     // Issue #159: resolved on the options as shown, after the context call, so a label it wrote stands for its position.
-    return yield* askOffering((p) => ui.ask(p, onExpiry), prompts.decisionPrompt, draft, undefined, null, decisionAnswerOf);
+    return yield* askOffering(byLine((p) => ui.ask(p, onExpiry)), prompts.decisionPrompt, draft, undefined, null, decisionAnswerOf);
   });
 
 /** Issue #185: the expiry of a review limit's own prompt, which extends the review instead of ending the run. */
@@ -450,7 +450,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.limitQuestion(heading, command.limit)), options: limitOptions(proceed), explain: prompts.limitFacts(heading, command.limit, state.counts), decision: within };
             // Issue #185 (G-R1-3): asked with "extend"; only the expiry of this prompt itself extends the review, while a
             // question asked inside it (the context call's, decision support's) expires with "abandon" and ends the run.
-            return yield* askOffering((p) => ui.ask(p, "extend"), proceed === null ? prompts.limitNoProceedPrompt : prompts.limitPrompt, draft).pipe(
+            return yield* askOffering(byLine((p) => ui.ask(p, "extend")), proceed === null ? prompts.limitNoProceedPrompt : prompts.limitPrompt, draft).pipe(
               Effect.map((answer): ReviewEvent => ({ kind: "LimitAnswer", answer })),
               Effect.catchIf(extendsReview, () => Effect.succeed<ReviewEvent>({ kind: "LimitUnanswered" })),
             );
@@ -459,7 +459,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             // Issue #30: Retry, Proceed or Stop, with the offer of decision support; an answer that is none of them is asked again.
             const origin: QuestionOrigin = { kind: "unchanged", heading, fileLabel, accepted: command.accepted };
             const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(command.retry === "interview"), explain: prompts.unchangedFacts(heading, fileLabel, command.accepted), decision: within };
-            const answer = yield* askOffering((p) => ui.ask(p), prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
+            const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
             return { kind: "UnchangedAnswer", answer: parseUnchangedAnswer(answer)! };
           }
           case "AskDecision": {

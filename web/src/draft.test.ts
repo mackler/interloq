@@ -3,7 +3,7 @@ import * as prompts from "../../src/prompts.ts";
 import type { RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
-import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "./draft.ts";
+import { awaitedKey, carried, type Draft, draftFor, pendingKey, type Reconciled, reconcile, restoreUnsent } from "./draft.ts";
 import fc from "fast-check";
 import { plainPieces } from "../../src/pieces.ts";
 import type { UiEvent } from "../../src/uiEvents.ts";
@@ -14,7 +14,7 @@ import { helloChain } from "./testChain.ts";
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "implementation", item: { id: "1", title: "t" } };
 const TIME = "2026-09-27T14:00:00.000Z";
 const stamp = (events: readonly RunEvent[]): Stamped[] => events.map((event) => ({ time: TIME, event }));
-const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: null });
+const asked = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: null, deciding: null });
 const answered = (prompt: number): RunEvent => ({ _tag: "Answered", prompt, text: "" });
 const hello = (incarnation = "a", current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation });
 const fold = (messages: readonly ServerMessage[], from: ViewState = initialState): ViewState => messages.reduce(reduce, from);
@@ -150,5 +150,64 @@ describe("a draft whose question expired (issue #185)", () => {
     }
     expect(prompts.draftExpiredNotice("abandon", "x")).toContain("its run has ended");
     expect(prompts.draftExpiredNotice("extend", "x")).toContain("the review went on");
+  });
+});
+
+// Issue #153: the text typed before Help me decide stays in the field through the wait and to the analysis.
+describe("a draft through Help me decide", () => {
+  const question = (number: number): RunEvent => ({
+    _tag: "Notified",
+    event: { _tag: "QuestionPresented", question: { number, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: ["A", "B"].map((l, i) => ({ label: plainPieces(l), description: plainPieces(""), answer: { token: String(i + 1) } })), attached: null, decision: null } },
+  });
+  const offered = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.withOffer(prompts.optionOrTextPrompt)), countdown: null, deciding: null });
+  const frame = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: 1 });
+  const plain = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null });
+  const decide: RunEvent = { _tag: "Answered", prompt: 1, text: "/decide" };
+  const typed = (prompt: number, text = "my text"): Draft => ({ _tag: "Held", key: { incarnation: "a", run: 1, prompt }, text });
+  const base = [started, question(1), offered(1), decide];
+  /** The draft reconciled through each view in turn, as the page reconciles after every reduction. */
+  const through = (d: Draft, views: readonly Shown[]): Reconciled => views.reduce<Reconciled>((r, v) => (r.draft === null ? r : reconcile(r.draft, v)), { draft: d, notice: null });
+
+  test("after Help me decide the field still shows the text, its key the same prompt", () => {
+    const view = live(base);
+    expect(draftFor(typed(1), pendingKey(view))).toBe("my text");
+    expect(reconcile(typed(1), view)).toEqual({ draft: typed(1), notice: null });
+  });
+
+  test("the text edited while starting follows the question to its frame, and to the question asked again", () => {
+    const r = through(typed(1, "edited"), [live(base), live([...base, frame(2)])]);
+    expect(r).toEqual({ draft: typed(2, "edited"), notice: null });
+    const again = through(r.draft!, [live([...base, frame(2), { _tag: "PromptWithdrawn", prompt: 2 }]), live([...base, frame(2), { _tag: "PromptWithdrawn", prompt: 2 }, question(1), plain(3)])]);
+    expect(again).toEqual({ draft: typed(3, "edited"), notice: null });
+    expect(draftFor(again.draft, pendingKey(live([...base, frame(2), { _tag: "PromptWithdrawn", prompt: 2 }, question(1), plain(3)])))).toBe("edited");
+  });
+
+  test("an answer from another tab to the frame's prompt withdraws the draft with the notice", () => {
+    expect(reconcile(typed(2), live([...base, frame(2), { _tag: "Answered", prompt: 2, text: "1" }]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my text") });
+  });
+
+  test("a foreground question over the frame: the frame's draft waits for its question to return", () => {
+    const over = live([...base, frame(2), question(2), plain(3)]);
+    expect(reconcile(typed(2), over)).toEqual({ draft: typed(2), notice: null });
+    const back = live([...base, frame(2), question(2), plain(3), { _tag: "Answered", prompt: 3, text: "1" }, frame(2)]);
+    expect(through(typed(2), [over, back])).toEqual({ draft: typed(2), notice: null });
+  });
+
+  test("a draft followed to another question is withdrawn with the notice when non-empty, quietly when empty", () => {
+    const other = live([...base, question(2), plain(3)]);
+    expect(reconcile(typed(1), other)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my text") });
+    expect(reconcile(typed(1, ""), other)).toEqual({ draft: null, notice: null });
+  });
+
+  test("an unsent /decide leaves the field as it is and quotes nothing", () => {
+    const view = live([started, question(1), offered(1)]);
+    const message: ClientMessage = { type: "answer", incarnation: "a", run: 1, prompt: 1, text: "/decide" };
+    expect(restoreUnsent(typed(1), view, message)).toEqual({ draft: typed(1), quoted: null });
+  });
+
+  test("awaitedKey is the pending key only while the prompt waits for the developer", () => {
+    expect(awaitedKey(live([started, question(1), offered(1)]))).toEqual({ incarnation: "a", run: 1, prompt: 1 });
+    expect(awaitedKey(live(base))).toBeNull();
+    expect(awaitedKey(live([...base, frame(2)]))).toBeNull();
   });
 });

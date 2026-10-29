@@ -163,6 +163,17 @@ export const SCENARIOS: Record<string, TestOptions> = {
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
     execs: [finished],
   }),
+  // Issue #153: the question stays on the page while its analysis is prepared; the analysis call hangs until the answer
+  // given meanwhile interrupts it, and the answer is then applied to the plan. The question carries one term.
+  decideWait: askedInPlanReview({
+    steps: [
+      { output: { questions_for_user: [questionOf({ context: "The service keeps its data in a database.", question: "Which database should the service use?", terms: [{ term: "service", explanation: "The program this task builds." }], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
+      { hang: true },
+      { output: noQuestions },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execs: [finished],
+  }),
   // W1-R1-3: a long recommendation must not squeeze the columns.
   // Issue #133: its question has a history too, and its context is eight paragraphs, so that the History heading and
   // the text columns are exercised.

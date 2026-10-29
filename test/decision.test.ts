@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { decisionLoop } from "../src/decision.ts";
-import { askOffering, limitOptions, numberedOptions, type OfferedOption, permissionOptions, type QuestionDraft } from "../src/offer.ts";
+import { askOffering, byLine, limitOptions, numberedOptions, type OfferedOption, permissionOptions, type QuestionDraft } from "../src/offer.ts";
 import * as prompts from "../src/prompts.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { withOffer } from "../src/prompts.ts";
@@ -177,7 +177,7 @@ const draftOf = (q: Readonly<{ question: string; options: readonly OfferedOption
 const offering = (layer: Layer.Layer<Services>, q: Readonly<{ question: string; options: readonly OfferedOption[] }>, prompt = "Pick > ") =>
   Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), prompt, draftOf(q));
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompt, draftOf(q));
   }).pipe(Effect.provide(layer)));
 /** How often the question was presented: first, and again after an analysis or a rejected answer. */
 const presentations = (probe: { ui: { notified: { _tag: string }[] } }) => probe.ui.notified.filter((e) => e._tag === "QuestionPresented").length;
@@ -207,7 +207,7 @@ test("after an analysis the question is asked without the offer, also after a re
   const offers = (text: string) => promptOf(text).choices.some((c) => c.label === prompts.HELP_ME_DECIDE);
   const ask = (layer: Layer.Layer<Services>) => Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), prompts.decisionPrompt, draftOf({ question: question.question, options: offered }), (a) => a.trim() !== "");
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompts.decisionPrompt, draftOf({ question: question.question, options: offered }), (a) => a.trim() !== "");
   }).pipe(Effect.provide(layer)));
   const { layer, probe } = await setUp({ answers: ["/decide", "", "2"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
   assert.equal(await ask(layer), "2");
@@ -228,7 +228,7 @@ test("free text after an analysis is recorded without an option; q stops and rec
   const quit = await setUp({ answers: ["/decide", "q"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
   const exit = await Effect.runPromiseExit(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), "Pick > ", draftOf({ question: question.question, options: offered }));
+    return yield* askOffering(byLine((p) => ui.ask(p)), "Pick > ", draftOf({ question: question.question, options: offered }));
   }).pipe(Effect.provide(quit.layer)));
   assert.ok(Exit.isFailure(exit));
   assert.ok(!fs.existsSync(path.join(quit.probe.dir, "decision-1/chosen.json")));
@@ -347,7 +347,7 @@ test("with a predicate, a rejected answer is asked again and not recorded; witho
   const retried = await setUp({ answers: ["/decide", "", "2"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
   const answer = await Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), "Pick > ", draftOf({ question: question.question, options: offered }), notEmpty);
+    return yield* askOffering(byLine((p) => ui.ask(p)), "Pick > ", draftOf({ question: question.question, options: offered }), notEmpty);
   }).pipe(Effect.provide(retried.layer)));
   assert.equal(answer, "2");
   assert.deepEqual(json(retried.probe.dir, "decision-1/chosen.json"), { version: 2, decision: 1, answer: "2", option: "PostgreSQL" });
@@ -363,13 +363,13 @@ test("askOffering notifies AnswerRejected once per rejected answer, never for an
   const withPredicate = await setUp({ answers: ["/decide", "", "2"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
   await Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), "Pick > ", draftOf({ question: question.question, options: offered }), (a) => a !== "");
+    return yield* askOffering(byLine((p) => ui.ask(p)), "Pick > ", draftOf({ question: question.question, options: offered }), (a) => a !== "");
   }).pipe(Effect.provide(withPredicate.layer)));
   assert.equal(rejectedCount(withPredicate.probe), 1);
   const fewOptions = await setUp({ answers: ["", "x"] });
   await Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), "Pick > ", draftOf({ question: "q", options: offered.slice(0, 1) }), (a) => a !== "");
+    return yield* askOffering(byLine((p) => ui.ask(p)), "Pick > ", draftOf({ question: "q", options: offered.slice(0, 1) }), (a) => a !== "");
   }).pipe(Effect.provide(fewOptions.layer)));
   assert.equal(rejectedCount(fewOptions.probe), 1);
   const without = await setUp({ answers: ["/decide", ""], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
@@ -528,7 +528,7 @@ const decideOn = async (draft: QuestionDraft) => {
   const { layer, probe } = await setUp({ answers: ["/decide", "1"], steps: [{ output: analysis() }], reviews: [{ issues: [] }] });
   await Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), prompts.decisionPrompt, draft);
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompts.decisionPrompt, draft);
   }).pipe(Effect.provide(layer)));
   return { prompt: analysisPromptOf(probe.planner.prompts), probe };
 };
@@ -585,7 +585,7 @@ test("S10: after a context call rephrases a permission question, the analysis ar
   const answer = await Effect.runPromise(
     Effect.gen(function* () {
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, permissionDraft("Bash", { command: "ls" }));
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, permissionDraft("Bash", { command: "ls" }));
     }).pipe(Effect.provide(layer)),
   );
   assert.equal(answer, "y");
@@ -623,7 +623,7 @@ const termsOffered = (text: string) => prompts.offersOf(text).terms;
 const askWithTerms = (layer: Layer.Layer<Services>, terms: ((question: number) => Effect.Effect<QuestionDraft>) | null, prompt = "Pick > ") =>
   Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), prompt, plainDraft, () => true, terms);
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompt, plainDraft, () => true, terms);
   }).pipe(Effect.provide(layer)));
 const tagsOf = (probe: { ui: { notified: UiEvent[] } }) => probe.ui.notified.filter((e) => ["QuestionPresented", "QuestionExplained", "DecisionAnalyzed"].includes(e._tag));
 
@@ -674,7 +674,7 @@ test("issue #142: a question with fewer than two options takes the request too",
   const one = { ...plainDraft, options: [] };
   const result = await Effect.runPromise(Effect.gen(function* () {
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), "Pick > ", one, () => true, () => Effect.succeed({ ...explainedDraft, options: [] }));
+    return yield* askOffering(byLine((p) => ui.ask(p)), "Pick > ", one, () => true, () => Effect.succeed({ ...explainedDraft, options: [] }));
   }).pipe(Effect.provide(layer)));
   assert.equal(result, "ok");
   assert.deepEqual(probe.ui.asked.map(termsOffered), [true, false]);

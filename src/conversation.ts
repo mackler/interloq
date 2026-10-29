@@ -15,7 +15,7 @@ import * as S from "./schema.ts";
 import type { QuestionsFile, TermsEntry } from "./schema.ts";
 import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNormalize.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
-import { agentContext, askOffering, numberedOptions, programContext, type QuestionDraft } from "./offer.ts";
+import { agentContext, askOffering, byMessage, numberedOptions, programContext, type QuestionDraft } from "./offer.ts";
 import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -158,7 +158,7 @@ export const interview = (opening: string, agreed: readonly string[]): Effect.Ef
 
       // A blank message is asked again inside the offer, so that it is never recorded as the choice (W1-R1-1).
       const draft = turnDraft(turn, { questions, terms: yield* store.loadTerms() });
-      const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.interviewMessagePrompt, draft, (m) => m !== ""));
+      const reply = parseInterviewMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.interviewMessagePrompt, draft, (m) => m !== ""));
       if (reply.kind === "empty") continue;
       yield* store.converse(`**User:** ${reply.kind === "done" ? "/done" : reply.text}\n\n`);
       prompt = reply.kind === "done" ? prompts.interviewDonePrompt : prompts.interviewUserMessage(reply.text);
@@ -171,7 +171,7 @@ const confirmSummary = (summary: string): Effect.Effect<ReturnType<typeof parseI
     const ui = yield* Ui;
     const origin: QuestionOrigin = { kind: "confirmSummary" };
     const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.CONFIRM_SUMMARY_QUESTION), options: [], attached: attachedOf("summary", [{ kind: "document", markdown: summary.trim() }]), decision: null };
-    return parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.confirmSummaryPrompt, draft));
+    return parseInterviewMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.confirmSummaryPrompt, draft));
   });
 
 /** A question presented and asked until the developer's reply is not empty. */
@@ -179,7 +179,7 @@ const askUntilAnswered = (draft: QuestionDraft, request: ((number: number) => Ef
   Effect.gen(function* () {
     const ui = yield* Ui;
     for (;;) {
-      const reply = parseInterviewMessage(yield* askOffering((m) => ui.askMessage(m), prompts.interviewMessagePrompt, draft, (m) => m !== "", request));
+      const reply = parseInterviewMessage(yield* askOffering(byMessage((m) => ui.askMessage(m)), prompts.interviewMessagePrompt, draft, (m) => m !== "", request));
       if (reply.kind !== "empty") return reply;
     }
   });

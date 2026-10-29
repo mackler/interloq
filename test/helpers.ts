@@ -6,7 +6,7 @@ import { programWritten } from "../src/questionContext.ts";
 import { CONTEXT_REQUEST_HEADING, confirmEndText, itemReturnedLine, LIST_DONE_SENTENCE, permissionPrompt, recordSubject } from "../src/prompts.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { type Block, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
-import { askOffering, permissionDraft } from "../src/offer.ts";
+import { askOffering, byLine, permissionDraft } from "../src/offer.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -17,7 +17,7 @@ import { Cause, Clock, Duration, Effect, Exit, FileSystem, Layer, Option, Platfo
 import * as NodeChildProcessSpawner from "@effect/platform-node/NodeChildProcessSpawner";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
-import type { Schema } from "effect";
+import type { Schema, Scope } from "effect";
 import type { RunError } from "../src/errors.ts";
 import type { LimitReset } from "../src/limitReset.ts";
 import type { ClaudeFailure } from "../src/transport.ts";
@@ -35,7 +35,7 @@ import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsM
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { OnExpiry, StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
-import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
+import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
 import { type DeciderDeps, deciderLayer } from "../src/decision.ts";
@@ -102,7 +102,12 @@ export function tempRepo(): string {
 
 /** One scripted answer: the text the user types, or a step that never completes (for interruption tests). */
 /** Issue #185: `{ noAnswer: true }`, a question whose wait runs out: the ask fails with NoAnswer. */
-export type ScriptedAnswer = string | { readonly wait: true } | { readonly noAnswer: true } | { readonly text: string; readonly before: () => void } | { readonly text: string; /** Issue #184: the answer is given once this promise resolves. */ readonly when: () => Promise<void> };
+export type ScriptedAnswer = string | { readonly wait: true } | { readonly noAnswer: true } | { readonly text: string; readonly before: () => void } | { readonly text: string; /** Issue #184: the answer is given once this promise resolves. */ readonly when: () => Promise<void> }
+  /**
+   * Issue #153: an answer given while a decision is being prepared, to the question still open beside it (`askDuring`),
+   * once `when` resolves, or at once. Only `askDuring` takes it; an ordinary ask that reaches it dies, naming the script.
+   */
+  | { readonly during: string; readonly when?: () => Promise<void> };
 
 /** A promise that resolves when `signal` is next called; for tests that wait for a double to be reached. */
 const readiness = (): { wait: () => Promise<void>; signal: () => void } => {
@@ -154,6 +159,29 @@ export class ScriptedUi implements UiShape {
   get nextQuestion(): Effect.Effect<number> {
     return Effect.sync(() => ++this.questions);
   }
+  /**
+   * Issue #153: a question open beside its decision takes the next scripted answer only where it is a `during` one; any
+   * other script runs the work to its end, so an answer after "/decide" answers the question asked again beside the analysis.
+   */
+  enterQuestion(_question: number): Effect.Effect<QuestionFrame, never, Scope.Scope> {
+    const askDuring = <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>): Effect.Effect<DuringAnswer<A>, E | UserStopped, R> =>
+      Effect.suspend(() => {
+        const next = this.answers[0];
+        if (next === undefined || typeof next === "string" || !("during" in next)) return Effect.map(work, (value): DuringAnswer<A> => ({ _tag: "Done", value }));
+        this.answers.shift();
+        this.asked.push(prompt);
+        this.order.push("during");
+        this.asks.signal();
+        const when = next.when;
+        const given: Effect.Effect<string> = when === undefined ? Effect.succeed(next.during) : Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(next.during))));
+        const answered = Effect.flatMap(given, (text): Effect.Effect<DuringAnswer<A>, UserStopped> => {
+          const parsed = kind === "line" ? parseAskLine(text) : parseMessage(text);
+          return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed({ _tag: "Answered", text: parsed.text });
+        });
+        return Effect.raceFirst(Effect.map(work, (value): DuringAnswer<A> => ({ _tag: "Done", value })), answered);
+      });
+    return Effect.succeed({ askDuring });
+  }
   /** The commands of src/input.ts, which the page sends: "q" ends the run at a one-line prompt. */
   ask(prompt: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> {
     return this.take(prompt, "ask", onExpiry, (text) => {
@@ -190,6 +218,7 @@ export class ScriptedUi implements UiShape {
       const answer = this.answers.shift();
       if (answer === undefined) return Effect.die(new Error(`no scripted answer for: ${prompt}`));
       if (typeof answer === "string") return Effect.succeed(answer);
+      if ("during" in answer) return Effect.die(new Error(`the scripted answer during a decision (${answer.during}) was reached by an ordinary ask: ${prompt}`));
       if ("wait" in answer) return Effect.never;
       if ("noAnswer" in answer) return Effect.fail(new NoAnswer({ where: prompt, seconds: 120, question: this.lastPresented, then: onExpiry }));
       if ("when" in answer) {
@@ -454,6 +483,13 @@ export class ScriptedPlanner implements PlannerShape {
           this.hangs.signal();
         });
       }
+      // Issue #153: the call waits for its gate (interruptibly) before it does anything else, so a test can hold it open.
+      return this.gated(step, Effect.suspend(() => this.planned(step, schema)));
+    });
+  }
+  /** The outcome of a scripted planning step once its gate opened: its writes, then its failure or its output. */
+  private planned(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
+    {
       if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
       const records = this.state.records();
       if (step.editRecord !== undefined) {
@@ -472,7 +508,7 @@ export class ScriptedPlanner implements PlannerShape {
       if (step.failure !== undefined) return Effect.fail(callFailure(step.failure.message, step.failure.facts));
       if (step.limit !== undefined) return Effect.fail(new UsageLimited({ agent: "claude", message: "You've hit your session limit", reset: step.limit.reset, limitType: step.limit.limitType }));
       return Effect.succeed({ output: this.withPlan(schema, step), resultText: step.resultText ?? "", costUsd: 0.1 });
-    });
+    }
   }
   /** Issue #184: the scripted replies of the first interview, apart from `steps`, and the prompts they answered. */
   replies: PlanningStep[] = [];
@@ -542,7 +578,7 @@ export class ScriptedPlanner implements PlannerShape {
       if (script.usage) self.recordUsage();
       if (script.permission !== undefined && ui !== null && self.callStore !== null) {
         const draft = permissionDraft(script.permission.tool, script.permission.input);
-        const answer = yield* askOffering((p) => ui.ask(p), permissionPrompt, draft).pipe(Effect.provideService(Ui, ui), Effect.provideService(Store, self.callStore));
+        const answer = yield* askOffering(byLine((p) => ui.ask(p)), permissionPrompt, draft).pipe(Effect.provideService(Ui, ui), Effect.provideService(Store, self.callStore));
         self.permissionAnswers.push(answer);
       }
       for (const [id, status] of script.reports ?? []) self.stepReplies.push(yield* reporter(id, status));
@@ -570,7 +606,7 @@ export class ScriptedPlanner implements PlannerShape {
  * `raw` replaces the reply text, for a reply that is not a review (or not JSON). `inputTokens` is the turn's input as
  * Codex would report it (issue #165), null without one.
  */
-export type ReviewStep = Review & { inputTokens?: number; fault?: string; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void };
+export type ReviewStep = Review & { inputTokens?: number; fault?: string; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
 
 export class ScriptedReviewer implements ReviewerShape {
   phases = 0;
@@ -589,11 +625,19 @@ export class ScriptedReviewer implements ReviewerShape {
     return {
       /** Returns the reply text as Codex would: the caller decodes it. */
       review: (prompt: string): Effect.Effect<ReviewReply, TransportFault> =>
-        Effect.sync(() => this.turn(prompt, phase)).pipe(
+        this.gated(prompt).pipe(
+          Effect.andThen(Effect.sync(() => this.turn(prompt, phase))),
           Effect.flatMap((reply) => (reply.fault === null ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens }) : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null })))),
         ),
     };
   });
+  /** The next review's gate, waited for interruptibly before the turn is taken (issue #153); none for a terms review. */
+  private gated(prompt: string): Effect.Effect<void> {
+    return Effect.suspend(() => {
+      const gate = prompt.includes(`/${pathOf({ kind: "terms" })}`) ? undefined : this.reviews[0]?.gate;
+      return gate === undefined ? Effect.void : Effect.callback<void>((resume) => void gate().then(() => resume(Effect.void)));
+    });
+  }
   /** One scripted turn: its effects on the files, then its reply text, or the fault it fails with. */
   /** The reviews of the terms (S17), apart from `reviews`; without one, a terms review raises no issue. */
   termsReviews: ReviewStep[] = [];
@@ -683,7 +727,7 @@ export class ScriptedSuite implements SuiteRunnerShape {
 }
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked
@@ -738,7 +782,7 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   planner.terms = [...(options.terms ?? [])];
   planner.replies = [...(options.replies ?? [])];
   planner.closings = [...(options.closings ?? [])];
-  planner.ui = ui;
+  planner.ui = options.ui ?? ui;
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
   const wrap = options.store ?? ((s: StoreShape) => s);
@@ -746,7 +790,7 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   // Issue #120: the project's tracker, a fake holding the scripted item (unrefined, as a refinement run finds it).
   const tracker = options.tracker ?? fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
   const suite = new ScriptedSuite(options.suite ?? []);
-  const layer = Layer.merge(withDecider(Layer.mergeAll(store, Layer.succeed(Ui, ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: options.mode ?? "implementation" }))), Layer.merge(Layer.succeed(Tracker, tracker.tracker), Layer.succeed(SuiteRunner, suite)));
+  const layer = Layer.merge(withDecider(Layer.mergeAll(store, Layer.succeed(Ui, options.ui ?? ui), Layer.succeed(Planner, planner), Layer.succeed(Reviewer, reviewer), Layer.succeed(RunConfig, config), Layer.succeed(RunKind, { mode: options.mode ?? "implementation" }))), Layer.merge(Layer.succeed(Tracker, tracker.tracker), Layer.succeed(SuiteRunner, suite)));
   const dir = paths.records();
   const loadLog = (subject: SubjectId = { plan: 1 }): Promise<readonly LogEntry[]> =>
     Effect.runPromise(makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.flatMap((s) => s.loadLog(subject)), Effect.provide(platformLayer)));

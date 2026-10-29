@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import fc from "fast-check";
-import { askOffering, numberedOptions, permissionDraft, type QuestionDraft, withContext } from "../src/offer.ts";
+import { askOffering, byLine, numberedOptions, permissionDraft, type QuestionDraft, withContext } from "../src/offer.ts";
 import { blockPieces, literalsOf, piecesText, plainBlocks, valueTokensOf } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { contextValidation, programWritten, writeContext } from "../src/questionContext.ts";
@@ -164,7 +164,7 @@ test("S9: a question that asks for its context is presented with the agent's par
   const ask = Effect.gen(function* () {
     yield* (yield* Store).init("the task");
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
   });
   await Effect.runPromise(ask.pipe(Effect.provide(layer)));
   const [q] = presentedQuestions(probe.ui);
@@ -188,7 +188,7 @@ test("F1 scenario: a context call that alters the command twice leaves Interloq'
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
     }).pipe(Effect.provide(layer)),
   );
   const [q] = presentedQuestions(probe.ui);
@@ -448,7 +448,7 @@ test("W3-R1-1 scenario (P4-R1-1): a reply that puts a two-line command in a code
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
     }).pipe(Effect.provide(layer)),
   );
   const problems = [...questionProblems({ ...inline }, []), { kind: "literalChanged" as const, subject: "" }];
@@ -558,7 +558,7 @@ test("W4-R1-1 scenario: a reply that moves the setting's reference onto its valu
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
     }).pipe(Effect.provide(layer)),
   );
   assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");
@@ -615,7 +615,7 @@ test("S32 scenario: a reply that drops one occurrence's reference twice leaves I
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
     }).pipe(Effect.provide(layer)),
   );
   assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");
@@ -661,7 +661,7 @@ test("S33 scenario (P6-R1-3): a reply whose option label is two adjacent code pi
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
     }).pipe(Effect.provide(layer)),
   );
   assert.equal(probe.planner.contextPrompts.length, 2, "one call and one repair turn");

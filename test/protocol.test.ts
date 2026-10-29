@@ -162,7 +162,10 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   // Issue #185: a prompt may count down, with its expiry.
   fc
     .tuple(nat, fc.constantFrom(...promptTexts), fc.option(fc.record({ fromMs: nat, untilMs: nat, then: fc.constantFrom(...ON_EXPIRIES) }), { nil: null }))
-    .map(([prompt, t, countdown]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown })),
+    .map(([prompt, t, countdown]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown, deciding: null })),
+  // Issue #153: a prompt open beside a decision being prepared names its question; a withdrawn one its prompt.
+  fc.tuple(nat, fc.constantFrom(...promptTexts), nat).map(([prompt, t, deciding]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown: null, deciding })),
+  fc.record({ _tag: fc.constant("PromptWithdrawn" as const), prompt: nat }),
   fc.record({ _tag: fc.constant("CountdownStopped" as const), prompt: nat, reason: fc.constantFrom("held" as const, "chainOff" as const) }),
   fc.record({ _tag: fc.constant("AnswerExpired" as const), prompt: nat, seconds: nat, then: fc.constantFrom(...ON_EXPIRIES) }),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
@@ -496,4 +499,17 @@ test("an Asked without its countdown decodes with null, and a hold frame with a 
   assert.ok(decodedFrame.type === "event" && decodedFrame.event._tag === "Asked" && decodedFrame.event.countdown === null);
   assert.ok(Result.isSuccess(decodeClient(JSON.stringify({ type: "hold", incarnation: "i", run: 1, prompt: 2 }))));
   assert.ok(Result.isFailure(decodeClient(JSON.stringify({ type: "hold", incarnation: "i", run: 1, prompt: 2.5 }))));
+});
+
+// Issue #153: an Asked recorded before `deciding` existed decodes with null; one opened beside a decision round-trips, and so
+// does the withdrawal of such a prompt.
+test("an Asked without deciding decodes with null; deciding and PromptWithdrawn round-trip", () => {
+  const asked = { _tag: "Asked", prompt: 3, ...promptOf(prompts.decisionPrompt), countdown: null };
+  const frame = { type: "event", run: 1, seq: 0, time: "t", event: asked };
+  const old = decoded(decodeServer(JSON.stringify(frame)));
+  assert.ok(old.type === "event" && old.event._tag === "Asked" && old.event.deciding === null);
+  const deciding = { ...frame, event: { ...asked, deciding: 3 } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(deciding))), deciding);
+  const withdrawn = { ...frame, event: { _tag: "PromptWithdrawn", prompt: 4 } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(withdrawn))), withdrawn);
 });

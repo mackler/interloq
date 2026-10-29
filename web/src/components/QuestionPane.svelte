@@ -16,10 +16,10 @@
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
   import { limitQuestionExpiredText, questionExpiredText, answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, EXPLAIN_TERMS, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
-  import type { Expired, Widget } from "../state.ts";
+  import { type Expired, offersDecision, type Widget } from "../state.ts";
   import AnswerCountdown from "./AnswerCountdown.svelte";
   import type { DraftKey } from "../draft.ts";
-  import { type Ending, endingOf, isTermsRequest } from "../../../src/input.ts";
+  import { type Ending, endingOf, isDecide, isTermsRequest } from "../../../src/input.ts";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
   import { blocksText, piecesText } from "../../../src/pieces.ts";
   import QuestionText from "./QuestionText.svelte";
@@ -63,8 +63,9 @@
   });
   const deliver = (value: string) => {
     if (widget === null) return;
-    // Issue #142: the request for the terms keeps the field's text for the same question asked again.
-    if (!offline && !isTermsRequest(value)) text = "";
+    // Issue #142: the request for the terms keeps the field's text for the same question asked again. Issue #153: so does
+    // Help me decide where the offer stands, since the question stays on the page while its analysis is prepared.
+    if (!offline && !isTermsRequest(value) && !(isDecide(value) && offersDecision(widget))) text = "";
     onAnswer(widget.asked.prompt, value);
   };
   // S25: a submission that ends the run, clicked or typed, is confirmed first by the one predicate of src/input.ts.
@@ -79,14 +80,23 @@
   // W1-R1-1 of work review 1: the pane is one scrolling region, and App reuses it for another tab's prompt, so it
   // returns to its top for each new prompt: the question and its first answer in view (the developer's decision of
   // 9 Oct 2026). Svelte runs the effect after the DOM shows the new prompt.
+  // Issue #153: what the developer is looking at, keyed by the presented question's number (the prompt's where the widget
+  // has no question): Help me decide moves the question to a new prompt, and the screen stays as it is, so the scroll
+  // position and the open sections follow the question, not the prompt. The confirmation stays bound to the prompt.
+  const viewIdentityOf = (): string | null =>
+    widget === null ? null : JSON.stringify([identity?.incarnation ?? null, identity?.run ?? null, widget.question === null ? `prompt-${widget.asked.prompt}` : `question-${widget.question.number}`]);
+  const viewIdentity = $derived(viewIdentityOf());
+  // Issue #153: between Help me decide and the question's opening beside its preparation no prompt is open on the
+  // server, so the pane's submission is inert: nothing sent, nothing cleared, no confirmation; the field stays editable.
+  const starting = $derived(widget?.decision === "starting");
   let paneElement = $state<HTMLElement | null>(null);
   $effect(() => {
-    void currentIdentity;
+    void viewIdentity;
     if (paneElement !== null) paneElement.scrollTop = 0;
   });
   let returnFocus: HTMLElement | null = null;
   const send = (value: string) => {
-    if (widget === null) return;
+    if (widget === null || starting) return;
     const ending = endingOf(widget.asked.kind, widget.asked.mode, value);
     if (ending === null) return deliver(value);
     returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -120,13 +130,13 @@
   const besideColumns = (count: number): string | null => (answersOnly && count >= 2 && count <= 3 ? `repeat(${count}, minmax(0, 1fr))` : null);
   type Section = "context" | "history" | "attached";
   let opened = $state<Readonly<{ key: string | null; open: readonly Section[] }>>({ key: null, open: [] });
-  const isOpen = (section: Section): boolean => opened.key === currentIdentity && opened.open.includes(section);
+  const isOpen = (section: Section): boolean => opened.key === viewIdentity && opened.open.includes(section);
   const setOpen = (section: Section, open: boolean) => {
-    const others = (opened.key === currentIdentity ? opened.open : []).filter((s) => s !== section);
-    opened = { key: currentIdentity, open: open ? [...others, section] : others };
+    const others = (opened.key === viewIdentity ? opened.open : []).filter((s) => s !== section);
+    opened = { key: viewIdentity, open: open ? [...others, section] : others };
   };
   // The bodies' ids, unique per prompt, so that two panes of the page never share one.
-  const sectionId = (section: Section): string => `question-${(currentIdentity ?? "none").replace(/[^A-Za-z0-9_-]+/g, "-")}-${section}`;
+  const sectionId = (section: Section): string => `question-${(viewIdentity ?? "none").replace(/[^A-Za-z0-9_-]+/g, "-")}-${section}`;
 </script>
 
 <!-- Issue #137: a collapsed section of the pane under its heading; its body carries the id sectionId(section). -->
@@ -163,7 +173,7 @@
           {#each question.options as option, i (i)}
             {#if "token" in option.answer}
               {@const token = option.answer.token}
-              <Card variant="outlined" onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}</span></Card>
+              <Card variant="outlined" disabled={starting} onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}</span></Card>
             {:else}
               <div class="numeric"><span class="option-label"><strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}<span class="m3-font-body-small">{NUMERIC_OPTION_NOTE}</span></div>
             {/if}
@@ -172,7 +182,7 @@
       {:else if widget.options.length > 0}
         <div class="options m3-font-body-medium" role="group" aria-label={PROPOSED_ANSWERS_LABEL} style:grid-template-columns={besideColumns(widget.options.length)}>
           {#each widget.options as option, i (i)}
-            <Card variant="outlined" onclick={() => send(option.sends)}>{option.label}</Card>
+            <Card variant="outlined" disabled={starting} onclick={() => send(option.sends)}>{option.label}</Card>
           {/each}
         </div>
       {/if}
@@ -185,9 +195,9 @@
         {#each widget.choices as choice, i (i)}
           {#if endsRunLabel(choice.label, choice.sends)}
             <!-- A button that ends the run: the error role, set apart from the ordinary choices (S25). -->
-            <span class="ends-run"><Button variant="outlined" type="button" onclick={() => send(choice.sends)}>{choice.label}</Button></span>
+            <span class="ends-run"><Button variant="outlined" type="button" disabled={starting} onclick={() => send(choice.sends)}>{choice.label}</Button></span>
           {:else}
-            <Button variant={variantOf(choice.label, i)} type="button" onclick={() => send(choice.sends)}>{choice.label}</Button>
+            <Button variant={variantOf(choice.label, i)} type="button" disabled={starting} onclick={() => send(choice.sends)}>{choice.label}</Button>
           {/if}
         {/each}
       </div>
@@ -201,7 +211,7 @@
         {/if}
         <div class="send-row">
           {#if !answersOnly}<p class="hint m3-font-body-small">{answerHint(widget.asked.free === "line" ? "line" : "message")}</p>{/if}
-          <Button variant="filled" type="button" name="send" disabled={text === ""} onclick={() => send(text)}>Send</Button>
+          <Button variant="filled" type="button" name="send" disabled={text === "" || starting} onclick={() => send(text)}>Send</Button>
         </div>
       {/if}
       </div>

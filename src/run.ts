@@ -19,7 +19,7 @@ import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
-import { askOffering, programContext, type QuestionDraft, suiteStoppedOptions } from "./offer.ts";
+import { askOffering, byLine, programContext, type QuestionDraft, suiteStoppedOptions } from "./offer.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
@@ -393,7 +393,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
             explain: suiteStoppedFacts(command, stops, repeated),
             decision: null,
           };
-          const answer = yield* askOffering((p) => ui.ask(p), transportPrompt, draft, (a) => parseTransportAnswer(a) !== null).pipe(inPhase({ kind: "suite", n }));
+          const answer = yield* askOffering(byLine((p) => ui.ask(p)), transportPrompt, draft, (a) => parseTransportAnswer(a) !== null).pipe(inPhase({ kind: "suite", n }));
           if (parseTransportAnswer(answer) === "stop") return yield* Effect.fail(new SuiteStopped({ command, suite: n, stops: stops.length, reason }));
         }
       });

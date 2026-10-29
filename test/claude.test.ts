@@ -629,7 +629,7 @@ test("a relayed question with options offers Help me decide, presents the questi
   const fake = await planner([script], ["/decide", "2"]);
   const { decider, requests } = recordingDecider();
   await run(fake.planner.planning("write the plan", schema), decider);
-  const [{ shown, ...request }] = requests as { shown: { context: string; terms: string; details: string } }[];
+  const [{ shown, opened: _opened, ...request }] = requests as { shown: { context: string; terms: string; details: string }; opened?: unknown }[];
   assert.deepEqual(request, { question: "A or B?", options: questions[0].options, number: 1 });
   // S37: the analysis is given the question as the user was shown it.
   assert.deepEqual(shown, { context: prompts.fallbackContext({ kind: "relayed" }), history: "", terms: "", details: "" });

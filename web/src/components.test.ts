@@ -82,8 +82,8 @@ const type = (el: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   flushSync();
 };
 const widget = (text: string, options: Widget["options"] = []): Widget => {
-  const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text), countdown: null };
-  return { asked, options, choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, text), countdown: null, held: true };
+  const asked = { _tag: "Asked" as const, prompt: 7, ...promptOf(text), countdown: null, deciding: null };
+  return { asked, options, choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, text), countdown: null, held: true, decision: "none" };
 };
 
 // Issue #1: a message's time, shown in its header or, when grouped, given to assistive technology only.
@@ -3076,7 +3076,7 @@ describe("QuestionPane: the countdown (issue #185)", () => {
   const counting = (then: "abandon" | "extend"): Widget => {
     const w = widget(prompts.optionOrTextPrompt);
     const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then };
-    return { ...w, asked: { ...w.asked, countdown }, countdown, held: false };
+    return { ...w, asked: { ...w.asked, countdown }, countdown, held: false, decision: "none" };
   };
   test("a counting prompt shows the indicator, the label of its kind and the button, which sends one hold", () => {
     for (const then of ["abandon", "extend"] as const) {

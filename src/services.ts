@@ -2,7 +2,7 @@
 // Tests provide scripted layers; src/web.ts provides the live ones. API names: docs/effect-v4-api.md.
 
 import { Context, Effect } from "effect";
-import type { Brand, Option, Schema } from "effect";
+import type { Brand, Option, Schema, Scope } from "effect";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
@@ -44,6 +44,24 @@ export type StepReply = Readonly<{ text: string; isError: boolean }>;
 export type StepReporter = (id: string, status: "started" | "done") => Effect.Effect<StepReply, RunError>;
 export type ReviewerError = CodexCallFailed | StoreError;
 
+/**
+ * Issue #153: how the answer to a question is read: a one-line prompt (`parseAskLine`, "q" ends the run) or an interview
+ * message (`parseMessage`, "/quit" ends the run).
+ */
+export type AskKind = "line" | "message";
+/** Issue #153: what ended a question open beside work: the work, with its value, or the user's answer, first. */
+export type DuringAnswer<A> = Readonly<{ _tag: "Done"; value: A }> | Readonly<{ _tag: "Answered"; text: string }>;
+/**
+ * Issue #153: the handle of one asking of one question (`UiShape.enterQuestion`). `askDuring` shows the prompt `prompt` in
+ * the handle's frame while `work` runs, and returns `Done` with work's value when work finishes first, or `Answered` with
+ * the user's text when an answer reaches the server first. An answer that ends the run ("q" for `line`, "/quit" for
+ * `message`) fails with UserStopped. It never counts down (issue #185): before this change nothing counted down while an
+ * analysis was prepared. Once answered, or once work finished, the frame stays, unanswerable, until the handle's Scope
+ * closes; a later `askDuring` on the same handle reuses it in place.
+ */
+export type QuestionFrame = Readonly<{
+  askDuring: <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>) => Effect.Effect<DuringAnswer<A>, E | UserStopped, R>;
+}>;
 export interface UiShape {
   readonly say: (text: string) => Effect.Effect<void>;
   /**
@@ -58,6 +76,12 @@ export interface UiShape {
   readonly notify: (event: UiEvent) => Effect.Effect<void>;
   /** The number of the next question the user is asked (S6): one sequence for the run, from 1, whatever produced the question. */
   readonly nextQuestion: Effect.Effect<number>;
+  /**
+   * Issue #153: pushes a frame for the question numbered `question`, unanswerable, which blocks every frame beneath it, so
+   * no question whose decision is being prepared beneath it is shown or answerable until the Scope closes, whatever
+   * prompts this question's asking shows. The frame is removed when the Scope closes. Each call makes a distinct frame.
+   */
+  readonly enterQuestion: (question: number) => Effect.Effect<QuestionFrame, never, Scope.Scope>;
 }
 export class Ui extends Context.Service<Ui, UiShape>()("plan-review/Ui") {}
 
@@ -322,7 +346,10 @@ export interface StoreShape {
 export class Store extends Context.Service<Store, StoreShape>()("plan-review/Store") {}
 
 /** A question a decision analyzes, without its phase: the Decider adds the phase it is bound to. */
-export type DecisionRequest = Readonly<{ question: string; options: readonly QuestionOption[]; /** What the user was shown with the question (S37). */ shown?: ShownWithQuestion; /** The displayed number of the question (S21), for the progress the user reads; no record keeps it. */ number?: number | null }>;
+export type DecisionRequest = Readonly<{ question: string; options: readonly QuestionOption[]; /** What the user was shown with the question (S37). */ shown?: ShownWithQuestion; /** The displayed number of the question (S21), for the progress the user reads; no record keeps it. */ number?: number | null;
+  /** Issue #153: called by the decision loop as soon as the decision's number is allocated, so the asker knows it when it abandons the decision. */
+  opened?: (decision: number) => Effect.Effect<void>;
+}>;
 /** How a decision loop ended: its number, the analysis as it stands, and the loop's result. */
 export type DecisionOutcome = Readonly<{ decision: number; analysis: DecisionAnalysis; result: LoopResult }>;
 /**

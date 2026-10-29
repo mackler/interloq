@@ -35,13 +35,21 @@ export const analysisValidation =
     return Result.succeed({ value: validated.success.analysis, notes });
   };
 /** One decision loop: the analysis, its review to convergence (or the user's proceed), and the analysis as it stands. */
-export const decisionLoop = (format: string, task: string, question: DecisionQuestion, number: number | null = null): Effect.Effect<DecisionEnd, RunError, Services> =>
+export const decisionLoop = (
+  format: string,
+  task: string,
+  question: DecisionQuestion,
+  number: number | null = null,
+  opened: (decision: number) => Effect.Effect<void> = () => Effect.void,
+): Effect.Effect<DecisionEnd, RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
     // A fresh session (Q3): the run's main session, possibly paused mid-call, is neither resumed nor forked.
     const planner = yield* (yield* Planner).fresh;
-    const k = yield* store.openDecision(question);
+    // Issue #153: the allocation and the asker's learning of k are one uninterruptible region, so an asker that
+    // interrupts the loop (an answer given during the wait) knows k whenever decision-<k>/ exists.
+    const k = yield* Effect.uninterruptible(store.openDecision(question).pipe(Effect.tap(opened)));
     yield* store.converse(renderDecisionOpened(k, question.question, question.options));
     // S21 (Q4): one plain status while the analysis is prepared, from the moment the offer is taken.
     yield* analysisProgress(k, number, 0);
@@ -74,7 +82,7 @@ export const makeDecider = (task: string, format: string): Effect.Effect<Decider
       const self: DeciderShape = {
         at,
         decide: (request) =>
-          decisionLoop(format, task, { phase, label, question: request.question, options: request.options, ...(request.shown === undefined ? {} : { shown: request.shown }) }, request.number ?? null).pipe(
+          decisionLoop(format, task, { phase, label, question: request.question, options: request.options, ...(request.shown === undefined ? {} : { shown: request.shown }) }, request.number ?? null, request.opened).pipe(
             Effect.map((end) => ({ decision: end.decision, analysis: end.analysis, result: end.result })),
             Effect.provideService(Decider, self),
             Effect.provideContext(context),

@@ -5,13 +5,13 @@
 // timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
 import type { SubjectId } from "../../src/artifacts.ts";
-import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
+import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { REFINEMENT_LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
-import { isTermsRequest } from "../../src/input.ts";
+import { isDecide, isTermsRequest } from "../../src/input.ts";
 import { correctionCount } from "../../src/issueLog.ts";
 import { SUITE_OUTCOMES, type SuiteOutcome } from "../../src/suite.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
@@ -127,7 +127,23 @@ export type Widget = Readonly<{
   hint: string;
   countdown: AnswerCountdown | null;
   held: boolean;
+  /**
+   * Issue #153: `none` an ordinary prompt; `starting` the prompt was answered Help me decide and the server has not yet
+   * opened the question beside its analysis (the pane stays, its submission inert); `preparing` the question open while
+   * its analysis is prepared (its controls live).
+   */
+  decision: "none" | "starting" | "preparing";
 }>;
+/**
+ * Issue #153: whether the widget offers decision support: one of its choices sends the decide command. The server starts
+ * a decision on "/decide" only while the offer stands, and the offer line is what puts that choice in the prompt's
+ * choices, so this agrees with the server by construction.
+ */
+export const offersDecision = (w: Widget): boolean => w.choices.some((c) => isDecide(c.sends));
+/** Issue #153: a question answered Help me decide whose analysis is being prepared, with its frame's prompt once asked. */
+export type Deciding = Readonly<{ question: number; widget: Widget; prompt: number | null }>;
+/** Issue #153: a prompt after which the same question is asked again under another prompt. */
+export type Followed = Readonly<{ prompt: number; question: number }>;
 /** Issue #185: a prompt whose wait ran out: its number, the wait and what the expiry did. */
 export type Expired = Readonly<{ prompt: number; seconds: number; then: OnExpiry }>;
 
@@ -229,6 +245,10 @@ export type RunView = Readonly<{
   ui: RunUiState;
   /** The "You and Interloq" panel as a dashboard (issue #22). */
   dashboard: Dashboard;
+  /** Issue #153: the questions answered Help me decide whose analysis is being prepared. */
+  deciding: readonly Deciding[];
+  /** Issue #153: the prompts after which the same question is asked again (a draft follows its question through them). */
+  followed: readonly Followed[];
 }>;
 
 /** A tab's items (issue #120): not asked yet, being asked for, listed, or the notice of why the tracker could not list them. */
@@ -327,7 +347,8 @@ export const selectMode = (state: ViewState, mode: RunMode): ViewState => ({ ...
  * The tab a page shows before the user has chosen one [visibility of system status]: the tab whose run waits for an
  * answer, else the tab of a run in progress, else the tab shown; once the user has chosen, his choice stands.
  */
-const waits = (r: RunView): boolean => r.pending !== null && r.ended === null;
+/** Issue #153: a question whose analysis is being prepared does not wait for the developer; it waits again when asked beside the analysis. */
+const waits = (r: RunView): boolean => r.pending !== null && r.pending.decision === "none" && r.ended === null;
 const unchosenTab = (state: ViewState): RunMode => {
   if (state.chosen) return state.selected;
   const held = (m: RunMode) => (m === "implementation" ? state.modes[m].runs.slice(-1) : state.modes[m].runs);
@@ -433,6 +454,8 @@ export const emptyRun = (id: number): RunView => ({
   foreseen: [],
   ui: emptyUiState,
   dashboard: emptyDashboard,
+  deciding: [],
+  followed: [],
 });
 
 /**
@@ -836,8 +859,12 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       const text = analysisProgressLine(event.decision, event.question, event.check);
       return { ...withInterloqLine(run, text), absorb: [text] };
     }
-    case "DecisionAnalyzed":
-      return { ...run, analysis: { event, prompt: null } };
+    case "DecisionAnalyzed": {
+      // Issue #153: the question beside its preparation goes; the decision page takes its place.
+      const number = event.presented.number;
+      const pending = run.pending !== null && run.pending.decision !== "none" && run.pending.question?.number === number ? null : run.pending;
+      return { ...run, pending, deciding: run.deciding.filter((d) => d.question !== number), analysis: { event, prompt: null } };
+    }
     case "AnswerRejected":
       // The question is asked again: the analysis its rejected answer dismissed goes to the next prompt.
       return run.dismissed === null ? run : { ...run, analysis: { ...run.dismissed, prompt: null }, dismissed: null };
@@ -890,6 +917,23 @@ const withClaude = (run: RunView, claude: ClaudeLatest): RunView => ({ ...run, d
 const withoutHelp = (run: RunView): RunView => (run.dashboard.interviewHelp === null ? run : { ...run, dashboard: { ...run.dashboard, interviewHelp: null } });
 const withInterloqLine = (run: RunView, text: string): RunView => ({ ...run, dashboard: { ...run.dashboard, status: { _tag: "Interloq", text: text.replace(/^[\r\n]+|[\r\n]+$/g, "") } } });
 
+/**
+ * Issue #153: the question open beside its decision's preparation, from its frame's Asked: the widget of the question
+ * answered Help me decide (or of this frame's prompt), else, for a frame reopened after a rejected answer, the question
+ * presented again. `dismissed` is cleared as by any Asked: another prompt is now shown, so a nested question's analysis
+ * its answer dismissed is not restored by a rejection of this one.
+ */
+const framed = (r: RunView, event: Extract<RunEvent, { _tag: "Asked" }>, question: number, time: string): RunView => {
+  const entry = r.deciding.find((d) => d.prompt === event.prompt) ?? r.deciding.find((d) => d.question === question && d.prompt === null);
+  const own = { asked: event, choices: event.choices, hint: pagePromptText(event.kind, event.text), countdown: null, held: true, decision: "preparing" as const };
+  if (entry !== undefined) {
+    const pending: Widget = { ...entry.widget, ...own };
+    return { ...r, pending, dismissed: null, deciding: r.deciding.map((d) => (d === entry ? { ...d, prompt: event.prompt } : d)) };
+  }
+  const pending: Widget = { ...own, options: r.questionOptions, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time };
+  return { ...r, pending, dismissed: null, questionOptions: [], presented: null, deciding: [...r.deciding, { question, widget: pending, prompt: event.prompt }] };
+};
+
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
 export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
   // The lines said for an interview turn or a relayed question are absorbed only while they follow it directly.
@@ -902,11 +946,12 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "Said":
         return event.text.trim() === "" ? r : withInterloqLine(r, event.text);
       case "Asked": {
+        if (event.deciding !== null) return framed(r, event, event.deciding, time);
         const extra = r.questionOptions;
         // Presented options belong to this prompt alone (P1-R1-2); an analysis waiting for its prompt gets this one.
         const analysis = r.analysis !== null && r.analysis.prompt === null ? { ...r.analysis, prompt: event.prompt } : r.analysis;
         const hint = pagePromptText(event.kind, event.text);
-        const pending: Widget = { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint, countdown: event.countdown, held: event.countdown === null };
+        const pending: Widget = { asked: event, options: extra, choices: event.choices, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time, hint, countdown: event.countdown, held: event.countdown === null, decision: "none" };
         return { ...r, pending, expired: r.expired?.then === "extend" ? null : r.expired, questionOptions: [], presented: null, analysis, dismissed: null };
       }
       // Issue #185: the countdown stopped for good; the prompt waits as long as it takes.
@@ -918,6 +963,16 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, "");
         return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds, then: event.then }, analysis, dismissed, explaining };
       }
+      // Issue #153: the prompt open beside a decision, withdrawn because the analysis is ready (S6 handles it).
+      case "PromptWithdrawn": {
+        const entry = r.deciding.find((d) => d.prompt === event.prompt);
+        return {
+          ...r,
+          deciding: r.deciding.filter((d) => d.prompt !== event.prompt),
+          followed: entry === undefined ? r.followed : [...r.followed, { prompt: event.prompt, question: entry.question }],
+          pending: r.pending?.asked.prompt === event.prompt ? null : r.pending,
+        };
+      }
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
@@ -925,12 +980,27 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const own = r.pending !== null && r.pending.asked.prompt === event.prompt ? r.pending : null;
         const shownAsked: AskedShown = own === null ? { _tag: "NotShown" } : own.question !== null ? { _tag: "Question", question: own.question } : { _tag: "Hint", hint: own.hint };
         const entry: AnsweredEntry = { key: `${r.id}-${r.nextSeq}`, asked: shownAsked, answer: chosen?.label ?? event.text };
-        return { ...r, dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] }, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
+        // Issue #153: Help me decide keeps the question on the page, starting, until the server opens it beside its analysis.
+        if (own !== null && own.decision === "none" && own.question !== null && isDecide(event.text) && offersDecision(own)) {
+          const question = own.question.number;
+          return {
+            ...r,
+            dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] },
+            pending: { ...own, decision: "starting" },
+            answered: [...r.answered, event.prompt],
+            analysis,
+            dismissed,
+            explaining,
+            deciding: [...r.deciding, { question, widget: own, prompt: null }],
+            followed: [...r.followed, { prompt: event.prompt, question }],
+          };
+        }
+        return { ...r, deciding: r.deciding.filter((d) => d.prompt !== event.prompt), dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] }, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
       }
       case "Notified":
         return notifiedEvent(r, event.event, time);
       case "Ended": {
-        const ended: RunView = { ...withoutHelp(withActivity(r, "")), explaining: null, ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...withoutHelp(withActivity(r, "")), explaining: null, deciding: [], ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }

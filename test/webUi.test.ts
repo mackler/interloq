@@ -267,3 +267,156 @@ test("an interruption during the countdown withdraws the prompt and publishes no
   assert.equal(await run(ui.pending), null);
   assert.ok(!events.some((e) => e._tag === "AnswerExpired"));
 });
+
+// ---- issue #153: the question open beside its decision ------------------------------------------------------------
+
+/** The Asked events published for a prompt. */
+const askedFor = (events: readonly RunEvent[], prompt: number) => events.filter((e) => e._tag === "Asked" && e.prompt === prompt);
+/** Waits until the events hold a frame's Asked (one with `deciding`) for the question, and returns its prompt. */
+const framePrompt = async (events: readonly RunEvent[], question: number, count = 1): Promise<number> => {
+  for (let i = 0; i < 200; i++) {
+    const found = events.filter((e) => e._tag === "Asked" && e.deciding === question);
+    if (found.length >= count) {
+      const last = found[found.length - 1];
+      if (last._tag === "Asked") return last.prompt;
+    }
+    await sleep(2);
+  }
+  throw new Error(`no frame was opened for question ${question}`);
+};
+/** Waits until the pending prompt is a different one from `not`. */
+const pendingOther = async (ui: WebUi, not: number): Promise<number> => {
+  for (let i = 0; i < 200; i++) {
+    const p = await run(ui.pending);
+    if (p !== null && p.prompt !== not) return p.prompt;
+    await sleep(2);
+  }
+  throw new Error("no other prompt became pending");
+};
+
+test("a frame's Asked carries the question it decides and no countdown; an answer to it is returned as Answered", async () => {
+  const { ui, events } = await withUi();
+  const work = await run(Deferred.make<string>());
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(4), (h) => h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work)))));
+  const prompt = await framePrompt(events, 4);
+  const asked = askedFor(events, prompt)[0];
+  assert.ok(asked._tag === "Asked" && asked.countdown === null && asked.deciding === 4);
+  assert.equal((await run(ui.pending))?.prompt, prompt);
+  assert.equal(await run(ui.answer(prompt, "2")), "taken");
+  assert.deepEqual(await run(Fiber.join(fiber)), { _tag: "Answered", text: "2" });
+  assert.equal(await run(ui.pending), null);
+});
+
+test("work finishing first gives Done, withdraws the prompt, and a later answer to it is refused", async () => {
+  const { ui, events } = await withUi();
+  const work = await run(Deferred.make<string>());
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work)))));
+  const prompt = await framePrompt(events, 1);
+  await run(Deferred.succeed(work, "analysis"));
+  assert.deepEqual(await run(Fiber.join(fiber)), { _tag: "Done", value: "analysis" });
+  assert.deepEqual(events[events.length - 1], { _tag: "PromptWithdrawn", prompt });
+  assert.equal(await run(ui.answer(prompt, "1")), "notWaiting");
+});
+
+test("an answer before the work's close wins even when the work finishes afterwards", async () => {
+  const { ui, events } = await withUi();
+  const work = await run(Deferred.make<string>());
+  const gate = await run(Deferred.make<void>());
+  const fiber = Effect.runFork(
+    Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Deferred.await(gate).pipe(Effect.andThen(Deferred.await(work)))))),
+  );
+  const prompt = await framePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "1")), "taken");
+  await run(Deferred.succeed(gate, undefined));
+  await run(Deferred.succeed(work, "late"));
+  assert.deepEqual(await run(Fiber.join(fiber)), { _tag: "Answered", text: "1" });
+  assert.equal(events.filter((e) => e._tag === "PromptWithdrawn").length, 0);
+});
+
+test("a foreground question asked inside the work takes the frame's place; its answer brings the frame back under its own number", async () => {
+  const { ui, events } = await withUi();
+  const inner = await run(Deferred.make<string>());
+  const work = Effect.gen(function* () {
+    const answer = yield* ui.ask(prompts.limitPrompt);
+    yield* Deferred.succeed(inner, answer);
+    return yield* Effect.never;
+  });
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", work))));
+  const frame = await framePrompt(events, 1);
+  const fore = await pendingOther(ui, frame);
+  assert.equal(await run(ui.answer(frame, "1")), "notWaiting");
+  assert.equal(await run(ui.answer(fore, "3")), "taken");
+  assert.equal(await run(Deferred.await(inner)), "3");
+  assert.equal(askedFor(events, frame).length, 2, "the frame's Asked is published again");
+  assert.deepEqual(askedFor(events, frame)[1], askedFor(events, frame)[0]);
+  assert.equal((await run(ui.pending))?.prompt, frame);
+  assert.equal(await run(ui.answer(frame, "2")), "taken");
+  assert.deepEqual(await run(Fiber.join(fiber)), { _tag: "Answered", text: "2" });
+});
+
+test("a nested question's whole asking blocks the outer frame until its scope closes", async () => {
+  const { ui, events } = await withUi();
+  const innerWork = await run(Deferred.make<string>());
+  const innerDone = await run(Deferred.make<void>());
+  const release = await run(Deferred.make<void>());
+  // The decision's loop asks a question with its own offer: entered first, asked in the foreground, answered /decide, then a
+  // text the asker rejects and asks again, then /decide, then held open beside its own decision.
+  const nested = Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* ui.enterQuestion(2);
+      const first = yield* ui.ask(prompts.limitPrompt);
+      assert.equal(first, "bad");
+      const second = yield* ui.ask(prompts.limitPrompt);
+      assert.equal(second, "/decide");
+      const during = yield* h.askDuring(prompts.limitPrompt, "line", Deferred.await(innerWork));
+      const again = yield* h.askDuring(prompts.limitPrompt, "line", Deferred.await(innerWork));
+      yield* Deferred.succeed(innerDone, undefined);
+      yield* Deferred.await(release);
+      return [during, again] as const;
+    }),
+  );
+  const outer = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Effect.andThen(nested, Effect.never)))));
+  const outerPrompt = await framePrompt(events, 1);
+  const outerAsked = () => askedFor(events, outerPrompt).length;
+  const fore = await pendingOther(ui, outerPrompt);
+  assert.equal(await run(ui.answer(fore, "bad")), "taken");
+  assert.equal(await run(ui.answer(outerPrompt, "1")), "notWaiting");
+  const fore2 = await pendingOther(ui, fore);
+  assert.equal(await run(ui.answer(fore2, "/decide")), "taken");
+  const innerPrompt = await framePrompt(events, 2);
+  assert.equal(outerAsked(), 1, "no outer Asked between the nested answers");
+  assert.equal(await run(ui.answer(outerPrompt, "1")), "notWaiting");
+  assert.equal(await run(ui.answer(innerPrompt, "4")), "taken");
+  const innerAgain = await framePrompt(events, 2, 2);
+  assert.equal(innerAgain, innerPrompt + 1, "the second askDuring opens a new prompt in the same frame");
+  assert.equal(outerAsked(), 1, "the outer frame stays blocked between the two askings of one handle");
+  await run(Deferred.succeed(innerWork, "analysis"));
+  await run(Deferred.await(innerDone));
+  assert.equal(await run(ui.answer(outerPrompt, "1")), "notWaiting", "blocked until the nested scope closes");
+  assert.equal(outerAsked(), 1);
+  await run(Deferred.succeed(release, undefined));
+  await framePrompt(events, 1, 2);
+  assert.equal(await run(ui.answer(outerPrompt, "1")), "taken");
+  assert.deepEqual(await run(Fiber.join(outer)), { _tag: "Answered", text: "1" });
+});
+
+test("q at a line frame and /quit at a message frame stop the run", async () => {
+  const { ui, events } = await withUi();
+  const stopped = async (kind: "line" | "message", question: number, answer: string) => {
+    const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(question), (h) => h.askDuring(prompts.decisionPrompt, kind, Effect.never))));
+    await run(ui.answer(await framePrompt(events, question), answer));
+    const exit = await run(Effect.exit(Fiber.join(fiber)));
+    assert.ok(Exit.isFailure(exit) && String(exit.cause).includes("UserStopped"), `${answer} did not stop`);
+  };
+  await stopped("line", 1, "q");
+  await stopped("message", 2, "/quit");
+});
+
+test("closing a frame's scope removes it: the prompt is no longer pending", async () => {
+  const { ui, events } = await withUi();
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Effect.never))));
+  const prompt = await framePrompt(events, 1);
+  await run(Fiber.interrupt(fiber));
+  assert.equal(await run(ui.pending), null);
+  assert.equal(await run(ui.answer(prompt, "1")), "notWaiting");
+});

@@ -4,7 +4,7 @@
 import { Clock, Duration, Effect, Exit, Result } from "effect";
 import { AgentUnreachable, type ProcessEnded, type RunError, type TransportFault, type UsageLimited } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
-import { askOffering, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
+import { askOffering, byLine, programContext, type QuestionDraft, transportOptions } from "./offer.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
@@ -140,7 +140,7 @@ export const withTransportRetry = <A, E, R>(
         // need the agent that cannot be reached; a pause for Codex gets its context from Claude Code (S12).
         const facts = prompts.transportFacts(agent, what, n, error.message);
         const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, error.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
-        const answer = yield* askOffering((p) => ui.ask(p), prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null);
+        const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null);
         const choice = parseTransportAnswer(answer) ?? "stop";
         yield* store.converse(prompts.transportDecisionLine(choice, agent, what));
         if (choice === "stop") return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: error.message }));

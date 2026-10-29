@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONFIRM_SUMMARY_LABEL, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -553,6 +553,32 @@ test.describe("the tests of the decide server, in order", () => {
     await other.close();
     await option(page, /PostgreSQL/).click();
     await toHaveEnded(page, 0);
+  });
+});
+
+// Issue #153 (requirements Q1): the question stays on the page while its analysis is prepared, and an answer given
+// then ends the wait without the analysis.
+test.describe("the tests of the decideWait server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(33) the question stays while its analysis is prepared, and an answer during it ends the wait", async ({ page }) => {
+    await startTask(page, "decideWait");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await openSection(page, CONTEXT_HEADING);
+    await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+    await expect(dashboard(page)).toContainText(analysisProgressLine(1, 1, 0));
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await expect(pane(page).getByRole("button", { name: CONTEXT_HEADING, exact: true })).toHaveAttribute("aria-expanded", "true");
+    await expect(option(page, /SQLite/)).toBeVisible();
+    await expect(option(page, /PostgreSQL/)).toBeEnabled();
+    await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: DECISION_REGION })).toHaveCount(0);
+    await pane(page).locator(".question-text .term", { hasText: "service" }).hover();
+    await expect(page.getByRole("tooltip")).toContainText("The program this task builds.");
+    await option(page, /PostgreSQL/).click();
+    await expect(dashboard(page).locator("[data-last-answer] [data-your-answer]").getByText("PostgreSQL — a database server")).toBeVisible();
+    await toHaveEnded(page, 0);
+    await expect(page.getByRole("region", { name: DECISION_REGION })).toHaveCount(0);
   });
 });
 

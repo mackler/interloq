@@ -5,7 +5,7 @@
 import { Clock, Data, Duration, Effect, Option, Ref, Result } from "effect";
 import type { HeldState, RunError, TrackerUnreachable, WriteCheck } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
-import { askOffering, askUnoffered, programContext, type QuestionDraft, trackerOptions } from "./offer.ts";
+import { askOffering, byLine, askUnoffered, programContext, type QuestionDraft, trackerOptions } from "./offer.ts";
 import { plainPieces } from "./pieces.ts";
 import * as prompts from "./prompts.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
@@ -229,7 +229,7 @@ export const runTrackerEnv: Effect.Effect<TrackerRetryEnv, never, Ui | Store | R
     ui,
     settings,
     record: (markdown) => store.converse(markdown),
-    ask: (draft) => askOffering((p) => ui.ask(p), prompts.transportPrompt, draft, acceptable).pipe(Effect.provideContext(context)),
+    ask: (draft) => askOffering(byLine((p) => ui.ask(p)), prompts.transportPrompt, draft, acceptable).pipe(Effect.provideContext(context)),
     exhausted: "ask",
   };
 });

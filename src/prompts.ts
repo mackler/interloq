@@ -2466,6 +2466,11 @@ export function analysisProgressLine(decision: number, question: number | null, 
   const which = question === null ? `Your analysis (Decision ${decision})` : `Your analysis for Question ${question} (Decision ${decision})`;
   return check === 0 ? `\n${which} is being written. It will be shown when it is ready.` : `${which} is being written and checked (check ${check} so far). It will be shown when it is ready.`;
 }
+/**
+ * Issue #153: decision k was abandoned because the user answered its question while its analysis was being prepared;
+ * said to the page and written to conversation.md.
+ */
+export const decisionAbandonedLine = (k: number): string => `Decision ${k} was abandoned: you answered its question while its analysis was being prepared.`;
 /** The offer's label (docs/decision-support-design.md, section 1): one per question, never one per option. */
 export const HELP_ME_DECIDE = "Help me decide";
 /** The line that carries the offer in a prompt text (D1): the page turns it into a button. */

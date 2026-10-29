@@ -197,6 +197,19 @@ parentheses, the document allows either — and the symbol sequence ("Equivalenc
   option's arguments, what is unclear about it and which readings are possible, and is shown under
   the option's heading in place of the two headings.
 
+### The wait (issue #153)
+
+While the analysis is prepared, the question stays on the page with its choices, its context, its attached material and
+its term explanations, and the status line reports the wait beside it; it carries neither "Help me decide" nor "Explain
+the terms". Its controls stay live. An answer given during the wait abandons the decision: Interloq interrupts the
+decision loop, records the answer in `decision-<k>/chosen.json`, writes the abandoned line and the choice to
+`conversation.md`, says the abandoned line on the page, and returns the answer as if no help had been asked for; the
+analysis files written so far stay. The decision's allocation is uninterruptible, so every allocated decision gets these
+records. Whichever of the answer and the finished analysis reaches the server first wins. A question the decision loop
+asks before the analysis is ready takes the question's place, and the question returns, as the same prompt, when that
+question's whole asking has ended; Help me decide on it follows the same rule, so no nested decision is open when an
+outer one is abandoned. A question being analyzed raises no notification and no waiting mark.
+
 ## 8. What this costs
 
 A decision loop is a full review loop: at least one Claude Code call and one Codex turn, and more if

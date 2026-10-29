@@ -254,7 +254,7 @@ test("a context-written label of a disputed pause chooses its position, and a pe
 // disagreement is about what the task requires; the call is told what that context must say.
 test("a marked pause keeps its context when the context call falls back, and the call is given the task-dispute facts", async () => {
   const { decisionDraft } = await import("../src/review.ts");
-  const { askOffering, programContext } = await import("../src/offer.ts");
+  const { askOffering, byLine, programContext } = await import("../src/offer.ts");
   const { programWritten } = await import("../src/questionContext.ts");
   const { plainBlocks } = await import("../src/pieces.ts");
   const { presentedQuestions } = await import("./helpers.ts");
@@ -268,7 +268,7 @@ test("a marked pause keeps its context when the context call falls back, and the
     await Effect.runPromise(Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.decisionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.decisionPrompt, draft);
     }).pipe(Effect.provideService(Decider, decider), Effect.provide(layer)));
     return { draft, requests, presented: presentedQuestions(probe.ui)[0] };
   };

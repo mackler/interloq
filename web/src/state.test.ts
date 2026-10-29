@@ -28,7 +28,7 @@ const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", c
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task", mode: "implementation", item: { id: "1", title: "the task" } };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
-const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text), countdown: null });
+const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(text), countdown: null, deciding: null });
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",
@@ -2615,7 +2615,7 @@ describe("the presented runs", () => {
 
 // Issue #185: the countdown of a question, its hold and its expiry by kind, the abandoned items' mark.
 describe("the countdown of a question (issue #185)", () => {
-  const counting = (prompt: number, then: "abandon" | "extend"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000, then } });
+  const counting = (prompt: number, then: "abandon" | "extend"): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.decisionPrompt), countdown: { fromMs: 1000, untilMs: 121_000, then }, deciding: null });
   test("an Asked with a countdown sets it on the pending prompt; CountdownStopped clears it and marks it held", () => {
     const s = fold(live([started, counting(1, "abandon")]));
     expect(runOf(s, "implementation")?.pending?.countdown).toEqual({ fromMs: 1000, untilMs: 121_000, then: "abandon" });
@@ -2660,5 +2660,117 @@ describe("the countdown of a question (issue #185)", () => {
     const [abandoned] = ended(begunChain, 4, { code: 2, root: null, parked: null, abandoned: { _tag: "SetRefined" } });
     expect([...abandonedInChain(abandoned)]).toEqual(["7"]);
     expect([...abandonedInChain(helloChain)]).toEqual([]);
+  });
+});
+
+// Issue #153 (requirements Q1, G-R1-1): the question stays on the page while its decision's analysis is prepared.
+describe("a question kept while its analysis is prepared", () => {
+  const OFFERED = prompts.withOffer(prompts.optionOrTextPrompt);
+  const questionNumbered = (number: number, text: string): UiEvent => {
+    const e = presentedEvent(text, [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }]);
+    return e._tag === "QuestionPresented" ? { ...e, question: { ...e.question, number } } : e;
+  };
+  const q1 = questionNumbered(1, "Which database?");
+  const q2 = questionNumbered(2, "More cycles?");
+  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question });
+  const answered = (prompt: number, text: string): RunEvent => ({ _tag: "Answered", prompt, text });
+  const analyzedOf = (number: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision: 1, question: "Which database?", presented: { ...presentedOf(q1), number }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } });
+  const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
+  const decided = [notified(q1), asked(1, OFFERED), answered(1, "/decide")];
+  const helpMeDecide = (r: RunView | null | undefined) => r?.pending?.choices.some((c) => c.label === prompts.HELP_ME_DECIDE);
+
+  test("Help me decide keeps the question as starting, with the same question and cards", () => {
+    const before = runAfter([notified(q1), asked(1, OFFERED)]);
+    const r = runAfter(decided);
+    expect(r?.pending?.decision).toBe("starting");
+    expect(r?.pending?.question?.number).toBe(1);
+    expect(r?.pending?.options).toEqual(before?.pending?.options);
+    expect(r?.deciding).toEqual([{ question: 1, widget: before?.pending, prompt: null }]);
+    expect(r?.followed).toEqual([{ prompt: 1, question: 1 }]);
+  });
+
+  test("the frame's Asked: preparing, the question kept, no Help me decide; a foreground question replaces it and it returns", () => {
+    const preparing = runAfter([...decided, frame(2, 1)]);
+    expect(preparing?.pending?.decision).toBe("preparing");
+    expect(preparing?.pending?.asked.prompt).toBe(2);
+    expect(preparing?.pending?.question?.number).toBe(1);
+    expect(helpMeDecide(preparing)).toBe(false);
+    const foreground = runAfter([...decided, frame(2, 1), notified(q2), asked(3, prompts.optionOrTextPrompt)]);
+    expect(foreground?.pending?.decision).toBe("none");
+    expect(foreground?.pending?.question?.number).toBe(2);
+    expect(runAfter([...decided, frame(2, 1), notified(q2), asked(3, prompts.optionOrTextPrompt), answered(3, "1")])?.pending).toBeNull();
+    const back = runAfter([...decided, frame(2, 1), notified(q2), asked(3, prompts.optionOrTextPrompt), answered(3, "1"), frame(2, 1)]);
+    expect(back?.pending?.question?.number).toBe(1);
+    expect(back?.pending?.decision).toBe("preparing");
+    const done = runAfter([...decided, frame(2, 1), answered(2, "2")]);
+    expect(done?.pending).toBeNull();
+    expect(done?.deciding).toEqual([]);
+    const last = done?.dashboard.answers.at(-1);
+    expect(last?.asked._tag === "Question" ? last.asked.question.number : null).toBe(1);
+    expect(last?.answer).toBe("PostgreSQL — a server");
+  });
+
+  test("PromptWithdrawn then DecisionAnalyzed: the frame goes, its prompt followed, the analysis kept for the next prompt", () => {
+    const r = runAfter([...decided, frame(2, 1), { _tag: "PromptWithdrawn", prompt: 2 }, notified(analyzedOf(1))]);
+    expect(r?.pending).toBeNull();
+    expect(r?.deciding).toEqual([]);
+    expect(r?.followed).toEqual([{ prompt: 1, question: 1 }, { prompt: 2, question: 1 }]);
+    expect(r?.analysis?.event.decision).toBe(1);
+  });
+
+  test("DecisionAnalyzed with no frame published clears the starting question", () => {
+    const r = runAfter([...decided, notified(analyzedOf(1))]);
+    expect(r?.pending).toBeNull();
+    expect(r?.deciding).toEqual([]);
+  });
+
+  test("/decide where no offer stands is an ordinary answer: pending cleared, nothing deciding or followed", () => {
+    const noOffer = runAfter([notified(q1), asked(1, prompts.optionOrTextPrompt), answered(1, "/decide")]);
+    expect(noOffer?.pending).toBeNull();
+    expect(noOffer?.deciding).toEqual([]);
+    expect(noOffer?.followed).toEqual([]);
+  });
+
+  test("a nested question's analysis dismissed by its answer is not restored by a rejection of the outer frame", () => {
+    const r = runAfter([...decided, frame(2, 1), notified(q2), asked(3, prompts.withOffer(prompts.optionOrTextPrompt)), notified(analyzedOf(2)), notified(q2), asked(4, prompts.optionOrTextPrompt), answered(4, "1"), frame(2, 1), answered(2, ""), notified({ _tag: "AnswerRejected" })]);
+    expect(r?.analysis).toBeNull();
+  });
+
+  test("a run whose question is being analyzed does not wait for the developer", () => {
+    const s = fold(live([started, ...decided, frame(2, 1)]));
+    expect(modeWaiting(s, "implementation")).toBe(false);
+    expect(modeWaiting(fold(live([started, notified(q1), asked(1, OFFERED)])), "implementation")).toBe(true);
+  });
+
+  test("a replay gives the view the live events give", () => {
+    const events = [started, ...decided, frame(2, 1), notified(q2), asked(3, prompts.optionOrTextPrompt), answered(3, "1"), frame(2, 1)];
+    const a = runOf(fold(live(events)), "implementation");
+    const b = runOf(replayed(events), "implementation");
+    expect(b?.pending).toEqual(a?.pending);
+    expect(b?.deciding).toEqual(a?.deciding);
+  });
+
+  test("property: whenever the pending prompt is the frame's, its question is the question answered Help me decide", () => {
+    fc.assert(
+      fc.property(fc.array(fc.constantFrom("frame", "foreground", "answer"), { maxLength: 12 }), (steps) => {
+        let events: RunEvent[] = [started, ...decided];
+        let prompt = 3;
+        let open: number | null = null;
+        for (const step of steps) {
+          if (step === "frame" && open === null) events = [...events, frame(2, 1)];
+          else if (step === "foreground" && open === null) {
+            open = prompt++;
+            events = [...events, notified(q2), asked(open, prompts.optionOrTextPrompt)];
+          } else if (step === "answer" && open !== null) {
+            events = [...events, answered(open, "1")];
+            open = null;
+          }
+          const r = runAfter(events.slice(1));
+          if (r?.pending?.asked.prompt === 2 && r.pending.question?.number !== 1) return false;
+        }
+        return true;
+      }),
+      { numRuns: 100 },
+    );
   });
 });

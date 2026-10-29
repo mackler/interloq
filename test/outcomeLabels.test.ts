@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import type { QuestionInvalid } from "../src/errors.ts";
-import { askOffering, permissionDraft, positionOptions } from "../src/offer.ts";
+import { askOffering, byLine, permissionDraft, positionOptions } from "../src/offer.ts";
 import { piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
 import * as prompts from "../src/prompts.ts";
 import { contextValidation } from "../src/questionContext.ts";
@@ -137,7 +137,7 @@ test("a permission request keeps its matching: a rephrased Allow label typed is 
     Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;
-      return yield* askOffering((p) => ui.ask(p), prompts.decisionPrompt, draft);
+      return yield* askOffering(byLine((p) => ui.ask(p)), prompts.decisionPrompt, draft);
     }).pipe(Effect.provide(layer)),
   );
   assert.equal(answer, allowShown, "not y, so Claude Code is denied as before");

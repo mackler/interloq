@@ -23,7 +23,7 @@
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
   import { chainFrame, holdFrame, itemsFrame, startFrame } from "../tabs.ts";
   import { fullTime } from "../time.ts";
-  import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
+  import { awaitedKey, carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { isTermsRequest } from "../../../src/input.ts";
   import { connect, type Connection } from "../socket.ts";
   import { tabTitle } from "../title.ts";
@@ -286,7 +286,8 @@
     const selected = p.mode === mode;
     const onScreen = selected && watched !== null && run !== null && watched.id === run.id;
     return {
-      pending: pendingKey(p.shown),
+      // Issue #153: a question whose analysis is being prepared raises no alert; asked beside its analysis, it does.
+      pending: awaitedKey(p.shown),
       run: watched === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: watched.id },
       ended: watched?.ended ?? null,
       visible,

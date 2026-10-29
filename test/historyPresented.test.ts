@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect } from "effect";
 import { asksNothing, turnDraft } from "../src/conversation.ts";
-import { askOffering, withContext } from "../src/offer.ts";
+import { askOffering, byLine, withContext } from "../src/offer.ts";
 import * as prompts from "../src/prompts.ts";
 import { writeContext } from "../src/questionContext.ts";
 import { renderQuestionRecord } from "../src/render.ts";
@@ -108,7 +108,7 @@ test("a program-composed question with a history keeps it when its context is th
   const ask = Effect.gen(function* () {
     yield* (yield* Store).init("the task");
     const ui = yield* Ui;
-    return yield* askOffering((p) => ui.ask(p), prompts.permissionPrompt, draft);
+    return yield* askOffering(byLine((p) => ui.ask(p)), prompts.permissionPrompt, draft);
   });
   await Effect.runPromise(ask.pipe(Effect.provideService(Decider, noDecider), Effect.provide(layer)));
   const [q] = presentedQuestions(probe.ui);

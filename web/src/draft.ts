@@ -2,10 +2,10 @@
 // of one start of the server; it is reconciled against the view after every reduction, live or replayed, so that
 // another tab's answer withdraws it with a notice instead of leaving it attached to the next prompt.
 
-import { isTermsRequest } from "../../src/input.ts";
+import { isDecide, isTermsRequest } from "../../src/input.ts";
 import { draftExpiredNotice, draftWithdrawnNotice } from "../../src/prompts.ts";
 import type { ClientMessage } from "../../src/protocol.ts";
-import type { Shown } from "./state.ts";
+import { offersDecision, type Shown } from "./state.ts";
 
 export type DraftKey = Readonly<{ incarnation: string; run: number; prompt: number }>;
 /**
@@ -21,6 +21,12 @@ export type Reconciled = Readonly<{ draft: Draft | null; notice: string | null }
 /** The key of the prompt the shown run waits on, or null (issue #120: each tab's run, shownRun of web/src/state.ts). */
 export const pendingKey = (view: Shown): DraftKey | null =>
   view.incarnation === null || view.run === null || view.run.pending === null ? null : { incarnation: view.incarnation, run: view.run.id, prompt: view.run.pending.asked.prompt };
+
+/**
+ * Issue #153: the key of the prompt the shown run waits on for the developer: null while the question is answered Help
+ * me decide and its analysis is being prepared (no notification, no title mark), the pending key otherwise.
+ */
+export const awaitedKey = (view: Shown): DraftKey | null => (view.run?.pending?.decision === "none" ? pendingKey(view) : null);
 
 /** Whether two keys name the same prompt of the same run of the same start of the server. */
 export const sameKey = (a: DraftKey, b: DraftKey): boolean => a.incarnation === b.incarnation && a.run === b.run && a.prompt === b.prompt;
@@ -42,6 +48,15 @@ export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
   // Issue #185: its prompt's wait ran out: withdrawn with the notice of what the expiry did, the text kept in it.
   const expired = sameRun ? view.run!.expired : null;
   if (expired !== null && expired.prompt === draft.key.prompt) return { draft: null, notice: draft.text.trim() === "" ? null : draftExpiredNotice(expired.then, draft.text) };
+  // Issue #153: a prompt after which its question is asked again under another prompt (Help me decide, a frame withdrawn
+  // because the analysis was ready): the draft waits while nothing is pending, follows its question, and is withdrawn
+  // for another one.
+  const follow = sameRun ? view.run!.followed.find((f) => f.prompt === draft.key.prompt) : undefined;
+  if (follow !== undefined) {
+    if (pending === null) return { draft, notice: null };
+    if (view.run!.pending?.question?.number === follow.question) return { draft: { _tag: "Held", key: pending, text: draft.text }, notice: null };
+    return withdrawn(draft);
+  }
   const overtaken = !sameRun || view.run!.answered.includes(draft.key.prompt);
   // A prompt neither pending nor answered in the same run (for example not yet replayed): the draft waits.
   if (!overtaken) return { draft, notice: null };
@@ -76,6 +91,8 @@ export const restoreUnsent = (draft: Draft | null, view: Shown, message: ClientM
   const pending = pendingKey(view);
   const own = pending !== null && sameKey(pending, unsentKey);
   if (!own) return { draft, quoted: message.text.trim() === "" ? null : message.text };
+  // Issue #153: Help me decide where the offer stands leaves the field as it is, so its unsent frame restores nothing.
+  if (isDecide(message.text) && view.run?.pending != null && offersDecision(view.run.pending)) return { draft, quoted: null };
   const current = draftFor(draft, pending);
   if (current === "") return { draft: { _tag: "Held", key: pending, text: message.text }, quoted: null };
   if (current === message.text || message.text.trim() === "") return { draft, quoted: null };

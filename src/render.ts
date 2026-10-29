@@ -2,7 +2,7 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
-import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, QUESTION_HISTORY_HEADING, questionTitle, TERMS_HEADING } from "./prompts.ts";
+import { attachedHeading, CONTEXT_BY_PROGRAM, decisionAbandonedLine, originLine, QUESTION_HISTORY_HEADING, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type ShownBlock, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
 import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, taskDisputeOf, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
@@ -138,6 +138,8 @@ export const renderLabelCorrected = (given: string, exact: string): string =>
   `**Option label corrected:** the analysis named ${JSON.stringify(given)}, which the program read as the option ${JSON.stringify(exact)}.\n\n`;
 /** A plan whose stage or step numbers were not 1…n in order, renumbered by position (issue #6: the numbers are display only). */
 export const renderPlanRenumbered = (): string => "**Plan renumbered:** the stage or step numbers of the plan were not 1, 2, 3 … in order; the program numbered them by position.\n\n";
+/** Issue #153: decision k abandoned by an answer given while its analysis was prepared, in conversation.md. */
+export const renderDecisionAbandoned = (k: number): string => `**${decisionAbandonedLine(k)}**\n\n`;
 /** The user's answer after decision k (decision Q4), in conversation.md. */
 export const renderChoice = (k: number, answer: string, option: string | null): string =>
   `**User choice** after decision ${k}: ${answer === "" ? "(none)" : answer}${option === null ? "" : ` (${option})`}\n\n`;
