@@ -69,5 +69,8 @@ export type GitState =
   | Readonly<{ _tag: "Detached" }>
   | Readonly<{ _tag: "InProgress"; operation: "rebase" | "merge" | "cherry-pick" | "revert" }>;
 
+/** Issue #185 (F1): what merging a parked run's branch did: merged at a commit, or a content conflict with git's message. */
+export type MergeOutcome = Readonly<{ _tag: "Merged"; commit: string }> | Readonly<{ _tag: "Conflicted"; message: string }>;
+
 /** What committing a halted run's leftovers did: nothing was left, or the commit it made. */
 export type LeftoverCommit = Readonly<{ _tag: "NothingLeft" }> | Readonly<{ _tag: "Committed"; commit: string }>;

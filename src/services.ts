@@ -12,7 +12,7 @@ import type { EarlierPlan } from "./earlierPlan.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
 import type { CommitCheck } from "./commitCheck.ts";
-import type { BranchName, GitState, LeftoverCommit, ParkRecord } from "./park.ts";
+import type { BranchName, GitState, LeftoverCommit, MergeOutcome, ParkRecord } from "./park.ts";
 import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type * as SchemaModule from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
@@ -204,6 +204,12 @@ export interface StoreShape {
   head(): Effect.Effect<string | null, StoreError>;
   /** The commit the branch names, or null where it does not exist. */
   branchTip(branch: BranchName): Effect.Effect<string | null, StoreError>;
+  /**
+   * Issue #185 (F1): merges a parked run's branch into the working branch with --no-verify (its commits are that run's
+   * unchecked work): Merged, a fast-forward or a merge commit; Conflicted, a content conflict, the merge aborted and the
+   * working tree as it was; any other failure, after aborting a merge it left, a GitError.
+   */
+  mergeParked(branch: string): Effect.Effect<MergeOutcome, StoreError>;
   /** Issue #185 (G-R1-1): whether the repository is on a branch with no rebase, merge, cherry-pick or revert in progress. */
   gitState(): Effect.Effect<GitState, StoreError>;
   /** Creates the branch at HEAD. */

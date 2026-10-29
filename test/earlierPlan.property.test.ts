@@ -5,8 +5,8 @@ import { test } from "node:test";
 import { Cause, Effect, Exit, Option, Result, Schema } from "effect";
 import fc from "fast-check";
 import { type RunRoot, runRootOf } from "../src/artifacts.ts";
-import { carriedPlan, type EarlierRunRecords, latestQualifying, planReviewConverged } from "../src/earlierPlan.ts";
-import { PLAN_FILE_LABEL, reviewConvergedMarkdown } from "../src/prompts.ts";
+import { carriedPlan, type EarlierRunRecords, latestQualifying, legacyEndingOf, planReviewConverged, undonePlan } from "../src/earlierPlan.ts";
+import { PLAN_FILE_LABEL, parkedRecordLine, reviewConvergedMarkdown, sentBackLine, stoppedUnrefinedLine } from "../src/prompts.ts";
 import { type RoundRecord, RoundFile, Baseline } from "../src/records.ts";
 import { subjectHeading } from "../src/render.ts";
 import { readRefinement } from "../src/refinement.ts";
@@ -126,4 +126,34 @@ test("seam: a plan review run until Codex raises no counted issue qualifies, one
     config: { maxRounds: 1 },
   });
   assert.equal(planReviewConverged(readRecords(proceeded.dir, ROOT)), false);
+});
+
+// Issue #185 (F1): after a merge that conflicted every step is implemented again, the plan otherwise unchanged.
+test("undonePlan keeps every id, label and text and leaves no step done", () => {
+  fc.assert(
+    fc.property(arbPlan, (plan) => {
+      const undone = undonePlan(plan);
+      const flat = (p: RecordedPlan) => p.stages.flatMap((s) => s.steps);
+      assert.deepEqual(flat(undone).map(({ id, label, text }) => [id, label, text]), flat(plan).map(({ id, label, text }) => [id, label, text]));
+      assert.ok(flat(undone).every((s) => s.status === "pending"));
+    }),
+    RUNS,
+  );
+});
+
+// Issue #185: a parked.json written before its ending was recorded is classified by what its parking wrote.
+test("legacyEndingOf recognizes the send-back endings' lines, and is halted for a halt's line, other text and none", () => {
+  const record = (branch: string) => ({ _tag: "Parked" as const, version: 2 as const, branch, commit: "c", start_commit: "s", committed: [] as string[], recorded: false, time: "t", ending: null });
+  fc.assert(
+    fc.property(fc.string({ minLength: 1 }), fc.string({ minLength: 1 }), fc.integer({ min: 1, max: 20 }), fc.string(), (item, branch, count, other) => {
+      assert.equal(legacyEndingOf(`${other}\n${parkedRecordLine(record(branch), "sentBack")}`), "sentBack");
+      assert.equal(legacyEndingOf(`${other}\n${sentBackLine(item, count)}`), "sentBack");
+      assert.equal(legacyEndingOf(`${parkedRecordLine(record(branch), "stoppedUnrefined")}\n${other}`), "stoppedUnrefined");
+      assert.equal(legacyEndingOf(stoppedUnrefinedLine(item)), "stoppedUnrefined");
+      assert.equal(legacyEndingOf(parkedRecordLine(record(branch), "halted")), "halted");
+    }),
+    RUNS,
+  );
+  assert.equal(legacyEndingOf(null), "halted");
+  assert.equal(legacyEndingOf("# Conversation record\n"), "halted");
 });

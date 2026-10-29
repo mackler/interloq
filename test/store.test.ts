@@ -592,3 +592,75 @@ test("commitLeftovers leaves a change staged before the run began staged and unc
   assert.deepEqual(committedFiles(repo, "HEAD"), ["a.txt"]);
   assert.match(git(repo, "status", "--porcelain"), /^A  staged\.txt/m);
 });
+
+// ---- Issue #185 (F1): merging a parked run's branch ----
+
+const mergeRepo = () => {
+  const repo = tempRepo();
+  const g = (...args: string[]) => execFileSync("git", ["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...args], { encoding: "utf8" }).trim();
+  g("config", "user.email", "t@t");
+  g("config", "user.name", "t");
+  const start = g("rev-parse", "HEAD");
+  g("checkout", "-q", "-b", "parked");
+  fs.writeFileSync(path.join(repo, "a.txt"), "the parked run's change\n");
+  g("commit", "-qam", "parked work");
+  g("checkout", "-q", "-");
+  return { repo, g, start };
+};
+const mergeStore = (repo: string) => Effect.runPromise(makeStore(repo, TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
+
+test("mergeParked: a branch based on HEAD fast-forwards", async () => {
+  const { repo, g } = mergeRepo();
+  const outcome = await Effect.runPromise((await mergeStore(repo)).mergeParked("parked"));
+  assert.deepEqual(outcome, { _tag: "Merged", commit: g("rev-parse", "parked") });
+});
+
+test("mergeParked: a conflict is Conflicted, the merge aborted, HEAD and the tree unchanged", async () => {
+  const { repo, g } = mergeRepo();
+  fs.writeFileSync(path.join(repo, "a.txt"), "another item's change\n");
+  g("commit", "-qam", "another item");
+  const head = g("rev-parse", "HEAD");
+  const outcome = await Effect.runPromise((await mergeStore(repo)).mergeParked("parked"));
+  assert.equal(outcome._tag, "Conflicted");
+  assert.equal(g("rev-parse", "HEAD"), head);
+  assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "another item's change\n");
+  assert.ok(!fs.existsSync(path.join(repo, ".git", "MERGE_HEAD")));
+  assert.equal(g("status", "--porcelain"), "");
+});
+
+test("mergeParked: a missing branch and a dirty tree the merge would overwrite fail with GitError, the changes intact", async () => {
+  const missing = mergeRepo();
+  const e1 = await Effect.runPromiseExit((await mergeStore(missing.repo)).mergeParked("nope"));
+  assert.ok(Exit.isFailure(e1) && JSON.stringify(e1.cause).includes("GitError"));
+  const dirty = mergeRepo();
+  fs.writeFileSync(path.join(dirty.repo, "a.txt"), "the developer's own change\n");
+  const e2 = await Effect.runPromiseExit((await mergeStore(dirty.repo)).mergeParked("parked"));
+  assert.ok(Exit.isFailure(e2) && JSON.stringify(e2.cause).includes("GitError"));
+  assert.equal(fs.readFileSync(path.join(dirty.repo, "a.txt"), "utf8"), "the developer's own change\n");
+});
+
+test("mergeParked: a merge commit refused by its signing fails with GitError, no MERGE_HEAD left and HEAD unchanged", async () => {
+  const { repo, g } = mergeRepo();
+  fs.writeFileSync(path.join(repo, "b.txt"), "another item's file\n");
+  g("add", "b.txt");
+  g("commit", "-qm", "another item");
+  const head = g("rev-parse", "HEAD");
+  g("config", "commit.gpgSign", "true");
+  g("config", "gpg.program", "false");
+  const exit = await Effect.runPromiseExit((await mergeStore(repo)).mergeParked("parked"));
+  assert.ok(Exit.isFailure(exit) && JSON.stringify(exit.cause).includes("GitError"));
+  assert.ok(!fs.existsSync(path.join(repo, ".git", "MERGE_HEAD")));
+  assert.equal(g("rev-parse", "HEAD"), head);
+});
+
+test("mergeParked: a pre-commit hook that refuses commits does not stop a non-fast-forward merge", async () => {
+  const { repo, g } = mergeRepo();
+  fs.writeFileSync(path.join(repo, "b.txt"), "another item's file\n");
+  g("add", "b.txt");
+  g("commit", "-qm", "another item");
+  fs.writeFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(repo, ".git", "hooks", "pre-merge-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const outcome = await Effect.runPromise((await mergeStore(repo)).mergeParked("parked"));
+  assert.equal(outcome._tag, "Merged");
+  assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "the parked run's change\n");
+});

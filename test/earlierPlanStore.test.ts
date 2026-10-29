@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { Effect, Result } from "effect";
 import { type RunRoot, runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
-import { PLAN_FILE_LABEL, reviewConvergedMarkdown } from "../src/prompts.ts";
+import { PLAN_FILE_LABEL, parkedRecordLine, reviewConvergedMarkdown, sentBackLine } from "../src/prompts.ts";
 import type { Baseline } from "../src/records.ts";
 import type { ParkRecord } from "../src/park.ts";
 import { subjectHeading } from "../src/render.ts";
@@ -107,7 +107,10 @@ test("parked: a newest run parked, or with its parking intended, gives EarlierRu
     parkedIn(repo, NEW, record);
     // Issue #186 (review P1-R2-1): Parked is a parking that completed, Intended one that did not.
     const parking = record._tag === "Parked" ? "complete" : "incomplete";
-    assert.deepEqual(await run((await storeOf(repo)).earlierPlan(item("80"))), { _tag: "EarlierRunParked", root: NEW, branch: "interloq/halted/80/x", parking }, record._tag);
+    // Issue #185: a parked halt whose plan review agreed carries its plan; an incomplete parking carries none.
+    const got = await run((await storeOf(repo)).earlierPlan(item("80")));
+    assert.ok(got._tag === "EarlierRunParked", record._tag);
+    assert.deepEqual({ ...got, plan: got.plan === null ? null : "plan" }, { _tag: "EarlierRunParked", root: NEW, branch: "interloq/halted/80/x", parking, ending: "halted", plan: parking === "complete" ? "plan" : null }, record._tag);
   }
 });
 
@@ -127,4 +130,45 @@ test("taken: an earlier run whose round file has the shape written before issue 
   fs.writeFileSync(path.join(repo, "plan-review", NEW, "planning-1", "round-1.json"), JSON.stringify(old));
   const got = await run((await storeOf(repo)).earlierPlan(item("80")));
   assert.equal(got._tag, "EarlierPlanTaken");
+});
+
+// ---- Issue #185 (F1): the ending of a parked run, and its own agreed plan ----
+
+const parkedRecord = (ending: ParkRecord extends infer R ? (R extends { ending: infer E } ? E : never) : never): ParkRecord => ({ _tag: "Parked", version: 2, branch: "interloq/halted/80/x", commit: "c", start_commit: "s", committed: [], recorded: true, time: "t", ending });
+
+test("a parked abandoned run with an agreed plan carries it, a running step unfinished; one without an agreed plan carries none", async () => {
+  for (const agreed of [true, false]) {
+    const repo = tempRepo();
+    earlier(repo, NEW, { agreed, plan: planOf("started") });
+    parkedIn(repo, NEW, parkedRecord("abandoned"));
+    const got = await run((await storeOf(repo)).earlierPlan(item("80")));
+    assert.ok(got._tag === "EarlierRunParked" && got.ending === "abandoned");
+    if (agreed) assert.deepEqual(got.plan?.stages[0]!.steps.map((s) => s.status), ["done", "unfinished"]);
+    else assert.equal(got.plan, null);
+  }
+});
+
+test("a parked send-back gives sentBack and no plan", async () => {
+  const repo = tempRepo();
+  earlier(repo, NEW, {});
+  parkedIn(repo, NEW, parkedRecord("sentBack"));
+  const got = await run((await storeOf(repo)).earlierPlan(item("80")));
+  assert.ok(got._tag === "EarlierRunParked" && got.ending === "sentBack" && got.plan === null);
+});
+
+test("a legacy parked.json: a withdrawn verdict and the halt's parking line give halted with its plan; a sentBackLine gives sentBack", async () => {
+  const legacy = { _tag: "Parked", version: 2, branch: "interloq/halted/80/x", commit: "c", start_commit: "s", committed: [], recorded: true, time: "t" };
+  const halted = tempRepo();
+  earlier(halted, NEW, {});
+  fs.mkdirSync(path.join(halted, "plan-review", NEW, "verdict-1"), { recursive: true });
+  fs.appendFileSync(path.join(halted, "plan-review", NEW, "conversation.md"), `\n${parkedRecordLine({ ...parkedRecord("halted"), _tag: "Parked" } as Extract<ParkRecord, { _tag: "Parked" }>, "halted")}\n`);
+  fs.writeFileSync(path.join(halted, "plan-review", NEW, "parked.json"), JSON.stringify(legacy));
+  const h = await run((await storeOf(halted)).earlierPlan(item("80")));
+  assert.ok(h._tag === "EarlierRunParked" && h.ending === "halted" && h.plan !== null);
+  const sent = tempRepo();
+  earlier(sent, NEW, {});
+  fs.appendFileSync(path.join(sent, "plan-review", NEW, "conversation.md"), `\n${sentBackLine("80", 1)}\n`);
+  fs.writeFileSync(path.join(sent, "plan-review", NEW, "parked.json"), JSON.stringify(legacy));
+  const b = await run((await storeOf(sent)).earlierPlan(item("80")));
+  assert.ok(b._tag === "EarlierRunParked" && b.ending === "sentBack" && b.plan === null);
 });

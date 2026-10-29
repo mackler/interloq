@@ -6,7 +6,7 @@ import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Path, type Platf
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import { type Artifact, guardedRecord, implementationRootsOf, LOG_SUBJECTS, subjectOf, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
-import { FileSystemError, GitError } from "./errors.ts";
+import { describe, FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
@@ -16,7 +16,7 @@ import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type Store
 import { type CommitCheck, commitCheckOf, uncommittedPaths } from "./commitCheck.ts";
 import { decodeStatusV2, excluded, type StatusRecord, excludedIndexPaths, type OwnWrite, type RecordsSnapshot, type Snapshot, type WorkingTreeEntry } from "./snapshot.ts";
 import { decodeText } from "./state.ts";
-import { carriedPlan, type EarlierPlan, type EarlierRunRecords, latestQualifying } from "./earlierPlan.ts";
+import { carriedPlan, type EarlierPlan, type EarlierRunRecords, latestQualifying, legacyEndingOf } from "./earlierPlan.ts";
 import type { ItemId } from "./tracker.ts";
 import type { CallFailure, LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
 import { callFailedFields, callFailureOf } from "./callFailureRecord.ts";
@@ -337,7 +337,14 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           // Read newest first and stop at the first that qualifies: the requirement names the most recent one (Q1).
           for (const earlier of implementationRootsOf(yield* list(runsDir), item, root)) {
             const parked = yield* decodedOrNull(path.join(project, RECORDS_DIR, earlier, pathOf({ kind: "parked" })), ParkRecordSchema);
-            if (parked !== null && parked._tag !== "Nothing") return { _tag: "EarlierRunParked", root: earlier, branch: parked.branch, parking: parked._tag === "Parked" ? "complete" : "incomplete" } as const;
+            if (parked !== null && parked._tag !== "Nothing") {
+              // Issue #185 (F1): the parked run's ending, read from its conversation.md where its parked.json predates
+              // the field, and, for a halt or an abandonment whose parking completed, its own agreed plan.
+              const records = yield* earlierRecords(earlier);
+              const ending = parked.ending ?? legacyEndingOf(records.conversation === "" ? null : records.conversation);
+              const agreed = parked._tag === "Parked" && (ending === "halted" || ending === "abandoned") ? latestQualifying([records]) : null;
+              return { _tag: "EarlierRunParked", root: earlier, branch: parked.branch, parking: parked._tag === "Parked" ? "complete" : "incomplete", ending, plan: agreed === null ? null : carriedPlan(agreed.plan) } as const;
+            }
             const found = latestQualifying([yield* earlierRecords(earlier)]);
             if (found === null) continue;
             const kept = found.baseline !== null && (yield* treeExists(found.baseline.tree)) ? found.baseline : null;
@@ -388,6 +395,21 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           Effect.map((out) => out.trim()),
           Effect.catchTag("GitError", () => Effect.succeed(null)),
         ),
+      mergeParked: (branch) =>
+        Effect.gen(function* () {
+          const merged = yield* Effect.result(git(["merge", "--no-edit", "--no-verify", "-q", branch]));
+          if (merged._tag === "Success") return { _tag: "Merged", commit: (yield* git(["rev-parse", "--verify", "HEAD"])).trim() } as const;
+          const failure = merged.failure;
+          // A content conflict leaves unmerged entries in the index; only that is Conflicted, after the merge is aborted.
+          const unmerged = (yield* git(["ls-files", "-u"])).trim() !== "";
+          const inMerge = yield* git(["rev-parse", "-q", "--verify", "MERGE_HEAD"]).pipe(
+            Effect.as(true),
+            Effect.catchTag("GitError", () => Effect.succeed(false)),
+          );
+          if (inMerge) yield* git(["merge", "--abort"]);
+          if (unmerged) return { _tag: "Conflicted", message: describe(failure) } as const;
+          return yield* Effect.fail(failure);
+        }),
       gitState: () =>
         Effect.gen(function* () {
           const onBranch = yield* git(["symbolic-ref", "-q", "HEAD"]).pipe(

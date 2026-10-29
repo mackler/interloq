@@ -3603,6 +3603,8 @@ const endingWords = (ending: ParkedEnding): Readonly<{ adjective: string; clause
   }
 };
 
+/** Issue #185: the clause of the parking's conversation.md line for an ending, which src/earlierPlan.ts recognizes. */
+export const parkedLineOpening = (ending: ParkedEnding): string => `**Parked:** this run ${endingWords(ending).clause}`;
 /** Issue #185 (G-R1-1): the sentence the park commit's message and the conversation.md line share. */
 export const PARK_UNCHECKED_SENTENCE = "The committed work was not checked: this commit skipped the project's hooks.";
 
@@ -3623,11 +3625,11 @@ export const parkedRecordLine = (record: ParkedRecord, ending: ParkedEnding = "h
   const paths = record.committed.length === 0 ? "no files were left uncommitted" : `the files it left uncommitted were committed with ${PARK_NO_VERIFY}, skipping the repository's hooks: ${record.committed.join(", ")}`;
   const keeps = ending === "halted" || ending === "stoppedUnrefined" ? " The item keeps the label implementing." : "";
   const unchecked = record.committed.length === 0 ? "" : ` ${PARK_UNCHECKED_SENTENCE}`;
-  return `**Parked:** this run ${endingWords(ending).clause}; ${paths}.${unchecked} Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began.${keeps}`;
+  return `${parkedLineOpening(ending)}; ${paths}.${unchecked} Its work is on the branch ${record.branch} (commit ${record.commit}), and the working branch was returned to commit ${record.start_commit}, where this run began.${keeps}`;
 };
 
 /** The line written to the halted run's conversation.md where there was nothing to keep. */
-export const nothingParkedLine = (ending: ParkedEnding = "halted"): string => `**Parked:** this run ${endingWords(ending).clause} with no work to keep: it made no commit and left no file uncommitted.`;
+export const nothingParkedLine = (ending: ParkedEnding = "halted"): string => `${parkedLineOpening(ending)} with no work to keep: it made no commit and left no file uncommitted.`;
 
 /** The chain's switch on the Implementation tab, its two optional fields and their supporting texts. */
 export const CHAIN_SWITCH_LABEL = "Start the next refined item when a run ends";
@@ -3887,11 +3889,14 @@ export const verdictStandsLine = (n: number): string => `Verdict ${n} stands: Co
 /** Said and written when Claude Code withdrew verdict n after Codex's review. */
 export const verdictWithdrawnLine = (n: number): string => `Verdict ${n} is withdrawn: Codex showed that the sources settle what it named, and Claude Code accepted it. The run goes on with a plan.`;
 /** Said and written when the item was sent back (issue #186): unrefined, with its comment, `count` times in all. */
-export const sentBackLine = (item: string, count: number): string =>
-  `Item ${item} is sent back to refinement: Interloq labeled it unrefined and added a comment saying what its requirements left out. It has been sent back ${count === 1 ? "once" : `${count} times`}.`;
+/** The fixed part of sentBackLine after the item, which src/earlierPlan.ts recognizes in an earlier run's conversation.md (issue #185). */
+export const SENT_BACK_PHRASE = "is sent back to refinement: Interloq labeled it unrefined and added a comment saying what its requirements left out.";
+export const sentBackLine = (item: string, count: number): string => `Item ${item} ${SENT_BACK_PHRASE} It has been sent back ${count === 1 ? "once" : `${count} times`}.`;
 /** Said and written when the guard of requirements Q5 stopped the item rather than sending it back. */
-export const stoppedUnrefinedLine = (item: string): string =>
-  `Item ${item} is not sent back: the refinement that last refined it asked you no question, so refining it again with nobody asked could repeat the same requirements. It stays implementing, its work parked, with a comment saying what was missing.`;
+/** The fixed part of stoppedUnrefinedLine after the item (issue #185, as SENT_BACK_PHRASE). */
+export const STOPPED_UNREFINED_PHRASE =
+  "is not sent back: the refinement that last refined it asked you no question, so refining it again with nobody asked could repeat the same requirements. It stays implementing, its work parked, with a comment saying what was missing.";
+export const stoppedUnrefinedLine = (item: string): string => `Item ${item} ${STOPPED_UNREFINED_PHRASE}`;
 /** The count of send-backs beside an item in the tabs' lists (issue #186, F1). */
 export const sentBackCountText = (n: number): string => `Sent back ${n === 1 ? "once" : `${n} times`}`;
 /** Why a verdict reply is refused (issue #186), one line each. */

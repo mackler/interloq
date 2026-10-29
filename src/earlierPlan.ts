@@ -7,7 +7,8 @@
 // is set aside.
 import type { RunRoot } from "./artifacts.ts";
 import { endExecution } from "./plan.ts";
-import { PLAN_FILE_LABEL, reviewConvergedMarkdown } from "./prompts.ts";
+import { PLAN_FILE_LABEL, parkedLineOpening, reviewConvergedMarkdown, SENT_BACK_PHRASE, STOPPED_UNREFINED_PHRASE } from "./prompts.ts";
+import type { ParkedEnding } from "./runEnding.ts";
 import type { Baseline, RoundRecord } from "./records.ts";
 import { subjectHeading } from "./render.ts";
 import type { RecordedPlan } from "./schema.ts";
@@ -32,7 +33,11 @@ export type EarlierPlan =
    * the parking completed (parked.json Parked: the branch was made at the park commit), this run's plan starts from
    * that branch; where it did not (Intended: written before any git write), the branch may be missing or unrelated.
    */
-  | Readonly<{ _tag: "EarlierRunParked"; root: RunRoot; branch: string; parking: "complete" | "incomplete" }>;
+  /**
+   * Issue #185 (F1): `ending`, how the parked run ended, and `plan`, its own plan where its plan review ended in
+   * agreement and it halted or was abandoned (null otherwise), which a later run takes after merging its branch.
+   */
+  | Readonly<{ _tag: "EarlierRunParked"; root: RunRoot; branch: string; parking: "complete" | "incomplete"; ending: ParkedEnding; plan: RecordedPlan | null }>;
 
 /** Whether some plan review of the run ended in agreement, as its records show. */
 export const planReviewConverged = (records: EarlierRunRecords): boolean =>
@@ -46,3 +51,20 @@ export const latestQualifying = (runs: readonly EarlierRunRecords[]): (EarlierRu
 
 /** The taken plan's statuses: done stays done, a step left running is begun and not finished (Q3). */
 export const carriedPlan = (plan: RecordedPlan): RecordedPlan => endExecution(plan);
+
+/** Issue #185 (F1): the plan with every step to be implemented again, after a merge of its branch that conflicted. */
+export const undonePlan = (plan: RecordedPlan): RecordedPlan => ({
+  stages: plan.stages.map((stage) => ({ ...stage, steps: stage.steps.map((step) => ({ ...step, status: "pending" as const })) })),
+});
+
+/**
+ * Issue #185: the ending of a parked.json written before it recorded one, read from what the parking wrote: only a
+ * send-back or a guard stop (issue #186) wrote their own line after its parking and named itself in the parking's line;
+ * any other parking was the chain's, of a halt. Never a verdict's directory, since a verdict may be withdrawn.
+ */
+export const legacyEndingOf = (conversation: string | null): ParkedEnding => {
+  if (conversation === null) return "halted";
+  if (conversation.includes(parkedLineOpening("stoppedUnrefined")) || conversation.includes(STOPPED_UNREFINED_PHRASE)) return "stoppedUnrefined";
+  if (conversation.includes(parkedLineOpening("sentBack")) || conversation.includes(SENT_BACK_PHRASE)) return "sentBack";
+  return "halted";
+};
