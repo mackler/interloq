@@ -3051,3 +3051,52 @@ describe("TimelineRail: the Full test suite (issue #162)", () => {
     expect(root.querySelectorAll(".entry button.rail-toggle").length).toBe(0);
   });
 });
+
+// Issue #185: the countdown of a question, the button that holds it, typing that holds it, and the expired notices.
+describe("QuestionPane: the countdown (issue #185)", () => {
+  const counting = (then: "abandon" | "extend"): Widget => {
+    const w = widget(prompts.optionOrTextPrompt);
+    const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then };
+    return { ...w, asked: { ...w.asked, countdown }, countdown, held: false };
+  };
+  test("a counting prompt shows the indicator, the label of its kind and the button, which sends one hold", () => {
+    for (const then of ["abandon", "extend"] as const) {
+      const holds: number[] = [];
+      const root = show(QuestionPane, { widget: counting(then), onAnswer: () => undefined, onHold: (p: number) => void holds.push(p) });
+      expect(root.querySelector("[data-answer-countdown]")).not.toBe(null);
+      // The time remaining ticks, so the label is compared after it: what the wait's end does, by its kind.
+      const tail = (label: string) => label.slice(label.indexOf("; then"));
+      expect(root.textContent).toContain(tail(then === "abandon" ? prompts.answerCountdownLabel("x") : prompts.limitCountdownLabel("x")));
+      const button = root.querySelector<HTMLButtonElement>("button[name=hold]")!;
+      expect(button.textContent?.trim()).toBe(prompts.WORKING_ON_IT);
+      button.click();
+      expect(holds).toEqual([7]);
+    }
+  });
+  test("text in the answer field sends the hold once; a held prompt shows neither the indicator nor the button", () => {
+    const holds: number[] = [];
+    show(QuestionPane, { widget: counting("abandon"), text: "my draft", onAnswer: () => undefined, onHold: (p: number) => void holds.push(p) });
+    flushSync();
+    expect(holds).toEqual([7]);
+    const held = show(QuestionPane, { widget: widget(prompts.optionOrTextPrompt), onAnswer: () => undefined, onHold: () => undefined });
+    expect(held.querySelector("[data-answer-countdown]")).toBe(null);
+    expect(held.querySelector("button[name=hold]")).toBe(null);
+  });
+  test("an expired question shows its notice by kind and no answer field", () => {
+    for (const then of ["abandon", "extend"] as const) {
+      const root = show(QuestionPane, { widget: null, expired: { prompt: 7, seconds: 120, then }, onAnswer: () => undefined });
+      expect(root.textContent).toContain(then === "abandon" ? prompts.questionExpiredText(120) : prompts.limitQuestionExpiredText(120));
+      expect(root.querySelector("[name=answer]")).toBe(null);
+    }
+  });
+});
+
+describe("ItemList: an item abandoned in the chain (issue #185)", () => {
+  test("carries the mark, and an item not abandoned does not", () => {
+    const items = [{ id: "1", title: "one", excerpt: "", url: null, sentBack: 0 }, { id: "2", title: "two", excerpt: "", url: null, sentBack: 0 }];
+    const root = show(ItemList, { mode: "implementation", items: { _tag: "Listed", items }, startable: { _tag: "Except", items: [] }, abandoned: new Set(["1"]), onStart: () => undefined, onRefresh: () => undefined });
+    const marks = [...root.querySelectorAll("[data-abandoned]")];
+    expect(marks.length).toBe(1);
+    expect(marks[0]!.textContent).toBe(prompts.ABANDONED_IN_CHAIN);
+  });
+});

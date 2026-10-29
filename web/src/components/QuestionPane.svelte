@@ -15,8 +15,9 @@
   // filled, because the agent's first option is not a recommended default [consistency and standards]; the fixed
   // choices keep the program's primary action filled. More cycles, answered with a typed number, is no button.
   import { Button, Card, TextFieldOutlined, TextFieldOutlinedMultiline } from "m3-svelte";
-  import { answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, EXPLAIN_TERMS, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
-  import type { Widget } from "../state.ts";
+  import { limitQuestionExpiredText, questionExpiredText, answerHint, attachedHeading, CONTEXT_HEADING, END_RUN_LABEL, EXPLAIN_TERMS, HELP_ME_DECIDE, NUMERIC_OPTION_NOTE, originLine, PROGRAM_CONTEXT_NOTE, PROPOSED_ANSWERS_LABEL, QUESTION_HISTORY_HEADING, questionTitle, SHOW_CONVERSATION } from "../../../src/prompts.ts";
+  import type { Expired, Widget } from "../state.ts";
+  import AnswerCountdown from "./AnswerCountdown.svelte";
   import type { DraftKey } from "../draft.ts";
   import { type Ending, endingOf, isTermsRequest } from "../../../src/input.ts";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
@@ -33,8 +34,31 @@
   // `answersOnly`: beside a decision's analysis, which shows the question with its context and terms (S22), the pane keeps
   // only the answers [aesthetic and minimalist design: the question is not shown twice].
   // `identity`: the pending prompt's full key (incarnation, run, prompt; ../draft.ts), to which a confirmation is bound.
-  type Props = { widget: Widget | null; identity?: DraftKey | null; text?: string; offline?: boolean; answersOnly?: boolean; onAnswer: (prompt: number, text: string) => void; onShowConversation?: () => void };
-  let { widget, identity = null, text = $bindable(""), offline = false, answersOnly = false, onAnswer, onShowConversation }: Props = $props();
+  // Issue #185: `onHold`, the developer is working on the prompt, so its countdown stops; `expired`, the last prompt
+  // whose wait ran out, whose notice takes the pane's place when no prompt waits [error prevention: no answer is typed
+  // into a question that no longer exists].
+  type Props = {
+    widget: Widget | null;
+    identity?: DraftKey | null;
+    text?: string;
+    offline?: boolean;
+    answersOnly?: boolean;
+    expired?: Expired | null;
+    onAnswer: (prompt: number, text: string) => void;
+    onHold?: (prompt: number) => void;
+    onShowConversation?: () => void;
+  };
+  let { widget, identity = null, text = $bindable(""), offline = false, answersOnly = false, expired = null, onAnswer, onHold = () => undefined, onShowConversation }: Props = $props();
+  // Issue #185: the first text typed into the field of a counting prompt holds it, once per prompt, as the button does.
+  let heldFor = $state<number | null>(null);
+  const hold = () => {
+    if (widget === null || heldFor === widget.asked.prompt) return;
+    heldFor = widget.asked.prompt;
+    onHold(widget.asked.prompt);
+  };
+  $effect(() => {
+    if (widget !== null && widget.countdown !== null && text.trim() !== "") hold();
+  });
   const deliver = (value: string) => {
     if (widget === null) return;
     // Issue #142: the request for the terms keeps the field's text for the same question asked again.
@@ -151,6 +175,7 @@
         </div>
       {/if}
       {#if question !== null && !answersOnly}<p class="asks m3-font-body-small">{widget.hint}</p>{/if}
+      {#if widget.countdown !== null}<AnswerCountdown wait={widget.countdown} onHold={hold} />{/if}
       <!-- Issue #133: beside an analysis the fixed choices, the field and Send share as few rows as fit, so that the columns
            of the decision page keep their height; elsewhere this wrapper adds nothing to the layout. -->
       <div class="controls">
@@ -209,9 +234,12 @@
     {/if}
   </section>
   <ConfirmEndDialog ending={confirming?.ending ?? null} onConfirm={confirm} onCancel={cancel} />
+{:else if expired !== null}
+  <p class="expired m3-font-body-medium" role="status" data-expired>{expired.then === "abandon" ? questionExpiredText(expired.seconds) : limitQuestionExpiredText(expired.seconds)}</p>
 {/if}
 
 <style>
+  .expired { margin: 0.5rem 1rem; padding: 0.75rem 1rem; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container); color: var(--m3c-on-surface-variant); }
   /* Issue #137: the pane fills the left column and is its one scrolling region; nothing inside it scrolls on its own. */
   .pane { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; background: var(--m3c-surface-container-low); border-radius: var(--m3-shape-medium); }
   /* Beside an analysis the pane holds only the answers, sized by them, the options side by side as everywhere. */

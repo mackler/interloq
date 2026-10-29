@@ -23,11 +23,13 @@
   import type { ListedItem } from "../../../src/protocol.ts";
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
-  import { ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
+  import { ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
   import type { ItemsView, StartableItems } from "../state.ts";
 
-  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
-  let { mode, items, startable, offline = false, terms = null, onTerms = () => undefined, onStart, onRefresh }: Props = $props();
+  // Issue #185: `abandoned`, the items whose run in the current chain stopped waiting for an answer, which carry a mark,
+  // so an item back in the refined list does not look untouched [visibility of system status].
+  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
+  let { mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), onTerms = () => undefined, onStart, onRefresh }: Props = $props();
   const texts = $derived(TAB_TEXTS[mode]);
   const inProgress = (id: string): boolean => startable._tag === "Except" && startable.items.includes(id);
   const startableItem = (id: string): boolean => startable._tag === "Except" && !startable.items.includes(id);
@@ -73,6 +75,7 @@
           <div class="trailing">
             <!-- Issue #186 (F1): how many times Interloq sent the item back to refinement, and nothing more. -->
             {#if item.sentBack > 0}<span class="in-progress m3-font-label-medium" data-sent-back>{sentBackCountText(item.sentBack)}</span>{/if}
+            {#if abandoned.has(item.id)}<span class="in-progress m3-font-label-medium" data-abandoned>{ABANDONED_IN_CHAIN}</span>{/if}
             {#if inProgress(item.id)}<span class="in-progress m3-font-label-medium">{ITEM_IN_PROGRESS}</span>{/if}
             <Button variant="text" type="button" name="start" data-item={item.id} disabled={!startableItem(item.id) || offline} onclick={() => onStart(item)}>{texts.action}</Button>
           </div>

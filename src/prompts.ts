@@ -2088,6 +2088,17 @@ export function answerHint(free: "line" | "message"): string {
 /** The accessible name of the agent's options, the cards above the fixed choices (issue #12). */
 export const PROPOSED_ANSWERS_LABEL = "Proposed answers";
 /** Another tab answered the prompt this tab had an unsent draft for (finding 5). */
+/** Issue #185: the label of a question's countdown, with the time remaining, by what its expiry does. */
+export const answerCountdownLabel = (remaining: string): string =>
+  `This question waits ${remaining} for an answer; then the run stops waiting, moves its work to the item's branch, sets the item's label to \`refined\`, and the chain starts the next item.`;
+export const limitCountdownLabel = (remaining: string): string => `This question waits ${remaining} for an answer; then the review goes on with more cycles and the run continues.`;
+/** Issue #185: the button that stops the countdown for good. */
+export const WORKING_ON_IT = "I'm working on this question";
+/** Issue #185: the notice in place of a question whose wait ran out. */
+export const questionExpiredText = (seconds: number): string => `This question expired after ${durationText(seconds * 1000)} with no answer, and its run has ended.`;
+export const limitQuestionExpiredText = (seconds: number): string => `This question expired after ${durationText(seconds * 1000)} with no answer; the review goes on with more cycles.`;
+/** Issue #185: the mark of an item whose run in the current chain stopped waiting for an answer. */
+export const ABANDONED_IN_CHAIN = "Its run in this chain stopped waiting for an answer";
 /** Issue #185: a draft whose question expired before it was sent, by what the expiry did; its text quoted. */
 export function draftExpiredNotice(then: "abandon" | "extend", text: string): string {
   const after = then === "abandon" ? "its run has ended" : "the review went on with more cycles and the run continues";

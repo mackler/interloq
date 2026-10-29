@@ -21,7 +21,7 @@
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
-  import { chainFrame, itemsFrame, startFrame } from "../tabs.ts";
+  import { chainFrame, holdFrame, itemsFrame, startFrame } from "../tabs.ts";
   import { fullTime } from "../time.ts";
   import { carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { isTermsRequest } from "../../../src/input.ts";
@@ -32,7 +32,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -49,6 +49,8 @@
    * An answer to the shown run's prompt. Issue #142: the request for the question's terms keeps the text typed beside
    * it, carried to the prompt that asks the same question again with its explanations.
    */
+  // Issue #185: the developer is working on the prompt; its countdown stops.
+  const hold = (target: RunView, prompt: number) => send(holdFrame(view.incarnation ?? "", target.id, prompt));
   const answer = (target: RunView, prompt: number, text: string) => {
     const key = draftKeyOf(target.id);
     const own = drafts[key] ?? null;
@@ -370,7 +372,7 @@
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
       {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
-      <ItemList {mode} items={tab.items} startable={startableOf(view, mode)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
+      <ItemList {mode} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
@@ -413,6 +415,7 @@
               identity={pendingKey(shownTab)}
               answersOnly
               {offline}
+              onHold={(prompt) => hold(run, prompt)}
               bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [draftKey]: key === null ? null : { _tag: "Held", key, text } }; }}
               onAnswer={(prompt, text) => answer(run, prompt, text)} />
           {/snippet}
@@ -440,6 +443,8 @@
             identity={pendingKey(shownTab)}
             onShowConversation={() => (conversationForPrompt = promptKey)}
             {offline}
+            expired={run.expired}
+            onHold={(prompt) => hold(run, prompt)}
             bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [draftKey]: key === null ? null : { _tag: "Held", key, text } }; }}
             onAnswer={(prompt, text) => answer(run, prompt, text)} />
         {/if}
