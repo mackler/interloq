@@ -202,6 +202,7 @@ export const FirstPlanReply = Schema.Struct({ reply: Schema.Union([FirstPlan, No
 export type FirstPlanReply = typeof FirstPlanReply.Type;
 /** The plan Claude Code writes after its verdict was withdrawn (requirements Q2), which cannot be a second verdict. */
 export const PlanOnly = Schema.Struct({ plan: Plan });
+export type PlanOnly = typeof PlanOnly.Type;
 /** Claude Code's response to a review of its verdict: the verdict as it now stands, beside a response's fields. */
 export const VerdictResponse = Schema.Struct({ ...plannerResponseFields, missing: Schema.String });
 export type VerdictResponse = typeof VerdictResponse.Type;

@@ -20,6 +20,8 @@ import { questionProblems } from "./question.ts";
 import { validatePlan } from "./plan.ts";
 import { normalizeQuestionList } from "./schemaNormalize.ts";
 import { Store, Ui } from "./services.ts";
+import type { VerdictRecord } from "./records.ts";
+import { verdictResponseValidation } from "./verdictValidation.ts";
 
 /** Records the list as questions.json after normalisation: an invalid list halts, and a dropped default is noted in the conversation. */
 export const writeQuestions = (task: string, list: QuestionList): Effect.Effect<void, RunError, Store> =>
@@ -250,5 +252,42 @@ export function workSubject(task: string, phase: number, withRequirements: boole
       const store = yield* Store;
       yield* store.changeRecord(phase);
     }),
+  };
+}
+
+/**
+ * Verdict n (issue #186, requirements Q2): Claude Code's verdict that the item is not refined, given in place of the
+ * run's first plan or at the end of an execution phase, reviewed by Codex in rounds. A round in which Claude Code accepts
+ * an objection ends the loop with revise, which the run reads as the verdict withdrawn; a decision of the developer at a
+ * pause does too, except one that keeps Claude Code's position, which is recorded and logged and does not leave the loop
+ * (standsWithPlanner, as in the work review); a loop that converges means the verdict stands. A disagreement that
+ * persists reaches the developer, as a disputed plan review does.
+ */
+export function verdictSubject(n: number, phase: number, phaseRecord: VerdictRecord["phase"], origin: prompts.VerdictOrigin, withRequirements: boolean): Subject<S.VerdictResponse, S.PlanOnly> {
+  const id = { verdict: n };
+  const recordOrigin: VerdictRecord["origin"] = origin._tag === "FirstPlan" ? "firstPlan" : "execution";
+  return {
+    id,
+    phase,
+    heading: subjectHeading(id),
+    fileLabel: "verdict.json",
+    reviewPrompt: (root, round, thread) => prompts.verdictReviewPrompt(root, n, round, withRequirements, thread),
+    respond: {
+      prompt: (root, round) => prompts.verdictRespondPrompt(root, n, round, origin),
+      schema: S.VerdictResponse,
+      after: (output) => Effect.flatMap(Store, (store) => store.saveVerdict(n, { missing: output.missing, phase: phaseRecord, origin: recordOrigin })),
+      capability: "records",
+      validate: verdictResponseValidation(),
+    },
+    // Never issued: leaveOnDecision ends the loop instead of a planning call.
+    applyDecisions: { prompt: (root) => prompts.planApplyDecisionsPrompt(root, S.NO_STEP_CHECKS), schema: S.PlanOnly, after: null, validate: null },
+    amend: null,
+    proceed: null,
+    leaveOnAcceptance: true,
+    leaveOnDecision: true,
+    onUnchanged: null,
+    disputesSettledBy: "user",
+    reviewSchema: S.Review,
+    prepare: null,
   };
 }
