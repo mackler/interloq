@@ -5,9 +5,10 @@ import { type Change, renderChange } from "./snapshot.ts";
 import type { ProcessEnd } from "./transport.ts";
 import type { LimitReset } from "./limitReset.ts";
 import { ItemState } from "./tracker.ts";
+import { type ParkNote, ParkNoteSchema } from "./chain.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
-import { type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -154,6 +155,19 @@ export class ServerFault extends Data.TaggedError("ServerFault")<{ readonly mess
  * by its limit or unable to start, after the one automatic repeat. `stops` counts the stops in a row.
  */
 export class SuiteStopped extends Data.TaggedError("SuiteStopped")<{ readonly command: string; readonly suite: number; readonly stops: number; readonly reason: string }> {}
+/**
+ * Issue #186 (requirements Q5): the verdict stood, but the item is not sent back: the refinement that last refined it
+ * asked the developer no question (`refinementAskedNothing`; its work parked, `park`), or the run has no tracker and so
+ * no item to send back (`noTracker`, `park` null).
+ */
+export class NotRefinedStopped extends Data.TaggedError("NotRefinedStopped")<{ readonly item: string | null; readonly missing: string; readonly reason: "refinementAskedNothing" | "noTracker"; readonly park: ParkNote | null }> {}
+/** Issue #186 (requirements Q6): the parking of a send-back or a guard stop failed: the work stays where it is and the item implementing. */
+export class SendBackNotParked extends Data.TaggedError("SendBackNotParked")<{ readonly item: string; readonly message: string; readonly park: ParkNote }> {}
+/**
+ * Issue #186 (review P1-R1-2): the parking of a send-back or a guard stop succeeded and a later tracker step, the comment
+ * or the label, failed for good; `cause` is that step's halt text, with what the item held after it.
+ */
+export class SendBackIncomplete extends Data.TaggedError("SendBackIncomplete")<{ readonly item: string; readonly ending: "sentBack" | "stoppedUnrefined"; readonly park: ParkNote; readonly cause: string }> {}
 /** Issue #186: Claude Code's verdict that the item is not refined was refused after its validation repair turn. */
 export class VerdictInvalid extends Data.TaggedError("VerdictInvalid")<{ readonly problem: VerdictProblem }> {}
 /**
@@ -228,6 +242,9 @@ export type RunError =
   | ServerFault
   | SuiteStopped
   | VerdictInvalid
+  | NotRefinedStopped
+  | SendBackNotParked
+  | SendBackIncomplete
   | Interrupted;
 
 const indent = (changes: readonly Change[]): string => changes.map((change) => `\n  ${renderChange(change)}`).join("");
@@ -312,6 +329,12 @@ export const describe = (error: RunErrorFields): string => {
       return suiteStoppedText(error.command, error.suite, error.stops, error.reason);
     case "VerdictInvalid":
       return verdictInvalidText(error.problem);
+    case "NotRefinedStopped":
+      return notRefinedStoppedText(error.item, error.reason, error.missing);
+    case "SendBackNotParked":
+      return sendBackNotParkedText(error.item, error.message);
+    case "SendBackIncomplete":
+      return sendBackIncompleteText(error.item, error.ending, error.park, error.cause);
     case "Interrupted":
       return `interrupted during ${error.where}`;
   }
@@ -376,6 +399,9 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),
   Schema.Struct({ _tag: Schema.Literal("ServerFault"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("SuiteStopped"), command: Schema.String, suite: Schema.Number, stops: Schema.Number, reason: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("NotRefinedStopped"), item: Schema.NullOr(Schema.String), missing: Schema.String, reason: Schema.Literals(["refinementAskedNothing", "noTracker"]), park: Schema.NullOr(ParkNoteSchema) }),
+  Schema.Struct({ _tag: Schema.Literal("SendBackNotParked"), item: Schema.String, message: Schema.String, park: ParkNoteSchema }),
+  Schema.Struct({ _tag: Schema.Literal("SendBackIncomplete"), item: Schema.String, ending: Schema.Literals(["sentBack", "stoppedUnrefined"]), park: ParkNoteSchema, cause: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("VerdictInvalid"), problem: Schema.Literals(["blankMissing", "questionsAsked"]) }),
   Schema.Struct({ _tag: Schema.Literal("Interrupted"), where: Schema.String }),
 ]);

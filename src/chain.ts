@@ -49,7 +49,7 @@ export type ParkNote =
   | Readonly<{ _tag: "Parked"; branch: string; commit: string }>
   | Readonly<{ _tag: "NothingParked" }>
   | Readonly<{ _tag: "ParkFailed"; message: string }>;
-const ParkNoteSchema = Schema.Union([
+export const ParkNoteSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Pending") }),
   Schema.Struct({ _tag: Schema.Literal("Parked"), branch: Schema.String, commit: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("NothingParked") }),

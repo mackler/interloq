@@ -33,6 +33,9 @@ import {
   StateFileInvalid,
   SuiteStopped,
   VerdictInvalid,
+  NotRefinedStopped,
+  SendBackNotParked,
+  SendBackIncomplete,
   TrackerStepFailed,
   UserStopped,
 } from "../src/errors.ts";
@@ -91,6 +94,9 @@ const samples: { readonly [K in RunError["_tag"]]: Extract<RunError, { _tag: K }
   ServerFault: new ServerFault({ message: "boom" }),
   SuiteStopped: new SuiteStopped({ command: "npm test", suite: 2, stops: 2, reason: "timedOut" }),
   VerdictInvalid: new VerdictInvalid({ problem: "blankMissing" }),
+  NotRefinedStopped: new NotRefinedStopped({ item: "186", missing: "the retention period", reason: "refinementAskedNothing", park: { _tag: "Parked", branch: "interloq/halted/186/r", commit: "abc" } }),
+  SendBackNotParked: new SendBackNotParked({ item: "186", message: "git branch failed: exists", park: { _tag: "ParkFailed", message: "git branch failed: exists" } }),
+  SendBackIncomplete: new SendBackIncomplete({ item: "186", ending: "sentBack", park: { _tag: "NothingParked" }, cause: "the label could not be set" }),
   Interrupted: new Interrupted({ where: "planning" }),
 };
 
@@ -100,4 +106,12 @@ test("over the whole union, the page's halt text and the record are derived from
     assert.equal(haltMessage(sample), `HALTED: ${text}`, sample._tag);
     assert.ok(haltRecord(text).includes(text), sample._tag);
   }
+});
+
+// Issue #186: the three halts of a send-back name the item and the reason.
+test("the halts of a send-back name the item and why", () => {
+  assert.match(describe(samples.NotRefinedStopped), /item 186.*asked the developer no question/);
+  assert.match(describe(new NotRefinedStopped({ item: null, missing: "m", reason: "noTracker", park: null })), /no item in a tracker/);
+  assert.match(describe(samples.SendBackNotParked), /item 186.*could not be parked: git branch failed: exists/);
+  assert.match(describe(samples.SendBackIncomplete), /item 186.*no work to park.*the label could not be set/);
 });

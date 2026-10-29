@@ -2,7 +2,7 @@
 
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
-import type { ChainEndReason, ChainEntry, ChainState } from "./chain.ts";
+import type { ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -3809,3 +3809,18 @@ export const verdictInvalidText = (problem: VerdictProblem): string => `Claude C
 /** The validation repair turn of a verdict (issue #186). */
 export const verdictRepairPrompt = (problem: VerdictProblem): string =>
   validationRepairPrompt([VERDICT_PROBLEMS[problem]], [problem === "blankMissing" ? "State in 'missing' each thing the requirements leave out, why the sources do not settle it, and what a refinement would have to ask." : "Return an empty questions_for_user array: a point the developer must settle is what the verdict states."]);
+
+/** Issue #186: the halt of a verdict that stood and did not send the item back. */
+export const notRefinedStoppedText = (item: string | null, reason: "refinementAskedNothing" | "noTracker", missing: string): string =>
+  reason === "noTracker"
+    ? `Claude Code declared the task not refined and Codex's review let the verdict stand, but the run has no item in a tracker to send back. What its requirements leave out: ${missing}`
+    : `item ${item} was declared not refined, and Codex's review let the verdict stand, but it was not sent back: the refinement that last refined it asked the developer no question, so refining it again with nobody asked could repeat the same requirements. Its work is parked and it stays implementing, with a comment saying what was missing`;
+/** Issue #186 (requirements Q6): the halt of a send-back whose parking failed, naming the git operation and what git reported. */
+export const sendBackNotParkedText = (item: string, message: string): string =>
+  `item ${item} was to be sent back to refinement, but its work could not be parked: ${message} The work stays where it is, nothing was reversed, and the item stays implementing`;
+/** Issue #186 (review P1-R1-2): the halt of a send-back whose parking succeeded and a later tracker step failed. */
+export const sendBackIncompleteText = (item: string, ending: "sentBack" | "stoppedUnrefined", park: ParkNote, cause: string): string => {
+  const parked = park._tag === "Parked" ? `its work is parked on the branch ${park.branch}` : park._tag === "NothingParked" ? "it had no work to park" : "its parking did not complete";
+  const meant = ending === "sentBack" ? "sent back to refinement" : "stopped and left implementing";
+  return `item ${item} was to be ${meant}; ${parked}, but a tracker step after the parking failed: ${cause}`;
+};
