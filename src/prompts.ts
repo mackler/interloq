@@ -2785,6 +2785,8 @@ export const SHOW_CONVERSATION = "Show the conversation";
 export const SHOW_QUESTION = "Back to the question";
 /** Issue #22: the dashboard's status line while nothing happens. */
 export const NO_AGENT_WORKING = "No agent is working.";
+/** Issue #22: the accessible name of the dashboard's compact form, under a question or the decision page. */
+export const DASHBOARD_COMPACT_NAME = "Status and earlier answers";
 /** Issue #22: the dashboard's label of its status line, Interloq's own place. */
 export const DASHBOARD_INTERLOQ_LABEL = "Interloq";
 /** Issue #22: the dashboard's label of Claude Code's latest message; the page names Claude Code "Claude" (issue #5). */

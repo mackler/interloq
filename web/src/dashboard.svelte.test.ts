@@ -119,6 +119,7 @@ describe("the dashboard", () => {
     expect(status?.classList.contains("compact")).toBe(true);
     for (const attr of ["data-models", "data-claude", "data-last-answer", "data-interview-help"]) expect(target.querySelector(`[${attr}]`), attr).toBe(null);
     expect(target.querySelector("h2")).toBe(null);
+    expect(target.querySelector("section")?.getAttribute("aria-label")).toBe(prompts.DASHBOARD_COMPACT_NAME);
     expect(target.querySelector("[data-answers-heading] button")).not.toBe(null);
     const open = mountDashboard(run, { compact: true, answersOpen: true });
     expect(open.target.querySelectorAll("[data-answers] [data-answer]").length).toBe(2);

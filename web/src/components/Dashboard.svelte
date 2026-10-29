@@ -8,9 +8,9 @@
   // and the real world]; and the heading of every answer, closed until opened, its open state the run's shared state, so
   // that every earlier answer stays reachable [recognition rather than recall; user control and freedom]. A region
   // without content is absent. `compact` renders the compact status line and the heading of every answer alone, for
-  // the column under a question or the decision page.
+  // the column under a question or the decision page, under a name of its own, since it is not the whole panel.
   import { render } from "../markdown.ts";
-  import { allAnswersHeading, DASHBOARD_CLAUDE_LABEL, itemHeadline, LAST_ANSWER_LABEL, YOU_LABEL } from "../../../src/prompts.ts";
+  import { allAnswersHeading, DASHBOARD_CLAUDE_LABEL, DASHBOARD_COMPACT_NAME, itemHeadline, LAST_ANSWER_LABEL, YOU_LABEL } from "../../../src/prompts.ts";
   import { type AnsweredEntry, lastAnswer, type RunView } from "../state.ts";
   import AnsweredQuestion from "./AnsweredQuestion.svelte";
   import Disclosure from "./Disclosure.svelte";
@@ -29,7 +29,7 @@
   <div class="you m3-font-body-medium"><span class="who m3-font-label-medium">{YOU_LABEL}</span><div class="markdown" data-your-answer>{@html render(entry.answer)}</div></div>
 {/snippet}
 
-<section class="dashboard" class:compact aria-label={NAME}>
+<section class="dashboard" class:compact aria-label={compact ? DASHBOARD_COMPACT_NAME : NAME}>
   {#if !compact}
     <h2 class="header">{run.item === null ? NAME : itemHeadline(run.item.id, run.item.title)}</h2>
     {#if d.models.claude !== null || d.models.codex !== null}
