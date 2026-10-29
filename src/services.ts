@@ -17,7 +17,7 @@ import type * as SchemaModule from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
-import type { LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
+import type { LimitWait, LimitWaitBegan, CallFailure, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
 import type { ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
@@ -251,6 +251,8 @@ export interface StoreShape {
   recordLimitWaitBegan(wait: LimitWaitBegan): Effect.Effect<void, StoreError>;
   /** One rate-limit notice of a Claude Code request, appended to usage.jsonl as it arrives (issue #170). */
   recordRateLimit(notice: RateLimitNotice): Effect.Effect<void, StoreError>;
+  /** One failed Claude Code request, its facts appended to usage.jsonl as a claude_call_failed line (issue #192). */
+  recordCallFailure(failure: CallFailure): Effect.Effect<void, StoreError>;
   /**
    * The hash of what a subject's rounds observe (behaviour 7): the reviewed file's content; for a work review the
    * diff recomputed from the baseline and the current tree (Q14). "" when it does not exist.

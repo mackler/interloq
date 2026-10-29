@@ -3,6 +3,7 @@
 
 import type { LimitWaitBasis } from "./limitReset.ts";
 import { durationText } from "./prompts.ts";
+import type { ClaudeFailure } from "./transport.ts";
 
 /** One line of usage.jsonl, per agent. A Claude Code line's session is null when the SDK reported none. */
 export type UsageLine =
@@ -34,6 +35,22 @@ export type LimitWait = LimitWaitBegan & Readonly<{ endedMs: number; outcome: "l
  */
 export type RateLimitNotice = Readonly<{ session: string | null; info: Readonly<Record<string, unknown>> }>;
 
+/** The purpose of a Claude Code request: a planning purpose of src/services.ts, or an execution call. */
+export type ClaudePurpose = "planning" | "interview" | "context" | "execution";
+
+/**
+ * One failed Claude Code request (issue #192, requirements Q1), as the program writes it and reads it back: the session
+ * and the call it belongs to, the call's error text, and the facts the adapter kept of the failure, or null where it
+ * kept none. Every text is already redacted (failureLineOf of src/callFailureRecord.ts).
+ */
+export type CallFailure = Readonly<{
+  session: string | null;
+  purpose: ClaudePurpose;
+  callId: string;
+  message: string;
+  failure: ClaudeFailure | null;
+}>;
+
 /**
  * The lines of usage.jsonl: the calls' usage, the waits, the rate-limit notices (issue #170) and the waits' starts
  * (issue #179); the summary uses neither of the last two.
@@ -43,6 +60,8 @@ export type UsageLines = Readonly<{
   waits: readonly LimitWait[];
   notices: readonly RateLimitNotice[];
   began: readonly LimitWaitBegan[];
+  /** The failed Claude Code requests (issue #192), which neither the summary nor the cost warning uses. */
+  failures: readonly CallFailure[];
 }>;
 
 export type UsageSummary = Readonly<{

@@ -447,7 +447,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       /** The usage lines of either version in their per-agent shape (src/usage.ts folds them); no file gives none. */
       usageLines: () =>
         Effect.gen(function* () {
-          if (!(yield* exists(usageFile))) return { calls: [], waits: [], notices: [], began: [] };
+          if (!(yield* exists(usageFile))) return { calls: [], waits: [], notices: [], began: [], failures: [] };
           const records = yield* Effect.fromResult(readUsage(usageFile, yield* readText(usageFile)));
           // Each record in its place by its kind; a call's line has none (issue #170).
           const waits = records.flatMap((r): LimitWait[] =>
@@ -466,7 +466,7 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const began = records.flatMap((r): LimitWaitBegan[] =>
             "kind" in r && r.kind === "usage_limit_wait_began" ? [{ agent: r.agent, limitType: r.limit_type, basis: r.basis, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until) }] : [],
           );
-          return { calls, waits, notices, began };
+          return { calls, waits, notices, began, failures: [] };
         }),
       /**
        * A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one; then the
@@ -492,6 +492,8 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const record: UsageRecord = { version: VERSION, kind: "rate_limit_event", agent: "claude", time: yield* now, session: notice.session, rate_limit_info: notice.info };
           yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
         }),
+      /** A failed Claude Code request's facts (issue #192). */
+      recordCallFailure: (_failure) => Effect.void,
       fileHash: (subject) =>
         typeof subject === "object" && "work" in subject
           ? diffText().pipe(Effect.map((text) => (text === null ? "" : createHash("sha256").update(text).digest("hex"))))

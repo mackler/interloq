@@ -615,7 +615,37 @@ export const RateLimitNoticeUsage = Schema.Struct({
   session: Schema.NullOr(Schema.String),
   rate_limit_info: Schema.Record(Schema.String, Schema.Unknown),
 });
-export const UsageRecord = Schema.Union([LimitWaitUsage, LimitWaitBeganUsage, RateLimitNoticeUsage, ClaudeUsage, CodexUsage]);
+/** The purposes of a Claude Code request, as src/services.ts names them (PlanningPurpose and EXECUTION_PURPOSE). */
+export const CLAUDE_PURPOSES = ["planning", "interview", "context", "execution"] as const;
+/**
+ * One failed Claude Code request (issue #192, requirements Q1): the facts the adapter kept of the failure
+ * (ClaudeFailure of src/transport.ts), each an explicit nullable field, with the session, the purpose and the call's
+ * id, so that the next lapsed login shows what the Agent SDK returns for it. `failure_known` is false where the
+ * adapter kept no facts at all, every fact then null. Every value of a credential-named variable is redacted.
+ */
+export const ClaudeCallFailedUsage = Schema.Struct({
+  version: Schema.Literal(2),
+  kind: Schema.Literal("claude_call_failed"),
+  agent: Schema.Literal("claude"),
+  time: Schema.String,
+  session: Schema.NullOr(Schema.String),
+  purpose: Schema.Literals(CLAUDE_PURPOSES),
+  call_id: Schema.String,
+  message: Schema.String,
+  failure_known: Schema.Boolean,
+  stream_code: Schema.NullOr(Schema.String),
+  api_status: Schema.NullOr(Schema.Int),
+  terminal_reason: Schema.NullOr(Schema.String),
+  assistant_error: Schema.NullOr(Schema.String),
+  subtype: Schema.NullOr(Schema.String),
+  result_text: Schema.NullOr(Schema.String),
+  retry_seen: Schema.NullOr(Schema.Struct({ status: Schema.NullOr(Schema.Int), error: Schema.String })),
+  rejection: Schema.NullOr(
+    Schema.Struct({ kind: Schema.Literals(["withReset", "withoutReset"]), limit_type: Schema.NullOr(Schema.String), resets_at: Schema.NullOr(Schema.String) }),
+  ),
+  process_end: Schema.NullOr(Schema.Union([Schema.Struct({ kind: Schema.Literal("signal"), signal: Schema.String }), Schema.Struct({ kind: Schema.Literal("exit"), code: Schema.Int })])),
+});
+export const UsageRecord = Schema.Union([LimitWaitUsage, LimitWaitBeganUsage, RateLimitNoticeUsage, ClaudeCallFailedUsage, ClaudeUsage, CodexUsage]);
 
 // The types, under the names the program used before the schemas existed.
 export type Severity = typeof Severity.Type;
@@ -684,6 +714,7 @@ export type ReviewEntry = typeof ReviewEntry.Type;
 export type Config = typeof Config.Type;
 export type QuestionsFile = typeof QuestionsFile.Type;
 export type UsageRecord = typeof UsageRecord.Type;
+export type ClaudeCallFailedUsage = typeof ClaudeCallFailedUsage.Type;
 
 /** The first problem of a failed decode: the field path (`a.b[0]`, or "" at the root) and the message. */
 export const firstIssue = (error: Schema.SchemaError): { path: string; message: string } => {
