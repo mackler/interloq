@@ -7,9 +7,12 @@ import type { RunMode } from "./runMode.ts";
  * A reviewed subject: the question list, the requirements, the plan of one planning phase, the work of one execution
  * phase (the work review), or the analysis of decision k (decision support, numbered across the run).
  */
-export type SubjectId = "questions" | "terms" | "requirements" | Readonly<{ plan: number }> | Readonly<{ work: number }> | Readonly<{ decision: number }>;
-/** A subject whose phase follows from its identity; a decision's phase is where it took place, which its identity does not say. */
-export type PhasedSubject = Exclude<SubjectId, Readonly<{ decision: number }>>;
+export type SubjectId = "questions" | "terms" | "requirements" | Readonly<{ plan: number }> | Readonly<{ work: number }> | Readonly<{ decision: number }> | Readonly<{ verdict: number }>;
+/**
+ * A subject whose phase follows from its identity; a decision's phase is where it took place, which its identity does
+ * not say, and so is a verdict's (issue #186: numbered across the run, given at a planning phase or an execution phase).
+ */
+export type PhasedSubject = Exclude<SubjectId, Readonly<{ decision: number }> | Readonly<{ verdict: number }>>;
 
 export type Artifact =
   | Readonly<{ kind: "conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked" }>
@@ -25,7 +28,9 @@ export type Artifact =
   | Readonly<{ kind: "suiteLog"; n: number }>
   | Readonly<{ kind: "invalidReply"; agent: "claude" | "codex"; n: number }>
   /** Decision k: the question and its options, the reviewed analysis, the analysis call's raw output, the user's choice. */
-  | Readonly<{ kind: "decisionQuestion" | "analysis" | "analysisWrite" | "chosen"; decision: number }>;
+  | Readonly<{ kind: "decisionQuestion" | "analysis" | "analysisWrite" | "chosen"; decision: number }>
+  /** Issue #186: verdict n, Claude Code's verdict that the item is not refined, the verdict subject's reviewed file. */
+  | Readonly<{ kind: "verdict"; verdict: number }>;
 
 /** The directory of the records, relative to the project. */
 export const RECORDS_DIR = "plan-review";
@@ -83,7 +88,10 @@ export const subjectDir = (subject: SubjectId): string =>
         ? `planning-${subject.plan}`
         : "work" in subject
           ? `work-review-${subject.work}`
-          : `decision-${subject.decision}`;
+          : "verdict" in subject
+            ? `verdict-${subject.verdict}`
+            : `decision-${subject.decision}`;
+const VERDICT_DIR = /^verdict-([1-9][0-9]*)$/;
 const PLANNING_DIR = /^planning-([1-9][0-9]*)$/;
 const WORK_DIR = /^work-review-([1-9][0-9]*)$/;
 const DECISION_DIR = /^decision-([1-9][0-9]*)$/;
@@ -96,6 +104,8 @@ export const subjectOf = (dirName: string): SubjectId | null => {
   if (planning !== null) return { plan: Number(planning[1]) };
   const work = WORK_DIR.exec(dirName);
   if (work !== null) return { work: Number(work[1]) };
+  const verdict = VERDICT_DIR.exec(dirName);
+  if (verdict !== null) return { verdict: Number(verdict[1]) };
   const decision = DECISION_DIR.exec(dirName);
   return decision === null ? null : { decision: Number(decision[1]) };
 };
@@ -107,7 +117,9 @@ export const reviewedFile = (subject: SubjectId): Artifact =>
       ? { kind: "planFile" }
       : "work" in subject
         ? { kind: "changes", phase: subject.work }
-        : { kind: "analysis", decision: subject.decision };
+        : "verdict" in subject
+          ? { kind: "verdict", verdict: subject.verdict }
+          : { kind: "analysis", decision: subject.decision };
 const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked"), string> = {
   conversation: "conversation.md",
   decisions: "user-decisions.md",
@@ -141,7 +153,9 @@ export const pathOf = (artifact: Artifact): string => {
             ? "issue-log.json"
             : "work" in artifact.subject
               ? "work-review-log.json"
-              : "decision-log.json";
+              : "verdict" in artifact.subject
+                ? "verdict-log.json"
+                : "decision-log.json";
     case "review":
     case "response":
     case "round":
@@ -168,12 +182,14 @@ export const pathOf = (artifact: Artifact): string => {
       return `decision-${artifact.decision}/cc-0.json`;
     case "chosen":
       return `decision-${artifact.decision}/chosen.json`;
+    case "verdict":
+      return `verdict-${artifact.verdict}/verdict.json`;
     default:
       return FIXED[artifact.kind];
   }
 };
-/** The six issue logs (one subject of each). */
-export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "questions", "terms", "requirements", { work: 1 }, { decision: 1 }];
+/** The seven issue logs (one subject of each; issue #186 adds the verdicts'). */
+export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "questions", "terms", "requirements", { work: 1 }, { decision: 1 }, { verdict: 1 }];
 
 /**
  * Whether a path relative to a run's records directory is a record that a read-only call must leave unchanged (finding

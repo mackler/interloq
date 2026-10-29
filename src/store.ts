@@ -10,7 +10,7 @@ import { FileSystemError, GitError } from "./errors.ts";
 import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
-import { AnalysisFile, Baseline, RoundFile, type RoundRecord, TermsFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
+import { AnalysisFile, Baseline, RoundFile, type RoundRecord, TermsFile, VerdictFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
 import { renderDecision, renderFeedback, subjectHeading } from "./render.ts";
 import { type ProjectPath, type RawReplyKind, type RecordPath, Store, type StoreError, type StoreShape } from "./services.ts";
 import { type CommitCheck, commitCheckOf, uncommittedPaths } from "./commitCheck.ts";
@@ -142,14 +142,17 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       const file = at({ kind: "log", subject });
       return exists(file).pipe(Effect.flatMap((present) => (present ? readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(readLog(file, text)))) : Effect.succeed([]))));
     };
-    /** Decision k's entries in decision-log.json are those whose id carries its number (D6 of the decision-support plan). */
-    const ofDecision = (k: number) => (entry: LogEntry): boolean => entry.id.startsWith(`D${k}-`);
-    const decisionOf = (subject: SubjectId): number | null => (typeof subject === "object" && "decision" in subject ? subject.decision : null);
-    /** A decision's save keeps the other decisions' entries as they are on disk, so that nested decisions lose none. */
+    /**
+     * Decision k's entries in decision-log.json are those whose id carries its number (D6 of the decision-support plan);
+     * verdict n's in verdict-log.json likewise (issue #186), its ids `V<n>-`.
+     */
+    const ownPrefixOf = (subject: SubjectId): string | null =>
+      typeof subject === "object" && "decision" in subject ? `D${subject.decision}-` : typeof subject === "object" && "verdict" in subject ? `V${subject.verdict}-` : null;
+    /** A decision's or a verdict's save keeps the others' entries as they are on disk, so that nested decisions lose none. */
     const saveLog = (subject: SubjectId, log: readonly LogEntry[]) =>
       Effect.gen(function* () {
-        const k = decisionOf(subject);
-        const others = k === null ? [] : (yield* readLogFile(subject)).filter((e) => !ofDecision(k)(e));
+        const prefix = ownPrefixOf(subject);
+        const others = prefix === null ? [] : (yield* readLogFile(subject)).filter((e) => !e.id.startsWith(prefix));
         yield* saveRecord({ kind: "log", subject }, { version: VERSION, entries: [...others, ...log] });
       });
     const converse = (markdown: string) => append(conversationFile, markdown);
@@ -419,8 +422,8 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       writeRequirements: (text) => writeText(requirements, text),
       saveSuiteLog: (n, text) => writeText(path.join(dir, pathOf({ kind: "suiteLog", n })), text),
       loadLog: (subject) => {
-        const k = decisionOf(subject);
-        if (k !== null) return readLogFile(subject).pipe(Effect.map((entries) => entries.filter(ofDecision(k))));
+        const prefix = ownPrefixOf(subject);
+        if (prefix !== null) return readLogFile(subject).pipe(Effect.map((entries) => entries.filter((e) => e.id.startsWith(prefix))));
         const file = at({ kind: "log", subject });
         return readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(readLog(file, text))));
       },
@@ -603,6 +606,11 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       loadAnalysis: (decision) => {
         const file = at({ kind: "analysis", decision });
         return readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(file, AnalysisFile, text))), Effect.map((f) => f.analysis));
+      },
+      saveVerdict: (verdict, record) => saveRecord({ kind: "verdict", verdict }, { version: VERSION, verdict: record }),
+      loadVerdict: (verdict) => {
+        const file = at({ kind: "verdict", verdict });
+        return readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(file, VerdictFile, text))), Effect.map((f) => f.verdict));
       },
       saveChoice: (decision, choice) => saveRecord({ kind: "chosen", decision }, { version: VERSION, decision, answer: choice.answer, option: choice.option }),
       readContext: () =>

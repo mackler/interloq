@@ -122,7 +122,7 @@ const Str = Schema.String;
 const tagged = <const T extends string, F extends Schema.Struct.Fields>(tag: T, fields: F) => Schema.Struct({ _tag: Schema.Literal(tag), ...fields });
 const typed = <const T extends string, F extends Schema.Struct.Fields>(type: T, fields: F) => Schema.Struct({ type: Schema.Literal(type), ...fields });
 
-const SubjectIdSchema = Schema.Union([Schema.Literal("questions"), Schema.Literal("terms"), Schema.Literal("requirements"), Schema.Struct({ plan: Int }), Schema.Struct({ work: Int }), Schema.Struct({ decision: Int })]);
+const SubjectIdSchema = Schema.Union([Schema.Literal("questions"), Schema.Literal("terms"), Schema.Literal("requirements"), Schema.Struct({ plan: Int }), Schema.Struct({ work: Int }), Schema.Struct({ decision: Int }), Schema.Struct({ verdict: Int })]);
 // Issue #162: the numbered kinds from src/uiEvents.ts, so the protocol and the run cannot disagree on them.
 const PhaseSchema = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(NUMBERED_PHASE_KINDS), n: Int })]);
 const AgentSchema = Schema.Literals(["claude", "codex"]);

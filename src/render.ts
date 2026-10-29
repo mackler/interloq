@@ -32,7 +32,9 @@ export const subjectHeading = (subject: SubjectId): string =>
         ? `Planning phase ${subject.plan}`
         : "work" in subject
           ? `Work review ${subject.work}`
-          : `Decision ${subject.decision}`;
+          : "verdict" in subject
+            ? `Verdict ${subject.verdict}`
+            : `Decision ${subject.decision}`;
 
 export function renderRound(heading: string, round: number, review: Review, response: PlannerResponse): string {
   return `## ${heading}, round ${round}\n\n${renderReview(review)}${renderResponse(response)}`;

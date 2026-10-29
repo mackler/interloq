@@ -110,7 +110,7 @@ test("readCheckpoint requires the logs for started, not baseline.json, and reads
     assert.ok(exit._tag === "Failure", "the checkpoint was accepted");
     return String(exit.cause);
   };
-  for (const log of ["issue-log.json", "questions-log.json", "terms-log.json", "requirements-log.json", "work-review-log.json", "decision-log.json"]) put(log, { version: 2, entries: [] });
+  for (const log of ["issue-log.json", "questions-log.json", "terms-log.json", "requirements-log.json", "work-review-log.json", "decision-log.json", "verdict-log.json"]) put(log, { version: 2, entries: [] });
   put("checkpoint.json", { version: 2, subject: "init", phase: 0, round: 0, stage: "started", time: "t" });
   assert.equal((await read())._tag, "Success");
   fs.rmSync(path.join(dir, "work-review-log.json"));

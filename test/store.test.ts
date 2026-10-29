@@ -196,6 +196,17 @@ const analysis = { decision: "d", columns: [{ kind: "argued" as const, option: "
 const question = { phase: { kind: "planning" as const, n: 1 }, label: "Planning", question: "Which?", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] };
 const json = (repo: string, name: string) => JSON.parse(fs.readFileSync(path.join(repo, "plan-review", TEST_ROOT, name), "utf8"));
 
+test("issue #186: a verdict is saved to verdict-<n>/verdict.json and loaded back, its hash the reviewed file's", async () => {
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  const verdict = { missing: "The retention period.", phase: { kind: "planning" as const, n: 1 }, origin: "firstPlan" as const };
+  await run(store.saveVerdict(1, verdict));
+  assert.deepEqual(json(repo, "verdict-1/verdict.json"), { version: 2, verdict });
+  assert.deepEqual(await run(store.loadVerdict(1)), verdict);
+  assert.notEqual(await run(store.recordHash({ verdict: 1 })), "");
+});
+
 test("decisions are numbered across the run, each with its question, analysis, raw output and choice", async () => {
   const repo = tempRepo();
   const store = await storeOf(repo);

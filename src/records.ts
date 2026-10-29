@@ -96,12 +96,20 @@ export type Baseline = typeof Baseline.Type;
 // ---- decision support ------------------------------------------------------------------------------
 
 /** Where a decision took place: the phase of the run as src/uiEvents.ts names it. */
-const PhaseRecord = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(["planning", "execution", "work"]), n: S.NonNegativeInt })]);
+export const PhaseRecord = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(["planning", "execution", "work"]), n: S.NonNegativeInt })]);
 /** decision-<k>/question.json: the question the user was asked, with its options, the phase in which it was asked and its label (W1-R1-2). */
 export const DecisionQuestionFile = Schema.Struct({ version: V2, decision: S.PositiveInt, phase: PhaseRecord, label: Schema.String, question: Schema.String, options: Schema.Array(S.QuestionOption) });
 export type DecisionQuestionFile = typeof DecisionQuestionFile.Type;
 /** decision-<k>/analysis.json: the reviewed file of decision k, the validated analysis. */
 export const AnalysisFile = Schema.Struct({ version: V2, analysis: S.DecisionAnalysis });
+/**
+ * verdict-<n>/verdict.json (issue #186): Claude Code's verdict that the item is not refined, as it now stands, the phase
+ * in which it was given and whether it replaced the run's first plan or ended an execution call; the verdict subject's
+ * reviewed file.
+ */
+export const VerdictRecord = Schema.Struct({ missing: Schema.String, phase: PhaseRecord, origin: Schema.Literals(["firstPlan", "execution"]) });
+export type VerdictRecord = typeof VerdictRecord.Type;
+export const VerdictFile = Schema.Struct({ version: V2, verdict: VerdictRecord });
 /** plan-review/terms.json (S17): the explanations of the agreed questions' terms. */
 export const TermsFile = Schema.Struct({ version: V2, entries: Schema.Array(S.TermsEntry) });
 /** decision-<k>/chosen.json (decision Q4): the user's answer after the analysis, and the option it chose (null for free text). */
@@ -223,6 +231,7 @@ export const readCheckpoint = (runDir: string): Effect.Effect<Checkpoint | null,
           yield* required({ kind: "decisionQuestion", decision: subject.decision }, DecisionQuestionFile);
           yield* required({ kind: "analysis", decision: subject.decision }, AnalysisFile);
         }
+        if (typeof subject === "object" && "verdict" in subject) yield* required({ kind: "verdict", verdict: subject.verdict }, VerdictFile);
         yield* required({ kind: "review", subject, round }, S.Review, lenient);
         const record = yield* required({ kind: "round", subject, round }, RoundFile);
         if (stage === "responded" || stage === "logged") {

@@ -6,7 +6,7 @@ import type { Brand, Option, Schema } from "effect";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { RunMode } from "./runMode.ts";
-import type { Baseline, CheckpointPoint, RoundRecord } from "./records.ts";
+import type { Baseline, CheckpointPoint, RoundRecord, VerdictRecord } from "./records.ts";
 import type { EarlierPlan } from "./earlierPlan.ts";
 import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
@@ -296,6 +296,9 @@ export interface StoreShape {
   /** The explanations of terms.json; none when the file does not exist (an empty agreed list, or no question phase). */
   loadTerms(): Effect.Effect<TermsWrite["entries"], StoreError>;
   loadAnalysis(decision: number): Effect.Effect<DecisionAnalysis, StoreError>;
+  /** Issue #186: verdict n as it now stands, its reviewed file (`verdict-<n>/verdict.json`). */
+  saveVerdict(verdict: number, record: VerdictRecord): Effect.Effect<void, StoreError>;
+  loadVerdict(verdict: number): Effect.Effect<VerdictRecord, StoreError>;
   /** The user's choice after decision k (`decision-<k>/chosen.json`, decision Q4). */
   saveChoice(decision: number, choice: Choice): Effect.Effect<void, StoreError>;
   /** The texts of requirements.md and plan.md, null where one does not exist: the context of a decision (decision Q3). */

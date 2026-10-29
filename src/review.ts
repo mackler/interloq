@@ -511,7 +511,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
         return yield* Effect.die(new Error("the review loop ended a batch without an event"));
       });
 
-    const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
+    const setup: ReviewSetup = { subject: id, heading, fileLabel, dirName: subjectDir(id), phase, idNumber: typeof id === "object" && "decision" in id ? id.decision : typeof id === "object" && "verdict" in id ? id.verdict : phase, proceed: subject.proceed, hasAmend: subject.amend !== null, leaveOnAcceptance: subject.leaveOnAcceptance, leaveOnDecision: subject.leaveOnDecision, onUnchanged: subject.onUnchanged, disputesSettledBy: subject.disputesSettledBy, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor };
     const begun = yield* store.observeFile(id);
     return yield* interpret(advance(initialState(setup, config), { kind: "Begin", hash: begun.hash, text: begun.text, log: yield* store.loadLog(id) }));
   });
