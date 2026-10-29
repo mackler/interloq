@@ -9,10 +9,11 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import { RUNS_DIR, type RunRoot } from "../src/artifacts.ts";
+import { interpretExecution } from "../src/claudeEvents.ts";
 import { parseComment } from "../src/itemComments.ts";
 import { parkBranchOf } from "../src/park.ts";
 import { program } from "../src/program.ts";
-import { revisePlanAfterExecutionPrompt, verdictGivenLine } from "../src/prompts.ts";
+import { execStopRevisionLine, revisePlanAfterExecutionPrompt, verdictGivenLine } from "../src/prompts.ts";
 import type { ExecOutcome } from "../src/schema.ts";
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import { finished, issue, respond, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
@@ -71,5 +72,32 @@ test("a verdict of an execution that Claude Code withdraws after Codex's objecti
   assert.equal((await heldItem(probe)).state, "implemented");
   const revision = revisePlanAfterExecutionPrompt(rootOf(probe), "task", false, 1, { _tag: "VerdictWithdrawn", verdict: 1 }, NO_STEP_CHECKS);
   assert.ok(probe.planner.prompts.includes(revision), probe.planner.prompts.map((p) => p.slice(0, 100)).join("\n"));
+  assert.equal(probe.planner.execPrompts.length, 2);
+});
+
+// Work review 1 (W1-R1-4): a not_refined report whose missing is blank is no verdict. The outcome is what the adapter's
+// interpretation produces from that report, so the run receives what the adapter would give it: an aborted stop, which
+// the work review follows and from which the plan is revised (behavior 4), with no verdict and no send-back.
+test("a not_refined report with a blank missing takes the aborted stop's path: work review, revision, no verdict", async () => {
+  const interpreted = interpretExecution(
+    { sessionId: "s", costUsd: 1, structured: { status: "not_refined", summary: "S1 done", question: "", remaining_work: "S2", missing: " ", checks: [] }, resultText: "r", error: null, partial: false, failure: null },
+    null,
+  );
+  assert.equal(interpreted.status, "aborted");
+  const { code, probe } = await runIt({
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    // The plan review, work review 1, the revision's review, work review 2.
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [interpreted, finished],
+  });
+  assert.equal(code, 0);
+  const said = execStopRevisionLine("<label>", "aborted").split("<label>")[1]!;
+  assert.ok(probe.ui.said.some((l) => l.endsWith(said)), probe.ui.said.join("\n"));
+  assert.ok(fs.existsSync(path.join(probe.dir, "work-review-1")), "the work review ran");
+  assert.ok(!fs.existsSync(path.join(probe.dir, "verdict-1")), "no verdict was reviewed");
+  const item = await heldItem(probe);
+  assert.equal(item.state, "implemented");
+  const tags = (item.comments ?? []).map((c) => parseComment(c.body)?._tag);
+  assert.ok(!tags.includes("SentBack") && !tags.includes("StoppedUnrefined"), tags.join(","));
   assert.equal(probe.planner.execPrompts.length, 2);
 });
