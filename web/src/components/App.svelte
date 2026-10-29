@@ -104,14 +104,15 @@
   const compact = $derived(width < EXPANDED_MIN_WIDTH);
   let layout = $state<Layout>(initialLayout);
   $effect(() => {
-    const counts = { left: run?.left.length ?? 0, right: run?.right.length ?? 0 };
+    const right = run?.right.length ?? 0;
     const prompt = pendingKey(shownTab);
     const narrow = compact;
-    layout = observe(untrack(() => layout), { counts, prompt }, narrow);
+    layout = observe(untrack(() => layout), { right, prompt }, narrow);
   });
   /** Whether a column is shown: both at expanded width, the selected one below it. */
   const shown = (pane: Pane): boolean => !compact || layout.selected === pane;
-  const TITLES: Record<Pane, string> = { left: "You and Interloq", right: "Claude and Codex" };
+  // Issue #22: the dashboard keeps the panel's name, the accessible name of its region and its selector's label.
+  const TITLES: Record<Pane, string> = { dashboard: "You and Interloq", right: "Claude and Codex" };
 
   // Issue #120: the tab shown, its run, and the run as the draft and the notifications key it.
   const mode = $derived(view.selected);
@@ -308,9 +309,9 @@
              conversation" is the way back (W4-R1-1) [aesthetic and minimalist design]. -->
         {#if !deciding}
           <ConnectedButtons>
-            {#each ["left", "right"] as const as pane (pane)}
+            {#each ["dashboard", "right"] as const as pane (pane)}
               <Button variant={layout.selected === pane ? "filled" : "tonal"} type="button" aria-pressed={layout.selected === pane} onclick={() => (layout = select(layout, pane))}>
-                {TITLES[pane]}{#if layout.unseen[pane] > 0}<span class="badge">&nbsp;{unseenBadge(layout.unseen[pane])}</span>{/if}
+                {TITLES[pane]}{#if pane === "right" && layout.unseen > 0}<span class="badge">&nbsp;{unseenBadge(layout.unseen)}</span>{/if}
               </Button>
             {/each}
           </ConnectedButtons>
@@ -346,10 +347,10 @@
           <Button variant="tonal" type="button" name="analysis" onclick={() => { conversationFor = null; conversationForPrompt = null; }}>{SHOW_ANALYSIS}</Button>
         </div>
       {/if}
-      <div class="left" class:hidden={!deciding && !shown("left")}>
+      <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <ChatPanel title={TITLES.left} messages={run.left} empty="The run has started." visible={shown("left") && !deciding && !asking} />
+          <ChatPanel title={TITLES.dashboard} messages={run.left} empty="The run has started." visible={shown("dashboard") && !deciding && !asking} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">

@@ -1,35 +1,35 @@
 // The page's layout state at compact widths (finding 7 of docs/gui-review.md, decision Q3), pure. Below M3's expanded
-// breakpoint only one of the two panels is shown; the other's new messages are counted for its badge, and a new
-// prompt selects "You and Interloq", where the prompt is answered.
+// breakpoint only one of the two panels is shown: the dashboard (issue #22), "You and Interloq", or the right panel,
+// "Claude and Codex". The dashboard has no message list, so only the right panel's new messages are counted for its
+// badge, and a new prompt selects the dashboard's column, where the prompt is answered.
 
 import { type DraftKey, sameKey } from "./draft.ts";
 
-export type Pane = "left" | "right";
-export type Counts = Readonly<Record<Pane, number>>;
-export type Layout = Readonly<{ selected: Pane; unseen: Counts; counts: Counts; prompt: DraftKey | null }>;
+export type Pane = "dashboard" | "right";
+/** `unseen` and `count` are the right panel's: its messages not seen while hidden, and its count last observed. */
+export type Layout = Readonly<{ selected: Pane; unseen: number; count: number; prompt: DraftKey | null }>;
 /**
- * What the layout observes of the view: each panel's message count and the pending prompt, by its full key
+ * What the layout observes of the view: the right panel's message count and the pending prompt, by its full key
  * (incarnation, run, prompt), since prompt numbers restart with each run and each start of the server (W2-R1-1).
  */
-export type Observed = Readonly<{ counts: Counts; prompt: DraftKey | null }>;
+export type Observed = Readonly<{ right: number; prompt: DraftKey | null }>;
 
 /** M3's expanded window class begins at 840 dp. */
 export const EXPANDED_MIN_WIDTH = 840;
 
-export const initialLayout: Layout = { selected: "left", unseen: { left: 0, right: 0 }, counts: { left: 0, right: 0 }, prompt: null };
+export const initialLayout: Layout = { selected: "dashboard", unseen: 0, count: 0, prompt: null };
 
 /** The layout after the view changed; `compact` when the window is narrower than the expanded class. */
 export const observe = (layout: Layout, observed: Observed, compact: boolean): Layout => {
   const newPrompt = observed.prompt !== null && (layout.prompt === null || !sameKey(observed.prompt, layout.prompt));
-  const selected: Pane = newPrompt ? "left" : layout.selected;
-  // A panel with fewer messages than before belongs to a new run: its count starts again.
-  const added = (pane: Pane): number => Math.max(0, observed.counts[pane] - layout.counts[pane]);
-  const count = (pane: Pane): number => (!compact || pane === selected ? 0 : observed.counts[pane] < layout.counts[pane] ? 0 : layout.unseen[pane] + added(pane));
-  return { selected, unseen: { left: count("left"), right: count("right") }, counts: observed.counts, prompt: observed.prompt };
+  const selected: Pane = newPrompt ? "dashboard" : layout.selected;
+  // Fewer messages than before belong to a new run: the count starts again.
+  const unseen = !compact || selected === "right" || observed.right < layout.count ? 0 : layout.unseen + (observed.right - layout.count);
+  return { selected, unseen, count: observed.right, prompt: observed.prompt };
 };
 
-/** The user selects a panel; its unseen count is cleared. */
-export const select = (layout: Layout, pane: Pane): Layout => ({ ...layout, selected: pane, unseen: { ...layout.unseen, [pane]: 0 } });
+/** The user selects a panel; selecting the right panel clears its unseen count. */
+export const select = (layout: Layout, pane: Pane): Layout => ({ ...layout, selected: pane, unseen: pane === "right" ? 0 : layout.unseen });
 
 /**
  * A decision's analysis as the page names it (W2-R1-3): decision numbers restart with each run and each start of the
