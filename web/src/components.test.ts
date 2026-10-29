@@ -13,7 +13,8 @@ import type { ClientMessage } from "../../src/protocol.ts";
 import type { RunMode } from "../../src/runMode.ts";
 import TimelineRail from "./components/TimelineRail.svelte";
 import CircularIndeterminate from "./components/CircularIndeterminate.svelte";
-import ActivityLine from "./components/ActivityLine.svelte";
+import StatusLine from "./components/StatusLine.svelte";
+import Dashboard from "./components/Dashboard.svelte";
 import { decodeServer, listedItemOf, type ServerMessage } from "../../src/protocol.ts";
 import { Result, Schema } from "effect";
 import { GithubIssue, itemOf } from "../../src/githubIssues.ts";
@@ -29,7 +30,7 @@ import ChatPanel from "./components/ChatPanel.svelte";
 import { clockTime, fullTime, TOOLTIP_GRACE_MS } from "./time.ts";
 import { type Disclosure, disclosureStateOf, railView, type RailView } from "./rail.ts";
 import { emptyUiState, type UiScope, withFlag } from "../../src/uiState.ts";
-import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
+import { callStartedAt, emptyRun, executing, initialState, type Message, reduce, type RoundGroup, type Status, type TimelineEntry, type TimelineStep, type Widget } from "./state.ts";
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { tabTitle } from "./title.ts";
 import { ownName } from "../../src/hostDir.ts";
@@ -43,6 +44,8 @@ const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
 let mounted: ReturnType<typeof mount>[] = [];
+/** A status line's status from an activity text, as the reducer sets it (issue #22). */
+const activityStatus = (text: string): Status => (text === "" ? { _tag: "Idle" } : { _tag: "Activity", text });
 const show = <P extends Record<string, any>>(component: Component<P>, props: P) => {
   const target = document.createElement("div");
   document.body.appendChild(target);
@@ -115,18 +118,20 @@ describe("Claude's messages", () => {
     expect(one(root, "header").textContent).toMatch(/^Claude(?! Code)/);
   });
 
-  test("the panel shows Claude's prose from the reducer as Claude's article, without the prefix", () => {
+  test("the dashboard shows Claude's prose from the reducer as Claude's latest message, without the prefix (issue #22)", () => {
     const time = "2026-09-27T14:00:00.000Z";
     const state = [
       { type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } },
     ].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
-    const root = show(ChatPanel, { title: "You and Interloq", messages: state.modes.refinement.run?.left ?? [], empty: "none" });
-    const article = one(root, "article[data-author=claude]");
-    expect(article.classList.contains("claude")).toBe(true);
-    expect(one(article, ".body").textContent?.trim()).toBe("done");
-    expect(article.textContent).not.toContain("[claude]");
+    const run = state.modes.refinement.run;
+    if (run === null) throw new Error("no run");
+    const root = show(Dashboard, { run, answersOpen: false, onAnswers: () => undefined });
+    const region = one(root, "[data-claude]");
+    expect(one(region, "header").textContent).toMatch(/^Claude(?! Code)/);
+    expect(one(region, ".markdown").textContent?.trim()).toBe("done");
+    expect(region.textContent).not.toContain("[claude]");
   });
 });
 
@@ -1288,6 +1293,70 @@ describe("App and the draft", () => {
     expect(root.querySelector('section[aria-label="Claude and Codex"]')).not.toBe(null);
   });
 
+  // Issue #22: the "You and Interloq" panel is a dashboard; its status line is the activity line, moved from the right column.
+  describe("the dashboard in the run view (issue #22)", () => {
+    const said = (text: string) => ({ _tag: "Said", text });
+    const claude = (text: string) => ({ _tag: "Notified", event: { _tag: "ClaudeSaid", text } });
+    const left = (root: HTMLElement) => one(root, ".left");
+    const right = (root: HTMLElement) => one(root, ".right");
+
+    test("the status line is in the left column and none is in the right", async () => {
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, said("Planning began.")]) }] });
+      expect(one(left(root), ".chat [data-status]").textContent).toBe("Planning began.");
+      expect(right(root).querySelector("[data-status], [data-activity]")).toBe(null);
+    });
+
+    test("Claude's prose is on the dashboard and not in the right panel", async () => {
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, claude("I am working.")]) }] });
+      expect(one(left(root), "[data-claude]").textContent).toContain("I am working.");
+      expect(right(root).textContent).not.toContain("I am working.");
+    });
+
+    test("after answering, the answer is the dashboard's last answer", async () => {
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "use **x**" }]) }] });
+      expect(one(left(root), "[data-last-answer] [data-your-answer] strong").textContent).toBe("x");
+    });
+
+    test("while a question is pending, the compact status line and the heading of every answer stay, opening to the earlier answers", async () => {
+      const { root, ws } = await openPage();
+      const events = [started, asked(1), { _tag: "Answered", prompt: 1, text: "first" }, said("Waiting for you."), asked(2)];
+      ws.receive({ type: "replay", ui: [{ run: 1, state: { version: 1, choices: [{ scope: { _tag: "DashboardAnswers" }, open: true }] } }], runs: [{ id: 1, events: stamp(events) }] });
+      expect(root.querySelector(".pane")).not.toBe(null);
+      const compact = one(left(root), ".dashboard-compact");
+      expect(one(compact, "[data-status]").textContent).toBe("Waiting for you.");
+      expect(one(compact, "[data-answers] [data-answer]").textContent).toContain("first");
+    });
+
+    test("while an analysis is shown, the compact status line and the heading of every answer are in view", async () => {
+      const { root, ws } = await openPage();
+      const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null };
+      const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: presentedQ, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "/decide" }, said("Analysis ready."), analyzed, asked(2)]) }] });
+      expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
+      const compact = one(root, ".dashboard-compact");
+      expect(one(compact, "[data-status]").textContent).toBe("Analysis ready.");
+      expect(compact.querySelector("[data-answers-heading] button")).not.toBe(null);
+    });
+
+    test("the heading of every answer sends the ui frame and opens from the shared state", async () => {
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "first" }]) }] });
+      ws.onopen?.({});
+      ws.sent = [];
+      const button = () => one(left(root), ".chat [data-answers-heading] button");
+      expect(button().getAttribute("aria-expanded")).toBe("false");
+      button().click();
+      flushSync();
+      expect(ws.sent.map((m) => JSON.parse(m))).toEqual([{ type: "ui", incarnation: "a", run: 1, flag: { scope: { _tag: "DashboardAnswers" }, open: true } }]);
+      ws.receive({ type: "ui", run: 1, state: { version: 1, choices: [{ scope: { _tag: "DashboardAnswers" }, open: true }] } });
+      expect(button().getAttribute("aria-expanded")).toBe("true");
+      expect(left(root).querySelector(".chat [data-answers] [data-answer]")).not.toBe(null);
+    });
+  });
+
   test("another tab's answer withdraws the draft with a notice; the next prompt's field is empty", async () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
@@ -1862,8 +1931,8 @@ test("the activity line shows retry 2 of 3", () => {
     ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
   ];
   const s = messages.reduce(reduce, initialState);
-  const root = show(ActivityLine, { text: s.modes.refinement.run?.activity ?? "" });
-  expect(one(root, "[data-activity]").textContent).toContain("retry 2 of 3");
+  const root = show(StatusLine, { status: s.modes.refinement.run?.dashboard.status ?? { _tag: "Idle" } });
+  expect(one(root, "[data-status]").textContent).toContain("retry 2 of 3");
 });
 
 // Issue #63 (replacing W1-R1-4's indeterminate bar): the wait before a retry is known exactly, so the activity line counts
@@ -1876,13 +1945,13 @@ test("the activity line counts down the wait before a retry with a determinate p
   try {
     const now = Date.UTC(2026, 9, 7, 12, 0, 0);
     vi.setSystemTime(now);
-    const retrying = show(ActivityLine, { text: "Codex — connection lost, retry 1 of 3 (x)", retry: { fromMs: now - 1000, untilMs: now + 4000 } });
+    const retrying = show(StatusLine, { status: activityStatus("Codex — connection lost, retry 1 of 3 (x)"), retry: { fromMs: now - 1000, untilMs: now + 4000 } });
     const bar = one(retrying, "[role=progressbar]");
     expect(bar.getAttribute("aria-label")).toBe(prompts.RETRY_WAITING_LABEL);
     expect(Number(bar.getAttribute("aria-valuenow"))).toBe(20);
     expect(one(retrying, "[data-remaining]").textContent).toBe("0:04 left");
     expect(retrying.querySelector(".indeterminate, [data-waiting]")).toBe(null);
-    const idle = show(ActivityLine, { text: "Codex — review" });
+    const idle = show(StatusLine, { status: activityStatus("Codex — review") });
     expect(idle.querySelector("[role=progressbar]")).toBe(null);
   } finally {
     vi.useRealTimers();
@@ -1904,8 +1973,8 @@ test("the activity line counts down the wait before a tracker request's repeat, 
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event } },
     ];
     const run = messages.reduce(reduce, initialState).modes.refinement.run;
-    const root = show(ActivityLine, { text: run?.activity ?? "", retry: run?.retry?.wait ?? null });
-    expect(one(root, "[data-activity]").textContent).toContain("GitHub");
+    const root = show(StatusLine, { status: run?.dashboard.status ?? { _tag: "Idle" }, retry: run?.retry?.wait ?? null });
+    expect(one(root, "[data-status]").textContent).toContain("GitHub");
     const bar = one(root, "[role=progressbar]");
     expect(Number(bar.getAttribute("aria-valuenow"))).toBe(20);
     expect(one(root, "[data-remaining]").textContent).toBe("0:12 left");
@@ -1922,9 +1991,9 @@ test("a countdown received 250 ms before its end is gone at its end, before the 
     const now = Date.UTC(2026, 9, 7, 12, 0, 0);
     vi.setSystemTime(now);
     const wait = { fromMs: now - 4750, untilMs: now + 250 };
-    for (const props of [{ text: "Codex — retry", retry: wait }, { text: "Claude — waiting", wait: { ...wait, agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const } }]) {
+    for (const props of [{ status: activityStatus("Codex — retry"), retry: wait }, { status: activityStatus("Claude — waiting"), wait: { ...wait, agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const } }]) {
       vi.setSystemTime(now);
-      const root = show(ActivityLine, props);
+      const root = show(StatusLine, props);
       expect(root.querySelector("[role=progressbar]")).not.toBe(null);
       vi.advanceTimersByTime(250);
       flushSync();
@@ -2499,14 +2568,14 @@ test("each option card shows its label in bold as its own element and its descri
 test("the activity line shows a determinate progressbar and the time remaining during a usage-limit wait", () => {
   const now = Date.now();
   const wait = { agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const, fromMs: now - 3_600_000, untilMs: now + 3_600_000 };
-  const root = show(ActivityLine, { text: "Claude — waiting", wait });
+  const root = show(StatusLine, { status: activityStatus("Claude — waiting"), wait });
   const bar = one(root, "[role=progressbar]");
   expect(bar.getAttribute("aria-label")).toBe(prompts.USAGE_LIMIT_WAITING_LABEL);
   const value = Number(bar.getAttribute("aria-valuenow"));
   expect(value).toBeGreaterThanOrEqual(49);
   expect(value).toBeLessThanOrEqual(51);
   expect(one(root, "[data-remaining]").textContent).toMatch(/^(1:00:00|59:5\d) left$/);
-  const plain = show(ActivityLine, { text: "Codex — review", wait: null });
+  const plain = show(StatusLine, { status: activityStatus("Codex — review"), wait: null });
   expect(plain.querySelector("[role=progressbar]")).toBe(null);
   expect(plain.querySelector("[data-remaining]")).toBe(null);
 });
@@ -2519,13 +2588,13 @@ test("the seam of the phase names: the rail and the bands show phaseName's names
   const events: unknown[] = [
     { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } },
     { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },
-    ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Said", text: `line ${i}` }]),
+    ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Notified", event: { _tag: "ReviewReceived", subject: { plan: i + 1 }, round: 1, review: { issues: [] }, counted: 0 } }]),
   ];
   const state = [{ type: "hello", chain: helloChain, location: "/p", current: { refinement: 1, implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
   const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
   const rail = showRail({ busy: false, timeline: state.modes.refinement.run?.timeline ?? [] });
   expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);
-  const panel = show(ChatPanel, { title: "You and Interloq", messages: state.modes.refinement.run?.left ?? [], empty: "none" });
+  const panel = show(ChatPanel, { title: "Claude and Codex", messages: state.modes.refinement.run?.right ?? [], empty: "none" });
   expect([...panel.querySelectorAll(".phase-label")].map((e) => e.textContent?.trim())).toEqual(names.map((n) => prompts.phaseBandLabel(n, clockTime(time))));
 });
 

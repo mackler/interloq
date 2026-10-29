@@ -2,11 +2,13 @@
   // The page (decision Q3 layout) [consistency and standards: one top app bar, M3 layout regions; the page shows
   // only the newest run, in progress or ended, and offers a new task when it has ended].
   // Adaptive layout (finding 7 of docs/gui-review.md, decision Q3 of its task): at M3's expanded width the rail and the
-  // two panels stand side by side; below it the rail becomes a one-line disclosure and one panel is shown at a time,
+  // two columns stand side by side; below it the rail becomes a one-line disclosure and one column is shown at a time,
   // chosen by its title in a segmented group [aesthetic and minimalist design: nothing is squeezed to unreadable
-  // widths; visibility of system status: the current phase stays in view and a badge counts the hidden panel's new
-  // messages; user control: the user chooses the panel, and only a new prompt, which is answered in "You and
-  // Interloq", selects it].
+  // widths; visibility of system status: the current phase stays in view and a badge counts the right panel's new
+  // messages; user control: the user chooses the column, and only a new prompt, which is answered in "You and
+  // Interloq", selects it]. Issue #22: the "You and Interloq" column is a dashboard, whose status line is the activity
+  // line moved from under "Claude and Codex", which holds its messages alone. While a question or the decision page
+  // takes the column, the dashboard's compact form (its status line and the heading of every answer) stays below it.
   import { Button, ConnectedButtons, Tabs } from "m3-svelte";
   import { untrack } from "svelte";
   import { BACK_TO_LIST, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
@@ -26,7 +28,7 @@
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
   import { type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
-  import ActivityLine from "./ActivityLine.svelte";
+  import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
   import { isOpen, openSectionOf, type UiScope } from "../../../src/uiState.ts";
@@ -124,6 +126,9 @@
   const toggleRail = (scope: UiScope, open: boolean) => {
     if (run !== null) send({ type: "ui", incarnation: view.incarnation ?? "", run: run.id, flag: { scope, open } });
   };
+  /** Issue #22 (F1): the dashboard's heading of every answer, one per run, opened and closed as the run's shared state. */
+  const DASHBOARD_ANSWERS: UiScope = { _tag: "DashboardAnswers" };
+  const toggleAnswers = (open: boolean) => toggleRail(DASHBOARD_ANSWERS, open);
   // S27: the pending prompt whose conversation the user chose to see instead of its question (by its full key).
   let conversationForPrompt = $state<string | null>(null);
   const promptKey = $derived(JSON.stringify(pendingKey(shownTab)));
@@ -350,7 +355,7 @@
       <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <ChatPanel title={TITLES.dashboard} messages={run.left} empty="The run has started." visible={shown("dashboard") && !deciding && !asking} />
+          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">
@@ -366,6 +371,11 @@
             bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [mode]: key === null ? null : { _tag: "Held", key, text } }; }}
             onAnswer={(prompt, text) => answer(run, prompt, text)} />
         {/if}
+        <!-- Issue #22 (F1): the status line and every earlier answer stay reachable while the question or the decision page
+             takes the column; below the question, so that it and its first answer keep their place at the top. -->
+        {#if deciding || asking}
+          <div class="dashboard-compact"><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} /></div>
+        {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}
           <div class="ended">
@@ -378,7 +388,6 @@
         <div class="chat" class:hidden={deciding}>
           <ChatPanel title={TITLES.right} messages={run.right} empty="No review yet." visible={shown("right") && !deciding} />
         </div>
-        <ActivityLine text={run.activity} retry={run.retry?.wait ?? null} wait={run.limitWait} />
       </div>
     </main>
   {/if}
@@ -393,12 +402,12 @@
   .left, .right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .left :global(.panel), .right :global(.panel) { flex: 1; }
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  /* The analysis spans both chat columns in the first row; the notice and the activity line stay below it. */
+  /* The analysis spans both chat columns in the first row; the notice and the dashboard's compact form stay below it. */
   /* Issue #133: the decision page holds the question, its answers, the columns and the headings, in that order; the
      question and its answers are at the page's top, in view when it appears. Every control stays, and where the window
      cannot hold them and the columns the run scrolls (the developer's decision of 12 Oct 2026, "Every control stays,
      windows scroll"): the decision row is at least its content and fills the window otherwise, and the row below it
-     (the notice and the activity line) is its content, however low the window. The rail contributes no
+     (the notice and the dashboard's compact form) is its content, however low the window. The rail contributes no
      height of its own (contain: size), so that its content never stretches the rows. */
   .run.deciding { grid-template-rows: minmax(min-content, 1fr) min-content; overflow-y: auto; }
   .run.deciding > :global(.rail) { grid-row: 1 / 3; contain: size; }
@@ -416,7 +425,7 @@
   .run.compact .left :global(.panel), .run.compact .right :global(.panel), .run.compact .left :global(.pane:not(.answers-only)) { min-height: 12.5rem; }
   /* W4-R1-1; issue #133: while the analysis is shown, only the decision area flexes, at least its content and filling
      the window otherwise, and the run scrolls where it cannot hold it (the developer's decision of 12 Oct 2026); the
-     columns below it hold the notice and the activity line, sized by their content. */
+     columns below it hold the notice and the dashboard's compact form, sized by their content. */
   .run.compact.deciding { overflow-y: auto; }
   .run.compact.deciding > .decision-area { flex: 1 0 auto; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
