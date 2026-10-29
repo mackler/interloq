@@ -14,8 +14,8 @@ import { serializeReply } from "./records.ts";
 import * as prompts from "./prompts.ts";
 import { questionRepairPrompt, correctivePrompt, transportReviewWhat, transportWhat, repairReplyPrompt, type RespondContext } from "./prompts.ts";
 import { correctiveValidation, reviewValidation, roundValidation, validateReview } from "./round.ts";
-import { agentContext, askOffering, limitOptions, numberedOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
-import { answerOf, parseUnchangedAnswer } from "./input.ts";
+import { agentContext, askOffering, decisionAnswerOf, limitOptions, numberedOptions, positionOptions, programContext, type QuestionDraft, unchangedOptions } from "./offer.ts";
+import { parseUnchangedAnswer } from "./input.ts";
 import { advance, type Asks, type DisputesSettledBy, initialState, roundCheckOf, type Option, type ReviewCommand, type ReviewEvent, type ReviewSetup, type ReviewState, type Transition } from "./reviewState.ts";
 import type { OnExpiry } from "./protocol.ts";
 import * as S from "./schema.ts";
@@ -99,7 +99,7 @@ export const decisionDraft = (heading: string, asks: Asks, options: readonly Opt
   const taskDispute = taskDisputeOf(asks.facts);
   const context = taskDispute ? { blocks: plainBlocks(prompts.taskDisputeContext(heading)), by: "program" as const } : programContext(origin);
   const question = taskDispute ? prompts.TASK_DISPUTE_QUESTION : prompts.pauseQuestion(pause);
-  return { origin, context, history: [], explanations: [], question: plainPieces(question), options: numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: taskDispute ? prompts.TASK_DISPUTE_CONTEXT_FACTS : "", decision };
+  return { origin, context, history: [], explanations: [], question: plainPieces(question), options: prompts.isDisputedKind(pause.pause) ? positionOptions(pause.pause, options) : numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: taskDispute ? prompts.TASK_DISPUTE_CONTEXT_FACTS : "", decision };
 };
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
 export const plannerDraft = (question: UserQuestion, heading: string, decision: number | null): QuestionDraft => {
@@ -111,8 +111,8 @@ export const plannerDraft = (question: UserQuestion, heading: string, decision: 
 export const askDecisionQuestion = (draft: QuestionDraft, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, RunError, Ui | Store | Decider> =>
   Effect.gen(function* () {
     const ui = yield* Ui;
-    const answer = yield* askOffering((p) => ui.ask(p, onExpiry), prompts.decisionPrompt, draft);
-    return answerOf(answer, draft.options);
+    // Issue #159: resolved on the options as shown, after the context call, so a label it wrote stands for its position.
+    return yield* askOffering((p) => ui.ask(p, onExpiry), prompts.decisionPrompt, draft, undefined, null, decisionAnswerOf);
   });
 
 /** Issue #185: the expiry of a review limit's own prompt, which extends the review instead of ending the run. */

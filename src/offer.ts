@@ -4,7 +4,7 @@
 
 import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
-import { chooseOption, isDecide, isTermsRequest, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
+import { answerOf, chooseOption, isDecide, isTermsRequest, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
 import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
@@ -21,7 +21,18 @@ import { Decider, Store, Ui, type UiShape } from "./services.ts";
  * `label` and `description` are the option's own words, by which it is chosen and recorded; `shown` is the option as the
  * user reads it, as pieces (issue #36), which a context call may rephrase (S10: the pairing is by position).
  */
-export type OfferedOption = Readonly<{ label: string; description: string; shown: PieceOption; answer: OptionAnswer; matches: (answer: string) => boolean }>;
+export type OfferedOption = Readonly<{
+  label: string;
+  description: string;
+  shown: PieceOption;
+  answer: OptionAnswer;
+  matches: (answer: string) => boolean;
+  /**
+   * Issue #159: the option is also chosen by the label it is shown with, a label a context call wrote included
+   * (`withContext`). Opt-in, since other options are chosen by a token that is not their label (a permission's y).
+   */
+  matchesShown?: true;
+}>;
 /** A question before it is numbered (S7): everything the user is shown of it but its number. */
 export type QuestionDraft = Readonly<{
   origin: QuestionOrigin;
@@ -77,6 +88,33 @@ export const numberedOptions = (options: readonly (Readonly<{ label: string; des
     const label = piecesText(shown.label);
     return { label, description: piecesText(shown.description), shown, answer: { token: String(i + 1) }, matches: (answer: string) => chooseOption(answer, options.length) === i || answer.trim() === label };
   });
+/**
+ * The two positions of a disputed pause (issue #159): each keeps its record label (`REVIEWER_POSITION`,
+ * `PLANNER_POSITION`), by which it is chosen and recorded, and is shown with the outcome label of `positionLabels`,
+ * matched by its record label, not its position. It is chosen by its number, its record label or its shown label.
+ */
+export const positionOptions = (pause: prompts.DisputedPauseKind, options: readonly Readonly<{ label: string; description: string }>[]): readonly OfferedOption[] => {
+  const outcomes = prompts.positionLabels(pause);
+  const outcomeOf = (label: string): string => (label === prompts.REVIEWER_POSITION ? outcomes.reviewer : label === prompts.PLANNER_POSITION ? outcomes.planner : label);
+  return options.map((o, i) => {
+    const outcome = outcomeOf(o.label);
+    return {
+      label: o.label,
+      description: o.description,
+      shown: plainOption(outcome, o.description),
+      answer: { token: String(i + 1) },
+      matches: (answer: string) => chooseOption(answer, options.length) === i || answer.trim() === o.label || answer.trim() === outcome,
+      matchesShown: true,
+    };
+  });
+};
+/**
+ * The text an answer to a decision stands for (issue #159): an option's number gives "label: description" (`answerOf`);
+ * an answer another option matches gives that option's record label, so a label the user was shown stands for its
+ * position; any other answer is itself.
+ */
+export const decisionAnswerOf = (answer: string, options: readonly OfferedOption[]): string =>
+  chooseOption(answer, options.length) !== null ? answerOf(answer, options) : (options.find((o) => o.matches(answer))?.label ?? answer);
 /** An option of the program's own words: shown as it is. */
 const own = (label: string, description: string, answer: OptionAnswer, matches: (answer: string) => boolean): OfferedOption => ({ label, description, shown: plainOption(label, description), answer, matches });
 /** A permission request: y allows, and anything else denies (the prompt's own rule); n is the answer shown for the denial. */
@@ -161,9 +199,15 @@ export const withContext = (draft: QuestionDraft, written: ContextWritten): Ques
   history: written.history,
   explanations: written.explanations,
   question: written.question ?? draft.question,
-  options: written.options === undefined ? draft.options : draft.options.map((o, i) => ({ ...o, shown: written.options?.[i] ?? o.shown })),
+  options: written.options === undefined ? draft.options : draft.options.map((o, i) => rephrased(o, written.options?.[i])),
   attached: draft.attached == null ? null : attachedOf(draft.attached.kind, written.details ?? draft.attached.blocks),
 });
+/** An option as a context call rephrased it: shown with its words, and, where it `matchesShown`, chosen by them too (issue #159). */
+const rephrased = (o: OfferedOption, shown: PieceOption | undefined): OfferedOption => {
+  if (shown === undefined) return o;
+  const label = piecesText(shown.label);
+  return o.matchesShown === true ? { ...o, shown, matches: (a: string) => o.matches(a) || a.trim() === label } : { ...o, shown };
+};
 /** Details the program gave a context call: blocks of its own words; a document is Markdown shown whole, never divided. */
 const requestDetails = (details: readonly ShownBlock[]): readonly Block[] => details.flatMap((b): readonly Block[] => (b.kind === "document" ? plainBlocks(b.markdown) : [b]));
 /** What a context call writes for a question the program composed (S9), before it is presented. */
@@ -220,6 +264,7 @@ export const askOffering = <E, R = never>(
   draft: QuestionDraft,
   acceptable: (answer: string) => boolean = () => true,
   terms: ((question: number) => Effect.Effect<QuestionDraft, E | RunError, R>) | null = null,
+  resolve: ((answer: string, options: readonly OfferedOption[]) => string) | null = null,
 ): Effect.Effect<string, E | RunError, Decider | Store | Ui | R> =>
   Effect.gen(function* () {
     const ui = yield* Ui;
@@ -284,6 +329,6 @@ export const askOffering = <E, R = never>(
         yield* store.saveChoice(k, { answer, option });
         yield* store.converse(renderChoice(k, answer, option));
       }
-      return answer;
+      return resolve === null ? answer : resolve(answer, explained.options);
     }
   });

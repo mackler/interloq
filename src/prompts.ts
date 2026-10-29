@@ -417,6 +417,7 @@ export const QUESTION_PROBLEM_KINDS = [
   "optionsChanged",
   "suppliedRefDropped",
   "entryCount",
+  "agentInLabel",
 ] as const;
 export type QuestionProblemKind = (typeof QUESTION_PROBLEM_KINDS)[number];
 export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>> = {
@@ -439,6 +440,7 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   optionsChanged: "keepOptions",
   suppliedRefDropped: "keepSuppliedRefs",
   entryCount: "keepWording",
+  agentInLabel: "determinateOptions",
 };
 /** One problem of a question: its kind and what it concerns (an explanation, a field, the bare reference), or "". */
 export type QuestionProblem = Readonly<{ kind: QuestionProblemKind; subject: string }>;
@@ -486,6 +488,8 @@ export function questionProblemText(problem: QuestionProblem): string {
       return `the name ${subject}, which Interloq supplied with its explanation, lost its reference`;
     case "entryCount":
       return `the reply holds ${problem.subject} entries for this question; it must hold exactly one, for this question`;
+    case "agentInLabel":
+      return `the label ${subject} of an option names ${agentNamesText()}; write it as the outcome the reader gets, from that option's description`;
   }
 }
 const questionProblemLines = (questions: QuestionProblems): readonly string[] => questions.map((q) => `${q.where}: ${q.problems.map(questionProblemText).join("; ")}.`);
@@ -2844,9 +2848,50 @@ export function limitFacts(heading: string, limit: number, counts: readonly numb
 export function unchangedFacts(heading: string, fileLabel: string, accepted: readonly string[]): string {
   return `In ${heading}, Claude Code accepted ${accepted.join(", ")} of Codex's review in full or in part, but ${fileLabel}, the file under review, did not change, also after Claude Code was told so.`;
 }
-/** The two positions at a disputed pause (decision Q1): what Codex asks for, and what Claude Code holds. */
+/**
+ * The program's record labels of the two positions at a disputed pause (decision Q1): what Codex asks for, and what
+ * Claude Code holds. An answer is chosen and recorded by them (`user-decisions.md`, `decision-<k>/chosen.json`,
+ * `conversation.md`), so the records keep naming whose position was chosen; since issue #159 they are never shown as an
+ * option's label, which names the outcome (`positionLabels`, or the context call's own wording).
+ */
 export const REVIEWER_POSITION = "Follow Codex (the reviewer)";
 export const PLANNER_POSITION = "Follow Claude Code (the planner)";
+/** The five disputed pauses of behavior 7 (issue #159), whose two options are Codex's position and Claude Code's. */
+export const DISPUTED_PAUSE_KINDS = ["reraised", "secondClarification", "reversal", "repeatedUnderNewId", "disputedSelfCorrection"] as const;
+export type DisputedPauseKind = (typeof DISPUTED_PAUSE_KINDS)[number];
+/** Whether a pause kind is one of the five disputed ones. */
+export const isDisputedKind = (pause: string): pause is DisputedPauseKind => (DISPUTED_PAUSE_KINDS as readonly string[]).includes(pause);
+/** Whether a question's origin is one of the five disputed pauses. */
+export const isDisputedPause = (origin: QuestionOrigin): boolean => origin.kind === "pause" && isDisputedKind(origin.pause);
+/** The labels the user is shown for the two positions, each naming the outcome and no agent (issue #159, requirements Q1). */
+export type PositionLabels = Readonly<{ reviewer: string; planner: string }>;
+const MAKE_THE_CHANGE = "Make the change the point asks for";
+/** The program's own outcome labels of a disputed pause, shown where the context call cannot write its own. */
+export function positionLabels(pause: DisputedPauseKind): PositionLabels {
+  switch (pause) {
+    case "reraised":
+    case "repeatedUnderNewId":
+    case "reversal":
+      return { reviewer: MAKE_THE_CHANGE, planner: "Keep the file under review as it is now" };
+    case "secondClarification":
+      return { reviewer: MAKE_THE_CHANGE, planner: "Wait for the requested explanation before making a change" };
+    case "disputedSelfCorrection":
+      return { reviewer: "Keep the correction", planner: "Withdraw the correction" };
+  }
+}
+/** The agents' names as a list in words. */
+const agentNamesText = (): string => AGENT_NAMES.map((n) => `"${n}"`).join(", ").replace(/, ([^,]*)$/, " or $1");
+/**
+ * The context call's rule for the options of a disputed pause (issue #159): each label the outcome, from its position's
+ * own content, as `determinateOptions` says, naming no agent; `contextValidation` refuses a label that names one.
+ */
+export const outcomeLabelsRule = (): string =>
+  `The options of this question are the two positions of a disagreement between Codex and Claude Code, Codex's first and Claude Code's second, each description stating its position. Write each option's label as the outcome the reader gets if he chooses it, from that position's own content, in the reader's terms, as this rule says: ${ruleTextOf("determinateOptions")} Name none of the agents in a label: no label may contain ${agentNamesText()}. The context and the history may name them.`;
+/** The agents' names, none of which an option's label of a disputed pause may carry (issue #159). */
+export const AGENT_NAMES = ["Claude Code", "Claude", "Codex"] as const;
+const AGENT_NAME_PATTERN = new RegExp(`\\b(?:${AGENT_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
+/** Whether a text names an agent: one of `AGENT_NAMES` as a whole word, in any case. */
+export const namesAgent = (text: string): boolean => AGENT_NAME_PATTERN.test(text);
 
 // ---- decision support: the representation as the page shows it ---------------------------------------
 
@@ -3283,7 +3328,7 @@ const pauseSubject = (p: PauseOrigin): string => {
  * its interrogative sentence last; its options are Codex's position and Claude Code's, as in every disputed pause.
  */
 export const TASK_DISPUTE_QUESTION =
-  "Codex and Claude Code read the task differently on this point: the first option is Codex's reading and the second is Claude Code's. Which reading of the task do you want the work to follow, Codex's or Claude Code's?";
+  "Codex and Claude Code read the task differently on this point: the first option follows Codex's reading and the second Claude Code's. Which reading of the task do you want the work to follow?";
 /** The question a pause of behaviour 7 asks, its interrogative sentence last (issue #34). */
 export function pauseQuestion(p: PauseOrigin): string {
   switch (p.pause) {
@@ -3291,9 +3336,9 @@ export function pauseQuestion(p: PauseOrigin): string {
     case "secondClarification":
     case "reversal":
     case "repeatedUnderNewId":
-      return "Codex has raised a point that Claude Code does not accept in full. Whose position do you want to stand, Codex's or Claude Code's?";
+      return "Codex has raised a point that Claude Code does not accept in full. Which outcome do you want?";
     case "disputedSelfCorrection":
-      return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stand, as Codex asked, or to be withdrawn, as Claude Code now holds?";
+      return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stay or to be withdrawn?";
     case "unexplained":
       return `${p.fileLabel} changed, although Claude Code accepted no point of the review and corrected nothing of its own. What do you want done with the change?`;
     case "identical":
@@ -3544,7 +3589,7 @@ export function contextPrompt(task: string, request: ContextRequest): string {
   return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and return the whole question as pieces, with the explanations of the words a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer the question.
 ${questionWritingRules()}
 ${QUESTION_TEXT_FORMAT}
-Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
+Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS}${isDisputedPause(request.origin) ? ` ${outcomeLabelsRule()}` : ""} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
 
 The task of the run: ${task}
 

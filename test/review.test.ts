@@ -182,7 +182,72 @@ test("decisionDraft asks a marked disagreement as a reading of the task, and an 
   assert.equal(piecesText(plainDraft.question), prompts.pauseQuestion({ pause: "reraised", id: "Q-R1-1" }));
   assert.deepEqual(plainDraft.context, programContext(plainDraft.origin));
   assert.deepEqual(markedDraft.options.map((o) => o.label), plainDraft.options.map((o) => o.label));
+  // Issue #159: both keep the record labels and show the outcome labels.
+  for (const draft of [markedDraft, plainDraft]) {
+    assert.deepEqual(draft.options.map((o) => o.label), [prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION]);
+    const { reviewer, planner } = prompts.positionLabels("reraised");
+    assert.deepEqual(draft.options.map((o) => piecesText(o.shown.label)), [reviewer, planner]);
+  }
   assert.ok(blocksText(markedDraft.context.blocks).join("").includes("Question review"));
+});
+
+// Issue #159: every kind of disputed pause shows outcome labels naming no agent, and keeps the record labels.
+test("decisionDraft shows the outcome labels of every disputed pause, naming no agent", async () => {
+  const { decisionDraft } = await import("../src/review.ts");
+  const { presentedQuestion } = await import("../src/offer.ts");
+  const { piecesText } = await import("../src/pieces.ts");
+  const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
+  const base = { id: "P1-R2-1", history: [], taskDispute: false };
+  const factsOf = (kind: prompts.DisputedPauseKind): import("../src/question.ts").PauseFacts => {
+    switch (kind) {
+      case "reraised":
+        return { ...base, pause: kind, issue: null, effects: null };
+      case "secondClarification":
+        return { ...base, pause: kind, disposition: null, effects: null };
+      case "disputedSelfCorrection":
+        return { ...base, pause: kind, explanation: "wrong", effects: null };
+      case "reversal":
+        return { ...base, pause: kind, reverses: "P1-R1-1", issue: null, disposition: null, effects: null };
+      case "repeatedUnderNewId":
+        return { ...base, pause: kind, repeats: "P1-R1-1", issue: null, disposition: null, effects: null };
+    }
+  };
+  for (const kind of prompts.DISPUTED_PAUSE_KINDS) {
+    const draft = decisionDraft("Planning 1", { kind: "pause", facts: factsOf(kind) }, options, null);
+    assert.deepEqual(draft.options.map((o) => o.label), [prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION], kind);
+    const presented = presentedQuestion(draft, 1);
+    assert.ok(Result.isSuccess(presented));
+    const labels = presented.success.options.map((o) => piecesText(o.label));
+    const { reviewer, planner } = prompts.positionLabels(kind);
+    assert.deepEqual(labels, [reviewer, planner], kind);
+    for (const label of labels) assert.equal(prompts.namesAgent(label), false, `${kind}: ${label}`);
+  }
+});
+
+// Issue #159 (seam, P1-R1-1): a label the context call wrote chooses the option at its position and resolves to its
+// record label; a permission request keeps its own matching (P1-R2-1).
+test("a context-written label of a disputed pause chooses its position, and a permission's Allow is still chosen by y alone", async () => {
+  const { positionOptions, withContext, decisionAnswerOf, permissionOptions, programContext } = await import("../src/offer.ts");
+  const { plainOption } = await import("../src/pieces.ts");
+  const { optionText } = await import("../src/input.ts");
+  const options = positionOptions("reraised", [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }]);
+  const origin = { kind: "pause" as const, heading: "Planning 1", pause: "reraised" as const, id: "P1-R1-1" };
+  const draft = { origin, context: programContext(origin), history: [], explanations: [], question: [], options, decision: null };
+  const written = { context: programContext(origin), history: [], explanations: [], options: [plainOption("Accept the review's point", "Drop Q1."), plainOption("Leave the plan as it is now", "Keep Q1.")] };
+  const rephrased = withContext(draft, written).options;
+  assert.equal(rephrased[0].matches("Accept the review's point"), true);
+  assert.equal(rephrased[1].matches("Leave the plan as it is now"), true);
+  assert.equal(rephrased[0].matches("Leave the plan as it is now"), false);
+  assert.equal(decisionAnswerOf("Leave the plan as it is now", rephrased), prompts.PLANNER_POSITION);
+  assert.equal(decisionAnswerOf(prompts.positionLabels("reraised").reviewer, rephrased), prompts.REVIEWER_POSITION);
+  assert.equal(decisionAnswerOf("2", rephrased), optionText(rephrased[1]));
+  assert.equal(decisionAnswerOf("something else", rephrased), "something else");
+  const permOrigin = { kind: "permission" as const, tool: "Bash", input: "ls" };
+  const permDraft = { origin: permOrigin, context: programContext(permOrigin), history: [], explanations: [], question: [], options: permissionOptions, decision: null };
+  const permWritten = { context: programContext(permOrigin), history: [], explanations: [], options: [plainOption("Let Claude Code run the command", "x"), plainOption("Refuse it", "y")] };
+  const perm = withContext(permDraft, permWritten).options;
+  assert.equal(perm[0].matches("Let Claude Code run the command"), false);
+  assert.equal(perm[0].matches("y"), true);
 });
 
 // Issue #156 (W1-R1-1): where the context call cannot succeed, the marked pause keeps its own context, which says the
@@ -235,7 +300,7 @@ test("a work review's issue keeps Codex's statement of its effect on the work in
 
 // Issue #183 (seam): the answer "2" and the planner's label, through askDecisionQuestion and decisionDraft, keep the work
 // review going instead of leaving for a planning phase.
-for (const answer of ["2", prompts.PLANNER_POSITION]) {
+for (const answer of ["2", prompts.PLANNER_POSITION, prompts.positionLabels("reraised").planner]) {
   test(`a work-review dispute answered ${JSON.stringify(answer)} stays in the review`, async () => {
     const noQuestions = { questions_for_user: [] };
     const none = { kind: "none" };
@@ -252,3 +317,30 @@ for (const answer of ["2", prompts.PLANNER_POSITION]) {
     assert.ok(probe.ui.notified.some((e) => e._tag === "QuestionPresented" && e.question.origin.kind === "pause"));
   });
 }
+
+// Issue #159 (P1-R1-1): a planner label the context call wrote, typed, keeps the work review going as "2" does.
+test("a work-review dispute answered with the context call's own planner label stays in the review", async () => {
+  const { scriptedContextReply } = await import("./helpers.ts");
+  const { plainPieces } = await import("../src/pieces.ts");
+  const leave = "Leave the work as it is now";
+  const noQuestions = { questions_for_user: [] };
+  const none = { kind: "none" };
+  const point = (effect: unknown) => ({ ...issue("W1-R1-1"), [S.WORK_EFFECT_FIELD]: effect }) as S.Issue;
+  const rejected = () => respond([], { dispositions: [{ id: "W1-R1-1", action: "rejected", rationale: "r", duplicate_of: "", reverses: "", [S.WORK_EFFECT_FIELD]: none } as S.Disposition] });
+  const relabel = (prompt: string) => {
+    const reply = scriptedContextReply(prompt);
+    return { ...reply, options: reply.options.map((o, i) => ({ ...o, label: plainPieces(i === 0 ? "Correct the work as the point asks" : leave) })) };
+  };
+  const { layer, probe } = testLayer(tempRepo(), {
+    config: { maxIdleRounds: 5 },
+    answers: [leave],
+    contexts: [{ output: relabel }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: rejected() }, { output: rejected() }],
+    reviews: [{ issues: [] }, { issues: [point(none)] }, { issues: [point({ kind: "differs", difference: "a file changes" })] }, { issues: [] }],
+    execs: [finished],
+  });
+  assert.equal(await runTask(layer), 1, "one execution phase: no plan revision");
+  const { piecesText } = await import("../src/pieces.ts");
+  const asked = probe.ui.notified.flatMap((e) => (e._tag === "QuestionPresented" && e.question.origin.kind === "pause" ? [e.question] : []));
+  assert.equal(piecesText(asked[0].options[1].label), leave);
+});
