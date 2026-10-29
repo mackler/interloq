@@ -180,6 +180,32 @@ export const PlanWrite = Schema.Struct({ plan: Plan, questions_for_user: Schema.
 /** A response to a review of the plan, with the complete amended plan. */
 export const PlanResponse = Schema.Struct({ ...effectResponseFields, plan: Plan });
 
+// ---- the verdict that an item is not refined (issue #186) -------------------------------------------------------------
+
+/**
+ * Claude Code's verdict that the item's requirements leave open what the work should achieve (requirements Q1): what
+ * they leave out, in Markdown. A plain string, as the facts of acceptance require; a blank one is refused by
+ * verdictValidation with its repair turn.
+ */
+export const NotRefinedVerdict = Schema.Struct({ kind: Schema.Literal("notRefined"), missing: Schema.String });
+export type NotRefinedVerdict = typeof NotRefinedVerdict.Type;
+/** A plan, as the first planning call returns it. */
+export const FirstPlan = Schema.Struct({ kind: Schema.Literal("plan"), plan: Plan });
+/** The two kinds of the first planning call's reply, in their order: the one statement both its prompts and tests read. */
+export const FIRST_PLAN_KINDS = ["plan", "notRefined"] as const;
+/**
+ * The reply of a run's first planning call (issue #186): a plan, or the verdict that the item is not refined, under
+ * `reply`, since an agent's reply is an object. It has no questions_for_user: the plan writer's question about what
+ * the work should achieve is replaced by the verdict, and one about how to build it is the writer's to settle.
+ */
+export const FirstPlanReply = Schema.Struct({ reply: Schema.Union([FirstPlan, NotRefinedVerdict]) });
+export type FirstPlanReply = typeof FirstPlanReply.Type;
+/** The plan Claude Code writes after its verdict was withdrawn (requirements Q2), which cannot be a second verdict. */
+export const PlanOnly = Schema.Struct({ plan: Plan });
+/** Claude Code's response to a review of its verdict: the verdict as it now stands, beside a response's fields. */
+export const VerdictResponse = Schema.Struct({ ...plannerResponseFields, missing: Schema.String });
+export type VerdictResponse = typeof VerdictResponse.Type;
+
 /** What the program records of a step (G-R1-2): reported started or done by report_step, unfinished when a call ended with it started. */
 export const StepStatus = Schema.Literals(["pending", "started", "done", "unfinished"]);
 export const RecordedStep = Schema.Struct({ ...PlanStep.fields, status: StepStatus });

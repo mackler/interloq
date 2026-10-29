@@ -104,6 +104,11 @@ export const protoSchemas: Record<string, Schema.Top> = {
   decisionApplied: Schema.Struct({ analysis: DecisionAnalysis }),
   planReply: Schema.Struct({ plan: Plan, questions_for_user: Schema.Array(UserQuestion) }),
   planResponse: Schema.Struct({ ...effectFields, plan: Plan }),
+  // Issue #186: the first plan's reply (a plan, or the verdict that the item is not refined), the plan after a
+  // withdrawn verdict, and the response to a review of the verdict.
+  firstPlanReply: Schema.Struct({ reply: Schema.Union([Schema.Struct({ kind: Schema.Literal("plan"), plan: Plan }), Schema.Struct({ kind: Schema.Literal("notRefined"), missing: Str })]) }),
+  planOnly: Schema.Struct({ plan: Plan }),
+  verdictResponse: Schema.Struct({ ...plannerFields, missing: Str }),
   // S9: the reply of the call that writes the context paragraph of a question the program composes, with the whole
   // question as pieces (issue #36, decisions G-R1-1 and F1).
   questionContext: Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, options: Schema.Array(PieceOption), details: Blocks, explanations: Schema.Array(Explanation) }),

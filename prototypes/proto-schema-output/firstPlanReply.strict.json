@@ -1,0 +1,104 @@
+{
+  "type": "object",
+  "properties": {
+    "reply": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "plan"
+              ]
+            },
+            "plan": {
+              "type": "object",
+              "properties": {
+                "stages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "steps": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "number": {
+                              "type": "integer"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "number",
+                            "label",
+                            "text"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "number",
+                      "title",
+                      "steps"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "stages"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "plan"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "notRefined"
+              ]
+            },
+            "missing": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "missing"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "reply"
+  ],
+  "additionalProperties": false
+}
