@@ -44,6 +44,8 @@ export type Wiring = Readonly<{
   decisionFormat?: string;
   /** The runner of the project's whole suite after the review of the work finds nothing left to correct (issue #162; live: suiteRunner of src/suiteExec.ts). */
   suite: SuiteRunnerShape;
+  /** A test's wrapper of every store the run opens (issue #186, W1-R1-3: a parking held while Stop task arrives); none live. */
+  store?: (store: StoreShape) => StoreShape;
 }>;
 
 /** The task of a run: a text with at least one character other than whitespace (issue #88). */
@@ -240,7 +242,7 @@ const programWith = (
     // Issue #120: the run's records directory, named by its start time, mode and item; allocated after the configuration
     // and the item are read. Issue #193: a halt before that allocates it to record the halt there (haltedBeforeRecords).
     const planned = runRootOf(mode, start.item, new Date(yield* Clock.currentTimeMillis).toISOString());
-    const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.provide(wiring.platform));
+    const store = (root: RunRoot, ignorePaths: readonly string[]) => makeStore(project, root, ignorePaths).pipe(Effect.map(wiring.store ?? ((s: StoreShape) => s)), Effect.provide(wiring.platform));
 
     /** The last two lines of every ending. */
     const tail = (sessionId: string | null, records: StoreShape) =>

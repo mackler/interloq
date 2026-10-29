@@ -853,6 +853,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   const wiring: Wiring = {
     ui: Effect.succeed(ui),
     platform: platformLayer,
+    ...(options.store === undefined ? {} : { store: options.store }),
     sdk: new FakeSdk(),
     // The scripted execution reports its call to the run's Ui, as the adapter does (issue #6: the current step).
     agents: Layer.mergeAll(

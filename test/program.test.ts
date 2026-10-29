@@ -14,7 +14,7 @@ import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { type Conclusion, defectMessage, exitCodeOf, type FaultSignal, makeFaultSignal, program, type Wiring } from "../src/program.ts";
 import { askedInPlanReview, tempDir, finished, scriptedTask, scriptedStart, steppingClock, tempRepo, testWiring, type WiringProbe, questionOf, questionEntry , TEST_ROOT, scriptedItem, fakeTrackerOf, haltConversationOf, haltReasonOf, withoutReturnLine } from "./helpers.ts";
 import type { RunRoot } from "../src/artifacts.ts";
-import { checkCommandInvalidText, defectRecord, sentBackLine, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
+import { checkCommandInvalidText, defectRecord, sendBackIncompleteText, sentBackLine, haltRecord, itemStartedLine, trackerDecisionLine, trackerExhaustedQuestion, trackerRetryLine, transportPrompt, serverFaultRecord, serverFaultText, sessionsLine, sessionTooLongText, workReviewBeganLine } from "../src/prompts.ts";
 import type { RunMode } from "../src/runMode.ts";
 import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
@@ -687,6 +687,7 @@ describe("the first read of the item, repeated", () => {
 // send-back left incomplete end with 1 and keep the item implementing; an interruption after the run's own parking
 // concludes it from parked.json and never returns the item to refined (reviews P1-R1-2, P1-R1-3).
 describe("issue #186: how a send-back ends", () => {
+  const git = (dir: string, ...args: string[]): string => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
   const MISSING = "The requirements do not say how long a note is kept.";
   const noQuestions = { questions_for_user: [] };
   const verdictAtFirstPlan = { steps: [{ output: { reply: { kind: "notRefined", missing: MISSING } } }], reviews: [{ issues: [] }] };
@@ -754,6 +755,54 @@ describe("issue #186: how a send-back ends", () => {
       assert.deepEqual(Option.getOrNull(Effect.runSync(Ref.get(concluded))), { code: 130, parked: { _tag: "NothingParked" } }, `asked: ${asked}`);
       assert.equal(await stateOf(probe), "implementing", `asked: ${asked}`);
     }
+  });
+
+  // Work review 1 (W1-R1-3): a guard stop whose parking kept the run's commit, and whose comment then fails for good.
+  test("a guard stop whose comment fails for good after a parking that kept work concludes 1 with Parked, its halt SendBackIncomplete", async () => {
+    const tracker = fakeTrackerOf([itemAsked(false)]);
+    Effect.runSync(tracker.failNext("comment", new TrackerAuthRefused({ tracker: "fake", status: 403 })));
+    const repo = tempRepo();
+    const start = git(repo, "rev-parse", "HEAD");
+    const { wiring, probe } = testWiring(repo, { ...verdictMidWork, tracker });
+    const { code, conclusion } = await ended(probe, wiring);
+    assert.equal(code, 1);
+    assert.equal(conclusion?.code, 1);
+    const parked = conclusion?.parked;
+    assert.ok(parked?._tag === "Parked", JSON.stringify(parked));
+    assert.notEqual(git(repo, "rev-parse", parked.branch), start, "the run's commit is on the item's branch");
+    assert.equal(git(repo, "rev-parse", "HEAD"), start, "the working branch is back at the start commit");
+    assert.equal(await stateOf(probe), "implementing");
+    const conversation = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
+    const incomplete = sendBackIncompleteText(scriptedItem.id, "stoppedUnrefined", parked, "<cause>").split("<cause>")[0]!;
+    assert.ok(conversation.includes(incomplete), conversation.slice(-1500));
+    assert.ok(conversation.trimEnd().split("\n").at(-1)!.startsWith("**Halted (exit code 1):**"), conversation.slice(-500));
+  });
+
+  // Work review 1 (W1-R1-3): the send-back's parking runs uninterruptibly, so Stop task during it takes effect after it.
+  test("Stop task during a send-back's parking lets the parking complete, concludes 130 with Parked and keeps the item implementing", async () => {
+    const entered = Effect.runSync(Deferred.make<void>());
+    const release = Effect.runSync(Deferred.make<void>());
+    const repo = tempRepo();
+    const start = git(repo, "rev-parse", "HEAD");
+    const { wiring, probe } = testWiring(repo, {
+      ...verdictMidWork,
+      tracker: fakeTrackerOf([itemAsked(true)]),
+      store: (s) => ({ ...s, commitLeftovers: (m) => Effect.andThen(Deferred.succeed(entered, undefined), Effect.andThen(Deferred.await(release), s.commitLeftovers(m))) }),
+    });
+    const { concluded, fiber } = started(probe, wiring);
+    await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout("20 seconds")));
+    const interrupted = Effect.runPromise(Fiber.interrupt(fiber));
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await interrupted;
+    assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
+    const conclusion = Option.getOrNull(Effect.runSync(Ref.get(concluded)));
+    assert.equal(conclusion?.code, 130);
+    const parked = conclusion?.parked;
+    assert.ok(parked?._tag === "Parked", JSON.stringify(parked));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(probe.dir, "parked.json"), "utf8"))._tag, "Parked");
+    assert.notEqual(git(repo, "rev-parse", parked.branch), start);
+    assert.equal(git(repo, "rev-parse", "HEAD"), start);
+    assert.equal(await stateOf(probe), "implementing");
   });
 
   test("a guard stop interrupted by the server's fault during its comment write concludes 1 and keeps the item implementing", async () => {
