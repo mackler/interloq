@@ -3,7 +3,8 @@
 
 import { Context, Effect } from "effect";
 import type { Brand, Option, Schema } from "effect";
-import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped } from "./errors.ts";
+import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
+import type { OnExpiry } from "./protocol.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
 import type { RunMode } from "./runMode.ts";
 import type { Baseline, CheckpointPoint, RoundRecord, VerdictRecord } from "./records.ts";
@@ -45,10 +46,14 @@ export type ReviewerError = CodexCallFailed | StoreError;
 
 export interface UiShape {
   readonly say: (text: string) => Effect.Effect<void>;
-  /** Reads one line. The answer "q" fails with UserStopped. */
-  readonly ask: (prompt: string) => Effect.Effect<string, UserStopped>;
-  /** Reads one message of the interview (the page's reply field). The message "/quit" fails with UserStopped. */
-  readonly askMessage: (prompt: string) => Effect.Effect<string, UserStopped>;
+  /**
+   * Reads one line. The answer "q" fails with UserStopped. Issue #185: where the Ui counts the question down (an
+   * implementation run in a chain), a wait that runs out fails with NoAnswer carrying `onExpiry` (default "abandon"),
+   * what the question's expiry does: end the run, or (a review's limit) extend the review.
+   */
+  readonly ask: (prompt: string, onExpiry?: OnExpiry) => Effect.Effect<string, UserStopped | NoAnswer>;
+  /** Reads one message of the interview (the page's reply field). The message "/quit" fails with UserStopped; NoAnswer as for ask. */
+  readonly askMessage: (prompt: string, onExpiry?: OnExpiry) => Effect.Effect<string, UserStopped | NoAnswer>;
   /** A structured event of the run (decision Q5). The page shows it; the records do not depend on it. */
   readonly notify: (event: UiEvent) => Effect.Effect<void>;
   /** The number of the next question the user is asked (S6): one sequence for the run, from 1, whatever produced the question. */

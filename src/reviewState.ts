@@ -60,6 +60,9 @@ export type ReviewEvent =
   /** `text`: the reviewed file's text, from which the change during a response is measured (issue #31); "" when absent. */
   | Readonly<{ kind: "Begin"; hash: string; text: string; log: readonly LogEntry[] }>
   | Readonly<{ kind: "LimitAnswer"; answer: string }>
+  /** Issue #185 (G-R1-3): the question at the round limit, or at the idle limit, went unanswered within its wait. */
+  | Readonly<{ kind: "LimitUnanswered" }>
+  | Readonly<{ kind: "IdleUnanswered" }>
   | Readonly<{ kind: "UnchangedAnswer"; answer: "retry" | "proceed" | "stop" }>
   // Issue #151: a decoded review or response carries the value the interpreter validated, with its repair turn, before
   // the state machine sees it (reviewValidation, roundValidation of src/round.ts), so no transition refuses one.
@@ -203,6 +206,8 @@ export type ReviewState = Readonly<{
   round: number;
   limit: number;
   idle: number;
+  /** Issue #185 (G-R1-3): a limit of this loop went unanswered, so every later limit is extended without a question. */
+  unanswered: boolean;
   log: readonly LogEntry[];
   observations: readonly Observation[];
   /** The reviewed file's text at the last observation (issue #31). */
@@ -222,6 +227,7 @@ export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds
   round: 0,
   limit: config.maxRounds,
   idle: 0,
+  unanswered: false,
   log: [],
   observations: [],
   lastText: "",
@@ -265,10 +271,25 @@ const ask = (s: ReviewState, step: Step, asking: Ask, before: readonly ReviewCom
   commands: [...before, { kind: "AskDecision", asks: asking.asks, id: asking.id, options: asking.options ?? [] }],
 });
 
+/**
+ * Issue #185 (G-R1-3): the line of an extension of the loop's round limit or idle limit, said and written: `first` for
+ * the unanswered question, otherwise a later limit extended without one. Each adds as many cycles as the limit reached.
+ */
+const extension = (s: ReviewState, kind: "rounds" | "idle", first: boolean): readonly ReviewCommand[] => {
+  const text = prompts.limitExtendedLine(s.setup.heading, kind, kind === "rounds" ? s.setup.maxRounds : s.setup.maxIdleRounds, first);
+  return [say(text), { kind: "Converse", markdown: `${text}\n\n` }];
+};
+/** The round limit extended by maxRounds, the next round started. */
+const extendRounds = (s: ReviewState, first: boolean): Transition =>
+  withBefore(startRound({ ...s, unanswered: true, limit: s.limit + s.setup.maxRounds }), extension(s, "rounds", first));
+/** The idle limit extended: the idle count reset, no decision recorded, the next round started. */
+const extendIdle = (s: ReviewState, first: boolean): Transition => withBefore(startRound({ ...s, unanswered: true, idle: 0 }), extension(s, "idle", first));
+
 /** Round n + 1 begins: the limit prompt if the limit is reached, otherwise the Codex review. */
 const startRound = (s: ReviewState): Transition => {
   const { heading } = s.setup;
   const n = s.round + 1;
+  if (n > s.limit && s.unanswered) return extendRounds(s, false);
   if (n > s.limit) {
     const lines = prompts.cycleCountsLines(heading, s.counts, s.costs);
     return { state: { ...s, step: { name: "awaitingLimit" } }, commands: [...lines.map(say), { kind: "AskLimit", limit: s.limit }] };
@@ -569,6 +590,7 @@ const finishRound = (s: ReviewState, hash: string, stage: Stage, before: readonl
   const idle = accepted === 0 && selfCount === 0 ? s.idle + 1 : 0;
   const state: ReviewState = { ...s, observations: [...s.observations, { round: s.round, stage, hash }], idle };
   if (idle < maxIdleRounds) return withBefore(startRound(state), before);
+  if (s.unanswered) return withBefore(extendIdle(state, false), before);
   const issues = state.log.filter((x) => x.phase === phase && x.round === s.round && x.source === "review" && x.action !== "accepted");
   const asking: Ask = { asks: { kind: "pause", facts: { pause: "idle", idle, round: s.round, issues } }, id: null };
   return ask(state, { name: "askingIdle", asking }, asking, before);
@@ -730,6 +752,10 @@ export const advance = (state: ReviewState, event: ReviewEvent): Transition => {
       return startRound({ ...state, log: event.log, lastText: event.text, observations: [{ round: 0, stage: "start", hash: event.hash }] });
     case "LimitAnswer":
       return state.step.name === "awaitingLimit" ? onLimitAnswer(state, event.answer) : noop(state);
+    case "LimitUnanswered":
+      return state.step.name === "awaitingLimit" ? extendRounds(state, true) : noop(state);
+    case "IdleUnanswered":
+      return state.step.name === "askingIdle" ? extendIdle(state, true) : noop(state);
     case "UnchangedAnswer":
       return state.step.name === "askingUnchanged" ? onUnchangedAnswer(state, state.step.hash, event.answer) : noop(state);
     case "ReviewDecoded":

@@ -3905,6 +3905,17 @@ export const notRefinedStoppedText = (item: string | null, reason: "refinementAs
   reason === "noTracker"
     ? `Claude Code declared the task not refined and Codex's review let the verdict stand, but the run has no item in a tracker to send back. What its requirements leave out: ${missing}`
     : `item ${item} was declared not refined, and Codex's review let the verdict stand, but it was not sent back: the refinement that last refined it asked the developer no question, so refining it again with nobody asked could repeat the same requirements. Its work is parked and it stays implementing, with a comment saying what was missing`;
+/**
+ * Issue #185 (G-R1-3): a review loop's round limit (`rounds`) or limit of cycles without a correction (`idle`) extended
+ * by `added` cycles: `first` where its question went unanswered, otherwise a later limit extended without a question.
+ */
+export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", added: number, first: boolean): string => {
+  const cycles = `${added} more ${added === 1 ? "cycle" : "cycles"}`;
+  const limit = kind === "rounds" ? "its limit of cycles" : "its limit of cycles without a correction";
+  return first
+    ? `No answer came to the question at ${limit} of ${heading}, so the review goes on for ${cycles}.`
+    : `${heading} reached ${limit} again; Interloq gave it ${cycles} without asking, because an earlier limit went unanswered.`;
+};
 /** Issue #185: why a run ended without an answer: the wait and the question it waited on. */
 export const noAnswerText = (question: { readonly number: number; readonly text: string } | null, seconds: number): string =>
   question === null

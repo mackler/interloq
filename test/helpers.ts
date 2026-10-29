@@ -22,7 +22,7 @@ import type { RunError } from "../src/errors.ts";
 import type { LimitReset } from "../src/limitReset.ts";
 import type { ClaudeFailure } from "../src/transport.ts";
 import { callFailure } from "../src/claude.ts";
-import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped } from "../src/errors.ts";
+import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
 import { type RunStart, type Task, taskOf, type Wiring } from "../src/program.ts";
 import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifacts.ts";
@@ -33,7 +33,7 @@ import { refinementRun, run } from "../src/run.ts";
 import * as S from "../src/schema.ts";
 import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
-import type { StartRequest } from "../src/protocol.ts";
+import type { OnExpiry, StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
 import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
@@ -101,7 +101,8 @@ export function tempRepo(): string {
 }
 
 /** One scripted answer: the text the user types, or a step that never completes (for interruption tests). */
-export type ScriptedAnswer = string | { readonly wait: true } | { readonly text: string; readonly before: () => void } | { readonly text: string; /** Issue #184: the answer is given once this promise resolves. */ readonly when: () => Promise<void> };
+/** Issue #185: `{ noAnswer: true }`, a question whose wait runs out: the ask fails with NoAnswer. */
+export type ScriptedAnswer = string | { readonly wait: true } | { readonly noAnswer: true } | { readonly text: string; readonly before: () => void } | { readonly text: string; /** Issue #184: the answer is given once this promise resolves. */ readonly when: () => Promise<void> };
 
 /** A promise that resolves when `signal` is next called; for tests that wait for a double to be reached. */
 const readiness = (): { wait: () => Promise<void>; signal: () => void } => {
@@ -122,6 +123,9 @@ export class ScriptedUi implements UiShape {
   readonly notified: UiEvent[] = [];
   /** The presentations and asks in the order they happened (S7): "presented <n>" and "ask". */
   readonly order: string[] = [];
+  /** Issue #185: what each prompt's expiry would do, in the order asked. */
+  readonly expiries: OnExpiry[] = [];
+  private lastPresented: AskedQuestion | null = null;
   private questions = 0;
   private readonly answers: ScriptedAnswer[];
   private readonly asks = readiness();
@@ -138,7 +142,10 @@ export class ScriptedUi implements UiShape {
   notify(event: UiEvent): Effect.Effect<void> {
     return Effect.sync(() => {
       this.notified.push(event);
-      if (event._tag === "QuestionPresented") this.order.push(`presented ${event.question.number}`);
+      if (event._tag === "QuestionPresented") {
+        this.order.push(`presented ${event.question.number}`);
+        this.lastPresented = { number: event.question.number, text: piecesText(event.question.question) };
+      }
     });
   }
   say(text: string): Effect.Effect<void> {
@@ -148,34 +155,35 @@ export class ScriptedUi implements UiShape {
     return Effect.sync(() => ++this.questions);
   }
   /** The commands of src/input.ts, which the page sends: "q" ends the run at a one-line prompt. */
-  ask(prompt: string): Effect.Effect<string, UserStopped> {
-    return this.take(prompt, "ask", (text) => {
+  ask(prompt: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> {
+    return this.take(prompt, "ask", onExpiry, (text) => {
       const parsed = parseAskLine(text);
       return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed(parsed.text);
     });
   }
   /** "/quit" ends the run in a message; "q" is a message like any other. */
-  askMessage(prompt: string): Effect.Effect<string, UserStopped> {
-    return this.take(prompt, "message", (text) => {
+  askMessage(prompt: string, onExpiry: OnExpiry = "abandon"): Effect.Effect<string, UserStopped | NoAnswer> {
+    return this.take(prompt, "message", onExpiry, (text) => {
       const parsed = parseMessage(text);
       return parsed.kind === "quit" ? Effect.fail(new UserStopped({ where: prompt })) : Effect.succeed(parsed.text);
     });
   }
-  private take(prompt: string, mode: "ask" | "message", interpret: (text: string) => Effect.Effect<string, UserStopped>): Effect.Effect<string, UserStopped> {
-    return (this.confirmEnds ? this.confirming(prompt, mode) : this.raw(prompt)).pipe(Effect.flatMap(interpret));
+  private take(prompt: string, mode: "ask" | "message", onExpiry: OnExpiry, interpret: (text: string) => Effect.Effect<string, UserStopped>): Effect.Effect<string, UserStopped | NoAnswer> {
+    this.expiries.push(onExpiry);
+    return (this.confirmEnds ? this.confirming(prompt, mode, onExpiry) : this.raw(prompt, onExpiry)).pipe(Effect.flatMap(interpret));
   }
   /** An answer that ends the run (endingOf) is returned only after a confirming reply (y); any other reply asks the question again. */
-  private confirming(prompt: string, mode: "ask" | "message"): Effect.Effect<string> {
-    return this.raw(prompt).pipe(
+  private confirming(prompt: string, mode: "ask" | "message", onExpiry: OnExpiry): Effect.Effect<string, NoAnswer> {
+    return this.raw(prompt, onExpiry).pipe(
       Effect.flatMap((text) => {
         const ending = endingOf(promptOf(prompt).kind, mode, text);
         if (ending === null) return Effect.succeed(text);
-        return this.raw(confirmEndText(ending)).pipe(Effect.flatMap((reply) => (parseConfirmEnd(reply) ? Effect.succeed(text) : this.confirming(prompt, mode))));
+        return this.raw(confirmEndText(ending), onExpiry).pipe(Effect.flatMap((reply) => (parseConfirmEnd(reply) ? Effect.succeed(text) : this.confirming(prompt, mode, onExpiry))));
       }),
     );
   }
-  private raw(prompt: string): Effect.Effect<string> {
-    return Effect.suspend(() => {
+  private raw(prompt: string, onExpiry: OnExpiry): Effect.Effect<string, NoAnswer> {
+    return Effect.suspend((): Effect.Effect<string, NoAnswer> => {
       this.asked.push(prompt);
       this.order.push("ask");
       this.asks.signal();
@@ -183,6 +191,7 @@ export class ScriptedUi implements UiShape {
       if (answer === undefined) return Effect.die(new Error(`no scripted answer for: ${prompt}`));
       if (typeof answer === "string") return Effect.succeed(answer);
       if ("wait" in answer) return Effect.never;
+      if ("noAnswer" in answer) return Effect.fail(new NoAnswer({ where: prompt, seconds: 120, question: this.lastPresented, then: onExpiry }));
       if ("when" in answer) {
         const when = answer.when;
         return Effect.callback<string>((resume) => void when().then(() => resume(Effect.succeed(answer.text))));

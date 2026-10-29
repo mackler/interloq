@@ -52,6 +52,7 @@ new name. Material online describes v3 in most cases and is not a source.
 | `Effect.runPromiseWith` | 16868 | `(context: Context<R>) => (effect: Effect<A, E, R>, options?) => Promise<A>`. **Bridge for SDK callbacks** (canUseTool, hooks): capture `yield* Effect.context<R>()` when the layer is built, then run callback Effects with `Effect.runPromiseWith(ctx)(eff, { signal })`. v4 has no `Runtime.runPromise`. |
 | `Effect.suspend` | 1538 | `(effect: LazyArg<Effect<A, E, R>>) => Effect<A, E, R>`; used by `lift` to turn a throwing call into a failure or a defect |
 | `Effect.catch` (`catch_ as catch`) | 4143 | `(f: (e: E) => Effect<A2, E2, R2>)`: handles every failure (v3 `catchAll`); used by `liftPromise` |
+| `Effect.catchIf` (read 29 Oct 2026, issue #185) | 5234 | `catchIf(predicate \| refinement, f, orElse?)`: recovers from the failures the predicate matches, every other failure re-failing with its cause; defects and interruptions are not caught. `src/review.ts` turns a review limit's own `NoAnswer` with `then: "extend"` into the loop's extension event |
 | `Effect.map` | 3568 | data-first and data-last |
 | `Effect.runPromise` rejection | 16833 | **Observed**: a typed failure rejects with the error object itself (`instanceof` the tagged class, `_tag` set), so `haltMessage(e)` can recognise it; a defect rejects with the defect |
 | `Option.isSome` / `isNone` | Option.d.ts:350 / 324 | type guards; `Cause.findErrorOption(exit.cause)` is `None` for a defect (observed) |
