@@ -23,7 +23,7 @@
   import type { ListedItem } from "../../../src/protocol.ts";
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
-  import { ITEM_IN_PROGRESS, ITEMS_LOADING, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
+  import { ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
   import type { ItemsView, StartableItems } from "../state.ts";
 
   type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
@@ -71,6 +71,8 @@
             {#if item.excerpt !== ""}<p class="supporting" data-supporting>{item.excerpt}</p>{/if}
           </div>
           <div class="trailing">
+            <!-- Issue #186 (F1): how many times Interloq sent the item back to refinement, and nothing more. -->
+            {#if item.sentBack > 0}<span class="in-progress m3-font-label-medium" data-sent-back>{sentBackCountText(item.sentBack)}</span>{/if}
             {#if inProgress(item.id)}<span class="in-progress m3-font-label-medium">{ITEM_IN_PROGRESS}</span>{/if}
             <Button variant="text" type="button" name="start" data-item={item.id} disabled={!startableItem(item.id) || offline} onclick={() => onStart(item)}>{texts.action}</Button>
           </div>

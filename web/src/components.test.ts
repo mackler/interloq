@@ -242,6 +242,17 @@ describe("ItemList", () => {
     expect(second!.querySelector<HTMLButtonElement>("button[name=start]")!.disabled).toBe(false);
   });
 
+  // Issue #186 (F1): how many times Interloq sent an item back, beside it, in its text from sentBackCountText; none at 0.
+  test("an item sent back twice shows the count beside it, and an item never sent back shows none", () => {
+    const counted = [{ ...items[0]!, sentBack: 2 }, items[1]!];
+    const root = show(ItemList, { mode: "refinement", items: { _tag: "Listed", items: counted }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined });
+    const [first, second] = [...root.querySelectorAll("ul > li")];
+    expect(first!.querySelector(".trailing [data-sent-back]")?.textContent).toBe(prompts.sentBackCountText(2));
+    expect(second!.querySelector("[data-sent-back]")).toBeNull();
+    expect(prompts.sentBackCountText(1)).toBe("Sent back once");
+    expect(prompts.sentBackCountText(2)).toBe("Sent back 2 times");
+  });
+
   test("the empty state, the loading status, and the unavailable notice with Try again", () => {
     expect(show(ItemList, { mode: "implementation", items: { _tag: "Listed", items: [] }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined }).textContent).toContain(prompts.TAB_TEXTS.implementation.empty);
     expect(one(show(ItemList, { mode: "implementation", items: { _tag: "Loading" }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined }), "[role=status]").textContent).toContain(prompts.ITEMS_LOADING);
