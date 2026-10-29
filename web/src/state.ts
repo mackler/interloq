@@ -5,7 +5,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, ChainFrameSettings, ItemsResult, ListedItem, RefinementItemsResult, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isTermsRequest } from "../../src/input.ts";
@@ -598,12 +598,13 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return reshow(relabel({ ...next, phase: bandOf(event.phase, time, countIn(next, event.phase)) }));
     }
     case "PhaseEnded":
-      return reshow({ ...withActivity(run, ""), busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
+      return reshow({ ...withoutHelp(withActivity(run, "")), busy: false, calls: [], retry: null, timeline: run.timeline.map((e) => (e.state === "active" && samePhase(e.phase, event.phase) ? recorded(endSteps({ ...e, state: "done", ended: time, currentStep: null, result: suiteResultOf(event.phase, event.result) }, "done"), run.plan) : e)) });
     case "RoundBegan":
       // A decision loop is a loop inside a phase that the progress panel does not show (D12 of the decision-support plan).
       // S17: the terms review's first round opens its own step of Gather Requirements, before the clarification.
       if (isDecision(event.subject)) return run;
-      return { ...run, timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
+      // Issue #22: the round of a review after the interview ends it, and its help with it.
+      return { ...withoutHelp(run), timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
     case "QuestionExplained":
       // Issue #142 (S15, W2-R1-1): "/terms" answered the prompt the analysis belongs to, and the same question is asked
       // again with its explanations: the analysis it set aside goes to the next prompt, beside the explained question.
@@ -634,7 +635,9 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     case "PlanWritten": {
       // Issue #46 (S19): the plan writer's questions are presented one by one after this message, never listed in it.
       const body = `**${planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase })))}**${event.resultText === "" ? "" : `\n\n${event.resultText}`}`;
-      return withLeft(run, message(run, time, "program", body, "markdown"));
+      const shown = withLeft(run, message(run, time, "program", body, "markdown"));
+      // Issue #22: the plan has its place in the rail; only its result text is Claude Code's latest message.
+      return event.resultText === "" ? shown : withClaude(shown, { heading: planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }))), body: event.resultText });
     }
     case "InterviewTurn": {
       const turn = event.summary === null ? { kind: "continuing" as const, message: event.message } : { kind: "summary_proposed" as const, message: event.message, summary: event.summary };
@@ -642,7 +645,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // Issue #5: the interview's turns are Claude's words, so they are Claude's messages.
       // Issue #21: the turn's count is the active clarification step's.
       const timeline = counted(run.timeline, { answered: event.answered, total: event.total });
-      return { ...withLeft({ ...run, timeline }, message(run, time, "claude", body, "markdown", event.heading)), absorb: interviewSays(turn) };
+      return { ...withClaude(withLeft({ ...run, timeline }, message(run, time, "claude", body, "markdown", event.heading)), { heading: event.heading, body }), absorb: interviewSays(turn) };
     }
     case "InterviewCounted":
       // Issue #184: Interloq counts each answer as it is given; the count alone changes, and no message is added.
@@ -664,7 +667,9 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       };
       const timeline = inQuestionPhase(run.timeline, opened);
       // The page's own help (finding 8).
-      return withLeft({ ...run, timeline }, message(run, time, "program", interviewHelp(event.heading), "text"));
+      const help = interviewHelp(event.heading);
+      const shown = withLeft({ ...run, timeline }, message(run, time, "program", help, "text"));
+      return { ...shown, dashboard: { ...shown.dashboard, interviewHelp: help } };
     }
     case "AgentCallStarted": {
       const label = `${AGENT[event.agent]} — ${purposeLabel(event.purpose)}`;
@@ -746,8 +751,6 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
           return "token" in o.answer ? [{ label: description === "" ? label : `${label} — ${description}`, sends: o.answer.token }] : [];
         }),
       };
-    case "ModelNamed":
-      return run;
     case "AnalysisProgress": {
       // S21 (Q4): one plain status while the analysis is prepared, updated in place; the line said for it that
       // follows is absorbed.
@@ -778,7 +781,10 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "ClaudeSaid":
       // Issue #5: Claude's prose is attributed as data, not by a prefix in its text.
-      return withLeft(run, message(run, time, "claude", event.text, "markdown"));
+      return withClaude(withLeft(run, message(run, time, "claude", event.text, "markdown")), { heading: null, body: event.text });
+    case "ModelNamed":
+      // Issue #22: the agent's model line, in its place at the dashboard's top; a later model of the agent replaces it.
+      return { ...run, dashboard: { ...run.dashboard, models: { ...run.dashboard.models, [event.model.agent]: modelLine(event.model) } } };
   }
 };
 
@@ -804,6 +810,10 @@ const withActivity = (run: RunView, activity: string): RunView => ({
   dashboard: { ...run.dashboard, status: activity !== "" ? { _tag: "Activity", text: activity } : run.dashboard.status._tag === "Activity" ? { _tag: "Idle" } : run.dashboard.status },
 });
 /** Interloq's own line as the status (issue #22): its leading and trailing line breaks removed. */
+/** Claude Code's latest message on the dashboard (issue #22): a newer one replaces it. */
+const withClaude = (run: RunView, claude: ClaudeLatest): RunView => ({ ...run, dashboard: { ...run.dashboard, claude } });
+/** The dashboard without the interview's help: the interview has ended (the requirements' default). */
+const withoutHelp = (run: RunView): RunView => (run.dashboard.interviewHelp === null ? run : { ...run, dashboard: { ...run.dashboard, interviewHelp: null } });
 const withInterloqLine = (run: RunView, text: string): RunView => ({ ...run, dashboard: { ...run.dashboard, status: { _tag: "Interloq", text: text.replace(/^[\r\n]+|[\r\n]+$/g, "") } } });
 
 /** One event of a run with its time, in its order. Pure; the replay folds the same function. */
@@ -830,12 +840,16 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         // S26: the question joins the transcript with its answer, as an ordinary exchange.
         const own = r.pending !== null && r.pending.asked.prompt === event.prompt ? r.pending : null;
         const asked = own === null ? r : own.question !== null ? withLeft(r, { ...message(r, own.presentedAt ?? time, "program", piecesText(own.question.question), "text"), key: `${r.id}-${r.nextSeq}-question`, question: own.question }) : withLeft(r, { ...message(r, own.presentedAt ?? time, "program", own.hint, "text"), key: `${r.id}-${r.nextSeq}-question` });
-        return { ...withLeft(asked, message(asked, time, "user", chosen?.label ?? event.text, "markdown")), pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
+        // Issue #22 (F1): every answer, of every kind, with what the page showed of its prompt, in the order given.
+        const shownAsked: AskedShown = own === null ? { _tag: "NotShown" } : own.question !== null ? { _tag: "Question", question: own.question } : { _tag: "Hint", hint: own.hint };
+        const entry: AnsweredEntry = { key: `${r.id}-${r.nextSeq}`, asked: shownAsked, answer: chosen?.label ?? event.text };
+        const recorded = withLeft(asked, message(asked, time, "user", entry.answer, "markdown"));
+        return { ...recorded, dashboard: { ...recorded.dashboard, answers: [...recorded.dashboard.answers, entry] }, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
       }
       case "Notified":
         return notifiedEvent(r, event.event, time);
       case "Ended": {
-        const ended: RunView = { ...withActivity(r, ""), explaining: null, ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...withoutHelp(withActivity(r, "")), explaining: null, ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }

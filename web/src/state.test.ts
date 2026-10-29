@@ -45,6 +45,12 @@ const statusOf = (s: ViewState | RunView | null | undefined): string | undefined
   const run = s === null || s === undefined ? undefined : "modes" in s ? s.modes.implementation.run : s;
   return run === null || run === undefined ? undefined : statusText(run.dashboard.status);
 };
+/** The dashboard's latest message of Claude Code, and the last answer, of the implementation tab's run (issue #22). */
+const claudeOf = (s: ViewState) => s.modes.implementation.run?.dashboard.claude;
+const lastAnswerOf = (s: ViewState) => {
+  const d = s.modes.implementation.run?.dashboard;
+  return d === undefined ? undefined : lastAnswer(d);
+};
 const bodies = (s: ViewState) => s.modes.implementation.run?.left.map((m) => `${m.author}:${m.body}`) ?? [];
 
 describe("the dashboard (issue #22)", () => {
@@ -157,38 +163,39 @@ describe("ordering and the panels", () => {
     const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Which database?", summary: null, answered: 0, total: 1 };
     const presented = presentedEvent("Which database?", [{ label: "PostgreSQL", description: "" }, { label: "SQLite", description: "" }], { kind: "clarification", id: "Q1" });
     const answered = (text: string) => fold(live([started, notified(turn), notified(presented), asked(1, prompts.interviewMessagePrompt), { _tag: "Answered", prompt: 1, text }]));
-    expect(bodies(answered("2")).at(-1)).toBe("user:SQLite");
-    expect(bodies(answered("/done")).at(-1)).toBe(`user:${prompts.END_CLARIFICATION}`);
+    expect(lastAnswerOf(answered("2"))?.answer).toBe("SQLite");
+    expect(lastAnswerOf(answered("/done"))?.answer).toBe(prompts.END_CLARIFICATION);
   });
 
   test("an answer that is a choice shows the choice's label", () => {
     const permission: UiEvent = { _tag: "QuestionPresented", question: { ...presentedOf(presentedEvent("Allow?", [])), options: [{ label: plainPieces("Allow"), description: [], answer: { token: "y" } }, { label: plainPieces("Deny"), description: [], answer: { token: "n" } }] } };
     const s = fold(live([started, notified(permission), asked(1, prompts.permissionPrompt), { _tag: "Answered", prompt: 1, text: "y" }]));
-    expect(bodies(s).at(-1)).toBe("user:Allow");
+    expect(lastAnswerOf(s)?.answer).toBe("Allow");
   });
 
-  test("an interview turn and a proposed summary each appear once, live and after a replay", () => {
+  test("an interview turn and a proposed summary are Claude's latest message in turn, and the lines said for them are absorbed", () => {
     const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Hello", summary: null, answered: 0, total: 1 };
     const summary: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Done.", summary: "# R", answered: 0, total: 1 };
-    const events: RunEvent[] = [started, notified(turn), said("\nHello\n"), notified(summary), said("\nDone.\n"), said("Summary proposed by Claude Code:\n\n# R\n"), said("\nHello\n")];
-    const expected = ["claude:Hello", "claude:Done.\n\n**Summary proposed by Claude:**\n\n# R", "program:\nHello\n"];
-    expect(bodies(fold(live(events)))).toEqual(expected);
-    expect(bodies(replayed(events))).toEqual(expected);
+    const first: RunEvent[] = [started, notified(turn), said("\nHello\n")];
+    for (const s of [fold(live(first)), replayed(first)]) expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Hello" });
+    const events: RunEvent[] = [...first, notified(summary), said("\nDone.\n"), said("Summary proposed by Claude Code:\n\n# R\n"), said("\nHello\n")];
+    for (const s of [fold(live(events)), replayed(events)]) {
+      expect(claudeOf(s)).toEqual({ heading: "Interview", body: `Done.\n\n**${prompts.SUMMARY_PROPOSED_HEADING}**\n\n# R` });
+      // The line said after the absorbed ones is Interloq's, the status.
+      expect(statusOf(s)).toBe("Hello");
+    }
   });
 
-  // Issue #46 (S19): a question of the plan writer reaches the user once, as its presented question; the plan-written
-  // message does not also list it.
-  test("a plan write is one program message with its result text and no list of questions, live and after a replay", () => {
+  // Issue #46 (S19): a question of the plan writer reaches the user once, as its presented question; the plan's result
+  // text is Claude Code's latest message, and the plan itself has its place in the rail.
+  test("a plan write's result text is Claude Code's latest message under the plan's heading; an empty one changes nothing", () => {
     const events: RunEvent[] = [started, notified({ _tag: "PlanWritten", phase: 1, resultText: "I wrote the plan." })];
     for (const s of [fold(live(events)), replayed(events)]) {
-      const m = s.modes.implementation.run?.left.at(-1);
-      expect(m?.format).toBe("markdown");
-      expect(m?.author).toBe("program");
       // Issue #6: the run holds one planning phase, so it carries no number.
-      expect(m?.body.startsWith(`**${prompts.planWrittenHeading("Planning")}**`)).toBe(true);
-      expect(m?.body).toMatch(/I wrote the plan\./);
-      expect(m?.body).not.toMatch(/Questions for you/);
+      expect(claudeOf(s)).toEqual({ heading: prompts.planWrittenHeading("Planning"), body: "I wrote the plan." });
     }
+    const claudeSaid = notified({ _tag: "ClaudeSaid", text: "before" });
+    expect(claudeOf(fold(live([started, claudeSaid, notified({ _tag: "PlanWritten", phase: 1, resultText: "" })])))).toEqual({ heading: null, body: "before" });
   });
 
   test("reviews and responses go to the right panel as Codex and Claude Code messages", () => {
@@ -204,23 +211,17 @@ describe("ordering and the panels", () => {
   });
 });
 
-// Issue #5: what Claude Code writes is attributed to Claude, as data; the page names it "Claude".
-describe("who speaks in the left panel", () => {
-  const claudeSaid = notified({ _tag: "ClaudeSaid", text: "done" });
+// Issue #5: what Claude Code writes is attributed to Claude, as data; the page names it "Claude". Issue #22: it is the
+// dashboard's latest message of Claude Code, replaced by the next.
+describe("Claude Code's latest message and the answers on the dashboard (issue #22)", () => {
+  const claudeSaid = (text: string) => notified({ _tag: "ClaudeSaid", text });
+  const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
-  test("Claude's prose is one message of Claude, without a prefix, live and after a replay", () => {
-    for (const s of [fold(live([started, claudeSaid])), replayed([started, claudeSaid])]) {
-      expect(s.modes.implementation.run?.left.map((m) => [m.author, m.body])).toEqual([["claude", "done"]]);
-    }
-  });
-
-  test("an interview turn and its proposed summary are Claude's; a plan write stays Interloq's", () => {
-    const turn = notified({ _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 });
-    const summary = notified({ _tag: "InterviewTurn", heading: "Interview", message: "Done.", summary: "# R", answered: 0, total: 1 });
-    const plan = notified({ _tag: "PlanWritten", phase: 1, resultText: "" });
-    for (const s of [fold(live([started, turn, summary, plan])), replayed([started, turn, summary, plan])]) {
-      expect(s.modes.implementation.run?.left.map((m) => m.author)).toEqual(["claude", "claude", "program"]);
-    }
+  test("Claude's prose is Claude Code's latest message, without a prefix, and a newer one replaces it", () => {
+    for (const s of both([started, claudeSaid("**done**")])) expect(claudeOf(s)).toEqual({ heading: null, body: "**done**" });
+    for (const s of both([started, claudeSaid("first"), claudeSaid("second")])) expect(claudeOf(s)).toEqual({ heading: null, body: "second" });
+    // Nothing of Claude Code's prose goes to the right panel.
+    for (const s of both([started, claudeSaid("first")])) expect(s.modes.implementation.run?.right).toEqual([]);
   });
 
   test("the activity line and the page's prompts say Claude", () => {
@@ -229,48 +230,85 @@ describe("who speaks in the left panel", () => {
     const tool = fold(live([started, notified({ _tag: "ToolUsed", agent: "claude", tool: "Read", target: "x", callId: "claude-1" })]));
     expect(statusOf(tool)).toBe("Claude — Read: x");
   });
-});
-
-// Issue #7: the left panel renders Markdown where Claude writes and where the user answers; Interloq's own texts stay plain.
-describe("Markdown in the left panel", () => {
-  const question: UiEvent = presentedEvent("A or **B**?", [{ label: "A", description: "a" }, { label: "B", description: "b" }]);
-  const formats = (s: ViewState) => s.modes.implementation.run?.left.map((m) => `${m.author}:${m.format}`) ?? [];
-
-  test("Claude's prose is Markdown", () => {
-    for (const s of [fold(live([started, notified({ _tag: "ClaudeSaid", text: "**done**" })])), replayed([started, notified({ _tag: "ClaudeSaid", text: "**done**" })])]) {
-      expect(formats(s)).toEqual(["claude:markdown"]);
-    }
-  });
 
   test("a presented question is held with its options by the pending prompt, live and after a replay (S5, S26)", () => {
+    const question: UiEvent = presentedEvent("A or **B**?", [{ label: "A", description: "a" }, { label: "B", description: "b" }]);
     const events: RunEvent[] = [started, notified(question), asked(1, prompts.optionOrTextPrompt)];
-    for (const s of [fold(live(events)), replayed(events)]) {
-      // S26: while pending, the question is the widget's, not the transcript's.
-      expect(s.modes.implementation.run?.left).toEqual([]);
+    for (const s of both(events)) {
+      // S26: while pending, the question is the widget's; no answer is recorded yet.
+      expect(s.modes.implementation.run?.dashboard.answers).toEqual([]);
       expect(s.modes.implementation.run?.pending?.question).toEqual(presentedOf(question));
       expect(s.modes.implementation.run?.pending?.options.map((c) => c.sends)).toEqual(["1", "2"]);
     }
   });
 
-  test("the user's answers are Markdown, typed or chosen", () => {
-    const typed = [started, asked(1, prompts.interviewMessagePrompt), { _tag: "Answered", prompt: 1, text: "use **x**" } as RunEvent];
-    const chosen = [started, asked(1, prompts.permissionPrompt), { _tag: "Answered", prompt: 1, text: "y" } as RunEvent];
-    for (const s of [fold(live(typed)), replayed(typed), fold(live(chosen)), replayed(chosen)]) {
-      expect(s.modes.implementation.run?.left.at(-1)?.format).toBe("markdown");
+  test("an answer records the question as it was presented, or the prompt's hint, or nothing for a prompt never pending here", () => {
+    const question: UiEvent = presentedEvent("A or B?", [{ label: "A", description: "a" }, { label: "B", description: "b" }]);
+    const withQuestion: RunEvent[] = [started, notified(question), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "use **x**" }];
+    for (const s of both(withQuestion)) {
+      expect(lastAnswerOf(s)).toEqual({ key: "1-3", asked: { _tag: "Question", question: presentedOf(question) }, answer: "use **x**" });
+    }
+    const withHint: RunEvent[] = [started, asked(1, prompts.decisionPrompt), { _tag: "Answered", prompt: 1, text: "" }];
+    for (const s of both(withHint)) {
+      expect(lastAnswerOf(s)).toEqual({ key: "1-2", asked: { _tag: "Hint", hint: prompts.pagePromptText("decision", prompts.decisionPrompt) }, answer: prompts.CONTINUE_WITHOUT_DECIDING });
+    }
+    const notShown: RunEvent[] = [started, { _tag: "Answered", prompt: 4, text: "late" }];
+    for (const s of both(notShown)) expect(lastAnswerOf(s)?.asked).toEqual({ _tag: "NotShown" });
+  });
+
+  test("the interview's help is shown from its opening until the review after it, a decision's rounds leaving it", () => {
+    const opened = notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 });
+    const help = prompts.interviewHelp("Interview");
+    for (const s of both([started, opened])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(help);
+    const decisionRound = notified({ _tag: "RoundBegan", subject: { decision: 1 }, round: 1, limit: 5 });
+    for (const s of both([started, opened, decisionRound])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(help);
+    const reviewRound = notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 });
+    for (const s of both([started, opened, reviewRound])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(null);
+    const phaseEnded = notified({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "done" });
+    for (const s of both([started, opened, phaseEnded])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(null);
+    for (const s of both([started, opened, { _tag: "Ended", code: 130 }])) expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(null);
+  });
+
+  test("ModelNamed sets the agent's model line, and a later model of that agent replaces it", () => {
+    const named = (model: prompts.NamedModel) => notified({ _tag: "ModelNamed", model });
+    const events: RunEvent[] = [started, named({ agent: "codex", name: null }), named({ agent: "claude", name: "a" }), named({ agent: "claude", name: "b" })];
+    for (const s of both(events)) {
+      expect(s.modes.implementation.run?.dashboard.models).toEqual({ claude: prompts.modelLine({ agent: "claude", name: "b" }), codex: prompts.modelLine({ agent: "codex", name: null }) });
     }
   });
 
-  test("Interloq's lines, prompts and interview help stay plain; plan writes and interview turns stay Markdown", () => {
-    const events: RunEvent[] = [
-      started,
-      said("a_b"),
-      notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 }),
-      notified({ _tag: "InterviewTurn", heading: "Interview", message: "Hi", summary: null, answered: 0, total: 1 }),
-      notified({ _tag: "PlanWritten", phase: 1, resultText: "" }),
-      asked(1, prompts.decisionPrompt),
-      { _tag: "Answered", prompt: 1, text: "" },
-    ];
-    expect(formats(fold(live(events)))).toEqual(["program:text", "program:text", "claude:markdown", "program:markdown", "program:text", "user:markdown"]);
+  test("property: the answers are the Answered events in order, lastAnswer the last, and the replay folds as the live page does", () => {
+    type Step = Readonly<{ _tag: "answer"; text: string }> | Readonly<{ _tag: "ask" }> | Readonly<{ _tag: "claude"; text: string }> | Readonly<{ _tag: "turn"; text: string }> | Readonly<{ _tag: "open" }> | Readonly<{ _tag: "review" }> | Readonly<{ _tag: "model"; name: string }>;
+    const step: fc.Arbitrary<Step> = fc.oneof(
+      fc.record({ _tag: fc.constant("answer" as const), text: fc.constantFrom("1", "x", "") }),
+      fc.constant({ _tag: "ask" as const }),
+      fc.record({ _tag: fc.constant("claude" as const), text: fc.constantFrom("a", "b") }),
+      fc.record({ _tag: fc.constant("turn" as const), text: fc.constantFrom("t", "u") }),
+      fc.constant({ _tag: "open" as const }),
+      fc.constant({ _tag: "review" as const }),
+      fc.record({ _tag: fc.constant("model" as const), name: fc.constantFrom("m", "n") }),
+    );
+    fc.assert(fc.property(fc.array(step, { maxLength: 12 }), (steps) => {
+      const events: RunEvent[] = [started];
+      let prompt = 0;
+      for (const st of steps) {
+        switch (st._tag) {
+          case "answer": events.push({ _tag: "Answered", prompt, text: st.text }); break;
+          case "ask": prompt += 1; events.push(asked(prompt, prompts.interviewMessagePrompt)); break;
+          case "claude": events.push(claudeSaid(st.text)); break;
+          case "turn": events.push(notified({ _tag: "InterviewTurn", heading: "I", message: st.text, summary: null, answered: 0, total: 1 })); break;
+          case "open": events.push(notified({ _tag: "InterviewOpened", heading: "I", stage: "clarification", total: 1 })); break;
+          case "review": events.push(notified({ _tag: "RoundBegan", subject: "requirements", round: 1, limit: 5 })); break;
+          case "model": events.push(notified({ _tag: "ModelNamed", model: { agent: "claude", name: st.name } })); break;
+        }
+      }
+      const liveView = fold(live(events));
+      const answers = liveView.modes.implementation.run?.dashboard.answers ?? [];
+      expect(answers.map((e) => e.key)).toEqual(events.flatMap((e, seq) => (e._tag === "Answered" ? [`1-${seq}`] : [])));
+      const d = liveView.modes.implementation.run?.dashboard;
+      expect(d === undefined ? null : lastAnswer(d)).toEqual(answers.at(-1) ?? null);
+      expect(replayed(events).modes.implementation.run?.dashboard).toEqual(d);
+    }), { numRuns: 150 });
   });
 });
 
@@ -468,7 +506,7 @@ describe("the steps of Gather Requirements", () => {
     const before = fold(live(base));
     const s = fold(live([...base, counted(4, 7)]));
     expect(steps(s)?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "4/7", ""]);
-    expect(s.modes.implementation.run?.left.length).toBe(before.modes.implementation.run?.left.length);
+    expect(s.modes.implementation.run?.dashboard).toEqual(before.modes.implementation.run?.dashboard);
     expect(s.modes.implementation.run?.pending?.asked.prompt).toBe(1);
     const followUp = [...through, turn(7, 7, "# R"), round("requirements", 1), opened("followUp", 2), counted(1, 2)];
     expect(steps(fold(live(followUp)))?.at(-1)).toEqual([prompts.stepLabel("clarification"), "active", "8/9", "Requirements review:1"]);
@@ -754,9 +792,9 @@ describe("answered prompts", () => {
 
 // Finding 8 of docs/gui-review.md: the page renders the interview's help without a """ convention.
 describe("the interview's opening help", () => {
-  test("the page message names /done, /quit and Shift+Enter, and has no triple quotes", () => {
+  test("the dashboard's help names /done, /quit and Shift+Enter, and has no triple quotes", () => {
     const s = fold(live([started, notified({ _tag: "InterviewOpened", heading: "Interview", stage: "clarification", total: 1 })]));
-    const body = s.modes.implementation.run?.left.at(-1)?.body ?? "";
+    const body = s.modes.implementation.run?.dashboard.interviewHelp ?? "";
     expect(body).toBe(prompts.interviewHelp("Interview"));
     expect(body).toMatch(/Shift\+Enter/);
     expect(body).toMatch(/\/done/);
@@ -791,9 +829,11 @@ describe("a frame the page could not read", () => {
 // The scenario whose absence let defect A of docs/page-question-phase-defects.md through: a replay, as the server sends
 // it, of a question phase with a review, Claude Code's response with the amended list, and the interview's first turn.
 describe("a replay of a question phase", () => {
-  test("decoded as the socket decodes it, it yields both panels and the pending interview prompt", () => {
+  test("decoded as the socket decodes it, it yields the right panel, the dashboard and the pending interview prompt", () => {
     const events: RunEvent[] = [
       started,
+      // Issue #22: the model named as the run names it, encoded with the protocol's schema below.
+      notified({ _tag: "ModelNamed", model: { agent: "codex", name: null } }),
       notified({ _tag: "PhaseBegan", phase: { kind: "questions" } }),
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
       notified({ _tag: "ReviewReceived", subject: "questions", round: 1, review: { issues: [{ id: "Q-R1-1", severity: "major", location: "Q1", problem: "The list does not ask for the database.", evidence: "e" }] }, counted: 1 }),
@@ -828,7 +868,9 @@ describe("a replay of a question phase", () => {
     expect(right.length).toBe(2);
     expect(right[0]).toMatch(/^codex:.*The list does not ask for the database\./s);
     expect(right[1]).toMatch(/^claude:.*\[Q-R1-1\]\*\* accepted: Added the database question\./s);
-    expect(bodies(s).slice(0, 2)).toEqual([`program:${prompts.interviewHelp("Interview")}`, "claude:Which database should the service use?\n1. PostgreSQL\n2. SQLite"]);
+    expect(s.modes.implementation.run?.dashboard.interviewHelp).toBe(prompts.interviewHelp("Interview"));
+    expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Which database should the service use?\n1. PostgreSQL\n2. SQLite" });
+    expect(s.modes.implementation.run?.dashboard.models).toEqual({ claude: null, codex: prompts.modelLine({ agent: "codex", name: null }) });
     expect(s.modes.implementation.run?.pending?.asked.kind).toBe("interviewMessage");
     expect(s.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);
     expect(s.modes.implementation.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.END_CLARIFICATION}=/done`, `${prompts.END_RUN_LABEL}=/quit`]);
@@ -1007,10 +1049,10 @@ describe("decision support", () => {
     const s = fold(live([started, notified(presented), asked(1, prompts.withOffer(prompts.decisionPrompt))]));
     expect(s.modes.implementation.run?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["Follow Codex — the issue=1", "Follow Claude — the rationale=2"]);
     expect(s.modes.implementation.run?.pending?.choices.map((c) => `${c.label}=${c.sends}`)).toEqual([`${prompts.CONTINUE_WITHOUT_DECIDING}=`, `${prompts.HELP_ME_DECIDE}=/decide`, `${prompts.END_RUN_LABEL}=q`]);
-    expect(bodies(s)).toEqual([]);
+    expect(s.modes.implementation.run?.dashboard.answers).toEqual([]);
     expect(s.modes.implementation.run?.pending?.hint).toBe(prompts.pagePromptText("decision", prompts.decisionPrompt));
     const helped = fold([{ type: "event", run: 1, seq: 3, time: at(3), event: { _tag: "Answered", prompt: 1, text: "/decide" } }], s);
-    expect(bodies(helped)).toEqual([`program:${piecesText(presentedOf(presented).question)}`, `user:${prompts.HELP_ME_DECIDE}`]);
+    expect(lastAnswerOf(helped)).toEqual({ key: "1-3", asked: { _tag: "Question", question: presentedOf(presented) }, answer: prompts.HELP_ME_DECIDE });
   });
 
   test("options never outlive their prompt: a pause without options after one with options shows no cards", () => {
@@ -1570,22 +1612,23 @@ describe("the steps an Implementation acted on", () => {
   });
 });
 
-// S26: the question the run waits on stays out of the transcript until it is answered; then the question and the
-// answer are appended as an ordinary exchange. Replay and live events fold alike.
+// S26: the question the run waits on is the widget's until it is answered; then the question and the answer are the
+// dashboard's last answer (issue #22). Replay and live events fold alike.
 describe("the pending question", () => {
   const presented = presentedEvent("Which database?", [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "" }]);
   const pendingEvents: RunEvent[] = [started, said("a"), notified(presented), asked(1, prompts.withOffer(prompts.optionOrTextPrompt))];
-  test("while pending, neither the question nor the prompt's text is a transcript message; the widget holds both", () => {
+  test("while pending, neither the question nor the prompt's text is an answer on the dashboard; the widget holds both", () => {
     for (const s of [fold(live(pendingEvents)), replayed(pendingEvents)]) {
-      expect(bodies(s)).toEqual(["program:a"]);
+      expect(s.modes.implementation.run?.dashboard.answers).toEqual([]);
+      expect(statusOf(s)).toBe("a");
       expect(s.modes.implementation.run?.pending?.question).toEqual(presentedOf(presented));
       expect(s.modes.implementation.run?.pending?.hint).toBe(prompts.pagePromptText("optionOrText", prompts.withOffer(prompts.optionOrTextPrompt)));
     }
   });
-  test("when answered, the question and the answer are appended as an exchange", () => {
+  test("when answered, the question and the answer are the dashboard's last answer", () => {
     const events: RunEvent[] = [...pendingEvents, { _tag: "Answered", prompt: 1, text: "1" }];
     for (const s of [fold(live(events)), replayed(events)]) {
-      expect(bodies(s)).toEqual(["program:a", `program:${piecesText(presentedOf(presented).question)}`, "user:SQLite — a file"]);
+      expect(lastAnswerOf(s)).toEqual({ key: "1-4", asked: { _tag: "Question", question: presentedOf(presented) }, answer: "SQLite — a file" });
       expect(s.modes.implementation.run?.pending).toBe(null);
     }
   });
@@ -1594,20 +1637,20 @@ describe("the pending question", () => {
     const s = fold(live([...pendingEvents, { _tag: "Answered", prompt: 1, text: "" }, notified({ _tag: "AnswerRejected" }), notified(again), asked(2, prompts.optionOrTextPrompt)]));
     expect(piecesText(s.modes.implementation.run?.pending?.question?.question ?? [])).toBe("Which database, again?");
   });
-  test("property: while a prompt is pending, its question's text is in no transcript message", () => {
+  test("property: while a prompt is pending, its question is in no answer of the dashboard", () => {
     fc.assert(
       fc.property(fc.array(fc.string({ minLength: 1, maxLength: 6 }).map((t) => said(`s ${t}`)), { maxLength: 4 }), fc.string({ minLength: 3, maxLength: 12 }), (before, text) => {
         const q = presentedEvent(`Q? ${text}`, []);
         const s = fold(live([started, ...before, notified(q), asked(1, prompts.optionOrTextPrompt)]));
-        return (s.modes.implementation.run?.left ?? []).every((m) => !m.body.includes(`Q? ${text}`));
+        return (s.modes.implementation.run?.dashboard.answers ?? []).length === 0 && s.modes.implementation.run?.pending?.question?.question[0]?.text === `Q? ${text}`;
       }),
     );
   });
 });
 
-// S28, S12 of the task of issue #36: an answered question joins the transcript whole, as it was presented, so that its
-// pieces keep referring to their explanations there.
-test("the question of an answered exchange is the presented question, whole", () => {
+// S28, S12 of the task of issue #36: an answered question is kept whole, as it was presented, so that its pieces keep
+// referring to their explanations on the dashboard (issue #22).
+test("the question of an answer is the presented question, whole", () => {
   const question: PresentedQuestion = {
     ...presentedOf(presentedEvent("Which zod?", [{ label: "A", description: "a" }])),
     question: [{ text: "Which ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: "?", ref: "", code: false }],
@@ -1615,12 +1658,10 @@ test("the question of an answered exchange is the presented question, whole", ()
     attached: { kind: "request", blocks: [{ kind: "code", text: "npm i zod" }, { kind: "document", markdown: "# Doc" }] },
   };
   const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
-  expect(s.modes.implementation.run?.left[0].question).toEqual(question);
-  expect(s.modes.implementation.run?.left[0].body).toBe("Which zod?");
-  expect(s.modes.implementation.run?.left[1].question).toBeUndefined();
+  expect(lastAnswerOf(s)).toEqual({ key: "1-3", asked: { _tag: "Question", question }, answer: "x" });
 });
 
-test("property: an answered question joins the transcript exactly as it was presented", () => {
+test("property: an answered question is kept exactly as it was presented", () => {
   const piece = fc.record({ text: fc.string({ maxLength: 6 }), ref: fc.constantFrom("", "a"), code: fc.boolean() });
   const block = fc.oneof(
     fc.record({ kind: fc.constant("paragraph" as const), pieces: fc.array(piece, { maxLength: 3 }) }),
@@ -1632,7 +1673,8 @@ test("property: an answered question joins the transcript exactly as it was pres
     fc.property(fc.array(block, { maxLength: 3 }), fc.array(piece, { minLength: 1, maxLength: 3 }), fc.array(block, { maxLength: 2 }), (context, text, details) => {
       const question: PresentedQuestion = { ...presentedOf(presentedEvent("q", [])), context: { blocks: context, by: "agent" }, history: [], question: text, attached: attachedOf("reviewFacts", details), explanations: [shownOf({ id: "a", term: "t", senses: ["e"] })] };
       const s = fold(live([started, notified({ _tag: "QuestionPresented", question }), asked(1, prompts.optionOrTextPrompt), { _tag: "Answered", prompt: 1, text: "x" }]));
-      return JSON.stringify(s.modes.implementation.run?.left[0].question) === JSON.stringify(question) && s.modes.implementation.run?.left[0].body === piecesText(text);
+      const entry = lastAnswerOf(s);
+      return entry?.asked._tag === "Question" && JSON.stringify(entry.asked.question) === JSON.stringify(question);
     }),
     { numRuns: 100 },
   );
