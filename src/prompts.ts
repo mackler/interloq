@@ -1155,6 +1155,13 @@ export const BLOCKED_STATUS_SENTENCE = "Return status 'blocked' only for a failu
  */
 export const REPORT_CHECKS_SENTENCE = "In the report's 'checks', list each check command you ran in this call, in the order you ran them: the step's id in 'step', the command exactly as you ran it in 'command', and how long it took in seconds in 'seconds'. List none if you ran none.";
 /**
+ * When an execution call asks the user (issue #186, work review 1, W1-R1-1): a decision or information about how to
+ * carry out the work, or a remaining step that proves wrong. A point of what the work should achieve that the sources
+ * leave open is the verdict of NOT_REFINED_STATUS_SENTENCE, named by the same phrase, so the two divide the cases by one
+ * criterion.
+ */
+export const ASK_USER_SENTENCE = "If you need information or a decision from the user about how to carry out the work, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. But where the task, the requirements, the user's decisions and the codebase leave open what the work should achieve, do not ask: return status 'not_refined' as stated below. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.";
+/**
  * The prompt of an execution call. Each execution phase runs in a Claude Code session of its own (issue #117), which has
  * not seen the planning, so the prompt names the task and the records it must follow.
  */
@@ -1162,7 +1169,7 @@ export function executePrompt(root: RunRoot, task: string, withRequirements: boo
   const requirements = withRequirements ? `${requirementsSentence(root)}\n` : "";
   return `${requirements}${userDecisionsSentence(root)}\nThe plan in ${runDir(root)}/plan.json has been reviewed. Implement its remaining steps: the steps whose status is 'pending' or 'unfinished'. You may work them in any order, with one step open at a time: report a step done before you start another. Steps with status 'done' are implemented; a step with status 'unfinished' was begun and not completed.
 Report your progress with the tool ${REPORT_STEP_TOOL}: when you begin a step, call it with the step's id and the status '${REPORT_STEP_STATUSES[0]}'; when the step is complete and verified, call it with the step's id and the status '${REPORT_STEP_STATUSES[1]}'. ${resumeStepSentence} The program records the status in ${runDir(root)}/plan.json; do not edit ${runDir(root)}/plan.json or ${runDir(root)}/plan.md, and do not change the plan.
-If you need information or a decision from the user, or if a remaining step proves to be wrong, do not continue on an assumption: ask with the AskUserQuestion tool. After you have asked, make no tool call other than the final structured output; end your turn with status 'needs_input'.
+${ASK_USER_SENTENCE}
 ${RELAYED_SHAPE}
 ${questionWritingRules()}
 ${planStepCheckRule(checks)}

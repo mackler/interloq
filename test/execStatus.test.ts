@@ -35,3 +35,15 @@ test("executePrompt carries the not_refined sentence, which names the status and
   assert.ok("missing" in S.ExecReport.fields);
   assert.match(prompts.NOT_REFINED_STATUS_SENTENCE, /'not_refined' with 'missing'/);
 });
+
+// Issue #186, work review 1 (W1-R1-1): the AskUserQuestion sentence excludes what the work should achieve, which is
+// reported as not_refined; the two sentences divide the cases by one criterion.
+test("executePrompt's AskUserQuestion sentence sends a point of what the work should achieve to not_refined", () => {
+  const prompt = prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS);
+  assert.ok(prompt.includes(prompts.ASK_USER_SENTENCE));
+  assert.ok(prompt.includes(prompts.NOT_REFINED_STATUS_SENTENCE));
+  assert.match(prompts.ASK_USER_SENTENCE, /return status 'not_refined'/);
+  const criterion = "leave open what the work should achieve";
+  assert.ok(prompts.ASK_USER_SENTENCE.includes(criterion));
+  assert.ok(prompts.NOT_REFINED_STATUS_SENTENCE.includes(criterion));
+});
