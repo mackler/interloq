@@ -29,7 +29,7 @@ const reasons: readonly ChainEndReason[] = [
 ];
 const chains: readonly Chain[] = [
   { _tag: "Idle", ended: null, history: [] },
-  { _tag: "Running", run: 4, item, title: "seven", ...common },
+  { _tag: "Running", run: 4, item, title: "seven", claim: { _tag: "Unclaimed" }, ...common },
   { _tag: "Parking", item, root: "runs/r" as RunRoot, then: null, ...common },
   { _tag: "Ready", ...common },
   { _tag: "Starting", item, title: "seven", ...common },

@@ -1519,6 +1519,17 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
   };
   return `${(check === null ? unsent : attempted)[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
 }
+/**
+ * Issue #192 (decision Q5): the line said and written when an implementation run that ended without finishing and made
+ * no commit had its item labeled refined again.
+ */
+export function itemReturnedLine(_item: string): string {
+  return "";
+}
+/** Issue #192: the line said and written when that relabeling failed for good; the item stays implementing. */
+export function itemNotReturnedLine(_item: string, _cause: string, _check: WriteCheck | null): string {
+  return "";
+}
 /** Issue #171 (requirements Q2): what the item held after the last write of a halted tracker step, or that it could not be checked. */
 export function writeCheckText(item: string, check: WriteCheck): string {
   if (check.kind === "unchecked") return `Item ${item} could not be checked after the last attempt.`;

@@ -121,7 +121,11 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  * `allocated` (issue #147): where the run's records directory is kept once allocated, given by the run manager so that it
  * learns the directory of a run however it ended, a halt or a defect included.
  */
-export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>): Effect.Effect<number, never, Scope.Scope> =>
+/**
+ * `claimParking` (issue #192) asks the chain to commit to parking this run's halt, and answers whether it did; the run
+ * manager gives it as one step of its publisher. Without a chain nothing parks the run.
+ */
+export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>, claimParking: Effect.Effect<boolean> = Effect.succeed(false)): Effect.Effect<number, never, Scope.Scope> =>
   programWith(
     {
       project: start.project,
@@ -157,6 +161,7 @@ export const program = (start: RunStart, wiring: Wiring, signal?: FaultSignal, a
     wiring,
     signal,
     allocated,
+    claimParking,
   );
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
@@ -168,7 +173,7 @@ export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<n
  * run, from the configuration to the body, is raced with it, so the run halts with ServerFault and its record wherever
  * it is. Without a signal, the run makes one that no one fails.
  */
-const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>): Effect.Effect<number, never, Scope.Scope> =>
+const programWith = (start: Started, wiring: Wiring, given?: FaultSignal, allocated?: Ref.Ref<Option.Option<RunRoot>>, _claimParking: Effect.Effect<boolean> = Effect.succeed(false)): Effect.Effect<number, never, Scope.Scope> =>
   Effect.gen(function* () {
     const signal = given ?? (yield* makeFaultSignal);
     const fault = Deferred.await(signal.fault);

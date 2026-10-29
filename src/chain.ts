@@ -2,7 +2,7 @@
 // run ends, so the machine is not idle while the developer is away. Pure: the whole state of the mode and every decision
 // of it, as data and transitions, so that src/runManager.ts only executes the commands they return. No I/O, no Effect
 // services; also imported by the browser (through src/protocol.ts and web/src/cutoff.ts).
-import { type Brand, Result, Schema } from "effect";
+import { type Brand, Effect, Result, Schema } from "effect";
 import type { ItemId } from "./tracker.ts";
 import type { RunRoot } from "./artifacts.ts";
 import { PositiveInt } from "./schema.ts";
@@ -114,19 +114,38 @@ const commonFields = {
 };
 
 /**
+ * Whether the chain has committed to parking the halt of its running run (issue #192): `Claimed` once the run asked,
+ * after which turning the mode off no longer cancels the parking (`then` the end decided meanwhile).
+ */
+export type ParkClaim = Readonly<{ _tag: "Unclaimed" }> | Readonly<{ _tag: "Claimed"; then: ChainEndReason | null }>;
+const UNCLAIMED: ParkClaim = { _tag: "Unclaimed" };
+const ParkClaimSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Unclaimed") }),
+  Schema.Struct({ _tag: Schema.Literal("Claimed"), then: Schema.NullOr(ChainEndReasonSchema) }),
+]);
+
+/**
  * The chain: none going (`Idle`, with the last chain's runs and why it ended, for display), a run of it in progress
  * (`Running`, `run` the run manager's id of it), a halted run's work being parked (`Parking`, `then` the end decided
  * meanwhile), its next start due (`Ready`), or a start asked of the manager (`Starting`).
  */
 export type Chain =
   | Readonly<{ _tag: "Idle"; ended: ChainEndReason | null; history: readonly ChainEntry[] }>
-  | (Readonly<{ _tag: "Running"; run: number; item: ItemId; title: string }> & Common)
+  | (Readonly<{ _tag: "Running"; run: number; item: ItemId; title: string; claim: ParkClaim }> & Common)
   | (Readonly<{ _tag: "Parking"; item: ItemId; root: RunRoot; then: ChainEndReason | null }> & Common)
   | (Readonly<{ _tag: "Ready" }> & Common)
   | (Readonly<{ _tag: "Starting"; item: ItemId; title: string }> & Common);
 const ChainSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Idle"), ended: Schema.NullOr(ChainEndReasonSchema), history: Schema.Array(ChainEntrySchema) }),
-  Schema.Struct({ _tag: Schema.Literal("Running"), run: Count, item: ItemIdSchema, title: Schema.String, ...commonFields }),
+  Schema.Struct({
+    _tag: Schema.Literal("Running"),
+    run: Count,
+    item: ItemIdSchema,
+    title: Schema.String,
+    // A chain.json written before issue #192 has no claim.
+    claim: ParkClaimSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed(UNCLAIMED))),
+    ...commonFields,
+  }),
   Schema.Struct({ _tag: Schema.Literal("Parking"), item: ItemIdSchema, root: RunRootSchema, then: Schema.NullOr(ChainEndReasonSchema), ...commonFields }),
   Schema.Struct({ _tag: Schema.Literal("Ready"), ...commonFields }),
   Schema.Struct({ _tag: Schema.Literal("Starting"), item: ItemIdSchema, title: Schema.String, ...commonFields }),
@@ -178,7 +197,7 @@ const limitReason = (state: ChainState, count: number, nowMs: number): ChainEndR
 export const begun = (state: ChainState, run: number, item: ItemId, title: string): ChainState => {
   if (!state.settings.enabled) return state;
   const generation = state.generation + 1;
-  return { ...state, generation, chain: { _tag: "Running", run, item, title, generation, count: 1, halts: [], history: [] } };
+  return { ...state, generation, chain: { _tag: "Running", run, item, title, claim: UNCLAIMED, generation, count: 1, halts: [], history: [] } };
 };
 
 /** The end of the run of id `run`; only the chain's own run counts, and a question inside a run never reaches here. */
@@ -237,6 +256,12 @@ export const startGuard = (state: ChainState, generation: number, item: ItemId, 
   return limitReason(state, chain.count, nowMs);
 };
 
+/**
+ * The halted run `run` asks the chain to park its uncommitted files (issue #192): granted, and recorded, exactly when the
+ * chain is running that run, so the program's choice to keep the item implementing rests on the chain's own decision.
+ */
+export const claimParking = (state: ChainState, _run: number): readonly [ChainState, boolean] => [state, false];
+
 /** No implementation run is reserved while a halted run's work is being moved off the working branch. */
 export const blocksImplementationStart = (state: ChainState): boolean => state.chain._tag === "Parking";
 
@@ -244,7 +269,7 @@ export const blocksImplementationStart = (state: ChainState): boolean => state.c
 export const started = (state: ChainState, generation: number, run: number, item: ItemId, title: string): ChainState => {
   const chain = state.chain;
   if (chain._tag !== "Starting" || chain.generation !== generation) return state;
-  return { ...state, chain: { _tag: "Running", run, item, title, ...commonOf(chain), count: chain.count + 1 } };
+  return { ...state, chain: { _tag: "Running", run, item, title, claim: UNCLAIMED, ...commonOf(chain), count: chain.count + 1 } };
 };
 
 /** The chained start was refused: the chain ends with the reason. */
