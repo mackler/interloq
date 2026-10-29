@@ -2642,6 +2642,19 @@ describe("the countdown of a question (issue #185)", () => {
     const next = runOf(fold(live([...expired, notified({ _tag: "RoundBegan", subject: { plan: 1 }, round: 2, limit: 2 })])), "implementation");
     expect(next?.expired).toBe(null);
   });
+  // Work review 1 of issue #185 (W1-R1-5): the analysis belongs to the prompt that expired, so it goes with it.
+  for (const then of ["abandon", "extend"] as const) {
+    test(`an expiry that ${then}s drops the analysis prepared for its prompt`, () => {
+      const analyzed = notified({ _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } });
+      const events = [started, analyzed, counting(1, then), { _tag: "AnswerExpired", prompt: 1, seconds: 120, then } as RunEvent];
+      const before = runOf(fold(live(events.slice(0, 3))), "implementation");
+      expect(before?.analysis?.prompt).toBe(1);
+      const run = runOf(fold(live(events)), "implementation");
+      expect(run?.analysis).toBe(null);
+      expect(run?.expired).toEqual({ prompt: 1, seconds: 120, then });
+      expect(runOf(replayed(events), "implementation")?.analysis).toBe(null);
+    });
+  }
   test("abandonedInChain lists the items the chain's history records as abandoned", () => {
     const begunChain = begun(helloChain, 4, "7" as ItemId, "seven");
     const [abandoned] = ended(begunChain, 4, { code: 2, root: null, parked: null, abandoned: { _tag: "SetRefined" } });

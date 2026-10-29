@@ -50,10 +50,12 @@
   };
   let { widget, identity = null, text = $bindable(""), offline = false, answersOnly = false, expired = null, onAnswer, onHold = () => undefined, onShowConversation }: Props = $props();
   // Issue #185: the first text typed into the field of a counting prompt holds it, once per prompt, as the button does.
-  let heldFor = $state<number | null>(null);
+  // Work review 1 of issue #185 (W1-R1-1): keyed by the prompt's full key, since every run numbers its prompts from 1.
+  let heldFor = $state<string | null>(null);
   const hold = () => {
-    if (widget === null || heldFor === widget.asked.prompt) return;
-    heldFor = widget.asked.prompt;
+    const key = identityOf();
+    if (widget === null || key === null || heldFor === key) return;
+    heldFor = key;
     onHold(widget.asked.prompt);
   };
   $effect(() => {

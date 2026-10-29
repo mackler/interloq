@@ -7,11 +7,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { Cause, Effect, Exit, Layer, Result } from "effect";
-import { abandonRun } from "../src/abandon.ts";
-import { TrackerUnreachable } from "../src/errors.ts";
+import { abandonedAfterFailure, abandonRun } from "../src/abandon.ts";
+import { FileSystemError, TrackerUnreachable } from "../src/errors.ts";
 import { parkBranchOf } from "../src/park.ts";
 import * as prompts from "../src/prompts.ts";
-import { type Services, Store, Tracker } from "../src/services.ts";
+import { type Services, Store, type StoreShape, Tracker } from "../src/services.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
 import { fakeTrackerOf, scriptedItem, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
 
@@ -21,11 +21,17 @@ const branch = Result.getOrThrow(parkBranchOf(scriptedItem.id, TEST_ROOT));
 const serverError = (message: string) => new TrackerUnreachable({ tracker: "GitHub", message, status: 502 });
 const unreached = (message: string) => new TrackerUnreachable({ tracker: "GitHub", message, status: null });
 
-const setup = (tracker: FakeTracker, options: { work?: boolean; lock?: boolean } = {}) => {
+const setup = (tracker: FakeTracker, options: { work?: boolean; leftover?: boolean; lock?: boolean; failWrites?: boolean } = {}) => {
   const repo = tempRepo();
   git(repo, "config", "user.email", "t@t");
   git(repo, "config", "user.name", "t");
-  const { layer, probe } = testLayer(repo, { tracker, config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 } });
+  // W1-R1-2: every write to conversation.md fails once the run's state is prepared.
+  let armed = false;
+  const store = (s: StoreShape): StoreShape => ({
+    ...s,
+    converse: (markdown) => (armed ? Effect.fail(new FileSystemError({ operation: "append", path: "conversation.md", message: "disk full" })) : s.converse(markdown)),
+  });
+  const { layer, probe } = testLayer(repo, { tracker, config: { maxTrackerRetries: 1, trackerRetryDelaySeconds: 0.01 }, store });
   const start = git(repo, "rev-parse", "HEAD");
   const prepared = Effect.gen(function* () {
     const store = yield* Store;
@@ -35,9 +41,10 @@ const setup = (tracker: FakeTracker, options: { work?: boolean; lock?: boolean }
       fs.writeFileSync(path.join(repo, "committed.txt"), "c\n");
       git(repo, "add", "committed.txt");
       git(repo, "commit", "-qm", "the run's commit");
-      fs.writeFileSync(path.join(repo, "left.txt"), "l\n");
+      if (options.leftover ?? true) fs.writeFileSync(path.join(repo, "left.txt"), "l\n");
     }
     if (options.lock === true) fs.writeFileSync(path.join(repo, ".git", "index.lock"), "");
+    if (options.failWrites === true) armed = true;
   });
   const runIt = () =>
     Effect.runPromiseExit(Effect.andThen(prepared, abandonRun(scriptedItem.id)).pipe(Effect.provide(Layer.merge(layer as Layer.Layer<Services>, Layer.succeed(Tracker, tracker.tracker)))));
@@ -111,4 +118,50 @@ test("the label request and its read-back failing: Unconfirmed with the last err
   const text = s.conversation();
   assert.ok(text.includes("could not be confirmed as `refined`") && text.includes("no answer, last"), text);
   assert.ok(!text.includes("**User decision:**"));
+});
+
+// Work review 1 of issue #185 (W1-R1-2): a parking that failed is never lost to a record that cannot be written.
+test("a failed parking whose line cannot be written still returns ParkFailed with the label implementing kept", async () => {
+  const tracker = fakeTrackerOf([implementing]);
+  const s = setup(tracker, { lock: true, failWrites: true });
+  const abandoned = success(await s.runIt());
+  assert.equal(abandoned.park._tag, "ParkFailed");
+  assert.deepEqual(abandoned.label, { _tag: "KeptImplementing" });
+  assert.equal((await held(tracker)).state, "implementing");
+});
+
+test("abandonedAfterFailure: a parking not recorded Parked or Nothing is ParkFailed with the label kept; a completed one keeps its note", () => {
+  const cause = "the tracker failed";
+  const failed = { park: { _tag: "ParkFailed", message: cause }, label: { _tag: "KeptImplementing" } };
+  assert.deepEqual(abandonedAfterFailure(null, cause), failed);
+  const time = "2026-10-29T00:00:00.000Z";
+  const start_commit = "a".repeat(40);
+  assert.deepEqual(abandonedAfterFailure({ _tag: "Intended", version: 2, branch, start_commit, time, ending: "abandoned" }, cause), failed);
+  const parked = { _tag: "Parked" as const, version: 2 as const, branch, commit: "b".repeat(40), start_commit, committed: ["left.txt"], recorded: true, time, ending: "abandoned" as const };
+  assert.deepEqual(abandonedAfterFailure(parked, cause), {
+    park: { _tag: "Parked", branch, commit: "b".repeat(40) },
+    label: { _tag: "Unconfirmed", cause },
+  });
+  assert.deepEqual(abandonedAfterFailure({ _tag: "Nothing", version: 2, time, ending: "abandoned" }, cause), { park: { _tag: "NothingParked" }, label: { _tag: "Unconfirmed", cause } });
+});
+
+// Work review 1 of issue #185 (W1-R1-4): the page, as conversation.md does, says that the parking commit skipped the
+// project's hooks and that the committed work was not checked.
+test("an abandonment with leftovers says on the page that the commit skipped the hooks; conversation.md holds the parking line once", async () => {
+  const tracker = fakeTrackerOf([implementing]);
+  const s = setup(tracker);
+  success(await s.runIt());
+  const said = s.probe.ui.said.filter((l) => l.includes(prompts.PARK_UNCHECKED_SENTENCE));
+  assert.equal(said.length, 1, s.probe.ui.said.join("\n"));
+  assert.ok(said[0]!.includes(branch));
+  const opening = prompts.parkedLineOpening("abandoned");
+  assert.equal(s.conversation().split(opening).length - 1, 1, s.conversation());
+});
+
+test("an abandonment whose run committed everything itself does not say the hooks were skipped", async () => {
+  const tracker = fakeTrackerOf([implementing]);
+  const s = setup(tracker, { leftover: false });
+  const abandoned = success(await s.runIt());
+  assert.equal(abandoned.park._tag, "Parked");
+  assert.ok(!s.probe.ui.said.some((l) => l.includes(prompts.PARK_UNCHECKED_SENTENCE)));
 });

@@ -684,6 +684,25 @@ describe("App and the draft", () => {
     expect(button()).toBe(undefined);
   });
 
+  // Work review 1 of issue #185 (W1-R1-5): a question that expires beside its decision analysis shows its notice.
+  for (const then of ["abandon", "extend"] as const) {
+    test(`a question beside its analysis that expires (${then}) shows the notice of its kind and no answer field`, async () => {
+      const { root, ws } = await openPage();
+      const presented = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("A or B?"), options: [{ label: plainPieces("A"), description: [], answer: { token: "1" } }, { label: plainPieces("B"), description: [], answer: { token: "2" } }], attached: null, decision: null };
+      const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
+      const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then };
+      ws.receive({
+        type: "replay",
+        ui: [],
+        runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "A or B?", presented, options: [], analysis } }, { _tag: "Notified", event: { _tag: "QuestionPresented", question: presented } }, { _tag: "Asked", prompt: 1, ...promptOf(prompts.decisionPrompt), countdown }]) }],
+      });
+      expect(root.querySelector("[name=answer]")).not.toBe(null);
+      ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: { _tag: "AnswerExpired", prompt: 1, seconds: 120, then } });
+      expect(one(root, "[data-expired]").textContent?.trim()).toBe(then === "abandon" ? prompts.questionExpiredText(120) : prompts.limitQuestionExpiredText(120));
+      expect(root.querySelector("[name=answer]")).toBe(null);
+    });
+  }
+
   // W1-R1-1: above the list, the bar names the server's project, not the ended run's.
   test("after a run has ended, Back to the list shows the server's identification in the top bar and the title", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);

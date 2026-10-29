@@ -130,3 +130,53 @@ describe("QuestionPane's confirmation of End the run", () => {
     expect(props.text).toBe("q");
   });
 });
+
+// Work review 1 of issue #185 (W1-R1-1): the hold is keyed by the prompt's full key, so prompt 1 of the next run is held
+// as prompt 1 of the run before it was.
+describe("QuestionPane's hold across runs", () => {
+  const counting = (prompt: number): Widget => {
+    const asked = { _tag: "Asked" as const, prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null };
+    const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then: "abandon" as const };
+    return { asked: { ...asked, countdown }, options: [], choices: asked.choices, question: null, presentedAt: null, hint: prompts.pagePromptText(asked.kind, prompts.optionOrTextPrompt), countdown, held: false };
+  };
+  const pane = () => {
+    const holds: number[] = [];
+    const props: { widget: Widget | null; identity: DraftKey | null; text: string; onAnswer: () => void; onHold: (prompt: number) => void } = $state({
+      widget: counting(1),
+      identity: { incarnation: "A", run: 3, prompt: 1 },
+      text: "",
+      onAnswer: () => undefined,
+      onHold: (prompt) => void holds.push(prompt),
+    });
+    const root = target();
+    mounted.push(mount(QuestionPane, { target: root, props }));
+    flushSync();
+    return { root, props, holds };
+  };
+  const nextRun = (props: { widget: Widget | null; identity: DraftKey | null; text: string }) => {
+    props.widget = counting(1);
+    props.identity = { incarnation: "A", run: 4, prompt: 1 };
+    props.text = "";
+    flushSync();
+  };
+  test("the button holds prompt 1 of each run", () => {
+    const { root, props, holds } = pane();
+    root.querySelector<HTMLButtonElement>("button[name=hold]")!.click();
+    flushSync();
+    expect(holds).toEqual([1]);
+    nextRun(props);
+    root.querySelector<HTMLButtonElement>("button[name=hold]")!.click();
+    flushSync();
+    expect(holds).toEqual([1, 1]);
+  });
+  test("typing holds prompt 1 of each run", () => {
+    const { props, holds } = pane();
+    props.text = "a";
+    flushSync();
+    expect(holds).toEqual([1]);
+    nextRun(props);
+    props.text = "b";
+    flushSync();
+    expect(holds).toEqual([1, 1]);
+  });
+});

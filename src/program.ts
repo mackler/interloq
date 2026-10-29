@@ -17,8 +17,7 @@ import { listedCommands, manifestProblems, manifestScriptsOf } from "./manifestC
 import type { Platform } from "./platform.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
 import type { AbandonLabel, ParkNote } from "./chain.ts";
-import { abandonRun } from "./abandon.ts";
-import type { ParkRecord } from "./park.ts";
+import { abandonedAfterFailure, abandonRun, parkedNoteOf } from "./abandon.ts";
 import { pathOf, recordPath, type RunRoot, runRootOf } from "./artifacts.ts";
 import { deciderLayer } from "./decision.ts";
 import { renderUsage, summarizeUsage } from "./usage.ts";
@@ -148,18 +147,6 @@ export const makeFaultSignal: Effect.Effect<FaultSignal> = Effect.all({ fault: D
  */
 /** Issue #185: `abandoned`, what an abandonment for want of an answer did to the item's label; null for every other ending. */
 export type Conclusion = Readonly<{ code: number; parked: ParkNote | null; abandoned: AbandonLabel | null }>;
-/** Issue #186: the note of a parking the run recorded in parked.json; an Intended one did not complete, so none. */
-export const parkedNoteOf = (record: ParkRecord | null): ParkNote | null => {
-  if (record === null) return null;
-  switch (record._tag) {
-    case "Parked":
-      return { _tag: "Parked", branch: record.branch, commit: record.commit };
-    case "Nothing":
-      return { _tag: "NothingParked" };
-    case "Intended":
-      return null;
-  }
-};
 /**
  * `concluded` (work review 2 of issue #192, W2-R1-1) receives the code the run computed once its records exist, with its
  * own parking since issue #186. The run's
@@ -538,9 +525,10 @@ const programWith = (
         if (mode !== "implementation" || tracker === null) return { park: null, label: { _tag: "Unchanged" } as const };
         const done = yield* Effect.result(abandonRun(start.item).pipe(Effect.provide(tracker), Effect.provide(context)));
         if (Result.isSuccess(done)) return done.success;
-        // A failure of the abandonment's own records is said; the label was not confirmed.
-        yield* ui.say(describe(done.failure));
-        return { park: parkedNoteOf(yield* records.loadParked().pipe(Effect.orElseSucceed(() => null))), label: { _tag: "Unconfirmed", cause: describe(done.failure) } as const };
+        // A failure of the abandonment is said; W1-R1-2: its outcome is read from parked.json as it stands.
+        const cause = describe(done.failure);
+        yield* ui.say(cause);
+        return abandonedAfterFailure(yield* records.loadParked().pipe(Effect.orElseSucceed(() => null)), cause);
       });
     const interrupted = Effect.gen(function* () {
       yield* ui.say(`\nINTERRUPTED by the user. State is preserved in ${records.dir}.`);

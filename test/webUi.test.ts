@@ -222,14 +222,28 @@ test("no limit at the ask: no countdown; the limit gone at the deadline: Countdo
   assert.equal(await run(Fiber.join(f2)), "b");
 });
 
-test("an answer /decide makes the next prompt start held; the prompt after an ordinary answer counts down again", async () => {
+// Work review 1 of issue #185 (W1-R1-3): the hold carried after /decide or /terms applies only to the prompt that presents
+// the same question again; a question asked in between, inside decision support or the terms request, counts down.
+for (const request of ["/decide", "/terms"]) {
+  test(`an answer ${request} makes only the same question presented again start held`, async () => {
+    const { ui, events } = await withTiming(Effect.succeed(5_000));
+    for (const [n, answer] of [[3, request], [4, "x"], [3, "y"], [5, "z"]] as const) {
+      await run(ui.notify(question(n, `Question ${n}?`)));
+      const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
+      await run(ui.answer(await pendingPrompt(ui), answer));
+      await run(Fiber.join(fiber));
+    }
+    assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, true, false, true]);
+  });
+}
+test("an answer /decide with no question presented carries nothing", async () => {
   const { ui, events } = await withTiming(Effect.succeed(5_000));
-  for (const answer of ["/decide", "x", "y"]) {
+  for (const answer of ["/decide", "x"]) {
     const fiber = Effect.runFork(ui.ask(prompts.decisionPrompt));
     await run(ui.answer(await pendingPrompt(ui), answer));
     await run(Fiber.join(fiber));
   }
-  assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, false, true]);
+  assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, true]);
 });
 
 test("an interruption during the countdown withdraws the prompt and publishes no expiry", async () => {

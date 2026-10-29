@@ -1041,3 +1041,23 @@ test("abandon: a parking that fails ends the chain ParkFailed, the item implemen
     assert.ok(text.includes("`implementing`") && !text.includes("set to `refined`"), text);
   }
 });
+
+// Work review 1 of issue #185 (W1-R1-2): a parking that fails is never lost to a record that cannot be written.
+test("abandon: a parking that fails and its line cannot be written ends the chain ParkFailed, its entry KeptImplementing, no second item started", async () => {
+  let parkingFailed = false;
+  const failing = (s: StoreShape): StoreShape => ({
+    ...s,
+    commitLeftovers: () => Effect.andThen(Effect.sync(() => (parkingFailed = true)), Effect.fail(new GitErrorOf({ args: ["commit"], message: "refused" }))),
+    converse: (markdown) => (parkingFailed ? Effect.fail(new GitErrorOf({ args: ["append"], message: "disk full" })) : s.converse(markdown)),
+  });
+  const h = await harness([unanswered({ store: failing }), converging], { repo: waitingRepo(), settings: settings(2) });
+  const order = await refinedOrder(h.tracker);
+  const id = await begin(h, order[0]!);
+  await idle(h);
+  assert.equal(endCode(h, id), 2);
+  assert.equal(await endedReason(h), "ParkFailed");
+  assert.equal(await stateIn(h.tracker, order[0]!), "implementing");
+  const entry = (await chainOf(h)).chain.history[0]!;
+  assert.deepEqual(entry.outcome._tag === "Abandoned" && entry.outcome.label, { _tag: "KeptImplementing" });
+  assert.equal(startedRuns(h).length, 1);
+});

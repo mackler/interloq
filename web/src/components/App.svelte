@@ -415,6 +415,7 @@
               identity={pendingKey(shownTab)}
               answersOnly
               {offline}
+              expired={run.expired}
               onHold={(prompt) => hold(run, prompt)}
               bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [draftKey]: key === null ? null : { _tag: "Held", key, text } }; }}
               onAnswer={(prompt, text) => answer(run, prompt, text)} />

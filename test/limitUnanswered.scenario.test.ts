@@ -59,3 +59,20 @@ test("a disputed pause that goes unanswered ends the run with NoAnswer", async (
   assert.equal(error._tag === "NoAnswer" && error.then, "abandon");
   assert.deepEqual(probe.ui.expiries, ["abandon"]);
 });
+
+// Work review 1 of issue #185 (W1-R1-3): Help me decide at a round limit, then a question inside the decision loop that
+// goes unanswered: only the limit prompt's own expiry extends, so this one ends the run.
+test("a question inside decision support at a round limit that goes unanswered ends the run with NoAnswer, no extension written", async () => {
+  const { layer, probe } = testLayer(tempRepo(), {
+    config: { maxRounds: 1, maxTransportRetries: 1, transportRetryDelaySeconds: 0.01 },
+    // The limit is answered /decide; the decision's analysis call loses its connection on every attempt, and the
+    // exhaustion pause, asked inside the decision loop, goes unanswered.
+    answers: ["/decide", { noAnswer: true }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" }, { fault: "connection reset" }, { fault: "connection reset" }],
+    reviews: [{ issues: [issue("P1-R1-1")] }],
+  });
+  const error = await runFails(layer, "NoAnswer", /no answer came within/);
+  assert.equal(error._tag === "NoAnswer" && error.then, "abandon");
+  assert.deepEqual(probe.ui.expiries, ["extend", "abandon"]);
+  assert.ok(!conversationOf(probe.dir).includes(limitExtendedLine("Planning phase 1", "rounds", 1, true)), conversationOf(probe.dir));
+});

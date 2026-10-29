@@ -913,8 +913,11 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
       case "CountdownStopped":
         return r.pending?.asked.prompt === event.prompt ? { ...r, pending: { ...r.pending, countdown: null, held: true } } : r;
       // Issue #185: the wait ran out: the prompt is withdrawn, and its expiry kept for the page to say.
-      case "AnswerExpired":
-        return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds, then: event.then } };
+      // Work review 1 of issue #185 (W1-R1-5): an analysis prepared for that prompt goes with it, as for an answer.
+      case "AnswerExpired": {
+        const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, "");
+        return { ...r, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, expired: { prompt: event.prompt, seconds: event.seconds, then: event.then }, analysis, dismissed, explaining };
+      }
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);

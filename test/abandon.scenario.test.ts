@@ -11,7 +11,7 @@ import { Effect, Option, Ref, Result } from "effect";
 import { TrackerUnreachable } from "../src/errors.ts";
 import { parkBranchOf } from "../src/park.ts";
 import { type Conclusion, program } from "../src/program.ts";
-import { abandonAfterSendBackLine, durationText } from "../src/prompts.ts";
+import { abandonAfterSendBackLine, durationText, PARK_UNCHECKED_SENTENCE } from "../src/prompts.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 import type { ItemState } from "../src/tracker.ts";
 import { fakeTrackerOf, finished, notRefined, questionOf, scriptedItem, scriptedStart, tempRepo, type TestOptions, testWiring, type WiringProbe } from "./helpers.ts";
@@ -24,6 +24,8 @@ const conversation = (probe: WiringProbe): string => fs.readFileSync(path.join(p
 
 const runIt = async (options: TestOptions) => {
   const repo = tempRepo();
+  git(repo, "config", "user.email", "t@t");
+  git(repo, "config", "user.name", "t");
   const start = git(repo, "rev-parse", "HEAD");
   const { wiring, probe } = testWiring(repo, options);
   const concluded = Effect.runSync(Ref.make(Option.none<Conclusion>()));
@@ -101,3 +103,18 @@ test("the first read's question unanswered: 2, nothing committed, the label stil
     assert.ok(conversation(probe).includes(abandonAfterSendBackLine(scriptedItem.id, park?._tag === "Parked" ? park.branch : null, "label")));
   });
 }
+
+// Work review 1 of issue #185 (W1-R1-4): the page says that the parking commit skipped the project's hooks.
+test("a plan writer's question unanswered after an execution left files uncommitted: the page says the commit skipped the hooks", async () => {
+  const question = questionOf({ context: "c", question: "Which retention?", terms: [], options: [] });
+  const { code, probe, conclusion } = await runIt({
+    answers: [{ noAnswer: true }],
+    steps: [{ output: noQuestions, plan: "v1" }, { output: { questions_for_user: [question] }, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execScripts: [{ uncommitted: true }],
+    execs: [{ status: "needs_input", summary: "s", question: "q", remainingWork: "r", userInput: null, checks: [] }],
+  });
+  assert.equal(code, 2);
+  assert.equal(conclusion?.parked?._tag, "Parked");
+  assert.ok(probe.ui.said.some((l) => l.includes(PARK_UNCHECKED_SENTENCE) && l.includes(branchOf(probe))), probe.ui.said.join("\n"));
+});
