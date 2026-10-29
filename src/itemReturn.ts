@@ -23,4 +23,10 @@ export type ReturnFacts =
 /** Return the item to refined, or keep it where it is and why. */
 export type ItemReturn = Readonly<{ _tag: "Return" }> | Readonly<{ _tag: "Keep"; reason: "noBaseline" | "committed" | "parkedWork" }>;
 
-export const itemReturnOf = (_facts: ReturnFacts): ItemReturn => ({ _tag: "Keep", reason: "noBaseline" });
+export const itemReturnOf = (facts: ReturnFacts): ItemReturn => {
+  if (facts._tag === "NoBaseline") return { _tag: "Keep", reason: "noBaseline" };
+  // Strict equality of the nullable values: an unborn branch still unborn made no commit, and a baseline written before
+  // start_commit existed (read as null) never matches a real HEAD.
+  if (facts.head !== facts.startCommit) return { _tag: "Keep", reason: "committed" };
+  return facts.parking._tag === "ParkingClaimed" ? { _tag: "Keep", reason: "parkedWork" } : { _tag: "Return" };
+};
