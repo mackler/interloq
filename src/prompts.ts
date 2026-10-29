@@ -1518,7 +1518,7 @@ export const TRACKER_FAILURE_TEXTS = {
   ambiguous: (id: string, labels: readonly string[]) => `item ${id} of the issue tracker carries more than one stage label: ${labels.join(", ")}`,
 } as const;
 /** The tracker steps at the end or the start of a run (TrackerStepFailed), as a halt names them. */
-export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "setRefined", "setImplemented"] as const;
+export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "recordRefinement", "setRefined", "setImplemented"] as const;
 export type TrackerStep = (typeof TRACKER_STEPS)[number];
 /** A tracker step that failed: what was not done, the cause, and that the records stand (behavior 11). */
 export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null, check: WriteCheck | null): string {
@@ -1526,6 +1526,7 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
   const unsent: Record<TrackerStep, string> = {
     setImplementing: `item ${item} could not be set to implementing, so the run made no agent call`,
     writeRefinement: `the requirements could not be written to item ${item}, and its state was not changed`,
+    recordRefinement: `the requirements were written to item ${item}, but the record of whether the developer was asked a question could not be added, so its state was not changed`,
     setRefined: `the requirements were written to item ${item}, but its state was not changed to refined`,
     setImplemented: `the work is done, but item ${item} could not be set to implemented and stays implementing`,
   };
@@ -1533,6 +1534,7 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
   const attempted: Record<TrackerStep, string> = {
     setImplementing: `setting item ${item} to implementing could not be completed, so the run made no agent call`,
     writeRefinement: `writing the requirements to item ${item} could not be completed, and its state was not changed`,
+    recordRefinement: `the requirements were written to item ${item}, but adding the record of whether the developer was asked a question could not be completed, so its state was not changed`,
     setRefined: `the requirements were written to item ${item}, but setting it to refined could not be completed`,
     setImplemented: `the work is done, but setting item ${item} to implemented could not be completed`,
   };

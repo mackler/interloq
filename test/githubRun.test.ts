@@ -56,7 +56,8 @@ test("a write-back whose read of the item reaches no answer once is repeated, an
   assert.ok(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
   assert.ok(Option.isSome(Result.getOrThrow(readRefinement(server.issue().body))));
   assert.deepEqual(server.issue().labels.map((l) => l.name), [LABELS.refined]);
-  assert.equal(stub.sent().filter((r) => r.method === "GET").length, 3, "the read was not repeated");
+  // The writes' reads: the requirements (twice, the first unanswered), the refinement's record (issue #186) and the state.
+  assert.equal(stub.sent().filter((r) => r.method === "GET").length, 4, "the read was not repeated");
 });
 
 test("a refused credential is not repeated: the refinement halts with TrackerStepFailed and asks nothing", async () => {

@@ -16,6 +16,16 @@ export type InvalidCommentKey = Readonly<{ _tag: "InvalidCommentKey"; text: stri
 export const commentKeyOf = (text: string): Result.Result<CommentKey, InvalidCommentKey> =>
   /^\S+$/u.test(text) && !text.includes("-->") ? Result.succeed(text as CommentKey) : Result.fail({ _tag: "InvalidCommentKey", text });
 
+/**
+ * The key of a comment named by a run's records directory: its name (`rootName` of src/park.ts), with any whitespace or
+ * `-->` replaced, which runRootOf never writes, so the function is total; `suffix` (`verdict-<n>`) after a slash.
+ */
+export const runCommentKey = (rootName: string, suffix: string | null = null): CommentKey => {
+  const safe = (t: string) => t.replace(/\s|-->/gu, "_");
+  const text = suffix === null ? safe(rootName) : `${safe(rootName)}/${safe(suffix)}`;
+  return (text === "" ? "_" : text) as CommentKey;
+};
+
 /** What Interloq writes on an item: a send-back, a guard stop (requirements Q5), or a refinement's record of whether it asked the developer anything. `date` is `YYYY-MM-DD` in UTC. */
 export type InterloqComment =
   | Readonly<{ _tag: "SentBack"; key: CommentKey; date: string; missing: string }>

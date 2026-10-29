@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
 import { Result } from "effect";
-import { type CommentKey, type InterloqComment, commentKeyOf, commentText, keyOf, lastRefinementAsked, parseComment, sentBackCount } from "../src/itemComments.ts";
+import { type CommentKey, type InterloqComment, commentKeyOf, runCommentKey, commentText, keyOf, lastRefinementAsked, parseComment, sentBackCount } from "../src/itemComments.ts";
 import type { ItemComment } from "../src/tracker.ts";
 
 // Issue #186: the comments Interloq writes read back as written, and the counts over them.
@@ -43,4 +43,11 @@ test("whether the last refinement asked is the newest record's, and true where t
     const newest = records.at(-1);
     assert.equal(lastRefinementAsked(cs.map(asItem)), newest === undefined ? true : newest.asked);
   }), { numRuns: 200 });
+});
+
+test("a run's comment key is always a key commentKeyOf accepts, and a records directory name is kept as it is", () => {
+  fc.assert(fc.property(fc.string(), fc.option(fc.string(), { nil: null }), (name, suffix) => {
+    assert.ok(Result.isSuccess(commentKeyOf(runCommentKey(name, suffix))));
+  }), { numRuns: 300 });
+  assert.equal(runCommentKey("2026-10-29T09-40-49-531Z-implementation-186", "verdict-2"), "2026-10-29T09-40-49-531Z-implementation-186/verdict-2");
 });

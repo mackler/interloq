@@ -1,7 +1,10 @@
 // The complete run: planning phase K, execution phase K and work review K, until Claude Code reports
 // 'finished' and the work review converges.
 
-import { Effect, Exit, Option, Result } from "effect";
+import { Clock, Effect, Exit, Option, Ref, Result } from "effect";
+import { commentDateOf, commentText, runCommentKey } from "./itemComments.ts";
+import { observingQuestions } from "./questionsSeen.ts";
+import { rootName } from "./park.ts";
 import { type Refinement, refinementOf } from "./refinement.ts";
 import { stateAtEnd, stateAtStart } from "./runMode.ts";
 import type { ItemId } from "./tracker.ts";
@@ -46,7 +49,9 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, he
     yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
     yield* ui.notify({ _tag: "ModelNamed", model: { agent: "codex", name: config.codexModel } });
     yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", iterationsOf(1)) });
-    yield* questionPhase(task, terms).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
+    // Issue #186 (requirements Q5): whether the developer was presented any question, which the item's record keeps.
+    const asked = yield* Ref.make(false);
+    yield* questionPhase(task, terms).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))), Effect.provideService(Ui, observingQuestions(ui, asked)));
     // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
     if ((yield* store.loadQuestions()).questions.length === 0) {
       yield* store.converse(`${NOTHING_TO_SETTLE}\n\n`);
@@ -59,6 +64,10 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, he
     // Issue #171: the write-back closes the question phase, so its exhaustion question's decision is bound to that phase.
     const env = yield* runTrackerEnv.pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
     yield* writeStep(tracker, { kind: "writeRefinement", item, refinement: refinement.success }, env, "writeRefinement", kept);
+    // Issue #186: the record before the state, so an item is never labeled refined without it.
+    const key = runCommentKey(rootName(store.root));
+    const record = commentText({ _tag: "RefinementRecord", key, date: commentDateOf(yield* Clock.currentTimeMillis), asked: yield* Ref.get(asked) });
+    yield* writeStep(tracker, { kind: "comment", item, text: record, key }, env, "recordRefinement", kept);
     yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("refinement") }, env, "setRefined", kept);
     yield* ui.say(refinementWrittenLine(item, store.requirements));
   });
