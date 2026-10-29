@@ -49,3 +49,25 @@ test("property: a checkpoint with any waiting note, or none, decodes to itself",
     RUNS,
   );
 });
+
+// Issue #192: a claude_call_failed line changes neither the summary nor the costs.
+test("property: claude_call_failed lines between call lines change neither the summary nor the costs", async () => {
+  await fc.assert(
+    fc.asyncProperty(fc.array(fc.tuple(fc.nat({ max: 3 }), fc.option(fc.integer({ min: 400, max: 599 }), { nil: null })), { maxLength: 4 }), async (failures) => {
+      const s = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
+      await Effect.runPromise(s.init("task"));
+      const calls = [1, 2, 3].map((n) => ({ agent: "claude" as const, session: "s", turns: 1, totalCostUsd: n }));
+      for (const [i, call] of calls.entries()) {
+        for (const [at, status] of failures) {
+          if (at === i) await Effect.runPromise(s.recordCallFailure({ session: "s", purpose: "planning", callId: `claude-${i}`, message: "failed", failure: status === null ? null : { streamCode: null, apiStatus: status, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null, processEnd: null } }));
+        }
+        await Effect.runPromise(s.recordUsage(call));
+      }
+      const read = await Effect.runPromise(s.usageLines());
+      assert.equal(read.failures.length, failures.filter(([at]) => at < 3).length);
+      assert.deepEqual(summarizeUsage(read), summarizeUsage({ calls, waits: [] }));
+      assert.deepEqual(callCosts(read.calls), callCosts(calls));
+    }),
+    { numRuns: 10, seed: 20261029 },
+  );
+});

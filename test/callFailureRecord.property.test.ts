@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { REDACTED, failureLineOf, redact, secretsOf } from "../src/callFailureRecord.ts";
+import { REDACTED, callFailedFields, callFailureOf, failureLineOf, redact, secretsOf } from "../src/callFailureRecord.ts";
 import type { ClaudeFailure } from "../src/transport.ts";
 
 const RUNS = { numRuns: 300, seed: 20261029 };
@@ -145,4 +145,16 @@ test("a request with no facts kept has a null failure", () => {
   const line = failureLineOf({ session: null, purpose: "planning", callId: "claude-1", message: "boom tok", failure: null }, ["tok"]);
   assert.equal(line.failure, null);
   assert.equal(line.message, "boom [redacted]");
+});
+
+// The seam of the store: what a line is written from is what it is read back as.
+test("property: a CallFailure written as its line's fields reads back as itself", () => {
+  fc.assert(
+    fc.property(input, fc.boolean(), (given, known) => {
+      const failure = known ? given : { ...given, failure: null };
+      const json = (v: unknown): unknown => JSON.parse(JSON.stringify(v));
+      assert.deepEqual(json(callFailureOf(json(callFailedFields(failure)) as ReturnType<typeof callFailedFields>)), json(failure));
+    }),
+    RUNS,
+  );
 });

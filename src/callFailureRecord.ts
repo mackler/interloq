@@ -2,7 +2,8 @@
 // value of a credential-named variable of the environment redacted, so that the line contains no credential whatever
 // text the Agent SDK puts in a failure (a process ending's stderr tail, an error result).
 
-import type { ClaudeFailure } from "./transport.ts";
+import type { ClaudeCallFailedUsage } from "./schema.ts";
+import type { ClaudeFailure, Rejection } from "./transport.ts";
 import type { CallFailure, ClaudePurpose } from "./usage.ts";
 
 /** What stands in place of a redacted text. */
@@ -74,3 +75,57 @@ export const failureLineOf = (input: FailureInput, secrets: readonly string[]): 
           },
   };
 };
+
+/** The fields of a claude_call_failed line of usage.jsonl that a CallFailure gives (all but the version, kind, agent and time). */
+export type CallFailedFields = Omit<ClaudeCallFailedUsage, "version" | "kind" | "agent" | "time">;
+
+/** A CallFailure as the fields of its line, the reset of a rejection as an ISO instant. */
+export const callFailedFields = ({ session, purpose, callId, message, failure: f }: CallFailure): CallFailedFields => ({
+  session,
+  purpose,
+  call_id: callId,
+  message,
+  failure_known: f !== null,
+  stream_code: f?.streamCode ?? null,
+  api_status: f?.apiStatus ?? null,
+  terminal_reason: f?.terminalReason ?? null,
+  assistant_error: f?.assistantError ?? null,
+  subtype: f?.subtype ?? null,
+  result_text: f?.resultText ?? null,
+  retry_seen: f?.retrySeen ?? null,
+  rejection:
+    f?.rejection == null
+      ? null
+      : f.rejection.kind === "withReset"
+        ? { kind: "withReset", limit_type: f.rejection.limitType, resets_at: new Date(f.rejection.resetsAtMs).toISOString() }
+        : { kind: "withoutReset", limit_type: f.rejection.limitType },
+  process_end: f?.processEnd ?? null,
+});
+
+/** A claude_call_failed line read back as the CallFailure it was written from. */
+export const callFailureOf = (r: CallFailedFields): CallFailure => ({
+  session: r.session,
+  purpose: r.purpose,
+  callId: r.call_id,
+  message: r.message,
+  failure: !r.failure_known
+    ? null
+    : {
+        streamCode: r.stream_code,
+        apiStatus: r.api_status,
+        terminalReason: r.terminal_reason,
+        assistantError: r.assistant_error,
+        subtype: r.subtype,
+        resultText: r.result_text,
+        retrySeen: r.retry_seen,
+        rejection: rejectionOf(r.rejection),
+        processEnd: r.process_end,
+      },
+});
+
+const rejectionOf = (r: CallFailedFields["rejection"]): Rejection | null =>
+  r === null
+    ? null
+    : r.kind === "withReset"
+      ? { kind: "withReset", resetsAtMs: Date.parse(r.resets_at), limitType: r.limit_type }
+      : { kind: "withoutReset", limitType: r.limit_type };

@@ -18,7 +18,8 @@ import { decodeStatusV2, excluded, type StatusRecord, excludedIndexPaths, type O
 import { decodeText } from "./state.ts";
 import { carriedPlan, type EarlierPlan, type EarlierRunRecords, latestQualifying } from "./earlierPlan.ts";
 import type { ItemId } from "./tracker.ts";
-import type { LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
+import type { CallFailure, LimitWait, LimitWaitBegan, RateLimitNotice, UsageLine } from "./usage.ts";
+import { callFailedFields, callFailureOf } from "./callFailureRecord.ts";
 import { PARK_NO_VERIFY, ParkRecordSchema } from "./park.ts";
 
 /**
@@ -466,7 +467,8 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           const began = records.flatMap((r): LimitWaitBegan[] =>
             "kind" in r && r.kind === "usage_limit_wait_began" ? [{ agent: r.agent, limitType: r.limit_type, basis: r.basis, fromMs: Date.parse(r.from), untilMs: Date.parse(r.until) }] : [],
           );
-          return { calls, waits, notices, began, failures: [] };
+          const failures = records.flatMap((r): CallFailure[] => ("kind" in r && r.kind === "claude_call_failed" ? [callFailureOf(r)] : []));
+          return { calls, waits, notices, began, failures };
         }),
       /**
        * A wait for a usage limit, as actually spent (issue #68): its scheduled end apart from its actual one; then the
@@ -493,7 +495,11 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
           yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
         }),
       /** A failed Claude Code request's facts (issue #192). */
-      recordCallFailure: (_failure) => Effect.void,
+      recordCallFailure: (failure) =>
+        Effect.gen(function* () {
+          const record: UsageRecord = { version: VERSION, kind: "claude_call_failed", agent: "claude", time: yield* now, ...callFailedFields(failure) };
+          yield* append(usageFile, (yield* serialize(usageFile, record)) + "\n");
+        }),
       fileHash: (subject) =>
         typeof subject === "object" && "work" in subject
           ? diffText().pipe(Effect.map((text) => (text === null ? "" : createHash("sha256").update(text).digest("hex"))))

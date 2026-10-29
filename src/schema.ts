@@ -641,7 +641,10 @@ export const ClaudeCallFailedUsage = Schema.Struct({
   result_text: Schema.NullOr(Schema.String),
   retry_seen: Schema.NullOr(Schema.Struct({ status: Schema.NullOr(Schema.Int), error: Schema.String })),
   rejection: Schema.NullOr(
-    Schema.Struct({ kind: Schema.Literals(["withReset", "withoutReset"]), limit_type: Schema.NullOr(Schema.String), resets_at: Schema.NullOr(Schema.String) }),
+    Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("withReset"), limit_type: Schema.NullOr(Schema.String), resets_at: Schema.String }),
+      Schema.Struct({ kind: Schema.Literal("withoutReset"), limit_type: Schema.NullOr(Schema.String) }),
+    ]),
   ),
   process_end: Schema.NullOr(Schema.Union([Schema.Struct({ kind: Schema.Literal("signal"), signal: Schema.String }), Schema.Struct({ kind: Schema.Literal("exit"), code: Schema.Int })])),
 });

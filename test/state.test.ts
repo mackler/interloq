@@ -514,3 +514,54 @@ test("recordRateLimit appends a rate_limit_event line, and usageLines returns no
   assert.deepEqual(read.calls, [{ agent: "claude", session: "s-1", turns: 1, totalCostUsd: 0.5 }]);
   assert.deepEqual(read.waits, [wait]);
 });
+
+// Issue #192 (requirements Q1): every failed Claude Code request is a claude_call_failed line of usage.jsonl.
+test("recordCallFailure appends a claude_call_failed line, and usageLines returns it in failures, in file order", async () => {
+  const s = await initialised();
+  const first = {
+    session: "s-1",
+    purpose: "planning" as const,
+    callId: "claude-1",
+    message: "Claude Code call failed: 401",
+    failure: {
+      streamCode: null,
+      apiStatus: 401,
+      terminalReason: "error",
+      assistantError: "authentication_failed",
+      retrySeen: { status: 401, error: "authentication_failed" },
+      subtype: "error_during_execution",
+      rejection: { kind: "withReset" as const, resetsAtMs: Date.UTC(2026, 9, 21, 14), limitType: "five_hour" },
+      resultText: "Please run /login",
+      processEnd: { kind: "exit" as const, code: 1 },
+    },
+  };
+  const second = { session: null, purpose: "execution" as const, callId: "claude-2", message: "spawn failed", failure: null };
+  await Effect.runPromise(s.recordCallFailure(first));
+  await Effect.runPromise(s.recordUsage({ agent: "claude", session: "s-1", turns: 1, totalCostUsd: 0 }));
+  await Effect.runPromise(s.recordCallFailure(second));
+  const lines = fs.readFileSync(path.join(s.dir, "usage.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  const { time, ...line } = lines[0] ?? {};
+  assert.equal(typeof time, "string");
+  assert.deepEqual(line, {
+    version: 2,
+    kind: "claude_call_failed",
+    agent: "claude",
+    session: "s-1",
+    purpose: "planning",
+    call_id: "claude-1",
+    message: "Claude Code call failed: 401",
+    failure_known: true,
+    stream_code: null,
+    api_status: 401,
+    terminal_reason: "error",
+    assistant_error: "authentication_failed",
+    subtype: "error_during_execution",
+    result_text: "Please run /login",
+    retry_seen: { status: 401, error: "authentication_failed" },
+    rejection: { kind: "withReset", limit_type: "five_hour", resets_at: "2026-10-21T14:00:00.000Z" },
+    process_end: { kind: "exit", code: 1 },
+  });
+  const read = await Effect.runPromise(s.usageLines());
+  assert.deepEqual(read.failures, [first, second]);
+  assert.deepEqual(read.calls, [{ agent: "claude", session: "s-1", turns: 1, totalCostUsd: 0 }]);
+});
