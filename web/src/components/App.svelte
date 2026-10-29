@@ -374,7 +374,7 @@
         <!-- Issue #22 (F1): the status line and every earlier answer stay reachable while the question or the decision page
              takes the column; below the question, so that it and its first answer keep their place at the top. -->
         {#if deciding || asking}
-          <div class="dashboard-compact"><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} /></div>
+          <div class="dashboard-compact" class:asking={asking && !deciding}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} /></div>
         {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}
@@ -429,6 +429,18 @@
   .run.compact.deciding { overflow-y: auto; }
   .run.compact.deciding > .decision-area { flex: 1 0 auto; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
+  /* Issue #22 (W1-R1-1 of work review 1): under a question, and not on the decision page, the compact dashboard yields to
+     the question pane and scrolls inside itself, the list of every answer losing its own limit and scroll so that one
+     region scrolls; the open list then never pushes the question and its first answer out of view (IN_VIEW_MIN_HEIGHT).
+     The question is what is new; the earlier answers are secondary while it waits. It takes at most 25 % of the column:
+     40 % left the pane 283 px at 1280 × 600, under a question heading and a first answer a paragraph long (296 px with
+     the pane's padding), and 25 % still holds the closed compact form (66 px there). In the compact layout the column is
+     sized to the window and the run scrolls as a whole, so there the dashboard does not shrink, which would hide it, and
+     is bounded by the window instead. */
+  .dashboard-compact.asking { flex: 0 1 auto; min-height: 0; max-height: 25%; overflow-y: auto; }
+  .run.compact .dashboard-compact.asking { flex: none; max-height: 25vh; }
+  .dashboard-compact.asking :global(.dashboard.compact) { min-height: 0; }
+  .dashboard-compact.asking :global(.answers) { max-height: none; overflow: visible; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
   .rail-column { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
   .rail-column > :global(nav.rail) { flex: 1 1 auto; min-height: 0; }

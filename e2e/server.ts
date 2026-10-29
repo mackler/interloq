@@ -282,6 +282,21 @@ SCENARIOS.longContextShortAnswers = {
   execs: [finished],
 };
 
+// Issue #22 (W1-R1-1 of work review 1): five agreed questions, each with two options a paragraph long, so that the
+// fifth waits after four long answers, which the compact dashboard's heading of every answer lists under it.
+const HISTORY_OPTIONS = LONG_ANSWERS.slice(0, 2).map((a) => {
+  const [label, ...rest] = a.replace(/^\d+\. /, "").split(": ");
+  return { label, description: rest.join(": ") };
+});
+SCENARIOS.longHistory = {
+  steps: [
+    { output: { questions: Array.from({ length: 5 }, (_, i) => entryOf({ id: `Q${i + 1}`, context: "c", question: `How should message ${i + 1} show its time?`, reason: "r", proposed_answers: HISTORY_OPTIONS, default_answer: HISTORY_OPTIONS[0].label })) } },
+  ],
+  replies: Array.from({ length: 5 }, () => ({ output: ack("Noted.") })),
+  closings: [{ output: summaryReply("# Requirements\n\nAbsolute clock time.", "That is all I need.") }],
+  reviews: [{ issues: [] }, { issues: [] }],
+};
+
 // S49 (W4-R1-1): a permission request with a 40-line command, which stays in the details while the question names the
 // action; Help me decide on it shows the analysis beside the question.
 export const LONG_COMMAND = Array.from({ length: 40 }, (_, i) => `echo "line ${i + 1} of a long command that prepares the build directory"`).join("\n");

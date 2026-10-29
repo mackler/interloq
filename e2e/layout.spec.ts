@@ -1177,3 +1177,50 @@ test.describe("the tests of the transportLong server, in order", () => {
     });
   }
 });
+
+// Issue #22 (W1-R1-1 of work review 1): under a question the compact dashboard's heading of every answer, opened after
+// four long answers, never collapses the question pane: the question and its first answer stay in view without the run
+// area scrolling (IN_VIEW_MIN_HEIGHT), and the earlier answers are reached by scrolling the compact dashboard itself.
+const LONG_HISTORY_URL = layoutUrl("longHistory");
+test.describe("the tests of the longHistory server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(L34) the open list of every answer under a question at 1280 × 600 and 640 × 450: the question keeps its room", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await startTask(page, LONG_HISTORY_URL);
+    const firstCard = pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
+    for (let i = 1; i <= 4; i++) {
+      await expect(asking(page, `How should message ${i} show its time?`)).toBeVisible();
+      await firstCard.click();
+    }
+    await expect(asking(page, "How should message 5 show its time?")).toBeVisible();
+    const compact = page.locator(".dashboard-compact");
+    const toggle = compact.locator("[data-answers-heading] button").first();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(compact.locator("[data-answer]")).toHaveCount(4);
+    // The compact status line stays in the column under the question.
+    await expect(compact.locator("[data-status]")).toBeVisible();
+    for (const [width, height] of [[1280, 600], [640, 450]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.locator("main.run").evaluate((el) => { el.scrollTop = 0; });
+      const heading = pane(page).locator("h2");
+      await expect(heading, `the question at ${width} × ${height}`).toBeInViewport({ ratio: 1 });
+      // As the question page's other tests check it: the first answer is in view, wholly where the window can hold the
+      // question and a card a paragraph long beside the earlier answers (1280 × 600), in part below that (640 × 450).
+      await expect(firstCard, `the first answer at ${width} × ${height}`).toBeInViewport(width >= 840 ? { ratio: 1 } : {});
+      const paneHeight = (await box(pane(page))).height;
+      const needed = (await box(heading)).height + (await box(firstCard)).height;
+      expect(paneHeight, `the question pane's height at ${width} × ${height}`).toBeGreaterThanOrEqual(needed);
+      const last = compact.locator("[data-answer]").last();
+      await last.scrollIntoViewIfNeeded();
+      await expect(last, `the last earlier answer at ${width} × ${height}`).toBeInViewport();
+      expect(await compact.evaluate((el) => el.scrollTop), `the compact dashboard scrolled at ${width} × ${height}`).toBeGreaterThan(0);
+      // Beside the rail (840 px and wider) the dashboard is under the question in one column, so reading the earlier
+      // answers leaves the question in view; in the compact layout at 450 px the dashboard is below the window, under the
+      // pane's 12.5rem, and the run scrolls as a whole to reach it.
+      if (width >= 840) await expect(heading, `the question after scrolling the answers at ${width} × ${height}`).toBeInViewport({ ratio: 1 });
+    }
+  });
+});

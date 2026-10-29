@@ -1323,6 +1323,8 @@ describe("App and the draft", () => {
       const compact = one(left(root), ".dashboard-compact");
       expect(one(compact, "[data-status]").textContent).toBe("Waiting for you.");
       expect(one(compact, "[data-answers] [data-answer]").textContent).toContain("first");
+      // W1-R1-1: under a question, and only there, the compact dashboard is bounded so the question keeps its room.
+      expect(compact.classList.contains("asking")).toBe(true);
     });
 
     test("while an analysis is shown, the compact status line and the heading of every answer are in view", async () => {
@@ -1334,6 +1336,8 @@ describe("App and the draft", () => {
       const compact = one(root, ".dashboard-compact");
       expect(one(compact, "[data-status]").textContent).toBe("Analysis ready.");
       expect(compact.querySelector("[data-answers-heading] button")).not.toBe(null);
+      // W1-R1-1: beside an analysis the compact dashboard keeps the decision page's arrangement, unbounded.
+      expect(compact.classList.contains("asking")).toBe(false);
     });
 
     test("the heading of every answer sends the ui frame and opens from the shared state", async () => {
