@@ -186,11 +186,29 @@ describe("a draft through Help me decide", () => {
     expect(reconcile(typed(2), live([...base, frame(2), { _tag: "Answered", prompt: 2, text: "1" }]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my text") });
   });
 
-  test("a foreground question over the frame: the frame's draft waits for its question to return", () => {
+  test("a foreground question over the frame withdraws the frame's draft, with the notice when non-empty, quietly when blank", () => {
     const over = live([...base, frame(2), question(2), plain(3)]);
-    expect(reconcile(typed(2), over)).toEqual({ draft: typed(2), notice: null });
+    expect(reconcile(typed(2), over)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my text") });
+    expect(reconcile(typed(2, " "), over)).toEqual({ draft: null, notice: null });
+  });
+
+  test("the nested question's field edited, then the frame returns: no stale text, and the notice given once", () => {
+    const over = live([...base, frame(2), question(2), plain(3)]);
     const back = live([...base, frame(2), question(2), plain(3), { _tag: "Answered", prompt: 3, text: "1" }, frame(2)]);
-    expect(through(typed(2), [over, back])).toEqual({ draft: typed(2), notice: null });
+    // The outer draft through both views: one notice, at the nested question, none when the frame returns.
+    const notices: string[] = [];
+    const outer = [over, back].reduce<Draft | null>((d, v) => {
+      const r = reconcile(d, v);
+      if (r.notice !== null) notices.push(r.notice);
+      return r.draft;
+    }, typed(2));
+    expect(outer).toBeNull();
+    expect(notices).toEqual([prompts.draftWithdrawnNotice("my text")]);
+    expect(draftFor(outer, pendingKey(back))).toBe("");
+    // The nested question's own draft, typed in its field, is kept while it is pending and dropped once it is answered.
+    expect(reconcile(typed(3, "nested"), over)).toEqual({ draft: typed(3, "nested"), notice: null });
+    expect(reconcile(typed(3, "nested"), back)).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("nested") });
+    expect(draftFor(reconcile(typed(3, "nested"), back).draft, pendingKey(back))).toBe("");
   });
 
   test("a draft followed to another question is withdrawn with the notice when non-empty, quietly when empty", () => {

@@ -37,7 +37,8 @@ export const draftFor = (draft: Draft | null, key: DraftKey | null): string => (
 /**
  * The draft after a reduction of the view, and the notice when it was withdrawn. It is kept while its prompt is
  * pending; it is withdrawn when its prompt was answered (the tab's own send clears the draft first, so that answer
- * came from another tab), or when the server or the run is another one. A non-empty draft is never dropped silently.
+ * came from another tab), when the server or the run is another one, or when another prompt asking another question is
+ * pending. A non-empty draft is never dropped silently.
  */
 export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
   if (draft === null) return { draft, notice: null };
@@ -57,10 +58,15 @@ export const reconcile = (draft: Draft | null, view: Shown): Reconciled => {
     if (view.run!.pending?.question?.number === follow.question) return { draft: { _tag: "Held", key: pending, text: draft.text }, notice: null };
     return withdrawn(draft);
   }
-  const overtaken = !sameRun || view.run!.answered.includes(draft.key.prompt);
-  // A prompt neither pending nor answered in the same run (for example not yet replayed): the draft waits.
-  if (!overtaken) return { draft, notice: null };
-  return withdrawn(draft);
+  if (!sameRun || view.run!.answered.includes(draft.key.prompt)) return withdrawn(draft);
+  // W2-R1-1 of issue #153: another prompt pending that asks another question (one asked inside the decision of the
+  // draft's question, open beside it) withdraws the draft, since the page holds one draft per run.
+  if (pending !== null) {
+    const own = view.run!.deciding.find((d) => d.prompt === draft.key.prompt)?.question;
+    if (own === undefined || view.run!.pending?.question?.number !== own) return withdrawn(draft);
+  }
+  // A prompt neither pending nor answered in the same run, with nothing else pending: the draft waits.
+  return { draft, notice: null };
 };
 const withdrawn = (draft: Draft): Reconciled => ({ draft: null, notice: draft.text.trim() === "" ? null : draftWithdrawnNotice(draft.text) });
 /**
