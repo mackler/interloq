@@ -7,13 +7,16 @@
   // widths; visibility of system status: the current phase stays in view and a badge counts the right panel's new
   // messages; user control: the user chooses the column, and only a new prompt, which is answered in "You and
   // Interloq", selects it]. Issue #22: the "You and Interloq" column is a dashboard, whose status line is the activity
-  // line moved from under "Claude and Codex", which holds its messages alone. While a question or the decision page
-  // takes the column, the dashboard's compact form (its status line and the heading of every answer) stays below it.
+  // line moved from under "Claude and Codex", which holds its messages alone. While a question takes the column, the
+  // dashboard's compact form (its status line and the heading of every answer) stays below it; while the decision page
+  // is shown nothing stands below it, at every window size (issue #200, requirements Q1).
   // Issue #191 (requirements Q1): under the Refinement tab, a second row of tabs (M3 secondary tabs, m3-svelte's Tabs with
   // `secondary`) holds the items first and then one tab per refinement run in start order, each named by its item and
   // carrying the waiting mark while its run waits [visibility of system status: every run's mark is in view from anywhere
   // in the tab; user control and freedom: one click between runs, and the page never switches away from the run shown].
   // Each run keeps its own draft and its own notifications, keyed by `presented` (web/src/state.ts).
+  // Issue #200: below 840 px the second row is hidden while the decision page is shown, and returns when the developer
+  // answers or shows the conversation (his decision of 30 Oct 2026).
   import { Button, ConnectedButtons, Tabs } from "m3-svelte";
   import { untrack } from "svelte";
   import { BACK_TO_LIST, CLOSE_RUN_TAB, runTabsLabel, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
@@ -44,7 +47,7 @@
   import QuestionPane from "./QuestionPane.svelte";
   import TimelineRail from "./TimelineRail.svelte";
   import TopBar from "./TopBar.svelte";
-  import { EMPTY_OUTPUTS, EMPTY_PANEL, type LiveOutputs, outputsAfter } from "../livePanel.ts";
+  import { EMPTY_OUTPUTS, EMPTY_PANEL, hasRunning, type LiveOutputs, outputsAfter } from "../livePanel.ts";
 
   let view = $state<ViewState>(initialState);
   // Issue #49: the live panels, kept beside the view and never folded by the reducer: only what arrived over this
@@ -246,6 +249,12 @@
   const analysis = $derived(run?.analysis ?? null);
   const analysisKey = $derived(analysis === null || run === null ? null : { incarnation: view.incarnation ?? "", run: run.id, decision: analysis.event.decision });
   const deciding = $derived(analysisKey !== null && analysisShown(conversationFor, analysisKey));
+  // Issue #200 (the developer's decision at the stop of execution phase 1): below 840 px the decision page needs the
+  // second row's 48 px for its question, first card and columns, so the row is hidden while it is shown.
+  const secondRowShown = $derived(secondRow !== null && !(compact && deciding));
+  // Issue #200: the shown run's live panel, read once, so the compact panel's presence and the compact dashboard's
+  // limit (class `running`) follow one value.
+  const runOutput = $derived(run === null ? EMPTY_PANEL : (outputs.get(run.id) ?? EMPTY_PANEL));
   /** The run area (issue #133, W1-R1-1): the decision page measures its room from it, and it scrolls in a low window. */
   let runArea = $state<HTMLElement | null>(null);
   // The decision page appears with the run at its top, so that the question and its choices are in view.
@@ -377,7 +386,7 @@
   <nav class="tabs" aria-label={TABS_LABEL}>
     <Tabs items={tabItems} bind:tab={() => mode, (value) => selectTab(value as RunMode)} />
   </nav>
-  {#if secondRow !== null}
+  {#if secondRow !== null && secondRowShown}
     <nav class="run-tabs" aria-label={runTabsLabel(mode)}>
       <Tabs secondary items={secondRow} bind:tab={() => focusValue, (value) => selectRunTab(value)} />
     </nav>
@@ -450,7 +459,7 @@
       <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={outputs.get(run.id) ?? EMPTY_PANEL} />
+          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={runOutput} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">
@@ -468,10 +477,11 @@
             bind:text={() => draftFor(draft, pendingKey(shownTab)), (text) => { const key = pendingKey(shownTab); drafts = { ...drafts, [draftKey]: key === null ? null : { _tag: "Held", key, text } }; }}
             onAnswer={(prompt, text) => answer(run, prompt, text)} />
         {/if}
-        <!-- Issue #22 (F1): the status line and every earlier answer stay reachable while the question or the decision page
-             takes the column; below the question, so that it and its first answer keep their place at the top. -->
-        {#if deciding || asking}
-          <div class="dashboard-compact" class:asking={asking && !deciding}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={outputs.get(run.id) ?? EMPTY_PANEL} /></div>
+        <!-- Issue #22 (F1): the status line and every earlier answer stay reachable while the question takes the column;
+             below the question, so that it and its first answer keep their place at the top. Issue #200 (requirements
+             Q1): not below the decision page, which keeps the window's room; they return on leaving it. -->
+        {#if asking && !deciding}
+          <div class="dashboard-compact" class:running={hasRunning(runOutput)}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={runOutput} /></div>
         {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}
@@ -502,14 +512,18 @@
   .left, .right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .left :global(.panel), .right :global(.panel) { flex: 1; }
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  /* The analysis spans both chat columns in the first row; the notice and the dashboard's compact form stay below it. */
+  /* The analysis spans both chat columns in the first row; the notice and the ended line stay below it (issue #200). */
   /* Issue #133: the decision page holds the question, its answers, the columns and the headings, in that order; the
      question and its answers are at the page's top, in view when it appears. Every control stays, and where the window
      cannot hold them and the columns the run scrolls (the developer's decision of 12 Oct 2026, "Every control stays,
      windows scroll"): the decision row is at least its content and fills the window otherwise, and the row below it
-     (the notice and the dashboard's compact form) is its content, however low the window. The rail contributes no
+     (the notice and the ended line; no dashboard since issue #200) is its content, however low the window. The rail contributes no
      height of its own (contain: size), so that its content never stretches the rows. */
-  .run.deciding { grid-template-rows: minmax(min-content, 1fr) min-content; overflow-y: auto; }
+  .run.deciding { grid-template-rows: minmax(min-content, 1fr) min-content; row-gap: 0; overflow-y: auto; }
+  /* Issue #200: the row below the decision page is usually empty, and an empty row's gap took 12 px of the room the
+     columns need at 1280 × 800 under issue #191's second row of tabs; the gap is the row's own padding, present only
+     when it holds something, and is counted by DecisionView, which measures the row's box. */
+  .run.deciding > .left:has(> :not(.hidden)), .run.deciding > .right:has(> :not(.hidden)) { padding-top: 0.75rem; }
   .run.deciding > :global(.rail) { grid-row: 1 / 3; contain: size; }
   .decision-area { grid-column: 2 / 4; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .run.paused { grid-template-rows: auto minmax(0, 1fr); }
@@ -525,22 +539,30 @@
   .run.compact .left :global(.panel), .run.compact .right :global(.panel), .run.compact .left :global(.pane:not(.answers-only)) { min-height: 12.5rem; }
   /* W4-R1-1; issue #133: while the analysis is shown, only the decision area flexes, at least its content and filling
      the window otherwise, and the run scrolls where it cannot hold it (the developer's decision of 12 Oct 2026); the
-     columns below it hold the notice and the dashboard's compact form, sized by their content. */
+     columns below it hold the notice and the ended line, sized by their content (issue #200). */
   .run.compact.deciding { overflow-y: auto; }
   .run.compact.deciding > .decision-area { flex: 1 0 auto; }
   .run.compact.deciding .left, .run.compact.deciding .right { flex: 0 0 auto; }
-  /* Issue #22 (W1-R1-1 of work review 1): under a question, and not on the decision page, the compact dashboard yields to
-     the question pane and scrolls inside itself, the list of every answer losing its own limit and scroll so that one
-     region scrolls; the open list then never pushes the question and its first answer out of view (IN_VIEW_MIN_HEIGHT).
-     The question is what is new; the earlier answers are secondary while it waits. It takes at most 25 % of the column:
-     40 % left the pane 283 px at 1280 × 600, under a question heading and a first answer a paragraph long (296 px with
-     the pane's padding), and 25 % still holds the closed compact form (66 px there). In the compact layout the column is
-     sized to the window and the run scrolls as a whole, so there the dashboard does not shrink, which would hide it, and
-     is bounded by the window instead. */
-  .dashboard-compact.asking { flex: 0 1 auto; min-height: 0; max-height: 25%; overflow-y: auto; }
-  .run.compact .dashboard-compact.asking { flex: none; max-height: 25vh; }
-  .dashboard-compact.asking :global(.dashboard.compact) { min-height: 0; }
-  .dashboard-compact.asking :global(.answers) { max-height: none; overflow: visible; }
+  /* Issue #22 (W1-R1-1 of work review 1): under a question the compact dashboard yields to the question pane and
+     scrolls inside itself, the list of every answer losing its own limit and scroll so that one region scrolls; the open
+     list then never pushes the question and its first answer out of view (IN_VIEW_MIN_HEIGHT). The question is what is
+     new; the earlier answers are secondary while it waits. In the compact layout the column is sized to the window and
+     the run scrolls as a whole, so there the dashboard does not shrink, which would hide it, and is bounded by the window
+     instead. Issue #200: two limits. While a process runs (`running`, hasRunning) the live panel stands in it and it may
+     take a quarter of the column (25vh in the compact layout), the question then possibly falling below the 450-pixel
+     promise until the command ends, which the developer accepted (requirements Q2); 40 % had left the pane 283 px at
+     1280 × 600 under a question heading and a first answer a paragraph long (296 px with the pane's padding). While none
+     runs it takes at most a fifth (20vh): issue #191's second row of tabs (48 px) shortened the column to about 416 px at
+     1280 × 600, and a fifth (about 83 px) still holds the closed compact form (66 px there) while returning the question
+     its room (L34). */
+  .dashboard-compact { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+  .run.compact .dashboard-compact { flex: none; }
+  .dashboard-compact.running { max-height: 25%; }
+  .run.compact .dashboard-compact.running { max-height: 25vh; }
+  .dashboard-compact:not(.running) { max-height: 20%; }
+  .run.compact .dashboard-compact:not(.running) { max-height: 20vh; }
+  .dashboard-compact :global(.dashboard.compact) { min-height: 0; }
+  .dashboard-compact :global(.answers) { max-height: none; overflow: visible; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
   .rail-column { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
   .rail-column > :global(nav.rail) { flex: 1 1 auto; min-height: 0; }

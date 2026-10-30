@@ -715,13 +715,30 @@ describe("App and the draft", () => {
     expect(one(root, "[data-live-output]").textContent).toContain(prompts.LIVE_OUTPUT_EMPTY);
   });
 
-  test("with a question pending, the compact dashboard shows the panel", async () => {
+  // Issue #200, requirements Q2: under a question the panel is present only while a process runs.
+  test("with a question pending, the compact dashboard shows the panel only while a process runs", async () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
-    ws.receive({ type: "output", run: 1, event: { _tag: "Touched", name: "Read src/a.ts" } });
     expect(root.querySelector("[name=answer]")).not.toBe(null);
-    const panel = one(root, `section[aria-label="${prompts.DASHBOARD_COMPACT_NAME}"] [data-live-output]`);
-    expect(panel.textContent).toContain("Read src/a.ts");
+    const compactPanel = () => root.querySelector(`section[aria-label="${prompts.DASHBOARD_COMPACT_NAME}"] [data-live-output]`);
+    expect(compactPanel()).toBe(null);
+    ws.receive({ type: "output", run: 1, event: { _tag: "Started", key: "suite:1", name: "suite" } });
+    ws.receive({ type: "output", run: 1, event: { _tag: "Printed", key: "suite:1", name: "suite", text: "ok 1\n" } });
+    expect(compactPanel()?.textContent).toContain("ok 1");
+    ws.receive({ type: "output", run: 1, event: { _tag: "Finished", key: "suite:1", name: "suite", status: { _tag: "Exited", code: 0 } } });
+    expect(compactPanel()).toBe(null);
+  });
+
+  // Issue #200: under a question the compact dashboard's limit follows whether a process runs (class `running`).
+  test("under a question, the compact dashboard is marked running only while a process runs", async () => {
+    const { root, ws } = await openPage();
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    const compact = () => one(root, ".dashboard-compact");
+    expect(compact().classList.contains("running")).toBe(false);
+    ws.receive({ type: "output", run: 1, event: { _tag: "Started", key: "suite:1", name: "suite" } });
+    expect(compact().classList.contains("running")).toBe(true);
+    ws.receive({ type: "output", run: 1, event: { _tag: "Finished", key: "suite:1", name: "suite", status: { _tag: "Exited", code: 0 } } });
+    expect(compact().classList.contains("running")).toBe(false);
   });
 
   // W1-R1-1: above the list, the bar names the server's project, not the ended run's.
@@ -1462,21 +1479,70 @@ describe("App and the draft", () => {
       const compact = one(left(root), ".dashboard-compact");
       expect(one(compact, "[data-status]").textContent).toBe("Waiting for you.");
       expect(one(compact, "[data-answers] [data-answer]").textContent).toContain("first");
-      // W1-R1-1: under a question, and only there, the compact dashboard is bounded so the question keeps its room.
-      expect(compact.classList.contains("asking")).toBe(true);
+      // Issue #200: the compact dashboard stands under the question pane, the only place it is shown.
+      expect(one(left(root), ".pane").compareDocumentPosition(compact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    test("while an analysis is shown, the compact status line and the heading of every answer are in view", async () => {
+    // Issue #200, requirements Q1: nothing stands below the decision page; the dashboard returns on leaving it.
+    test("while an analysis is shown, no compact dashboard is below it, and the dashboard returns on leaving it", async () => {
       const { root, ws } = await openPage();
       const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null };
       const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: presentedQ, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "/decide" }, said("Analysis ready."), analyzed, asked(2)]) }] });
       expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
-      const compact = one(root, ".dashboard-compact");
+      expect(root.querySelector(".dashboard-compact")).toBe(null);
+      expect(root.querySelector(`section[aria-label="${prompts.DASHBOARD_COMPACT_NAME}"]`)).toBe(null);
+      one(root, ".decision button[name=conversation]").click();
+      flushSync();
+      expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
+      const full = one(root, '.left .chat:not(.hidden) section[aria-label="You and Interloq"]');
+      expect(one(full, "[data-status]").textContent).toBe("Analysis ready.");
+      expect(full.querySelector("[data-answers-heading] button")).not.toBe(null);
+      expect(full.querySelector("[data-live-output]")).not.toBe(null);
+      expect(root.querySelector(".dashboard-compact")).toBe(null);
+      one(root, "button[name=question]").click();
+      flushSync();
+      expect(root.querySelector(".pane")).not.toBe(null);
+      const compact = one(left(root), ".dashboard-compact");
       expect(one(compact, "[data-status]").textContent).toBe("Analysis ready.");
       expect(compact.querySelector("[data-answers-heading] button")).not.toBe(null);
-      // W1-R1-1: beside an analysis the compact dashboard keeps the decision page's arrangement, unbounded.
-      expect(compact.classList.contains("asking")).toBe(false);
+    });
+
+    // Issue #200 (the developer's decision at the stop of execution phase 1): below 840 px the second row of tabs is
+    // hidden while the decision page is shown, and returns when he shows the conversation; at 840 px and wider it stays.
+    const decisionPage = async (innerWidth: number) => {
+      const width = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: innerWidth });
+      const opened = await openPage();
+      const presentedQ = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null };
+      const analyzed = { _tag: "Notified", event: { _tag: "DecisionAnalyzed", decision: 1, question: "Which?", presented: presentedQ, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } } };
+      opened.ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "/decide" }, analyzed, asked(2)]) }] });
+      flushSync();
+      expect(opened.root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
+      return { ...opened, restore: () => Object.defineProperty(window, "innerWidth", { configurable: true, value: width }) };
+    };
+    const secondRowOf = (root: HTMLElement) => root.querySelector(`nav[aria-label="${prompts.runTabsLabel("refinement")}"]`);
+
+    test("below 840 px the second row of tabs is hidden while the decision page is shown, and returns on showing the conversation", async () => {
+      const { root, restore } = await decisionPage(EXPANDED_MIN_WIDTH - 200);
+      try {
+        expect(secondRowOf(root)).toBe(null);
+        one(root, ".decision button[name=conversation]").click();
+        flushSync();
+        expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
+        expect(secondRowOf(root)).not.toBe(null);
+      } finally {
+        restore();
+      }
+    });
+
+    test("at 840 px and wider the second row of tabs stays on the decision page", async () => {
+      const { root, restore } = await decisionPage(1280);
+      try {
+        expect(secondRowOf(root)).not.toBe(null);
+      } finally {
+        restore();
+      }
     });
 
     test("the heading of every answer sends the ui frame and opens from the shared state", async () => {

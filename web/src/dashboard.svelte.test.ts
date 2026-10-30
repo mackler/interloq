@@ -160,11 +160,35 @@ describe("the live panel in the dashboard", () => {
     expect(region(target)?.querySelector("pre")?.textContent).toContain("npm test | ok");
   });
 
-  test("the compact dashboard shows the panel with four lines and keeps finished output", () => {
-    const panel = Array.from({ length: 8 }, (_, i) => i).reduce<LivePanel>((p, i) => applyOutput(p, { _tag: "Printed", key: K, name: "ls", text: `line ${i}\n` }), EMPTY_PANEL);
-    const ended = applyOutput(panel, { _tag: "Finished", key: K, name: "ls", status: { _tag: "Succeeded" } });
-    const pre = region(mountWith(ended, true))?.querySelector("pre");
-    expect(pre?.textContent?.split("\n").filter((l) => l !== "").length).toBe(COMPACT_PANEL_LINES);
-    expect(pre?.textContent).toContain("line 7");
+  // Issue #200, requirements Q2: the compact panel is present only while a process runs, a silent one included.
+  const eightLines = Array.from({ length: 8 }, (_, i) => i).reduce<LivePanel>(
+    (p, i) => applyOutput(p, { _tag: "Printed", key: K, name: "ls", text: `line ${i}\n` }),
+    EMPTY_PANEL,
+  );
+  const finished = applyOutput(eightLines, { _tag: "Finished", key: K, name: "ls", status: { _tag: "Succeeded" } });
+
+  test("the compact dashboard's panel shows four lines while a process runs", () => {
+    const pre = region(mountWith(eightLines, true))?.querySelector("pre");
+    const lines = pre?.textContent?.split("\n").filter((l) => l !== "") ?? [];
+    expect(lines.length).toBe(COMPACT_PANEL_LINES);
+    expect(lines.at(-1)).toContain("line 7");
+  });
+
+  test("the compact dashboard's panel is absent once no process runs, though finished lines exist", () => {
+    expect(region(mountWith(finished, true))).toBe(null);
+  });
+
+  test("the compact dashboard's panel is absent with nothing printed", () => {
+    expect(region(mountWith(EMPTY_PANEL, true))).toBe(null);
+  });
+
+  test("the compact dashboard's panel shows a silent running process with the running header", () => {
+    const silent = applyOutput(EMPTY_PANEL, { _tag: "Started", key: K, name: "npm test" });
+    expect(region(mountWith(silent, true))?.textContent).toContain(prompts.outputRunningHeader([{ name: "npm test", seconds: null }]));
+  });
+
+  test("the full dashboard's panel stays with nothing running", () => {
+    expect(region(mountWith(EMPTY_PANEL))).not.toBe(null);
+    expect(region(mountWith(finished))).not.toBe(null);
   });
 });

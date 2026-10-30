@@ -8,7 +8,9 @@
   // and the real world]; and the heading of every answer, closed until opened, its open state the run's shared state, so
   // that every earlier answer stays reachable [recognition rather than recall; user control and freedom]. A region
   // without content is absent. `compact` renders the compact status line and the heading of every answer alone, for
-  // the column under a question or the decision page, under a name of its own, since it is not the whole panel.
+  // the column under a question, under a name of its own, since it is not the whole panel. The live panel (issue #49)
+  // stands at the bottom of the full form always, and in the compact form only while a process runs, taking no room
+  // otherwise (issue #200, requirements Q2).
   import { render } from "../markdown.ts";
   import { allAnswersHeading, DASHBOARD_CLAUDE_LABEL, DASHBOARD_COMPACT_NAME, itemHeadline, LAST_ANSWER_LABEL, YOU_LABEL } from "../../../src/prompts.ts";
   import { type AnsweredEntry, lastAnswer, type RunView } from "../state.ts";
@@ -16,10 +18,11 @@
   import Disclosure from "./Disclosure.svelte";
   import StatusLine from "./StatusLine.svelte";
   import LiveOutput from "./LiveOutput.svelte";
-  import { COMPACT_PANEL_LINES, EMPTY_PANEL, type LivePanel, PANEL_LINES } from "../livePanel.ts";
+  import { COMPACT_PANEL_LINES, EMPTY_PANEL, hasRunning, type LivePanel, PANEL_LINES } from "../livePanel.ts";
 
   const NAME = "You and Interloq";
-  // Issue #49: `output`, the run's live panel as this tab received it, shown in both forms at all times.
+  // Issue #49: `output`, the run's live panel as this tab received it; shown in the full form always and in the compact
+  // form only while `hasRunning` (issue #200, requirements Q2).
   type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; compact?: boolean; output?: LivePanel };
   let { run, answersOpen, onAnswers, compact = false, output = EMPTY_PANEL }: Props = $props();
   const d = $derived(run.dashboard);
@@ -40,7 +43,7 @@
     {/if}
   {/if}
   <StatusLine status={d.status} retry={run.retry?.wait ?? null} wait={run.limitWait} {compact} />
-  {#if compact}<LiveOutput panel={output} lines={COMPACT_PANEL_LINES} />{/if}
+  {#if compact && hasRunning(output)}<LiveOutput panel={output} lines={COMPACT_PANEL_LINES} />{/if}
   <div class="regions">
     {#if !compact}
       {#if d.interviewHelp !== null}<p class="help m3-font-body-small" data-interview-help>{d.interviewHelp}</p>{/if}

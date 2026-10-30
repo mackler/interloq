@@ -5,6 +5,7 @@
   // own, so it is never read as the status line. Every text goes through Svelte's text interpolation, never {@html}
   // and never the Markdown renderer, so a backtick or an angle bracket in a process's output stays a character. Its
   // height is fixed at `lines` lines, so it keeps its place whether or not a process runs (requirements Q1).
+  // The compact dashboard mounts it only while a process runs (issue #200, requirements Q2).
   import { LIVE_OUTPUT_NAME, LIVE_OUTPUT_NOTE } from "../../../src/prompts.ts";
   import { type LivePanel, lineText, panelView } from "../livePanel.ts";
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import fc from "fast-check";
 import type { OutputEvent, ProcessKey } from "../../src/liveOutput.ts";
 import { LIVE_OUTPUT_EMPTY, OUTPUT_FINISHED_HEADER, outputEndedLine } from "../../src/prompts.ts";
-import { applyOutput, EMPTY_OUTPUTS, EMPTY_PANEL, LINE_LIMIT, type LivePanel, lineText, outputsAfter, PANEL_LINES, panelView } from "./livePanel.ts";
+import { applyOutput, EMPTY_OUTPUTS, EMPTY_PANEL, hasRunning, LINE_LIMIT, type LivePanel, lineText, outputsAfter, PANEL_LINES, panelView } from "./livePanel.ts";
 
 // Issue #49: the live panel's buffer.
 const K = (k: string): ProcessKey => k as ProcessKey;
@@ -103,6 +103,30 @@ describe("the live panel's invariants", () => {
         expect(fold(chunks.map((c) => print("p", c))).lines).toEqual(fold([print("p", text)]).lines);
       }),
       { numRuns: 300, seed: 4949 },
+    );
+  });
+});
+
+// Issue #200, requirements Q2: whether a process runs, the one source of the compact panel's presence and limit.
+describe("hasRunning", () => {
+  const touched: OutputEvent = { _tag: "Touched", name: "Read a.txt" };
+  test("an empty panel has nothing running", () => expect(hasRunning(EMPTY_PANEL)).toBe(false));
+  test("a process started and silent is running", () => expect(hasRunning(fold([started("a")]))).toBe(true));
+  test("a process started then finished is not running", () => expect(hasRunning(fold([started("a"), done("a")]))).toBe(false));
+  test("a tool touched alone runs nothing", () => expect(hasRunning(fold([touched]))).toBe(false));
+  test("two started and one finished leaves one running", () =>
+    expect(hasRunning(fold([started("a"), started("b"), done("a")]))).toBe(true));
+  test("it equals a model of the processes named and not yet finished", () => {
+    fc.assert(
+      fc.property(fc.array(arbEvent, { maxLength: 60 }), (events) => {
+        const model = events.reduce<ReadonlySet<string>>(
+          (keys, e) =>
+            e._tag === "Touched" ? keys : e._tag === "Finished" ? new Set([...keys].filter((k) => k !== e.key)) : new Set([...keys, e.key]),
+          new Set(),
+        );
+        expect(hasRunning(fold(events))).toBe(model.size > 0);
+      }),
+      { numRuns: 300, seed: 200 },
     );
   });
 });

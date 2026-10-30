@@ -24,6 +24,12 @@ export type RunningProcess = Readonly<{ name: string; seconds: number | null; af
 export type LivePanel = Readonly<{ lines: readonly PanelLine[]; running: ReadonlyMap<string, RunningProcess> }>;
 export const EMPTY_PANEL: LivePanel = { lines: [], running: new Map() };
 
+/**
+ * Whether any process of the run is running, a silent one included (issue #200, requirements Q2): the one statement of
+ * "a command runs" from which the compact dashboard decides both whether it shows the panel and how much room it takes.
+ */
+export const hasRunning = (panel: LivePanel): boolean => panel.running.size > 0;
+
 const clip = (text: string): string => (text.length <= LINE_LIMIT ? text : text.slice(0, LINE_LIMIT));
 const kept = (lines: readonly PanelLine[]): readonly PanelLine[] => (lines.length <= PANEL_LINES ? lines : lines.slice(lines.length - PANEL_LINES));
 const isPartialOf = (line: PanelLine, key: string): boolean => line._tag === "Output" && line.key === key && line.partial;
