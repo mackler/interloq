@@ -47,14 +47,22 @@ const start = async (opts: TestOptions): Promise<Harness> => {
   return { ui, events, dir: t.probe.dir, fiber };
 };
 const askeds = (h: Harness): Asked[] => h.events.flatMap((e) => (e._tag === "Asked" ? [e] : []));
+/**
+ * How long `next` waits for an event. A deadline in time, not a count of polls: a count of polls shrinks under the load
+ * of the parallel `npm test` while the decision loop it waits for slows down (issue #200's suite run 2, where test 2
+ * gave up after 13 s). A found event returns at once, so this bounds only a loop that is stuck.
+ */
+const NEXT_DEADLINE_MS = 60_000;
 /** Resolves with the first event at or after `from` that satisfies the predicate. */
 const next = async <E extends RunEvent>(h: Harness, from: number, pred: (e: RunEvent) => e is E): Promise<E> => {
-  for (let i = 0; i < 2500; i++) {
+  const began = Date.now();
+  const until = began + NEXT_DEADLINE_MS;
+  while (Date.now() < until) {
     const found = h.events.slice(from).find(pred);
     if (found !== undefined) return found;
-    await sleep(2);
+    await sleep(5);
   }
-  throw new Error(`no such event after ${from}: ${h.events.slice(from).map((e) => e._tag).join(", ")}`);
+  throw new Error(`no such event after ${from} in ${Date.now() - began} ms: ${h.events.slice(from).map((e) => e._tag).join(", ")}`);
 };
 const isFrame = (question: number) => (e: RunEvent): e is Asked => e._tag === "Asked" && e.deciding === question;
 /** The Ui event a Notified frame carries, of the given tag. */
