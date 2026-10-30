@@ -102,6 +102,27 @@ test("an interruption after the first question comment deletes every comment of 
   assert.ok(fs.readFileSync(path.join(s.probe.project, "plan-review", "runs", dir!, "conversation.md"), "utf8").includes("**Preparation stopped.**"));
 });
 
+test("an interruption once the preparation's own comment is written deletes nothing, and the preparation stays complete", async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  let written = 0;
+  const holding = (t: TrackerShape): TrackerShape => ({ ...t, comment: (id, text) => t.comment(id, text).pipe(Effect.andThen(Effect.suspend(() => (++written === 3 ? Effect.promise(() => gate) : Effect.void)))) });
+  const s = setup(twoQuestions, fakeTrackerOf([ITEM]), holding);
+  const fiber = Effect.runFork(s.prepare());
+  for (let waited = 0; written < 3; waited += 10) {
+    if (waited > 60_000) assert.fail("the preparation's own comment was never written");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(((await s.held()).comments ?? []).length, 3);
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  release();
+  const after = await s.held();
+  assert.equal((after.comments ?? []).length, 3);
+  assert.equal(preparationOf(after.comments ?? [], after, 1)._tag, "Prepared");
+  const [dir] = runs(s.probe.project);
+  assert.ok(fs.readFileSync(path.join(s.probe.project, "plan-review", "runs", dir!, "conversation.md"), "utf8").includes("**Preparation stopped.**"));
+});
+
 test("a tracker whose comment writes fail every time gives NotWritten, and no one is asked anything", async () => {
   const tracker = fakeTrackerOf([ITEM]);
   const failing = (t: TrackerShape): TrackerShape => ({ ...t, comment: () => Effect.fail(new TrackerUnreachable({ tracker: "GitHub", message: "down", status: null })) });

@@ -9,7 +9,7 @@ import { loadConfig } from "./config.ts";
 import { deciderLayer } from "./decision.ts";
 import { describe, isTrackerError, trackerFailureText } from "./errors.ts";
 import { prepareQuestionList } from "./interview.ts";
-import { commentDateOf, keyOf, runCommentKey } from "./itemComments.ts";
+import { commentDateOf, keyOf, parseComment, runCommentKey } from "./itemComments.ts";
 import { rootName } from "./park.ts";
 import { type PreparationCause, type PreparationRecord, digestOf, preparationOf, type PreparedQuestion, preparedComments } from "./preparedComments.ts";
 import { unattendedUi } from "./preparationUi.ts";
@@ -42,7 +42,8 @@ const ownKey = (key: string, comment: ItemComment): boolean => {
  * Q5). A pause (NoAnswer from the unattended Ui) and any other typed error set the item aside; a question whose
  * comment would be too long too. Before writing, every preparation comment already on the item is deleted, then the
  * questions are written in order and the preparation's own comment last (requirements G-R1-2). Every tracker request
- * goes through the tracker retry with no question. An interruption deletes this preparation's comments, uninterruptibly.
+ * goes through the tracker retry with no question. An interruption deletes this preparation's comments, uninterruptibly,
+ * unless its own comment is already on the item: a complete preparation stays (issue #200's suite run).
  */
 export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Effect<PreparationOutcome, never, Scope.Scope> =>
   Effect.gen(function* () {
@@ -75,11 +76,21 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
     const withTracker = <A, E>(use: (t: TrackerShape) => Effect.Effect<A, E>): Effect.Effect<A, E> => Effect.flatMap(Tracker, use).pipe(Effect.provide(trackerLayer.success));
     const key = runCommentKey(rootName(root.success));
     const deleteAll = (ids: readonly CommentId[]) => withTracker((t) => Effect.forEach(ids, (comment) => writeWithRetry(t, { kind: "deleteComment", item: item.id, comment }, env), { discard: true }));
-    /** This preparation's own comments, whatever it managed to write, deleted as far as the tracker allows; failures recorded and ignored. */
-    const deleteOwn = withTracker((t) => readCommentsWithRetry(t, item.id, env)).pipe(
-      Effect.flatMap((comments) => deleteAll(comments.filter((c) => ownKey(key, c)).map((c) => c.id))),
-      Effect.catchCause((cause) => record(`The comments of this preparation could not all be deleted: ${Cause.pretty(cause)}`)),
-    );
+    /** Whether the preparation's own comment, the last it writes, is among `comments`: then what it wrote is a whole preparation. */
+    const complete = (comments: readonly ItemComment[]): boolean =>
+      comments.some((c) => {
+        const marker = parseComment(c.body);
+        return marker !== null && marker._tag === "Preparation" && marker.key === key;
+      });
+    /** This preparation's own comments, whatever it managed to write, deleted as far as the tracker allows, unless `keep` holds of the comments read; failures recorded and ignored. */
+    const deleteOwnUnless = (keep: (comments: readonly ItemComment[]) => boolean) =>
+      withTracker((t) => readCommentsWithRetry(t, item.id, env)).pipe(
+        Effect.flatMap((comments) => (keep(comments) ? Effect.void : deleteAll(comments.filter((c) => ownKey(key, c)).map((c) => c.id)))),
+        Effect.catchCause((cause) => record(`The comments of this preparation could not all be deleted: ${Cause.pretty(cause)}`)),
+      );
+    const deleteOwn = deleteOwnUnless(() => false);
+    /** An interruption's cleanup: a complete preparation stays, an unfinished one is deleted. */
+    const deleteUnfinished = deleteOwnUnless(complete);
     /** Every preparation comment already on the item deleted, then `comments` written in order, the own comment last. */
     const write = (comments: readonly Readonly<{ key: string; text: string }>[]): Effect.Effect<Option.Option<string>> =>
       Effect.gen(function* () {
@@ -138,6 +149,6 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
     });
     return yield* body.pipe(
       Effect.catch((error) => Effect.succeed(notWritten(describe(error)))),
-      Effect.onInterrupt(() => deleteOwn.pipe(Effect.andThen(store.converse(`${PREPARATION_STOPPED}\n`)), Effect.ignore)),
+      Effect.onInterrupt(() => deleteUnfinished.pipe(Effect.andThen(store.converse(`${PREPARATION_STOPPED}\n`)), Effect.ignore)),
     );
   });
