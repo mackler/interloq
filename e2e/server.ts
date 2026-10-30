@@ -299,6 +299,9 @@ const HISTORY_OPTIONS = LONG_ANSWERS.slice(0, 2).map((a) => {
   const [label, ...rest] = a.replace(/^\d+\. /, "").split(": ");
   return { label, description: rest.join(": ") };
 });
+// Issue #202: several refinement runs at once, each waiting on its first question, so that the Refinement tab's second
+// row of tabs holds more tabs than a narrow window can.
+SCENARIOS.refinementTabs = SCENARIOS.longChoices;
 SCENARIOS.longHistory = {
   steps: [
     { output: { questions: Array.from({ length: 5 }, (_, i) => entryOf({ id: `Q${i + 1}`, context: "c", question: `How should message ${i + 1} show its time?`, reason: "r", proposed_answers: HISTORY_OPTIONS, default_answer: HISTORY_OPTIONS[0].label })) } },

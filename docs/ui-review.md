@@ -343,9 +343,18 @@ Any number of refinement runs may be in progress at once, each of a different it
 Refinement tab holds a second row of tabs: the items first, then one tab per run in the order the runs started
 (requirements Q1).
 
-- **The control.** M3's secondary tabs (m3-svelte's `Tabs` with `secondary`), under the primary tabs. The runs and the
-  items are peer destinations within the Refinement destination, which M3 specifies secondary tabs for. The row is shown
-  only while the tab holds a run, so a Refinement tab with none looks as before.
+- **The control.** M3's secondary tabs, under the primary tabs. The runs and the items are peer destinations within the
+  Refinement destination, which M3 specifies secondary tabs for. The row is shown only while the tab holds a run, so a
+  Refinement tab with none looks as before. Since issue #202 (its requirements Q1) the row is M3's scrollable secondary
+  tabs, written by hand in `ScrollableTabs.svelte`, in place of m3-svelte's `Tabs` with `secondary`.
+- **The scrollable row (issue #202, 30 Oct 2026).** What the substitute asserts: when its tabs are wider than the window
+  the row scrolls sideways inside itself, each tab keeping its whole name (cut at 32 characters as before) on one line
+  48 px high, and the page never scrolls sideways; the selected tab is scrolled into view when it is selected; the
+  indicator is the selected tab's underline, for any tab. It asserts nothing M3's scrollable tabs do not: no fade and no
+  arrows mark the tabs past the edge. It is written by hand because m3-svelte's `Tabs` cannot shrink or scroll, so a row
+  of long run names overflowed a 640-pixel window, and its `VariableTabs` scrolls but, like `Tabs`, draws the indicator
+  only for the first five tabs. A waiting run whose tab is scrolled out of view is still announced by the Refinement
+  tab's own waiting mark [visibility of system status].
 - **The waiting mark on a run's tab.** A run's tab is named by its item (`runTabName`, cut to 32 characters, since the
   dashboard shows the whole headline) and carries the waiting mark (●) while that run waits for an answer. It asserts
   that that run waits, and nothing more. The primary Refinement tab carries the mark while any of its runs waits, so

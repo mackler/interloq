@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { dashboard, expect, listOf, startFromTab, test, toHaveEnded, toTheList } from "./fixtures.ts";
+import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
 import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
@@ -1221,4 +1221,64 @@ test.describe("the tests of the longHistory server, in order", () => {
       if (width >= 840) await expect(heading, `the question after scrolling the answers at ${width} × ${height}`).toBeInViewport({ ratio: 1 });
     }
   });
+});
+
+// Issue #202: the Refinement tab's second row of tabs scrolls sideways inside itself when its tabs are wider than the
+// window, every tab keeping its whole name, the selected tab in view with its indicator, and the page never scrolling
+// sideways. The runs started at the first size stay in progress at the second, which only adds tabs.
+test.describe("the tests of the refinementTabs server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  for (const [width, height] of [[640, 400], [390, 844]] as const) {
+    test(`(L35) four refinement runs at ${width} × ${height}: the second row scrolls, the page does not`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(layoutUrl("refinementTabs"));
+      await expect(page.getByText("connected", { exact: true })).toBeVisible();
+      await tabOf(page, "refinement").click();
+      const row = runTabsOf(page).locator(".row");
+      const toList = async () => {
+        if (await runTabsOf(page).isVisible()) {
+          await listTabOf(page).scrollIntoViewIfNeeded();
+          await listTabOf(page).click();
+        }
+        await expect(listOf(page)).toBeVisible();
+      };
+      let last = "";
+      for (;;) {
+        await toList();
+        const start = listOf(page).locator("button[name=start]:not([disabled])").first();
+        await expect(start).toBeVisible();
+        last = (await start.getAttribute("data-item")) ?? "";
+        await start.click();
+        await expect(runTabOf(page, last)).toBeVisible();
+        await expect(pane(page)).toBeVisible();
+        if ((await runTabsOf(page).locator("label").count()) >= 5) break;
+      }
+      const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      const inRow = async (tab: Locator, what: string) => {
+        const rowBox = await box(row);
+        await expect.poll(async () => {
+          const tabBox = await box(tab);
+          return tabBox.x >= rowBox.x - 1 && tabBox.x + tabBox.width <= rowBox.x + rowBox.width + 1;
+        }, `${what} within the row at ${width} × ${height}`).toBe(true);
+      };
+      expect(await overflow(), `the page's sideways overflow at ${width} × ${height}`).toBeLessThanOrEqual(0);
+      expect(await row.evaluate((el) => el.scrollWidth - el.clientWidth), `the row scrolls at ${width} × ${height}`).toBeGreaterThan(1);
+      expect((await box(row)).height, `the row's height at ${width} × ${height}`).toBeCloseTo(48, 0);
+      await inRow(runTabOf(page, last), "the selected tab");
+      await expect(runTabOf(page, last).locator(".indicator")).toBeVisible();
+      await listTabOf(page).scrollIntoViewIfNeeded();
+      await listTabOf(page).click();
+      await expect(listOf(page)).toBeVisible();
+      await inRow(listTabOf(page), "the list's tab");
+      await runTabOf(page, last).scrollIntoViewIfNeeded();
+      await runTabOf(page, last).click();
+      await expect(pane(page)).toBeVisible();
+      await inRow(runTabOf(page, last), "the selected tab chosen again");
+      await expect(runTabOf(page, last).locator(".indicator")).toBeVisible();
+      expect(await overflow(), `the page's sideways overflow after choosing a tab at ${width} × ${height}`).toBeLessThanOrEqual(0);
+      // The top row (Refinement, Implementation) does not overflow either.
+      expect(await page.locator("nav.tabs > div").first().evaluate((el) => el.scrollWidth - el.clientWidth), `the top row at ${width} × ${height}`).toBeLessThanOrEqual(1);
+    });
+  }
 });

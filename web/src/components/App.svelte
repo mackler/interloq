@@ -10,14 +10,17 @@
   // line moved from under "Claude and Codex", which holds its messages alone. While a question takes the column, the
   // dashboard's compact form (its status line and the heading of every answer) stays below it; while the decision page
   // is shown nothing stands below it, at every window size (issue #200, requirements Q1).
-  // Issue #191 (requirements Q1): under the Refinement tab, a second row of tabs (M3 secondary tabs, m3-svelte's Tabs with
-  // `secondary`) holds the items first and then one tab per refinement run in start order, each named by its item and
+  // Issue #191 (requirements Q1): under the Refinement tab, a second row of tabs (M3 secondary tabs) holds the items first and then one tab per refinement run in start order, each named by its item and
   // carrying the waiting mark while its run waits [visibility of system status: every run's mark is in view from anywhere
   // in the tab; user control and freedom: one click between runs, and the page never switches away from the run shown].
   // Each run keeps its own draft and its own notifications, keyed by `presented` (web/src/state.ts).
+  // Issue #202 (requirements Q1): the second row is M3's scrollable secondary tabs, written by hand (ScrollableTabs),
+  // because m3-svelte's Tabs cannot shrink or scroll, so a row of long run names overflowed a 640 px window, and draws
+  // the selected tab's indicator for the first five tabs only; the row scrolls sideways inside itself instead.
   // Issue #200: below 840 px the second row is hidden while the decision page is shown, and returns when the developer
   // answers or shows the conversation (his decision of 30 Oct 2026).
   import { Button, ConnectedButtons, Tabs } from "m3-svelte";
+  import ScrollableTabs from "./ScrollableTabs.svelte";
   import { untrack } from "svelte";
   import { BACK_TO_LIST, CLOSE_RUN_TAB, runTabsLabel, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
@@ -388,7 +391,7 @@
   </nav>
   {#if secondRow !== null && secondRowShown}
     <nav class="run-tabs" aria-label={runTabsLabel(mode)}>
-      <Tabs secondary items={secondRow} bind:tab={() => focusValue, (value) => selectRunTab(value)} />
+      <ScrollableTabs items={secondRow} bind:tab={() => focusValue, (value) => selectRunTab(value)} />
     </nav>
   {/if}
   {#if tab.refusal !== null}<p class="notice refusal m3-font-body-medium" role="alert">{tab.refusal}</p>{/if}
@@ -507,6 +510,7 @@
   .app { height: 100vh; display: flex; flex-direction: column; background: var(--m3c-surface); color: var(--m3c-on-surface); }
   .list { flex: 1; overflow-y: auto; }
   .tabs, .run-tabs { flex-shrink: 0; }
+  .run-tabs { min-width: 0; max-width: 100%; }
   .refusal { color: var(--m3c-error); margin: 0.5rem 1rem 0; }
   .run { flex: 1; min-height: 0; display: grid; grid-template-columns: 14rem 1fr 1fr; gap: 0.75rem; padding: 0.75rem; }
   .left, .right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
