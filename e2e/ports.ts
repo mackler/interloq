@@ -10,7 +10,7 @@ import type { FakeItem } from "../test/fakeTracker.ts";
 // within each file the tests of one server form one group that runs in order in one worker.
 
 /** The servers of e2e/run.spec.ts, by scenario. */
-export const RUN_PORTS = { twoModes: 8123, noTracker: 8124, converge: 8101, decision: 8102, stop: 8103, interview: 8104, workCorrection: 8105, tabs: 8106, drop: 8107, long: 8108, questionReview: 8109, longChoices: 8110, decide: 8111, decideLong: 8112, decideRevise: 8113, decideBlank: 8114, planSteps: 8115, transportRetry: 8116, unchangedPause: 8117, longQuestion: 8118, permissionLong: 8119, whitespace: 8120, transportLong: 8121, emptyQuestions: 8122, chain: 8125, decideWait: 8126 } as const;
+export const RUN_PORTS = { twoModes: 8123, noTracker: 8124, converge: 8101, decision: 8102, stop: 8103, interview: 8104, workCorrection: 8105, tabs: 8106, drop: 8107, long: 8108, questionReview: 8109, longChoices: 8110, decide: 8111, decideLong: 8112, decideRevise: 8113, decideBlank: 8114, planSteps: 8115, transportRetry: 8116, unchangedPause: 8117, longQuestion: 8118, permissionLong: 8119, whitespace: 8120, transportLong: 8121, emptyQuestions: 8122, chain: 8125, decideWait: 8126, prepare: 8127 } as const;
 /** The servers of e2e/layout.spec.ts, by scenario. */
 export const LAYOUT_PORTS = { tabs: 8206, long: 8208, longChoices: 8210, decide: 8211, decideLong: 8212, planSteps: 8215, longQuestion: 8218, permissionLong: 8219, whitespace: 8220, transportLong: 8221, longContextShortAnswers: 8222, decideBlank: 8223, longHistory: 8224 } as const;
 
@@ -25,7 +25,7 @@ export const SERVERS: readonly (readonly [scenario: string, port: number])[] = [
  * The mode a scenario's runs are of (issue #120): the scenarios of the question phase are refinement runs, the others
  * implementation runs; the server of two modes runs both, one in each tab.
  */
-const REFINEMENT_SCENARIOS: readonly string[] = ["interview", "decideBlank", "emptyQuestions", "longChoices", "questionReview", "longHistory"];
+const REFINEMENT_SCENARIOS: readonly string[] = ["prepare", "interview", "decideBlank", "emptyQuestions", "longChoices", "questionReview", "longHistory"];
 export const modeOf = (scenario: string): RunMode => (REFINEMENT_SCENARIOS.includes(scenario) ? "refinement" : "implementation");
 
 /**
@@ -43,6 +43,11 @@ export const E2E_ITEMS: readonly FakeItem[] = [
   { id: "41" as ItemId, title: LONG_ITEM_TITLE, body: LONG_ITEM_BODY, state: "refined", open: true, url: e2eItemUrl(41) },
   { id: "141" as ItemId, title: LONG_ITEM_TITLE, body: LONG_ITEM_BODY, state: "unrefined", open: true, url: e2eItemUrl(141) },
 ];
+/**
+ * Issue #131: the item the prepare server's tracker marks for preparation, beside E2E_ITEMS: an unrefined item that
+ * carries the preparation's label, listed last so no other server's test starts it.
+ */
+export const PREPARED_ITEM: FakeItem = { id: "151" as ItemId, title: "Marked item 151", body: "", state: "unrefined", open: true, url: e2eItemUrl(151), marked: true };
 /** An e2e item's page in its tracker. */
 function e2eItemUrl(n: number): Option.Option<ItemUrl> {
   return Result.getSuccess(itemUrlOf(`https://tracker.example/issues/${n}`));
