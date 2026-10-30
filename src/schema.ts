@@ -589,11 +589,14 @@ export const stepChecksOf = (raw: Readonly<{ checkCommands: unknown; suiteComman
 export const PartialConfig = Config.mapFields(Struct.map(Schema.optionalKey));
 
 /** plan-review/questions.json: the task and the agreed list. Unlike the agent schema, an entry's id must not be empty. */
+/** One agreed question as questions.json records it (issue #131: the entry a preparation's comment carries too). */
+export const StoredQuestion = Schema.Struct({ ...QuestionEntry.fields, id: Schema.NonEmptyString, default_answer: Schema.NullOr(Schema.String) });
+export type StoredQuestion = typeof StoredQuestion.Type;
 export const QuestionsFile = Schema.Struct({
   version: Schema.Literal(2),
   task: Schema.String,
   /** A default that named none of the proposed answers is null (step 4.6). */
-  questions: Schema.Array(Schema.Struct({ ...QuestionEntry.fields, id: Schema.NonEmptyString, default_answer: Schema.NullOr(Schema.String) })),
+  questions: Schema.Array(StoredQuestion),
 });
 
 /** One line of plan-review/usage.jsonl, version 2: the fields the program reads, per agent (finding 9; Q5). */

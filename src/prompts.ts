@@ -1,5 +1,6 @@
 // Prompt texts. All paths are relative to the project directory.
 
+import type { PreparationCause } from "./preparedComments.ts";
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
@@ -4056,3 +4057,31 @@ export const sendBackIncompleteText = (item: string, ending: "sentBack" | "stopp
   const meant = ending === "sentBack" ? "sent back to refinement" : "stopped and left implementing";
   return `item ${item} was to be ${meant}; ${parked}, but a tracker step after the parking failed: ${cause}`;
 };
+
+// ---- the unattended preparation of an item's questions (issue #131) ----------------------------------------------
+
+/** The heading of a prepared question's comment on the item, which a person reading the issue sees. */
+export const preparedQuestionHeading = (n: number, count: number): string => `**Interloq prepared question ${n} of ${count} for this item.**`;
+/** What a prepared question's comment says will become of it. */
+export const PREPARED_QUESTION_NOTE = "Interloq asks this question, as Codex reviewed it, at once when Refine is pressed on this item.";
+/** The heading of a prepared question's explanations of its terms in its comment. */
+export const PREPARED_TERMS_HEADING = "Terms:";
+/** The preparation's own comment when the questions were prepared (requirements Q1 and G-R1-2: a count of 0 is a preparation that needed no question). */
+export const preparationPreparedText = (date: string, count: number): string =>
+  count === 0
+    ? `Interloq prepared this item on ${date}: Claude Code and Codex agreed that no question needs the developer's answer, so pressing Refine writes its requirements without asking anything. A change of the item's title or text discards this preparation.`
+    : `Interloq prepared ${count} question${count === 1 ? "" : "s"} for this item on ${date}. They are asked at once when Refine is pressed, and a change of the item's title or text discards them.`;
+/** Why an item was set aside, in words: the comment's, the page's mark's and conversation.md's. */
+export const preparationCauseText = (cause: PreparationCause): string => {
+  switch (cause._tag) {
+    case "Paused":
+      return `its question review stopped for a decision of the developer's: ${cause.question}`;
+    case "Failed":
+      return `the preparation failed: ${cause.reason}`;
+    case "TooLong":
+      return `question ${cause.question} with its explanations is longer than a comment may be`;
+  }
+};
+/** The preparation's own comment when the item was set aside (requirements G-R1-1), with the three ways it is released. */
+export const preparationSetAsideText = (date: string, cause: PreparationCause): string =>
+  `Interloq stopped preparing this item's questions on ${date}, because ${preparationCauseText(cause)}. It prepares the item again when its title or text changes, when the preparation switch is turned off and on again, or once Refine is pressed on it.`;
