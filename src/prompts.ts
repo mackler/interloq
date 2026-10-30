@@ -4085,3 +4085,10 @@ export const preparationCauseText = (cause: PreparationCause): string => {
 /** The preparation's own comment when the item was set aside (requirements G-R1-1), with the three ways it is released. */
 export const preparationSetAsideText = (date: string, cause: PreparationCause): string =>
   `Interloq stopped preparing this item's questions on ${date}, because ${preparationCauseText(cause)}. It prepares the item again when its title or text changes, when the preparation switch is turned off and on again, or once Refine is pressed on it.`;
+/** The first line of a preparation's conversation.md. */
+export const preparationStartedLine = (item: string, title: string): string => `Interloq prepares the questions of item ${item} (${title}) unattended: the question list, its review and the explanations of its terms.`;
+/** A preparation's outcome lines in its conversation.md. */
+export const preparationPreparedLine = (item: string, count: number): string => `Prepared ${count} question${count === 1 ? "" : "s"} for item ${item}, written as comments on the item.`;
+export const preparationSetAsideLine = (item: string, cause: PreparationCause): string => `Item ${item} was set aside, because ${preparationCauseText(cause)}.`;
+export const preparationNotWrittenLine = (item: string, reason: string): string => `The preparation of item ${item} could not be recorded on the item: ${reason}`;
+export const PREPARATION_STOPPED = "**Preparation stopped.**";

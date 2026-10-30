@@ -84,7 +84,7 @@ export const taskTextOf = (mode: RunMode, item: TrackerItem, comments: readonly 
 export type TaskStart = Readonly<{ task: Task; project: string }>;
 
 const TRACKER_ERROR_TAGS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
-const isTrackerError = (error: TrackerError | RunError): error is TrackerError => TRACKER_ERROR_TAGS.has(error._tag);
+export const isTrackerError = (error: TrackerError | RunError): error is TrackerError => TRACKER_ERROR_TAGS.has(error._tag);
 
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
