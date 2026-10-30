@@ -7,8 +7,8 @@ import { Option, Result } from "effect";
 import { TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "../src/errors.ts";
 import { CLOSING_LINE, OPENING_LINE, type Refinement, readRefinement, refinementOf, withRefinement } from "../src/refinement.ts";
 import type { TrackerError } from "../src/services.ts";
-import { ITEM_STATES, type ItemId, type ItemState, type TrackerItem } from "../src/tracker.ts";
-import { landed, retryable, trackerRetryDelays, uncertainWrite, commentLanded } from "../src/trackerRetry.ts";
+import { commentIdOf, ITEM_STATES, type ItemId, type ItemState, type TrackerItem } from "../src/tracker.ts";
+import { commentDeleted, landed, retryable, trackerRetryDelays, uncertainWrite, commentLanded } from "../src/trackerRetry.ts";
 import { commentKeyOf, commentText, type InterloqComment } from "../src/itemComments.ts";
 import { seededId } from "./fakeTracker.ts";
 
@@ -96,5 +96,14 @@ test("commentLanded holds exactly when some comment carries the key", () => {
     const found = Result.isSuccess(commentLanded(k, items));
     assert.equal(found, cs.some((c) => c.key === k));
     if (!found) assert.deepEqual(Result.getFailure(commentLanded(k, items)), Option.some({ kind: "noComment" }));
+  }), RUNS);
+});
+
+// Issue #131: a deletion is done exactly when no comment carries its id.
+test("commentDeleted holds exactly when no comment has the id", () => {
+  const ids = fc.constantFrom("1", "2", "3", "c-4").map((t) => Result.getOrThrow(commentIdOf(t)));
+  fc.assert(fc.property(ids, fc.array(ids, { maxLength: 6 }), (id, present) => {
+    const comments = present.map((c) => ({ id: c, body: "b", created: "t" }));
+    assert.equal(Result.isSuccess(commentDeleted(id, comments)), !present.includes(id));
   }), RUNS);
 });

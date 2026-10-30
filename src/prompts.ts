@@ -1602,6 +1602,8 @@ export function writeCheckText(item: string, check: WriteCheck): string {
       return `After the last attempt, item ${item} was in the state ${check.held.state}.`;
     case "noComment":
       return `After the last attempt, item ${item} held no comment of the run's.`;
+    case "commentPresent":
+      return `After the last attempt, item ${item} still held the comment that was to be deleted.`;
   }
 }
 
@@ -1620,6 +1622,8 @@ export function trackerOperationText(op: TrackerOperation): string {
       return `adding a comment to item ${op.item}`;
     case "comments":
       return `reading the comments of item ${op.item}`;
+    case "deleteComment":
+      return `deleting Interloq's comment ${op.comment} on item ${op.item}`;
   }
 }
 /** A repeat of a failed tracker request, as the page and conversation.md show it. */

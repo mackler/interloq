@@ -204,6 +204,8 @@ export const HeldStateSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("state"), state: ItemState }),
   // Issue #186: the item held no comment carrying the write's key.
   Schema.Struct({ kind: Schema.Literal("noComment") }),
+  // Issue #131: the item still held the comment a deletion was to remove.
+  Schema.Struct({ kind: Schema.Literal("commentPresent") }),
 ]);
 export type HeldState = typeof HeldStateSchema.Type;
 /** Issue #171 (requirements Q2): what a halt says about the item after the last write: what it held, or that it could not be checked. */

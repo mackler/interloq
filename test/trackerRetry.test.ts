@@ -10,7 +10,7 @@ import * as prompts from "../src/prompts.ts";
 import { OPENING_LINE, readRefinement, refinementOf } from "../src/refinement.ts";
 import * as S from "../src/schema.ts";
 import { Store } from "../src/services.ts";
-import type { ItemId } from "../src/tracker.ts";
+import type { CommentId, ItemId } from "../src/tracker.ts";
 import { commentKeyOf, commentText } from "../src/itemComments.ts";
 import { heldTrackerEnv, unattendedTrackerEnv, readCommentsWithRetry, readWithRetry, runTrackerEnv, type TrackerWrite, TrackerWriteFailed, writeWithRetry } from "../src/trackerRetry.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
@@ -297,4 +297,36 @@ test("an unattended environment whose record write fails ends with the tracker's
   const failed: unknown = failureOf(await Effect.runPromiseExit(writeWithRetry(t.fake.tracker, setRefined, env)));
   assert.ok(failed instanceof TrackerWriteFailed, String(failed));
   assert.equal(failed.error.message, unreached().message);
+});
+
+// Issue #131: a deletion of Interloq's own comment, idempotent, so a server error is settled by a listing of the comments.
+const deleting = async () => {
+  const t = await setup();
+  await Effect.runPromise(t.fake.tracker.comment(ID, "prepared"));
+  const [comment] = (await t.item()).comments ?? [];
+  let deletes = 0;
+  const tracker = { ...t.fake.tracker, deleteComment: (id: ItemId, c: CommentId) => Effect.suspend(() => { deletes += 1; return t.fake.tracker.deleteComment(id, c); }) };
+  const write: TrackerWrite = { kind: "deleteComment", item: ID, comment: comment!.id };
+  return { t, tracker, write, deletes: () => deletes };
+};
+test("a deletion that reached no answer is repeated and succeeds", async () => {
+  const d = await deleting();
+  await Effect.runPromise(d.t.fake.failNext("deleteComment", unreached()));
+  await Effect.runPromise(writeWithRetry(d.tracker, d.write, d.t.env));
+  assert.equal(d.deletes(), 2);
+  assert.deepEqual((await d.t.item()).comments, []);
+});
+test("a deletion applied and then answered 500 is read back and counted done with no second DELETE", async () => {
+  const d = await deleting();
+  await Effect.runPromise(d.t.fake.failAfterNext("deleteComment", serverError()));
+  await Effect.runPromise(writeWithRetry(d.tracker, d.write, d.t.env));
+  assert.equal(d.deletes(), 1);
+  assert.deepEqual((await d.t.item()).comments, []);
+});
+test("a deletion whose repeats are used up in the unattended environment asks nothing and fails with TrackerWriteFailed", async () => {
+  const d = await deleting();
+  await Effect.runPromise(Effect.forEach([1, 2, 3], () => d.t.fake.failNext("deleteComment", unreached()), { discard: true }));
+  const exit = await Effect.runPromiseExit(writeWithRetry(d.tracker, d.write, unattendedTrackerEnv(d.t.env)));
+  assert.ok(failureOf(exit) instanceof TrackerWriteFailed);
+  assert.equal(d.t.ui.asked.length, 0);
 });
