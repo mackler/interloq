@@ -123,7 +123,7 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
   const server = gitlabServer(issues);
   const stub = makeStub(server.handler);
   const token = Result.getOrThrow(gitlabCredential({ INTERLOQ_GITLAB_TOKEN: "glpat-FAKE" }));
-  const adapter = Effect.runSync(gitlabTracker({ kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS }, token).pipe(Effect.provide(stub.layer)));
+  const adapter = Effect.runSync(gitlabTracker({ kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS, prepareLabel: null }, token).pipe(Effect.provide(stub.layer)));
   type Scripted = Readonly<{ operation: TrackerOperation; error: TrackerError; when: "before" | "after" }>;
   const failures = Effect.runSync(Ref.make<readonly Scripted[]>([]));
   const reads = Effect.runSync(Ref.make<readonly ItemId[]>([]));

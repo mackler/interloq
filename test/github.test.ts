@@ -13,7 +13,7 @@ import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stub
 
 // Issue #120, part 1: the GitHub adapter over a stub HTTP client.
 const TOKEN: GithubToken = Result.getOrThrow(githubCredential({ INTERLOQ_GITHUB_TOKEN: "github_pat_SECRET123" }));
-const CONFIG: GithubTrackerConfig = { kind: "github", owner: "mackler", repo: "interloq", labels: LABELS };
+const CONFIG: GithubTrackerConfig = { kind: "github", owner: "mackler", repo: "interloq", labels: LABELS, prepareLabel: null };
 const ISSUES = "https://api.github.com/repos/mackler/interloq/issues";
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 

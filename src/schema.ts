@@ -2,7 +2,7 @@
 // (`typeof X.Type`), the JSON Schema for the agents (src/jsonSchema.ts) and runtime validation.
 // Replaces src/types.ts and src/schemas.ts. API names: docs/effect-v4-api.md.
 
-import { type Brand, Result, Schema, SchemaIssue, Struct } from "effect";
+import { type Brand, Effect, Result, Schema, SchemaIssue, Struct } from "effect";
 import { ITEM_STATES, type ItemState } from "./tracker.ts";
 import type { ProcessEnd } from "./transport.ts";
 
@@ -453,8 +453,18 @@ const perState = <S extends ItemState>(states: readonly S[], value: typeof NonBl
 /** Each of Interloq's five states mapped to a GitHub label name (issue #120, part 1). */
 export const GithubLabels = perState(ITEM_STATES, NonBlankText, "label");
 export type GithubLabels = typeof GithubLabels.Type;
-/** The project's GitHub tracker: the repository and the stage labels. No credential: it comes from the environment. */
-export const GithubTrackerConfig = Schema.Struct({ kind: Schema.Literal("github"), owner: NonBlankText, repo: NonBlankText, labels: GithubLabels });
+/**
+ * Issue #131 (requirements Q3, F2): the label that marks an item for unattended preparation of its questions, or null,
+ * where no item is prepared. It differs from every state's label, since an item would otherwise be marked by being in
+ * a state; the issue is on the key's path.
+ */
+const prepareLabelOf = <V extends Schema.Top & { readonly Type: string }>(value: V) => Schema.NullOr(value).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null)));
+const markDistinct = (config: Readonly<{ labels: Readonly<Record<string, string>>; prepareLabel: string | null }>) =>
+  config.prepareLabel !== null && Object.values(config.labels).includes(config.prepareLabel)
+    ? { path: ["prepareLabel"], issue: `the label ${JSON.stringify(config.prepareLabel)} marks a state too: the label that marks an item for preparation must be a label of its own` }
+    : undefined;
+/** The project's GitHub tracker: the repository, the stage labels and the preparation's mark. No credential: it comes from the environment. */
+export const GithubTrackerConfig = Schema.Struct({ kind: Schema.Literal("github"), owner: NonBlankText, repo: NonBlankText, labels: GithubLabels, prepareLabel: prepareLabelOf(NonBlankText) }).check(Schema.makeFilter(markDistinct));
 export type GithubTrackerConfig = typeof GithubTrackerConfig.Type;
 /** The states a GitLab label marks: every state but deployed, which is a closed issue (the developer's decision of 9 Oct 2026). */
 export const GITLAB_LABELED_STATES = ["unrefined", "refined", "implementing", "implemented"] as const satisfies readonly ItemState[];
@@ -471,7 +481,7 @@ export type GitlabLabels = typeof GitlabLabels.Type;
 /** GitLab's full path of a project, `namespace/name` with optional subgroups: no empty segment and no whitespace. */
 const GitlabProjectPath = Schema.String.check(Schema.isPattern(/^[^/\s]+(\/[^/\s]+)+$/u));
 /** The project's GitLab tracker on gitlab.com: the project's path and the state labels. No credential: it comes from the environment. */
-export const GitlabTrackerConfig = Schema.Struct({ kind: Schema.Literal("gitlab"), project: GitlabProjectPath, labels: GitlabLabels });
+export const GitlabTrackerConfig = Schema.Struct({ kind: Schema.Literal("gitlab"), project: GitlabProjectPath, labels: GitlabLabels, prepareLabel: prepareLabelOf(GitlabLabel) }).check(Schema.makeFilter(markDistinct));
 export type GitlabTrackerConfig = typeof GitlabTrackerConfig.Type;
 /** The project's issue tracker, a union tagged by `kind`: GitHub Issues or a GitLab project's issues. */
 export const TrackerConfig = Schema.Union([GithubTrackerConfig, GitlabTrackerConfig]);

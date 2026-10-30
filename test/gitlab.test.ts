@@ -18,7 +18,7 @@ import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stub
 // The GitLab adapter over a stub HTTP client, asserting the requests it sends as well as what it returns.
 const SECRET = "glpat-SECRET123";
 const TOKEN: GitlabToken = Result.getOrThrow(gitlabCredential({ INTERLOQ_GITLAB_TOKEN: SECRET }));
-const CONFIG: GitlabTrackerConfig = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
+const CONFIG: GitlabTrackerConfig = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS, prepareLabel: null };
 const ISSUES = "https://gitlab.com/api/v4/projects/adammackler%2Fiou-notes/issues";
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 

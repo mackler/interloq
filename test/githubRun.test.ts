@@ -45,7 +45,7 @@ const githubServer = (scripted: Answer[]) => {
 const refine = async (scripted: Answer[]) => {
   const server = githubServer(scripted);
   const stub = makeStub(server.handler);
-  const tracker = Effect.runSync(githubTracker({ kind: "github", owner: "mackler", repo: "interloq", labels: LABELS }, TOKEN).pipe(Effect.provide(stub.layer)));
+  const tracker = Effect.runSync(githubTracker({ kind: "github", owner: "mackler", repo: "interloq", labels: LABELS, prepareLabel: null }, TOKEN).pipe(Effect.provide(stub.layer)));
   const { layer, probe } = testLayer(tempRepo(), oneQuestion);
   const exit = await Effect.runPromiseExit(refinementRun("Retry\n\nRepeat a failed request.", ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe, server, stub };
