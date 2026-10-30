@@ -5,7 +5,7 @@ import { Deferred, Effect, Fiber, Queue, Ref, Result, type Scope, Semaphore } fr
 import { keyOf } from "./itemComments.ts";
 import type { PreparationOutcome } from "./preparation.ts";
 import { digestOf, eligible, preparationOf } from "./preparedComments.ts";
-import { failureCounts, isReleased, type PreparationFailure, type PreparationKept, type PreparationStatus } from "./preparationSwitch.ts";
+import { failureCounts, isReleased, type PreparationFailure, type PreparationKept, type PreparationRelease, type PreparationStatus } from "./preparationSwitch.ts";
 import type { ItemComment, ItemId, TrackerItem } from "./tracker.ts";
 
 /** A marked unrefined item with its comments, as the tracker listed them. */
@@ -62,6 +62,19 @@ const carriesKey = (comments: readonly ItemComment[], key: string): boolean =>
     const found = keyOf(c.body);
     return found === key || (found !== null && found.startsWith(`${key}/q-`));
   });
+
+/**
+ * The items whose Refine releases have done their work: the item is listed and none of its comments carries the
+ * release's key. A release whose item is absent from the marked listing is kept, since its set-aside comment may still
+ * be on the item; turning the switch off and on empties the releases (work review 1, W1-R1-2).
+ */
+export const spentReleases = (released: readonly PreparationRelease[], listed: readonly Candidate[]): readonly ItemId[] =>
+  released
+    .filter((r) => {
+      const candidate = listed.find((c) => c.item.id === r.item);
+      return candidate !== undefined && !carriesKey(candidate.comments, r.key);
+    })
+    .map((r) => r.item as ItemId);
 
 type Running = Readonly<{ item: ItemId; fiber: Fiber.Fiber<unknown, unknown>; done: Deferred.Deferred<void> }>;
 
@@ -124,8 +137,8 @@ export const makePreparationPass = (deps: PassDeps): Effect.Effect<PreparationPa
         yield* publish({ _tag: "Unavailable", notice: listed.failure });
         return yield* waitForWake;
       }
-      // A release whose preparation's comments are all gone has done its work; a later set-aside must count again.
-      const spent = kept.released.filter((r) => !listed.success.some((c) => c.item.id === r.item && carriesKey(c.comments, r.key))).map((r) => r.item as ItemId);
+      // A release whose item is listed with its preparation's comments all gone has done its work; a later set-aside must count again.
+      const spent = spentReleases(kept.released, listed.success);
       if (spent.length > 0) yield* deps.dropReleases(spent);
       const refining = yield* deps.refining;
       const next = listed.success.find((c) => !refining.includes(c.item.id) && candidateEligible(kept, c.item, c.comments));

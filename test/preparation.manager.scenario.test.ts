@@ -342,3 +342,27 @@ test("three at once: an implementation run, a held preparation, and a refinement
   await run(h.manager.stop("test", implementation as number));
   await run(h.manager.setPreparation(false));
 });
+
+test("W1-R1-2: Refine on a set-aside item whose mark was removed and whose deletion fails keeps the release; with the mark restored the item is prepared and the release then dropped", async () => {
+  let failing = true;
+  const refusing = (t: TrackerShape): TrackerShape => ({ ...t, deleteComment: (id, c) => (failing ? Effect.fail(new TrackerUnreachable({ tracker: "GitHub", message: "down", status: null })) : t.deleteComment(id, c)) });
+  const h = await harness([marked("21")], [PAUSING, { steps: [{ hang: true }] }, PREPARE_ONE], { trackerOf: refusing });
+  await run(h.manager.setPreparation(true));
+  await until("set aside", async () => (await foundOf(h, "21"))._tag === "SetAside");
+  await run(h.tracker.edit("21" as ItemId, (i) => ({ ...i, marked: false })));
+  const id = await startRefinement(h, "21");
+  await until("the release recorded", () => chainFile(h).preparation.released.length === 1);
+  await run(h.manager.stop("test", id));
+  await endedWith(h, id);
+  await listed(h);
+  await sleep(300);
+  assert.deepEqual(chainFile(h).preparation.released.map((r: { item: string }) => r.item), ["21"]);
+  assert.equal((await foundOf(h, "21"))._tag, "SetAside");
+  failing = false;
+  await run(h.tracker.edit("21" as ItemId, (i) => ({ ...i, marked: true })));
+  await listed(h);
+  await until("prepared", async () => (await foundOf(h, "21"))._tag === "Prepared");
+  await listed(h);
+  await until("the release dropped", () => chainFile(h).preparation.released.length === 0);
+  await run(h.manager.haltAll("end"));
+});

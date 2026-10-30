@@ -3,9 +3,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Effect, Option, Ref, Result, type Scope } from "effect";
-import { runCommentKey } from "../src/itemComments.ts";
+import { preparationMarkerLine, runCommentKey } from "../src/itemComments.ts";
 import { type PreparationOutcome } from "../src/preparation.ts";
-import { type Candidate, candidateEligible, makePreparationPass, type PassDeps, type PreparationPass } from "../src/preparationPass.ts";
+import { type Candidate, candidateEligible, makePreparationPass, type PassDeps, type PreparationPass, spentReleases } from "../src/preparationPass.ts";
 import { digestOf, type PreparationRecord, preparedComments } from "../src/preparedComments.ts";
 import { PREPARATION_KEPT_OFF, type PreparationFailure, type PreparationKept, type PreparationStatus, switched, withFailure, withRelease } from "../src/preparationSwitch.ts";
 import type { ItemComment, ItemId, TrackerItem } from "../src/tracker.ts";
@@ -334,5 +334,24 @@ test("W1-R1-1: a failure that counts, added while the listing is held, leads to 
   await settle();
   await settle();
   assert.deepEqual(h.generations, []);
+  await run(h.pass.shutdown);
+});
+
+// Work review 1 (W1-R1-2): a Refine release is dropped only when its item is listed without the release's key.
+test("W1-R1-2: spentReleases keeps a release whose item is absent or still carries its key, and drops one listed without it", () => {
+  const a = itemOf("1");
+  const release = [{ item: "1", key: "k-1" }];
+  assert.deepEqual(spentReleases(release, []), []);
+  assert.deepEqual(spentReleases(release, [{ item: a, comments: setAside(a, 1) }]), []);
+  const question: ItemComment = { id: seededId("q"), body: `text\n\n${preparationMarkerLine("PreparedQuestion", runCommentKey("k-1", "q-1"))}`, created: "t" };
+  assert.deepEqual(spentReleases(release, [{ item: a, comments: [question] }]), []);
+  assert.deepEqual(spentReleases(release, [{ item: a, comments: [] }]), ["1"]);
+});
+
+test("W1-R1-2: with a release and an empty listing, the pass drops nothing", async () => {
+  const h = await harness([], withRelease(ON, { item: "1", key: "k-1" }));
+  await run(h.pass.wake);
+  await until("Idle", () => h.last()?._tag === "Idle");
+  assert.deepEqual(h.dropped, []);
   await run(h.pass.shutdown);
 });
