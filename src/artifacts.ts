@@ -52,8 +52,10 @@ const ITEM_IN_ROOT = 40;
 /** An item id as a root carries it: its characters outside [A-Za-z0-9] become `_`, cut to ITEM_IN_ROOT; never contains `-`. */
 export const itemInRoot = (item: string): string => item.replace(/[^A-Za-z0-9]/g, "_").slice(0, ITEM_IN_ROOT);
 /** A run's root: the time with `:` and `.` replaced by `-`, as the archive names had; the item as itemInRoot gives it. Total. */
-export const runRootOf = (mode: RunMode, item: string, startedAtIso: string): RunRoot =>
-  `${RUNS_DIR}/${startedAtIso.replace(/[:.]/g, "-")}-${mode}-${itemInRoot(item)}` as RunRoot;
+/** What a records directory belongs to: a run of either mode, or an unattended preparation of an item's questions (issue #131). */
+export type RootKind = RunMode | "preparation";
+export const runRootOf = (kind: RootKind, item: string, startedAtIso: string): RunRoot =>
+  `${RUNS_DIR}/${startedAtIso.replace(/[:.]/g, "-")}-${kind}-${itemInRoot(item)}` as RunRoot;
 /**
  * The roots of the item's implementation runs among the entry names of plan-review/runs/ (issue #180), without the
  * run's own root, newest first: by the time part descending (its fixed-width form sorts as text), then by the clash
