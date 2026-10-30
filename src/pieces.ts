@@ -162,16 +162,49 @@ const escapedPiece = (text: string): string =>
 /** A space or a tab as a numeric character reference: not whitespace to the block parser, shown as the character. */
 const whitespaceReferences = (ws: string): string => ws.replace(/[ \t]/gu, (c) => (c === "\t" ? "&#9;" : "&#32;"));
 /**
+ * The tag names of an HTML block's sixth start condition, copied verbatim from marked 18.0.14's block `html` rule (the
+ * `|`-separated list from `address` to `ul` in `node_modules/marked/lib/marked.esm.js`; a superset of CommonMark's, with
+ * `meta` and `search`). `web/src/markdown.test.ts` checks it against the installed marked (issue #138, S9).
+ */
+export const HTML_BLOCK_TAGS: readonly string[] = ["address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "frame", "frameset", "h[1-6]", "head", "header", "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem", "meta", "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search", "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr", "track", "ul"];
+/**
+ * The source of marked 18.0.14's inline `tag` rule (raw HTML: a comment, a closing tag, an open tag with attributes, a
+ * processing instruction, a declaration, CDATA), copied verbatim from `node_modules/marked/lib/marked.esm.js`; it has no
+ * flags. `web/src/markdown.test.ts` checks it against the installed marked (issue #138, S9).
+ */
+export const MARKED_INLINE_TAG: string = /^<!--(?:-?>|[\s\S]*?-->)|^<\/[a-zA-Z][a-zA-Z0-9-]*\s*>|^<[a-zA-Z][a-zA-Z0-9-]*(?:\s+[a-zA-Z:_][\w.:-]*(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s"'=<>`]+)?)*?\s*\/?>|^<\?[\s\S]*?\?>|^<![a-zA-Z]+\s[\s\S]*?>|^<!\[CDATA\[[\s\S]*?\]\]>/.source;
+const htmlBlockTag = new RegExp(`^</?(?:${HTML_BLOCK_TAGS.join("|")})(?=[ \t>]|/>|$)`, "iu");
+/** A complete open or closing tag followed only by spaces and tabs to the end of the line (CommonMark's condition 7). */
+const wholeLineTag =
+  /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)[ \t]*$/u;
+/**
+ * Whether a line, after its leading whitespace, meets one of CommonMark's seven HTML-block start conditions, case-insensitive
+ * (issue #138, S9). Condition 7 cannot interrupt a paragraph, but whether the line follows paragraph text is not known here.
+ */
+const htmlBlockOpens = (rest: string): boolean =>
+  /^<(?:script|pre|style|textarea)(?=[\s>]|$)/iu.test(rest) ||
+  rest.startsWith("<!--") ||
+  rest.startsWith("<?") ||
+  /^<![A-Za-z]/u.test(rest) ||
+  rest.startsWith("<![CDATA[") ||
+  htmlBlockTag.test(rest) ||
+  wholeLineTag.test(rest);
+const markedInlineTag = new RegExp(MARKED_INLINE_TAG);
+/** Whether marked's inline raw-HTML rule matches at the start of a text, which may continue past the line (issue #138, S9). */
+const rawTagOpens = (text: string): boolean => markedInlineTag.test(text);
+/**
  * The text of a line after its leading whitespace, with a backslash where its first characters would open a block (issue
  * #94): an ATX heading, a block quote, a thematic break, a setext underline, a bullet list, a tilde fence, an ordered list
- * (the backslash before its `.` or `)`), an HTML block that is not an autolink, a link reference definition. A link
- * reference definition's label may span line breaks (none blank) and reach past the run (W1-R1-1), so it is decided over
- * `continuation`, the text from the same place through the end of the run and the Markdown written after it.
+ * (the backslash before its `.` or `)`), an HTML block (htmlBlockOpens), a raw inline HTML tag (rawTagOpens), a link
+ * reference definition. A link reference definition's label and a raw tag's attributes may span line breaks and reach past
+ * the run (W1-R1-1), so they are decided over `continuation`, the text from the same place through the end of the run and
+ * the Markdown written after it. A `<` that opens neither is not escaped (issue #138, S9): the backslash would stop marked
+ * masking the `<…>` span from its emphasis and strikethrough scan, so `<b~0~>` showed as `<b0>`. Still open: on a line
+ * that is escaped, emphasis or strikethrough delimiters inside the `<…>` span can still format.
  */
 const escapedOpener = (rest: string, continuation: string): string => {
   const ordered = /^(\d{1,9})([.)])(?=[ \t]|$)/u.exec(rest);
   if (ordered !== null) return `${ordered[1]}\\${rest.slice(ordered[1].length)}`;
-  const autolink = /^<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*)>/u;
   const opens =
     /^#{1,6}(?=[ \t]|$)/u.test(rest) ||
     rest.startsWith(">") ||
@@ -179,7 +212,8 @@ const escapedOpener = (rest: string, continuation: string): string => {
     /^(?:=+|-+)[ \t]*$/u.test(rest) ||
     /^[-+*](?=[ \t]|$)/u.test(rest) ||
     rest.startsWith("~~~") ||
-    (/^<[A-Za-z/!?]/u.test(rest) && !autolink.test(rest)) ||
+    htmlBlockOpens(rest) ||
+    rawTagOpens(continuation) ||
     linkLabelOpens(continuation);
   return opens ? `\\${rest}` : rest;
 };

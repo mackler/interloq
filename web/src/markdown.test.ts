@@ -295,4 +295,95 @@ describe("a plain piece opens no Markdown block: the class (issue #94)", () => {
     const { piecesMarkdown } = await import("../../src/pieces.ts");
     expect(piecesMarkdown([plainOf("run "), { text: "ls", ref: "", code: true }, plainOf(" now")])).toBe("run `ls` now");
   });
+
+  // Issue #138, suite run 1 (S9): a line that starts with `<` is escaped only where it would open an HTML block or a raw
+  // inline tag. The counterexample of seed -1639314794, ["<b","~0~",">"], was shown as "<b0>": the needless `\<` stopped
+  // marked masking the `<…>` span from its strikethrough scan.
+  test("seam: HTML_BLOCK_TAGS are the tag names of the installed marked's block html rule", async () => {
+    const { HTML_BLOCK_TAGS } = await import("../../src/pieces.ts");
+    const { Lexer } = await import("marked");
+    const source = Lexer.rules.block.gfm.html.source;
+    const names = /<\\\/\?\(([^)]*)\)/u.exec(source)?.[1].split("|");
+    expect(HTML_BLOCK_TAGS).toEqual(names);
+  });
+  test("seam: MARKED_INLINE_TAG is the installed marked's inline tag rule", async () => {
+    const { MARKED_INLINE_TAG } = await import("../../src/pieces.ts");
+    const { Lexer } = await import("marked");
+    expect(new RegExp(MARKED_INLINE_TAG).source).toBe(Lexer.rules.inline.gfm.tag.source);
+  });
+
+  const inlineShape = (el: Element) =>
+    [...el.querySelectorAll("a, em, strong, del")].map((e) => ({ tag: e.tagName.toLowerCase(), text: e.textContent, href: e.getAttribute("href") }));
+  const unescapedCases: readonly (readonly string[])[] = [
+    ["<b", "~0~", ">"],
+    ["<b*a*>"],
+    ["<b_a_>"],
+    ["<b\\>~x~>"],
+    ["<b\\<~x~>"],
+    ["<b[0](https://example.com)>"],
+    ["<b[*a*](https://example.com)>"],
+    ['<b[*a*](https://example.com "title")>'],
+    ["<b[x](url)~x~(z)>"],
+    ["<b https://example.com/a_b >"],
+    ["<b\\*a*>"],
+  ];
+  for (const texts of unescapedCases) {
+    test(`${JSON.stringify(texts)} opens neither an HTML block nor a raw tag, and renders as inline Markdown alone`, async () => {
+      const { piecesMarkdown, blocksMarkdown } = await import("../../src/pieces.ts");
+      const { renderInline } = await import("./markdown.ts");
+      const joined = texts.join("");
+      const expected = document.createElement("span");
+      expected.innerHTML = renderInline(joined);
+      const item = (level: number, ps: readonly { text: string; ref: string; code: boolean }[]) => ({ level, pieces: ps });
+      const ps = texts.map(plainOf);
+      const alone = shown(piecesMarkdown(ps));
+      const asItem = shown(blocksMarkdown([{ kind: "list", items: [item(0, [plainOf("top")]), item(1, ps)] }]));
+      const interrupting = shown(
+        blocksMarkdown([
+          { kind: "list", items: [item(0, [plainOf("one")]), item(1, [plainOf("two")])] },
+          { kind: "paragraph", pieces: ps },
+          { kind: "list", items: [item(1, [plainOf("three")])] },
+        ]),
+      );
+      // The paragraph between the lists is shown inside the item before it: <li><p>two</p><p>…</p></li>.
+      const shapes: readonly [string, Element, readonly Element[]][] = [
+        ["alone", alone.querySelector("p") ?? alone, [...alone.querySelectorAll(BLOCKS)]],
+        ["item", asItem.querySelectorAll("li")[1], [...asItem.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")]],
+        ["interrupting", interrupting.querySelectorAll("p")[1], [...interrupting.querySelectorAll("pre, code, h1, h2, h3, h4, h5, h6, ol, blockquote, hr, table")]],
+      ];
+      for (const [name, el, blocks] of shapes) {
+        expect(blocks, name).toEqual([]);
+        expect(textOf(el), name).toBe(expected.textContent);
+        expect(inlineShape(el), name).toEqual(inlineShape(expected));
+      }
+    });
+  }
+
+  const escapedCases: readonly string[] = [
+    "<div>",
+    "<div ~x~ y",
+    "</p>",
+    "<b>",
+    '<a href="x">',
+    "<!-- x",
+    "<?x",
+    "<!DOCTYPE html>",
+    "<![CDATA[x",
+    "<script>",
+    "<SCRIPT",
+    '<img src="x"> trailing text',
+    "<button>Click</button>",
+    '<img\nsrc="x"> t',
+  ];
+  for (const text of escapedCases) {
+    test(`${JSON.stringify(text)} would open an HTML block or a raw tag, so it is escaped`, async () => {
+      const { piecesMarkdown } = await import("../../src/pieces.ts");
+      const { INLINE_TAGS } = await import("./markdown.ts");
+      const markdown = piecesMarkdown([plainOf(text)]);
+      expect(markdown.startsWith("\\<")).toBe(true);
+      const el = shown(markdown);
+      expect([...el.children].map((c) => c.tagName.toLowerCase())).toEqual(["p"]);
+      expect([...el.children[0].querySelectorAll("*")].map((e) => e.tagName.toLowerCase()).filter((t) => !INLINE_TAGS.includes(t))).toEqual([]);
+    });
+  }
 });
