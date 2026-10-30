@@ -5,7 +5,7 @@
 // src/runEnding.ts, so the three endings that park are stated once.
 import { Clock, Effect } from "effect";
 import type { ParkNote } from "./chain.ts";
-import { NotRefinedStopped, type RunError, SendBackIncomplete, SendBackNotParked, SendBackUnanswered, TrackerStepFailed, trackerFailureText, describe } from "./errors.ts";
+import { isTrackerError, NotRefinedStopped, type RunError, SendBackIncomplete, SendBackNotParked, SendBackUnanswered, TrackerStepFailed, trackerFailureText, describe } from "./errors.ts";
 import { commentDateOf, commentText, lastRefinementAsked, runCommentKey, sentBackCount } from "./itemComments.ts";
 import { rootName } from "./park.ts";
 import { parkWork } from "./parking.ts";
@@ -15,8 +15,6 @@ import { type Services, Store, Tracker, type TrackerError, Ui } from "./services
 import type { ItemId } from "./tracker.ts";
 import { readCommentsWithRetry, runTrackerEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 
-const TRACKER_ERRORS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
-const isTrackerError = (e: TrackerError | RunError): e is TrackerError => TRACKER_ERRORS.has(e._tag);
 
 /** What a send-back leaves: the parking's note, for the chain (the run parked its own work), and the verdict. */
 export type SentBack = Readonly<{ park: ParkNote; missing: string }>;

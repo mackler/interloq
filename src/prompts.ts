@@ -4092,3 +4092,9 @@ export const preparationPreparedLine = (item: string, count: number): string => 
 export const preparationSetAsideLine = (item: string, cause: PreparationCause): string => `Item ${item} was set aside, because ${preparationCauseText(cause)}.`;
 export const preparationNotWrittenLine = (item: string, reason: string): string => `The preparation of item ${item} could not be recorded on the item: ${reason}`;
 export const PREPARATION_STOPPED = "**Preparation stopped.**";
+/** A refinement run that uses a current preparation (issue #131): which one, by its comment key, its records directory's name. */
+export const preparationUsedLine = (key: string): string => `This item's questions were prepared and reviewed in advance (${key}); the first one is asked at once.`;
+/** In place of the terms choice line (requirements Q5): for a prepared item the Refinement tab's choice of terms has no effect. */
+export const PREPARED_TERMS_CHOICE_LINE = "The questions and the explanations of their terms come from the preparation, which Codex reviewed; the Refinement tab's choice of terms has no effect for this item.";
+/** A deletion of the preparation's comments after the item was refined that failed for good; the run does not halt. */
+export const preparationCleanupFailedLine = (item: string, cause: string): string => `The prepared questions' comments on item ${item} could not all be deleted: ${cause}. They are not used again, since the item's refinement record follows them.`;

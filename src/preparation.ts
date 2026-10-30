@@ -7,13 +7,13 @@ import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Result, type Sco
 import { runRootOf } from "./artifacts.ts";
 import { loadConfig } from "./config.ts";
 import { deciderLayer } from "./decision.ts";
-import { describe, trackerFailureText } from "./errors.ts";
+import { describe, isTrackerError, trackerFailureText } from "./errors.ts";
 import { prepareQuestionList } from "./interview.ts";
 import { commentDateOf, keyOf, runCommentKey } from "./itemComments.ts";
 import { rootName } from "./park.ts";
 import { type PreparationCause, type PreparationRecord, digestOf, preparationOf, type PreparedQuestion, preparedComments } from "./preparedComments.ts";
 import { unattendedUi } from "./preparationUi.ts";
-import { DECISION_FORMAT, defectMessage, isTrackerError, taskTextOf, type Wiring } from "./program.ts";
+import { DECISION_FORMAT, defectMessage, taskTextOf, type Wiring } from "./program.ts";
 import { PREPARATION_STOPPED, preparationNotWrittenLine, preparationPreparedLine, preparationSetAsideLine, preparationStartedLine, TRANSPORT_ANSWERS } from "./prompts.ts";
 import { RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
