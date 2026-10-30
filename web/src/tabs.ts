@@ -16,3 +16,5 @@ export const itemsFrame = (mode: RunMode): ClientMessage => ({ type: "items", mo
 export const chainFrame = (settings: ChainFrameSettings): ClientMessage => ({ type: "chain", settings });
 /** Issue #185: the frame that says the developer is working on a prompt, so its countdown stops. */
 export const holdFrame = (incarnation: string, run: number, prompt: number): ClientMessage => ({ type: "hold", incarnation, run, prompt });
+/** Issue #131: the frame that turns the preparation of the marked items' questions on or off. */
+export const preparationFrame = (enabled: boolean): ClientMessage => ({ type: "preparation", enabled });

@@ -4,6 +4,7 @@
 // the same fold, so a tab that joins mid-run shows what a tab that watched from the start shows. The dashboard keeps no
 // timed list: the publication times (issue #1) and phase bands (issue #15) are the right panel's alone.
 
+import { type PreparationMark, type PreparationView, preparingItemOf } from "../../src/preparationSwitch.ts";
 import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
@@ -307,6 +308,13 @@ export type ViewState = Readonly<{
   chainQueued: number;
   /** A change of what the control shows that leaves the server's settings equal, which the control cannot see. */
   chainReset: ChainReset;
+  /** The preparation's switch and status from the last hello or preparation frame (issue #131); null before the first hello. */
+  preparation: PreparationView | null;
+  /**
+   * Increased whenever a preparation frame changes the item being prepared while the Refinement tab's list is shown
+   * (issue #131): the page then asks for the Refinement items again, so every row's mark follows the pass without a timer.
+   */
+  itemsRefresh: number;
 }>;
 
 /** A reset of the chain control's fields the page signals: its version increases with each, naming the fields changed. */
@@ -329,7 +337,16 @@ export const initialState: ViewState = {
   chainPending: NO_IN_FLIGHT,
   chainQueued: 0,
   chainReset: { version: 0, fields: [] },
+  preparation: null,
+  itemsRefresh: 0,
 };
+
+/**
+ * Issue #131 (requirements Q6): what a Refinement row shows: Preparing for the item the switch's status names, at once,
+ * whatever its last listing said; otherwise the item's own mark from that listing.
+ */
+export const shownMark = (state: ViewState, item: ListedItem): PreparationMark | null =>
+  state.preparation !== null && preparingItemOf(state.preparation.status) === item.id ? { _tag: "Preparing" } : item.preparation;
 
 /** The state with one mode's tab changed. */
 const withMode = (state: ViewState, mode: RunMode, change: (m: ModeView) => ModeView): ViewState => ({ ...state, modes: { ...state.modes, [mode]: change(state.modes[mode]) } });
@@ -1140,7 +1157,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(currentOf(message.current, m)) : reconnectedMode(state.modes[m], currentOf(message.current, m))])) as Record<RunMode, ModeView>;
-      return { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, ...chainAfterHello(state, message.chain, restarted) };
+      return { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, preparation: message.preparation, ...chainAfterHello(state, message.chain, restarted) };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the
@@ -1174,9 +1191,14 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // Issue #147: every frame carries the chain's whole state. A change of the settings acknowledges the frames it
       // answers; equal settings (a status change, a run event) leave the list as it is.
       return { ...state, chain: message.state, chainPending: state.chain !== null && sameSettings(state.chain.settings, message.state.settings) ? state.chainPending : acknowledged(state.chainPending, message.state.settings) };
-    case "preparation":
-      // Issue #131: the page shows the preparation's switch from step S18 on; until then the frame changes nothing.
-      return state;
+    case "preparation": {
+      // Issue #131: the whole view replaces the last; a change of the item being prepared, with the Refinement list
+      // shown, asks for its items again, so the marks of the rows other than the one being prepared follow the pass.
+      const before = state.preparation === null ? null : preparingItemOf(state.preparation.status);
+      const changed = before !== preparingItemOf(message.view.status);
+      const listShown = state.selected === "refinement" && state.modes.refinement.focus._tag === "List" && state.modes.refinement.items._tag === "Listed";
+      return { ...state, preparation: message.view, itemsRefresh: changed && listShown ? state.itemsRefresh + 1 : state.itemsRefresh };
+    }
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.

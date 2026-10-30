@@ -1,4 +1,5 @@
-import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
+import { PREPARATION_VIEW_OFF, type PreparationStatus, type PreparationView } from "../../src/preparationSwitch.ts";
+import type { ListedItem } from "../../src/protocol.ts";
 import fc from "fast-check";
 import type { SubjectId } from "../../src/artifacts.ts";
 import { shownOf } from "./test-setup.ts";
@@ -15,7 +16,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -2886,5 +2887,49 @@ describe("issue #144: the Implementation tab's list during a run", () => {
       }),
       { numRuns: 100 },
     );
+  });
+});
+
+// Issue #131 (S18): the preparation's switch, its status and the marks of the Refinement list.
+describe("preparation", () => {
+  const view = (status: PreparationStatus, enabled = true): PreparationView => ({ settings: { enabled, generation: 1 }, status });
+  const frame = (status: PreparationStatus): ServerMessage => ({ type: "preparation", view: view(status) });
+  const item = (id: string, preparation: ListedItem["preparation"] = null): ListedItem => ({ id, title: `t${id}`, excerpt: "", url: null, sentBack: 0, preparation });
+  const listedRefinement = (): ViewState => {
+    const helloed = reduce(initialState, { type: "hello", preparation: view({ _tag: "Off" }, false), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+    return reduce(selectMode(helloed, "refinement"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: [item("1"), item("2", { _tag: "SetAside", reason: "r" })], terms: "checked" } });
+  };
+  const preparing = (id: string): PreparationStatus => ({ _tag: "Preparing", item: id, title: `t${id}` });
+
+  test("the hello sets the view and a preparation frame replaces it", () => {
+    const s = listedRefinement();
+    expect(s.preparation).toEqual(view({ _tag: "Off" }, false));
+    expect(reduce(s, frame({ _tag: "Idle" })).preparation).toEqual(view({ _tag: "Idle" }));
+  });
+
+  test("each change of the item being prepared asks for the Refinement items again; a frame that leaves it unchanged does not", () => {
+    const s = listedRefinement();
+    const asks = (before: ViewState, status: PreparationStatus) => reduce(before, frame(status)).itemsRefresh > before.itemsRefresh;
+    expect(asks(s, preparing("1"))).toBe(true);
+    const idle = reduce(s, frame({ _tag: "Idle" }));
+    expect(asks(idle, preparing("1"))).toBe(true);
+    const a = reduce(s, frame(preparing("1")));
+    expect(asks(a, preparing("2"))).toBe(true);
+    expect(asks(a, { _tag: "Idle" })).toBe(true);
+    expect(asks(s, { _tag: "Idle" })).toBe(false);
+    expect(asks(a, preparing("1"))).toBe(false);
+  });
+
+  test("no request while a run is shown in the Refinement tab", () => {
+    const s = listedRefinement();
+    const shown = { ...s, modes: { ...s.modes, refinement: { ...s.modes.refinement, focus: { _tag: "Run" as const, run: 1 } } } };
+    expect(reduce(shown, frame(preparing("1"))).itemsRefresh).toBe(shown.itemsRefresh);
+  });
+
+  test("shownMark gives Preparing for the item the view names, whatever its listed mark, and the listed mark for every other", () => {
+    const s = reduce(listedRefinement(), frame(preparing("2")));
+    expect(shownMark(s, item("2", { _tag: "SetAside", reason: "r" }))).toEqual({ _tag: "Preparing" });
+    expect(shownMark(s, item("1"))).toBe(null);
+    expect(shownMark(s, item("3", { _tag: "Prepared", questions: 2 }))).toEqual({ _tag: "Prepared", questions: 2 });
   });
 });

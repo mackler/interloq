@@ -19,7 +19,7 @@ import { type Broadcast, makeRunManager, type RunManager } from "../src/runManag
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { chainFrame, holdFrame, itemsFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { chainFrame, holdFrame, itemsFrame, preparationFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
@@ -834,7 +834,7 @@ test("a tab's preparation frame turns the manager's switch on, and every tab rec
     await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
     const hello = a.messages[0] as Extract<ServerMessage, { type: "hello" }>;
     assert.deepEqual(hello.preparation, await Effect.runPromise(manager.preparation));
-    a.send({ type: "preparation", enabled: true });
+    a.send(preparationFrame(true));
     const viewOf = (c: Client) => c.messages.filter((m): m is Extract<ServerMessage, { type: "preparation" }> => m.type === "preparation").at(-1)?.view;
     await until("the view in both tabs", () => viewOf(a)?.settings.enabled === true && viewOf(b)?.settings.enabled === true);
     assert.equal((await Effect.runPromise(manager.preparation)).settings.enabled, true);
