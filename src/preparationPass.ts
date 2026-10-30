@@ -86,11 +86,19 @@ export const makePreparationPass = (deps: PassDeps): Effect.Effect<PreparationPa
       return (yield* deps.kept).settings.enabled && !(yield* Ref.get(closed)) && !(yield* deps.closing);
     });
 
-    /** Starts the item's preparation if it may begin and its item is not being refined; null otherwise. Atomic under the permit. */
-    const select = (candidate: Candidate, generation: number) =>
+    /**
+     * Starts the item's preparation if it may begin and its item is not being refined; null otherwise. Atomic under the
+     * permit. The candidate is judged again against the switch as it is now: where the generation it was judged at
+     * (`judgedAt`) has changed, or the item is no longer eligible, nothing starts, and the next cycle lists afresh
+     * (work review 1, W1-R1-1).
+     */
+    const select = (candidate: Candidate, judgedAt: number) =>
       permit.withPermits(1)(
         Effect.gen(function* () {
           if (!(yield* going) || (yield* deps.refining).includes(candidate.item.id)) return null;
+          const fresh = yield* deps.kept;
+          if (fresh.settings.generation !== judgedAt || !candidateEligible(fresh, candidate.item, candidate.comments)) return null;
+          const generation = fresh.settings.generation;
           const done = yield* Deferred.make<void>();
           const gate = yield* Deferred.make<void>();
           const preparation = Effect.gen(function* () {

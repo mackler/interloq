@@ -270,3 +270,69 @@ test("an item that becomes refining before its selection is skipped, or stopped 
   await run(h.pass.shutdown);
 });
 
+
+// Work review 1 (W1-R1-1): a candidate judged at one generation and selected after the switch was turned off and on.
+const heldListing = async (kept: PreparationKept) => {
+  const keptRef = Effect.runSync(Ref.make(kept));
+  const item = itemOf("1");
+  let comments: ItemComment[] = [];
+  let first = true;
+  const listing = gated();
+  const listed = gated();
+  const generations: number[] = [];
+  const statuses: PreparationStatus[] = [];
+  const deps: PassDeps = {
+    kept: Ref.get(keptRef),
+    closing: Effect.succeed(false),
+    candidates: Effect.gen(function* () {
+      if (first) {
+        first = false;
+        listed.open();
+        yield* Effect.promise(() => listing.promise);
+      }
+      return Result.succeed([{ item, comments }] as readonly Candidate[]);
+    }),
+    refining: Effect.succeed([]),
+    prepare: (_item, _comments, generation) =>
+      Effect.sync(() => {
+        generations.push(generation);
+        comments = setAside(item, generation);
+        return { _tag: "SetAside", cause: { _tag: "Paused", question: "?" } } as PreparationOutcome;
+      }),
+    recordFailure: () => Effect.void,
+    dropReleases: () => Effect.void,
+    publish: (s) => Effect.sync(() => void statuses.push(s)),
+  };
+  const pass = await run(makePreparationPass(deps));
+  await run(pass.wake);
+  await listed.promise;
+  return { pass, keptRef, listing, generations, statuses, setKept: (k: PreparationKept) => run(Ref.set(keptRef, k)) };
+};
+
+test("W1-R1-1: the switch turned off and on while the listing is held prepares at the new generation, once", async () => {
+  const h = await heldListing(ON);
+  const cycled = switched(switched(ON, false), true);
+  await h.setKept(cycled);
+  await run(h.pass.wake);
+  h.listing.open();
+  await until("Idle", () => h.statuses.at(-1)?._tag === "Idle");
+  for (let i = 0; i < 3; i += 1) await run(h.pass.wake);
+  await settle();
+  assert.deepEqual(h.generations, [cycled.settings.generation]);
+  const again = switched(switched(cycled, false), true);
+  await h.setKept(again);
+  await run(h.pass.wake);
+  await until("a preparation at the next generation", () => h.generations.length === 2);
+  assert.deepEqual(h.generations, [cycled.settings.generation, again.settings.generation]);
+  await run(h.pass.shutdown);
+});
+
+test("W1-R1-1: a failure that counts, added while the listing is held, leads to no preparation", async () => {
+  const h = await heldListing(ON);
+  await h.setKept(withFailure(ON, { item: "1", digest: digestOf(itemOf("1")), generation: ON.settings.generation, reason: "r" }));
+  h.listing.open();
+  await settle();
+  await settle();
+  assert.deepEqual(h.generations, []);
+  await run(h.pass.shutdown);
+});
