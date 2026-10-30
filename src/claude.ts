@@ -384,6 +384,9 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
                 const text = tail === null ? "" : plainOutput(tail);
                 return text === "" ? Effect.void : ui.output({ _tag: "Printed", key: command.key, name: command.name, text });
               }),
+              // W1-R1-1: the task's end is delivered however the read ends, an interruption by Stop task included;
+              // the read itself stays interruptible, so Stop task is never held back by it.
+              Effect.ensuring(ui.output({ _tag: "Finished", key: command.key, name: command.name, status: command.status })),
             );
       const endOpen = Ref.get(output).pipe(Effect.flatMap((state) => Effect.forEach(claudeOpenProcesses(state), (e) => ui.output(e), { discard: true })));
       const consume = Effect.gen(function* () {

@@ -221,7 +221,7 @@ export const taskName = (names: ReadonlyMap<string, string>, id: string): string
 // when its result arrives; a background task shows its name, and its output from its output file at its end.
 
 /** What the adapter does for the live panel: emit an event, or read a task's output file and emit its tail. */
-export type OutputCommand = Readonly<{ _tag: "Emit"; event: OutputEvent }> | Readonly<{ _tag: "Tail"; key: ProcessKey; name: string; path: string }>;
+export type OutputCommand = Readonly<{ _tag: "Emit"; event: OutputEvent }> | Readonly<{ _tag: "Tail"; key: ProcessKey; name: string; path: string; status: ProcessStatus }>;
 
 /**
  * The live output's state of one call: the foreground commands running, by tool_use_id, with their names; the
@@ -313,7 +313,7 @@ export const claudeOutputOf = (state: ClaudeOutputState, message: SDKMessage): r
     const name = s.openTasks.get(message.task_id);
     if (name !== undefined) {
       s = { ...s, openTasks: withoutEntry(s.openTasks, message.task_id) };
-      out.push(...keyed({ kind: "task", id: message.task_id }, (key) => [{ _tag: "Tail", key, name, path: message.output_file }, emit({ _tag: "Finished", key, name, status: statusOfTask(message.status) })]));
+      out.push(...keyed({ kind: "task", id: message.task_id }, (key) => [{ _tag: "Tail", key, name, path: message.output_file, status: statusOfTask(message.status) }]));
     }
   }
   // A task on the panel later marked ambient is ended there: how is not known.

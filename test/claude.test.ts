@@ -1994,3 +1994,23 @@ test("issue #49: an interrupted execution call ends its open command Unknown on 
   await Effect.runPromise(Fiber.interrupt(fiber));
   assert.deepEqual(fake.ui.outputs.map((e) => (e._tag === "Finished" ? `Finished ${e.status._tag}` : e._tag)), ["Started", "Finished Unknown"]);
 });
+
+test("issue #49 (W1-R1-1): a background task's end reaches the live panel when Stop task interrupts its output-file read", async () => {
+  const fake = await planner([
+    async function* (call) {
+      yield init();
+      yield bashUse("t2", "npm test", true);
+      yield started("b1");
+      yield notification("b1", "completed", "/tmp/hang.out");
+      await aborted(call.options);
+    },
+  ]);
+  fake.sdk.hangingOutputFiles.add("/tmp/hang.out");
+  fake.sdk.outputFiles.set("/tmp/hang.out", "never read\n");
+  const fiber = Effect.runFork(fake.planner.executing("implement the plan", noReporter).pipe(Effect.provideService(Decider, noDecider)));
+  for (let i = 0; i < 200 && !fake.sdk.outputReads.includes("/tmp/hang.out"); i++) await sleep(5);
+  assert.ok(fake.sdk.outputReads.includes("/tmp/hang.out"));
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  const ofTask = fake.ui.outputs.filter((e) => e._tag !== "Touched" && e.key === "task:b1");
+  assert.deepEqual(ofTask.map((e) => (e._tag === "Finished" ? `Finished ${e.status._tag}` : e._tag)), ["Started", "Finished Succeeded"]);
+});

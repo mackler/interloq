@@ -111,7 +111,12 @@ export class FakeSdk implements AgentSdk {
   /** The server a live binding would build; the handler is kept for `reportStep`. */
   /** Issue #49: the background tasks' output files, by path; a path not here cannot be read. */
   readonly outputFiles = new Map<string, string>();
+  /** Issue #49 (W1-R1-1): paths whose read never resolves, and the paths read so far. */
+  readonly hangingOutputFiles = new Set<string>();
+  readonly outputReads: string[] = [];
   readOutputTail(path: string): Promise<string | null> {
+    this.outputReads.push(path);
+    if (this.hangingOutputFiles.has(path)) return new Promise<string | null>(() => {});
     return Promise.resolve(this.outputFiles.get(path) ?? null);
   }
 

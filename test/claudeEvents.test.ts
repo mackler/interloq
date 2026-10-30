@@ -234,7 +234,7 @@ const commandsOf = (messages: readonly SDKMessage[]): { state: ClaudeOutputState
     { state: EMPTY_CLAUDE_OUTPUT, out: [] },
   );
 const brief = (c: OutputCommand): string =>
-  c._tag === "Tail" ? `Tail ${c.key} ${c.path}` : c.event._tag === "Touched" ? `Touched ${c.event.name}` : c.event._tag === "Printed" ? `Printed ${c.event.key} ${JSON.stringify(c.event.text)}` : c.event._tag === "Finished" ? `Finished ${c.event.key} ${c.event.status._tag}` : c.event._tag === "Progress" ? `Progress ${c.event.key} ${c.event.seconds}` : `Started ${c.event.key} ${c.event.name}`;
+  c._tag === "Tail" ? `Tail ${c.key} ${c.path} ${c.status._tag}` : c.event._tag === "Touched" ? `Touched ${c.event.name}` : c.event._tag === "Printed" ? `Printed ${c.event.key} ${JSON.stringify(c.event.text)}` : c.event._tag === "Finished" ? `Finished ${c.event.key} ${c.event.status._tag}` : c.event._tag === "Progress" ? `Progress ${c.event.key} ${c.event.seconds}` : `Started ${c.event.key} ${c.event.name}`;
 
 test("a foreground Bash starts, reports its time, and ends with its error result's output", () => {
   const { out, state } = commandsOf([toolUse("t1", "Bash", { command: "npm test" }), progress("t1", 4), toolResult("t1", [{ type: "text", text: "\u001b[31mnot ok 1\u001b[0m" }], true)]);
@@ -244,17 +244,17 @@ test("a foreground Bash starts, reports its time, and ends with its error result
 
 test("a backgrounded Bash starts nothing itself; its task starts and ends with its output file", () => {
   const { out } = commandsOf([toolUse("t2", "Bash", { command: "npm test", run_in_background: true }), started("b1"), toolResult("t2", "running in the background"), notification("b1", "completed", "/tmp/b1.out")]);
-  assert.deepEqual(out.map(brief), ["Started task:b1 task b1", "Tail task:b1 /tmp/b1.out", "Finished task:b1 Succeeded"]);
+  assert.deepEqual(out.map(brief), ["Started task:b1 task b1", "Tail task:b1 /tmp/b1.out Succeeded"]);
 });
 
 test("a task first seen in background_tasks_changed starts under its description", () => {
   const { out } = commandsOf([changed([["b2", false]]), notification("b2", "stopped", "/tmp/b2.out")]);
-  assert.deepEqual(out.map(brief), ["Started task:b2 task b2", "Tail task:b2 /tmp/b2.out", "Finished task:b2 Stopped"]);
+  assert.deepEqual(out.map(brief), ["Started task:b2 task b2", "Tail task:b2 /tmp/b2.out Stopped"]);
 });
 
 test("a foreground task moved to the background by task_updated starts under its description and ends by its notification", () => {
   const { out } = commandsOf([started("f1", { backgrounded: false }), moved("f1"), notification("f1", "failed", "/tmp/f1.out")]);
-  assert.deepEqual(out.map(brief), ["Started task:f1 task f1", "Tail task:f1 /tmp/f1.out", "Finished task:f1 Failed"]);
+  assert.deepEqual(out.map(brief), ["Started task:f1 task f1", "Tail task:f1 /tmp/f1.out Failed"]);
 });
 
 test("an ambient task is ignored; a Read is one Touched line; an open command ends Unknown at the call's end", () => {
