@@ -386,4 +386,19 @@ describe("a plain piece opens no Markdown block: the class (issue #94)", () => {
       expect([...el.children[0].querySelectorAll("*")].map((e) => e.tagName.toLowerCase()).filter((t) => !INLINE_TAGS.includes(t))).toEqual([]);
     });
   }
+
+  // W2-R1-1 of work review 2: marked's block html rule opens CDATA in any case.
+  const cdataCases: readonly string[] = ["<![cdata[x", "<![CData[x", "<![cdata[x\nsecond line"];
+  for (const text of cdataCases) {
+    test(`${JSON.stringify(text)} opens a CDATA block in any case, so it is escaped and shown whole`, async () => {
+      const { piecesMarkdown } = await import("../../src/pieces.ts");
+      const { INLINE_TAGS } = await import("./markdown.ts");
+      const markdown = piecesMarkdown([plainOf(text)]);
+      expect(markdown.startsWith("\\<")).toBe(true);
+      const el = shown(markdown);
+      expect([...el.children].map((c) => c.tagName.toLowerCase())).toEqual(["p"]);
+      expect([...el.children[0].querySelectorAll("*")].map((e) => e.tagName.toLowerCase()).filter((t) => !INLINE_TAGS.includes(t))).toEqual([]);
+      expect((el.children[0].textContent ?? "").replace(/\s+/gu, " ")).toBe(text.replace(/\s+/gu, " "));
+    });
+  }
 });

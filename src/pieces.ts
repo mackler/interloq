@@ -186,7 +186,7 @@ const htmlBlockOpens = (rest: string): boolean =>
   rest.startsWith("<!--") ||
   rest.startsWith("<?") ||
   /^<![A-Za-z]/u.test(rest) ||
-  rest.startsWith("<![CDATA[") ||
+  /^<!\[CDATA\[/iu.test(rest) ||
   htmlBlockTag.test(rest) ||
   wholeLineTag.test(rest);
 const markedInlineTag = new RegExp(MARKED_INLINE_TAG);
