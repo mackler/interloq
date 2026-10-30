@@ -1174,6 +1174,9 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // Issue #147: every frame carries the chain's whole state. A change of the settings acknowledges the frames it
       // answers; equal settings (a status change, a run event) leave the list as it is.
       return { ...state, chain: message.state, chainPending: state.chain !== null && sameSettings(state.chain.settings, message.state.settings) ? state.chainPending : acknowledged(state.chainPending, message.state.settings) };
+    case "preparation":
+      // Issue #131: the page shows the preparation's switch from step S18 on; until then the frame changes nothing.
+      return state;
     case "closing":
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.

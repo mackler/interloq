@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
 import { runRootOf } from "../../src/artifacts.ts";
 import { type Component, createRawSnippet, flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -124,7 +125,7 @@ describe("Claude's messages", () => {
   test("the dashboard shows Claude's prose from the reducer as Claude's latest message, without the prefix (issue #22)", () => {
     const time = "2026-09-27T14:00:00.000Z";
     const state = [
-      { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
+      { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } },
     ].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
@@ -510,7 +511,7 @@ describe("TimelineRail", () => {
     ];
     const time = "2026-09-29T00:00:00Z";
     const messages: ServerMessage[] = [
-      { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
+      { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
       ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
@@ -637,7 +638,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
     return { root, ws };
   };
 
@@ -647,7 +648,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", chain: helloChain, location: "/host/c", current: { refinement: [], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/host/c", current: { refinement: [], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [] });
     expect(root.querySelector("section.items")).not.toBe(null);
     expect(one(root, "header .location").textContent?.trim()).toBe("/host/c");
@@ -709,7 +710,7 @@ describe("App and the draft", () => {
     const { default: App } = await import("./components/App.svelte");
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", chain: helloChain, location: "/host/server", current: { refinement: [], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/host/server", current: { refinement: [], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([{ _tag: "Started", project: "/elsewhere", location: "/host/other", task: "t", mode: "refinement", item: { id: "11", title: "t" } }, { _tag: "Ended", code: 0 }]) }] });
     expect(one(root, "button[name=new]").textContent?.trim()).toBe(prompts.BACK_TO_LIST);
     one(root, "button[name=new]").click();
@@ -734,7 +735,7 @@ describe("App and the draft", () => {
       const root = show(App, {});
       const ws = FakeWebSocket.last!;
       ws.onopen?.({});
-      ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+      ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
       ws.receive({ type: "replay", ui: [], runs: [] });
       return { root, ws };
     };
@@ -768,7 +769,7 @@ describe("App and the draft", () => {
       const next = FakeWebSocket.last!;
       expect(next).not.toBe(ws);
       next.onopen?.({});
-      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+      next.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
       expect(sentOf(next)).toEqual([{ type: "items", mode: "refinement" }]);
     });
 
@@ -859,7 +860,7 @@ describe("App and the draft", () => {
       const next = FakeWebSocket.last!;
       expect(next).not.toBe(ws);
       next.onopen?.({});
-      next.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
+      next.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
       commitField(root, "chain-cutoff", "07:00");
       expect(chainFrames(next)).toEqual([{ enabled: true, runs: 3, cutoff: null }, { enabled: true, runs: 3, cutoff: hourIso() }]);
     });
@@ -988,7 +989,7 @@ describe("App and the draft", () => {
       expect(NotificationStub.calls.map((c) => c.title)).toEqual([prompts.pauseNotificationTitle(name)]);
       expect(document.title).toBe(tabTitle("/p", WAITING));
       expect(icon()).toBe(faviconHref(WAITING, schemeColors()));
-      ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+      ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
       expect(NotificationStub.calls).toHaveLength(1);
       ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
@@ -1122,7 +1123,7 @@ describe("App and the draft", () => {
         const { ws } = await openPage();
         pending(ws);
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
-        ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+        ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
         pending(ws);
         expect(AudioContextStub.started).toBe(CHIME_TONES.length);
       });
@@ -1233,7 +1234,7 @@ describe("App and the draft", () => {
     one(root, "button[name=conversation]").click();
     flushSync();
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).toBe(null);
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [2], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [2], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, analyzed, asked(1), { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp([started, analyzed, asked(1)]) }] });
     expect(root.querySelector('section[aria-label^="Your Choice: "]')).not.toBe(null);
   });
@@ -1431,7 +1432,7 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
     type(field(root), "draft for question one");
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "" }, asked(2)]) }] });
     expect(field(root).value).toBe("");
     expect(root.textContent).toMatch(/your unsent text was discarded: «draft for question one»/);
@@ -1546,7 +1547,7 @@ describe("App: several refinement runs", () => {
     const root = show(App, {});
     const ws = Ws.last!;
     ws.onopen?.({});
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: current, implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: current, implementation: null }, incarnation: "a" });
     return { root, ws };
   };
   /** Two refinement runs, the first running, the second waiting on its question. */
@@ -1591,7 +1592,7 @@ describe("App: several refinement runs", () => {
     field(root).value = "typed before the restart";
     field(root).dispatchEvent(new Event("input", { bubbles: true }));
     flushSync();
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
     expect(root.textContent).toContain(prompts.draftWithdrawnNotice("typed before the restart"));
   });
 
@@ -2140,7 +2141,7 @@ test("the activity line shows retry 2 of 3", () => {
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
-    { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
+    { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
     { type: "replay", ui: [], runs: [] },
     { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
     ...events.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time, event: { _tag: "Notified", event } })),
@@ -2182,7 +2183,7 @@ test("the activity line counts down the wait before a tracker request's repeat, 
     const time = "2026-10-15T12:00:00Z";
     const event: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 1, of: 5, delaySeconds: 15, fault: "no answer", fromMs: now - 3000, untilMs: now + 12_000 };
     const messages: ServerMessage[] = [
-      { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
+      { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "155", title: "t" } } },
       { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event } },
@@ -2394,7 +2395,7 @@ describe("TimelineRail: where the indicator is", () => {
     const resumed = report("S1", prompts.REPORT_STEP_STATUSES[0], plan("started", "done"));
     const rail = (list: UiEvent[]) => {
       const messages: ServerMessage[] = [
-        { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
+        { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
         { type: "replay", ui: [], runs: [] },
         { type: "event", run: 1, seq: 0, time: CALL, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
         ...list.map((event, i): ServerMessage => ({ type: "event", run: 1, seq: i + 1, time: CALL, event: { _tag: "Notified", event } })),
@@ -2805,7 +2806,7 @@ test("the seam of the phase names: the rail and the bands show phaseName's names
     { _tag: "Notified", event: { _tag: "PhasesForeseen", phases } },
     ...phases.flatMap((phase, i) => [{ _tag: "Notified", event: { _tag: "PhaseBegan", phase } }, { _tag: "Notified", event: { _tag: "ReviewReceived", subject: { plan: i + 1 }, round: 1, review: { issues: [] }, counted: 0 } }]),
   ];
-  const state = [{ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
+  const state = [{ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }, ...events.map((event, seq) => ({ type: "event", run: 1, seq, time, event }))].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
   const names = phases.map((p) => phaseName(p, countOfKind(phases, p.kind)));
   const rail = showRail({ busy: false, timeline: runOf(state, "refinement")?.timeline ?? [] });
   expect([...rail.querySelectorAll("[data-label]")].map((e) => e.textContent?.trim())).toEqual(names);
@@ -3169,7 +3170,7 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
     const root = show(App, {});
     const ws = FakeWebSocket.last!;
     ws.onopen?.({});
-    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp(events) }] });
     return { root, ws };
   };

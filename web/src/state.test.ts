@@ -1,3 +1,4 @@
+import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
 import fc from "fast-check";
 import type { SubjectId } from "../../src/artifacts.ts";
 import { shownOf } from "./test-setup.ts";
@@ -24,7 +25,7 @@ import type { ItemId } from "../../src/tracker.ts";
 const runOf = (s: ViewState, mode: RunMode): RunView | null => shownRun(s, mode).run;
 /** The run before a mode's newest that the page holds. */
 const lastOf = (s: ViewState, mode: RunMode): RunView | null => s.modes[mode].runs.at(-2) ?? null;
-const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
+const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task", mode: "implementation", item: { id: "1", title: "the task" } };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
@@ -611,7 +612,7 @@ describe("runs, replay and gaps", () => {
   });
 
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
-  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location, current: { refinement: [], implementation: null }, incarnation });
+  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location, current: { refinement: [], implementation: null }, incarnation });
   const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
 
   test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
@@ -692,7 +693,7 @@ describe("runs, replay and gaps", () => {
       fc.property(itemsArb, itemsArb, fc.constantFrom("a", "b"), (r, i, incarnation) => {
         const base = fold([hello(null)]);
         const state: ViewState = { ...base, modes: { refinement: { ...base.modes.refinement, items: r }, implementation: { ...base.modes.implementation, items: i } } };
-        const s = reduce(state, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+        const s = reduce(state, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
         expect([s.modes.refinement.items._tag, s.modes.implementation.items._tag]).not.toContain("Loading");
       }),
       { numRuns: 50 },
@@ -764,11 +765,11 @@ describe("runs, replay and gaps", () => {
 // Finding 12 of docs/gui-review.md: a hello from another incarnation clears the view of the earlier server's runs.
 describe("a server restart", () => {
   test("a hello with a new incarnation clears the old run's view; the same incarnation keeps it", () => {
-    const withRun = reduce(reduce(initialState, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: started }] }] });
+    const withRun = reduce(reduce(initialState, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: started }] }] });
     expect(runOf(withRun, "implementation")?.id).toBe(3);
     expect(withRun.incarnation).toBe("a");
-    expect(runOf(reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), "implementation")?.id).toBe(3);
-    const restarted = reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: null }, incarnation: "b" });
+    expect(runOf(reduce(withRun, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), "implementation")?.id).toBe(3);
+    const restarted = reduce(withRun, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: null }, incarnation: "b" });
     expect([runOf(restarted, "implementation"), lastOf(restarted, "implementation"), restarted.incarnation]).toEqual([null, null, "b"]);
     const next = reduce(restarted, { type: "event", run: 1, seq: 0, time: at(0), event: { ...started, task: "u" } as RunEvent });
     expect(runOf(next, "implementation")?.id).toBe(1);
@@ -1693,7 +1694,7 @@ describe("the shared state of a run's page", () => {
     expect(runOf(s, "implementation")?.ui).toEqual(state(0));
   });
   test("a hello of another incarnation drops the state with the runs", () => {
-    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }]);
+    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }]);
     expect(runOf(s, "implementation")).toBe(null);
   });
   test("after any order of the server's states, the view holds the state of the highest version", () => {
@@ -2059,7 +2060,7 @@ describe("the countdown of a retry's wait", () => {
 describe("two modes", () => {
   const startedIn = (mode: "refinement" | "implementation", id: string): RunEvent => ({ ...started, mode, item: { id, title: `item ${id}` } } as RunEvent);
   const events = (run: number, list: readonly RunEvent[]): ServerMessage[] => stamp(list).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }));
-  const helloBoth: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: 2 }, incarnation: "a" };
+  const helloBoth: ServerMessage = { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: 2 }, incarnation: "a" };
   const refinement = [startedIn("refinement", "11"), said("refining"), asked(1, prompts.interviewMessagePrompt)];
   const implementation = [startedIn("implementation", "1"), said("implementing"), notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), asked(1, prompts.decisionPrompt)];
 
@@ -2095,7 +2096,7 @@ describe("two modes", () => {
 
 describe("the tab shown before the user chooses one", () => {
   const startedIn = (mode: "refinement" | "implementation"): RunEvent => ({ ...started, mode, item: { id: "1", title: "t" } } as RunEvent);
-  const helloImpl: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: 1 }, incarnation: "a" };
+  const helloImpl: ServerMessage = { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: 1 }, incarnation: "a" };
   const replayOf = (mode: "refinement" | "implementation", more: readonly RunEvent[] = []): ServerMessage => ({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn(mode), ...more]) }] });
 
   test("a replay shows the tab of a run in progress; a choice of the user stands", () => {
@@ -2110,7 +2111,7 @@ describe("the tab shown before the user chooses one", () => {
 describe("the choice of terms", () => {
   const items = [{ id: "11", title: "t", excerpt: "e", url: null, sentBack: 0, preparation: null }];
   const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms } });
-  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const startedRefinement: RunEvent = { ...started, mode: "refinement", item: { id: "11", title: "t" } } as RunEvent;
 
   test("the listing's value is shown; a choice replaces it, survives a Refresh, and a refinement's Started resets it", () => {
@@ -2356,7 +2357,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
 describe("the chain", () => {
   test("the hello sets it, a chain frame replaces it, and a hello of another incarnation replaces it again", () => {
     expect(initialState.chain).toBeNull();
-    const hello = (incarnation: string, chain: ChainState): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+    const hello = (incarnation: string, chain: ChainState): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
     const first = reduce(initialState, hello("a", helloChain));
     expect(first.chain).toEqual(helloChain);
     const changed = configured(helloChain, OFF_SETTINGS, null);
@@ -2387,7 +2388,7 @@ describe("chainShown", () => {
 // Issue #147, the work review of 21 Oct 2026 (W1-R1-1), S29: the frames not yet acknowledged held by the page.
 describe("chain pending", () => {
   const CUTOFF = "2026-10-21T07:00:00.000Z";
-  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const open = reduce(initialState, helloOf("a"));
   const shownOf = (view: ViewState) => chainShown(view, (iso) => iso)!;
   const server = helloChain.settings;
@@ -2463,7 +2464,7 @@ describe("chain pending", () => {
 describe("several refinement runs", () => {
   const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
-  const helloOf = (refinement: readonly number[]): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement, implementation: null }, incarnation: "a" });
+  const helloOf = (refinement: readonly number[]): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement, implementation: null }, incarnation: "a" });
   const empty = fold([helloOf([]), { type: "replay", ui: [], runs: [] }]);
   const a = [refining("11"), said("refining 11"), asked(1, prompts.interviewMessagePrompt)];
   const b = [refining("12"), said("refining 12"), asked(1, prompts.interviewMessagePrompt)];
@@ -2516,7 +2517,7 @@ describe("several refinement runs", () => {
     const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([...a, { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp(b) }] };
     expect(reduce(closed, replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
     expect(reduce(reduce(closed, helloOf([2])), replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
-    expect(reduce(closed, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }).closed).toEqual([]);
+    expect(reduce(closed, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }).closed).toEqual([]);
   });
 
   test("a newer refinement of the same item replaces the held ended one", () => {
@@ -2582,7 +2583,7 @@ describe("several refinement runs", () => {
 describe("the presented runs", () => {
   const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
-  const empty = fold([{ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }]);
+  const empty = fold([{ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }]);
   const two = fold([...eventsOf(1, [refining("11"), said("x")]), ...eventsOf(2, [refining("12"), asked(1, prompts.interviewMessagePrompt)])], empty);
 
   test("presented: the implementation tab's run under one key, and each refinement run under its own, in start order", () => {
@@ -2779,7 +2780,7 @@ describe("a question kept while its analysis is prepared", () => {
 describe("issue #144: the Implementation tab's list during a run", () => {
   const implementing = (item: string): RunEvent => ({ ...started, item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
-  const helloOf = (implementation: number | null, incarnation = "a"): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation }, incarnation });
+  const helloOf = (implementation: number | null, incarnation = "a"): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation }, incarnation });
   const replayOf = (runs: readonly Readonly<{ id: number; events: readonly RunEvent[] }>[]): ServerMessage => ({ type: "replay", ui: [], runs: runs.map((r) => ({ id: r.id, events: stamp(r.events) })) });
   const empty = fold([helloOf(null), replayOf([])]);
   const question = asked(1, prompts.interviewMessagePrompt);

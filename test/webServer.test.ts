@@ -1,4 +1,8 @@
+import { PREPARATION_VIEW_OFF } from "../src/preparationSwitch.ts";
 import { PREPARATION_OFF } from "../src/preparationSwitch.ts";
+import { runCommentKey } from "../src/itemComments.ts";
+import { digestOf, markOf, preparationOf, preparedComments } from "../src/preparedComments.ts";
+import { seededId } from "./fakeTracker.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -112,7 +116,7 @@ test("on connect: hello and an empty replay", async () => {
   await serve(await managerOf(repo, []), dist(), async (port) => {
     const c = await connect(port);
     await until("two messages", () => c.messages.length >= 2);
-    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", chain: initialChain(OFF_SETTINGS), location: repo, current: { refinement: [], implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
+    assert.deepEqual(c.messages.slice(0, 2), [{ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: initialChain(OFF_SETTINGS), location: repo, current: { refinement: [], implementation: null }, incarnation: "test" }, { type: "replay", runs: [], ui: [] }]);
     c.close();
   });
 });
@@ -815,6 +819,49 @@ test("the page's hold frame reaches the manager's hold with its incarnation, run
     a.send(holdFrame("test", 3, 7));
     await until("the hold", () => holds.length === 1);
     assert.deepEqual(holds, [["test", 3, 7]]);
+    a.close();
+  });
+});
+
+// Issue #131 (S17): the preparation's switch over the real server: a tab's frame changes the manager's switch, every tab
+// receives the preparation frame, the hello carries the view, and each Refinement item's mark crosses the seam.
+test("a tab's preparation frame turns the manager's switch on, and every tab receives the same view", async () => {
+  const repo = tempRepo();
+  const manager = await managerOf(repo, []);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    const hello = a.messages[0] as Extract<ServerMessage, { type: "hello" }>;
+    assert.deepEqual(hello.preparation, await Effect.runPromise(manager.preparation));
+    a.send({ type: "preparation", enabled: true });
+    const viewOf = (c: Client) => c.messages.filter((m): m is Extract<ServerMessage, { type: "preparation" }> => m.type === "preparation").at(-1)?.view;
+    await until("the view in both tabs", () => viewOf(a)?.settings.enabled === true && viewOf(b)?.settings.enabled === true);
+    assert.equal((await Effect.runPromise(manager.preparation)).settings.enabled, true);
+    a.close();
+    b.close();
+  });
+});
+
+test("the Refinement items frame carries each item's mark as the comments give it (the seam with preparationOf and markOf)", async () => {
+  const repo = tempRepo();
+  const target = MANAGER_ITEMS.find((i) => i.state === "unrefined")!;
+  const key = runCommentKey("2026-10-01T00-00-00-000Z-preparation-x");
+  const texts = Result.getOrThrow(preparedComments(key, [], { _tag: "SetAside", key, digest: digestOf(target), generation: 0, date: "d", cause: { _tag: "Paused", question: "Raise the limit?" } }));
+  const comments = texts.map((c, i) => ({ id: seededId(`s-${i}`), body: c.text, created: "t" }));
+  const tracker = fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.id === target.id ? { ...i, comments } : i)));
+  await serve(await managerOf(repo, [], [], tracker), dist(), async (port) => {
+    const a = await connect(port);
+    await until("the replay", () => a.messages.some((m) => m.type === "replay"));
+    a.send(itemsFrame("refinement"));
+    await until("the items", () => a.messages.some((m) => m.type === "items"));
+    const items = a.messages.find((m): m is Extract<ServerMessage, { type: "items" }> => m.type === "items")!;
+    assert.ok(items.result._tag === "Listed");
+    if (items.result._tag !== "Listed") return;
+    const listed = items.result.items.find((i) => i.id === target.id)!;
+    assert.deepEqual(listed.preparation, markOf(preparationOf(comments, target, 0)));
+    assert.equal(listed.preparation?._tag, "SetAside");
+    assert.ok(items.result.items.filter((i) => i.id !== target.id).every((i) => i.preparation === null));
     a.close();
   });
 });

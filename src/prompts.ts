@@ -2121,7 +2121,7 @@ export function draftWithdrawnNotice(text: string): string {
 export const SERVER_CLOSED_NOTICE = "The server has ended. The page reconnects when it is started again.";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
-const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold", string> = {
+const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation", string> = {
   answer: "Your answer was not sent",
   // Issue #185.
   hold: "That you are working on the question was not sent, so its countdown may still run",
@@ -2130,6 +2130,8 @@ const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "c
   start: "The start of the run was not sent",
   items: "The request for the tab's items was not sent",
   chain: "The change of the setting that starts the next refined item was not sent",
+  // Issue #131.
+  preparation: "Turning the preparation of marked items' questions on or off was not sent",
 };
 const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = {
   ended: "the run has ended",
@@ -2140,7 +2142,7 @@ const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = 
  * An action that was not sent: queued while disconnected and overtaken by the reconnection, or refused because the page
  * has stopped reconnecting. A disconnected answer says where its text is: in the answer field, or quoted and kept.
  */
-export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
+export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
   const base = `${NOT_SENT_SUBJECT[kind]}: ${NOT_SENT_REASON[reason]}.`;
   if (kind !== "answer" || reason !== "disconnected") return base;
   return quoted === undefined ? `${base} Its text is still in the answer field.` : `${base} Its text is kept under “${UNSENT_HEADING}”: «${quoted}»`;

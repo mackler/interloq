@@ -105,7 +105,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
       const { queue: buffered, overflowed } = yield* subscribeBounded(manager, queueBound);
       const { runs, ui } = yield* manager.replay;
-      yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation, chain: yield* manager.chain });
+      yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation, chain: yield* manager.chain, preparation: yield* manager.preparation });
       yield* send({ type: "replay", runs, ui });
       const forward = Effect.gen(function* () {
         for (;;) {
@@ -121,6 +121,10 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
             case "chain":
               // Issue #147: every frame carries the whole state, so none is filtered by the replay.
               yield* send({ type: "chain", state: event.state });
+              break;
+            case "preparation":
+              // Issue #131: the whole view, so none is filtered by the replay.
+              yield* send({ type: "preparation", view: event.view });
               break;
           }
         }
@@ -157,6 +161,9 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
             if (Result.isFailure(settings)) return refuse({ refused: settings.failure, mode: "implementation" });
             return Effect.forkScoped(manager.setChain(settings.success)).pipe(Effect.asVoid);
           }
+          case "preparation":
+            // Issue #131: the answer is the preparation broadcast every tab receives; forked like the chain's, since it waits for its save.
+            return Effect.forkScoped(manager.setPreparation(message.enabled)).pipe(Effect.asVoid);
         }
       };
       // Every termination of the socket is a SocketError (Socket.d.ts); it ends the loop.

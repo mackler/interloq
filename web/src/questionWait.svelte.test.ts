@@ -1,5 +1,6 @@
 // Issue #153 (requirements Q1): the question stays on the page while its decision's analysis is prepared. The page is
 // mounted whole over a fake WebSocket and fed the events the server sends.
+import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import * as prompts from "../../src/prompts.ts";
@@ -47,7 +48,7 @@ const openPage = async () => {
   mounted.push(mount(App, { target: root, props: {} }));
   flushSync();
   const ws = FakeWebSocket.last!;
-  ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+  ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
   return { root, ws };
 };
 

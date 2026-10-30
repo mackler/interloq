@@ -2,7 +2,7 @@
 // the same way. Pure: no Node import (the browser imports this module).
 
 import { Effect, Option, Result, Schema } from "effect";
-import { type PreparationMark, PreparationMarkSchema } from "./preparationSwitch.ts";
+import { type PreparationMark, PreparationMarkSchema, type PreparationView, PreparationViewSchema } from "./preparationSwitch.ts";
 import * as S from "./schema.ts";
 import { NUMBERED_PHASE_KINDS, type UiEvent } from "./uiEvents.ts";
 import { DECISION_SECTIONS, type RunUiState, type UiFlag } from "./uiState.ts";
@@ -100,7 +100,9 @@ export type ClientMessage =
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>
   /** The chain's settings (issue #147): the mode on or off, a number of runs and the resolved cutoff instant, each optional. */
-  | Readonly<{ type: "chain"; settings: ChainFrameSettings }>;
+  | Readonly<{ type: "chain"; settings: ChainFrameSettings }>
+  /** Issue #131 (requirements Q4): the preparation's switch turned on or off. */
+  | Readonly<{ type: "preparation"; enabled: boolean }>;
 /** The chain's settings as the page sends them: the run limit a positive whole number, the cutoff an ISO instant. */
 export type ChainFrameSettings = Readonly<{ enabled: boolean; runs: number | null; cutoff: string | null }>;
 /** The settings a decoded chain frame names; a value its schema let through that the constructors refuse is the reason. */
@@ -148,6 +150,8 @@ export type ServerMessage =
       incarnation: string;
       /** The chain's state (issue #147). */
       chain: ChainState;
+      /** The preparation's switch and status (issue #131). */
+      preparation: PreparationView;
     }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
@@ -158,6 +162,8 @@ export type ServerMessage =
   | Readonly<{ type: "ui"; run: number; state: RunUiState }>
   /** The chain's whole state after a change (issue #147); every tab receives it. */
   | Readonly<{ type: "chain"; state: ChainState }>
+  /** The preparation's switch and status after a change (issue #131); every tab receives it. */
+  | Readonly<{ type: "preparation"; view: PreparationView }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
   | Readonly<{ type: "closing" }>;
 
@@ -305,10 +311,11 @@ export const ClientMessageSchema = Schema.Union([
       cutoff: Schema.NullOr(Str.check(Schema.makeFilter((text: string) => Result.isSuccess(cutoffOf(text)) || "a cutoff must be an ISO instant with its zone"))),
     }),
   }),
+  typed("preparation", { enabled: Schema.Boolean }),
 ]);
 const CurrentRunsSchema = Schema.Struct({ refinement: Schema.Array(Int), implementation: Schema.NullOr(Int) });
 export const ServerMessageSchema = Schema.Union([
-  typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema }),
+  typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema, preparation: PreparationViewSchema }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
@@ -316,6 +323,7 @@ export const ServerMessageSchema = Schema.Union([
   typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("chain", { state: ChainStateSchema }),
+  typed("preparation", { view: PreparationViewSchema }),
   typed("closing", {}),
 ]);
 

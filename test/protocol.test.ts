@@ -1,3 +1,4 @@
+import { PREPARATION_VIEW_OFF } from "../src/preparationSwitch.ts";
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -195,12 +196,21 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
   fc.record({ type: fc.constant("stop" as const), incarnation: text, run: nat }),
   fc.record({ type: fc.constant("hold" as const), incarnation: text, run: nat, prompt: nat }),
   fc.record({ type: fc.constant("ui" as const), incarnation: text, run: nat, flag: fc.record({ scope: uiScope, open: fc.boolean() }) }),
+  // Issue #131: the preparation's switch turned on or off.
+  fc.record({ type: fc.constant("preparation" as const), enabled: fc.boolean() }),
 );
+/** Issue #131: the preparation's view as the server sends it. */
+const preparationView = fc.record({
+  settings: fc.record({ enabled: fc.boolean(), generation: nat }),
+  status: fc.oneof(fc.constant({ _tag: "Off" as const }), fc.constant({ _tag: "Idle" as const }), fc.record({ _tag: fc.constant("Preparing" as const), item: text, title: text }), fc.record({ _tag: fc.constant("Unavailable" as const), notice: text })),
+});
 /** Issue #125: an https address, as an adapter's itemUrlOf accepts. */
 const httpsUrl = fc.tuple(fc.stringMatching(/^[a-z0-9]{1,10}$/u), fc.stringMatching(/^[a-z0-9/]{0,12}$/u)).map(([host, path]) => `https://${host}.example/${path}`);
 const listedItem = fc.record({ id: text, title: text, excerpt: text, url: fc.option(httpsUrl, { nil: null }), sentBack: fc.nat(9), preparation: fc.constantFrom(null, { _tag: "Preparing" as const }, { _tag: "Prepared" as const, questions: 2 }, { _tag: "SetAside" as const, reason: "r" }) });
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
-  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.array(nat, { maxLength: 3 }), implementation: fc.option(nat, { nil: null }) }), incarnation: text, chain: fc.constant(initialState(DEFAULT_SETTINGS)) }),
+  fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.array(nat, { maxLength: 3 }), implementation: fc.option(nat, { nil: null }) }), incarnation: text, chain: fc.constant(initialState(DEFAULT_SETTINGS)), preparation: preparationView }),
+  // Issue #131: the preparation's switch and status after a change.
+  fc.record({ type: fc.constant("preparation" as const), view: preparationView }),
   fc.constant({ type: "closing" as const }),
   fc.record({ type: fc.constant("replay" as const), runs: fc.array(runRecord, { maxLength: 2 }), ui: fc.array(fc.record({ run: nat, state: uiState }), { maxLength: 2 }) }),
   fc.record({ type: fc.constant("ui" as const), run: nat, state: uiState }),
@@ -493,7 +503,7 @@ test("a ReviewReceived whose issues state their effect on the work survives the 
 // Issue #191: the hello carries every refinement run in progress as a list, beside the implementation run.
 test("a hello with several refinement runs decodes; the shape of one run per mode does not; currentIds lists every id", () => {
   const chain = initialState(DEFAULT_SETTINGS);
-  const hello = { type: "hello", location: "/p", current: { refinement: [3, 5], implementation: 4 }, incarnation: "i", chain };
+  const hello = { type: "hello", location: "/p", current: { refinement: [3, 5], implementation: 4 }, incarnation: "i", chain, preparation: PREPARATION_VIEW_OFF };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(hello))), hello);
   assert.ok(Result.isFailure(decodeServer(JSON.stringify({ ...hello, current: { refinement: 3, implementation: 4 } }))));
   assert.deepEqual(currentIds({ refinement: [3, 5], implementation: 4 }), [3, 5, 4]);
@@ -521,4 +531,12 @@ test("an Asked without deciding decodes with null; deciding and PromptWithdrawn 
   assert.deepEqual(decoded(decodeServer(JSON.stringify(deciding))), deciding);
   const withdrawn = { ...frame, event: { _tag: "PromptWithdrawn", prompt: 4 } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(withdrawn))), withdrawn);
+});
+
+// Issue #131: the page and the server ship together, so a listed item without its preparation mark does not decode.
+test("a listed item without its preparation mark does not decode", () => {
+  const frame = (item: Record<string, unknown>) => JSON.stringify({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [item], terms: "checked" } });
+  const item = { id: "7", title: "t", excerpt: "", url: null, sentBack: 0 };
+  assert.ok(Result.isFailure(decodeServer(frame(item))));
+  assert.ok(Result.isSuccess(decodeServer(frame({ ...item, preparation: { _tag: "Prepared", questions: 3 } }))));
 });

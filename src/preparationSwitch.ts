@@ -64,3 +64,5 @@ export const preparingItemOf = (status: PreparationStatus): string | null => (st
 
 export const PreparationViewSchema = Schema.Struct({ settings: PreparationSettingsSchema, status: PreparationStatusSchema });
 export type PreparationView = typeof PreparationViewSchema.Type;
+/** The view of a switch that is off with nothing prepared: what a server sends before the switch was ever turned on. */
+export const PREPARATION_VIEW_OFF: PreparationView = { settings: PREPARATION_OFF, status: { _tag: "Off" } };
