@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, test } from "node:test";
-import { Effect, Fiber, Result } from "effect";
+import { Effect, Exit, Fiber, Result } from "effect";
 import { type CommandLine, commandLineOf } from "../src/schema.ts";
 import { SUITE_CLOSE_GRACE_MS, suiteRunner } from "../src/suiteExec.ts";
 
@@ -75,15 +75,40 @@ test("a command past the ceiling is killed with its process group and fails as t
   assert.ok(await waitGone(pid), "the background sleep of the suite was left running");
 });
 
-test("an interrupted run kills its process group, and nothing is uncaught", async () => {
-  await noneUncaught(async () => {
-    const pidFile = path.join(DIR, "interrupted.pid");
-    const fiber = Effect.runFork(suiteRunner(process.env).run(line(`sleep 30 & echo $! > ${pidFile}; wait`), DIR, 10_000, () => undefined));
-    for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await sleep(20);
+/** Waits until `ready` holds, polling every 20 ms up to `deadlineMs`; false if the deadline passed first. */
+const until = async (ready: () => boolean, deadlineMs: number): Promise<boolean> => {
+  const end = Date.now() + deadlineMs;
+  while (!ready() && Date.now() < end) await sleep(20);
+  return ready();
+};
+// The ceiling outlives each interrupted-run test, so the runner's own timeout, which also kills the group and stops
+// reading, can never be what ends the run.
+const BEYOND_THE_TEST_MS = 60_000;
+const READY_DEADLINE_MS = 10_000;
+
+/** Interrupts the run's fiber and asserts that it ended by the interruption, not with a result settled before it. */
+const interruptAndAssert = async <A, E>(fiber: Fiber.Fiber<A, E>): Promise<void> => {
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  const exit = await Effect.runPromise(Fiber.await(fiber));
+  assert.ok(Exit.hasInterrupts(exit), `the run settled before its interruption: ${JSON.stringify(exit)}`);
+};
+
+test("an interrupted run kills its process group, and nothing is uncaught", { timeout: 20_000 }, async () => {
+  // The shell prints the background sleep's pid on stdout; the test interrupts only once onOutput has delivered it, so
+  // a loaded machine cannot interrupt before the pid exists (suite run 1 of issue #49 read a pid file never written).
+  let printed = "";
+  const fiber = Effect.runFork(suiteRunner(process.env).run(line("sleep 30 & echo $!; wait"), DIR, BEYOND_THE_TEST_MS, (t) => void (printed += t)));
+  try {
+    await noneUncaught(async () => {
+      const pidOf = (): RegExpExecArray | null => /^(\d+)\n/u.exec(printed);
+      assert.ok(await until(() => pidOf() !== null, READY_DEADLINE_MS), `the shell printed no pid within ${READY_DEADLINE_MS} ms: ${JSON.stringify(printed)}`);
+      const pid = Number(pidOf()?.[1]);
+      await interruptAndAssert(fiber);
+      assert.ok(await waitGone(pid), "the suite's process was left running");
+    });
+  } finally {
     await Effect.runPromise(Fiber.interrupt(fiber));
-    const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
-    assert.ok(await waitGone(pid), "the suite's process was left running");
-  });
+  }
 });
 
 test("the command runs in the given directory with the given environment", async () => {
@@ -144,23 +169,24 @@ test("a shell that exits 3 while a detached descendant holds the output fails wi
 // W3-R1-2: Stop task during the suite stops reading its output, even when a detached descendant holds it. The writer
 // writes every 50 ms into the inherited output; once the runner destroys its read ends, the next write fails with EPIPE,
 // uncaught in the writer, and the writer exits. While the output is still read, it lives on.
-test("an interrupted run stops reading an output a detached descendant holds, and nothing is uncaught", { timeout: 10_000 }, async () => {
+test("an interrupted run stops reading an output a detached descendant holds, and nothing is uncaught", { timeout: 20_000 }, async () => {
   const pidFile = path.join(DIR, "writer.pid");
   const writer = path.join(DIR, "writer.js");
   fs.writeFileSync(writer, `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => process.stdout.write("x"), 50);`);
   const command = `node -e "require('child_process').spawn(process.execPath,[${JSON.stringify(writer).replaceAll('"', "'")}],{detached:true,stdio:'inherit'}).unref()"; sleep 20`;
   let pid: number | null = null;
+  const fiber = Effect.runFork(suiteRunner(process.env).run(line(command), DIR, BEYOND_THE_TEST_MS, () => undefined));
   try {
     await noneUncaught(async () => {
-      const fiber = Effect.runFork(suiteRunner(process.env).run(line(command), DIR, 10_000, () => undefined));
-      for (let i = 0; i < 150 && !fs.existsSync(pidFile); i++) await sleep(20);
+      assert.ok(await until(() => fs.existsSync(pidFile), READY_DEADLINE_MS), `the detached writer wrote no pid file within ${READY_DEADLINE_MS} ms`);
       const writerPid = Number(fs.readFileSync(pidFile, "utf8").trim());
       pid = writerPid;
       await sleep(200);
-      await Effect.runPromise(Fiber.interrupt(fiber));
+      await interruptAndAssert(fiber);
       assert.ok(await waitGone(writerPid), "the detached writer is still alive: its output is still read");
     });
   } finally {
+    await Effect.runPromise(Fiber.interrupt(fiber));
     killQuietly(pid);
   }
 });
