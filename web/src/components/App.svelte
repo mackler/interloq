@@ -21,7 +21,7 @@
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
-  import { chainFrame, holdFrame, itemsFrame, startFrame } from "../tabs.ts";
+  import { chainFrame, holdFrame, itemsFrame, preparationFrame, startFrame } from "../tabs.ts";
   import { fullTime } from "../time.ts";
   import { awaitedKey, carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { isTermsRequest } from "../../../src/input.ts";
@@ -32,7 +32,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -40,6 +40,7 @@
   import { railView } from "../rail.ts";
   import ItemList from "./ItemList.svelte";
   import ChainControl from "./ChainControl.svelte";
+  import PreparationControl from "./PreparationControl.svelte";
   import QuestionPane from "./QuestionPane.svelte";
   import TimelineRail from "./TimelineRail.svelte";
   import TopBar from "./TopBar.svelte";
@@ -182,6 +183,20 @@
   let noticesSeen = $state(0);
   const latestNotice = $derived(view.notices.length > noticesSeen ? (view.notices.at(-1) ?? null) : null);
   const offline = $derived(view.connection === "failed");
+  // Issue #131: the preparation's switch, on the Refinement tab alone, and a new listing of its items whenever the item
+  // being prepared changes while that list is shown, without the loading state, so every row's mark follows the pass.
+  const preparation = $derived(mode === "refinement" ? view.preparation : null);
+  const setPreparation = (enabled: boolean) => send(preparationFrame(enabled));
+  const itemsRefresh = $derived(view.itemsRefresh);
+  let refreshSeen = untrack(() => view.itemsRefresh);
+  $effect(() => {
+    const version = itemsRefresh;
+    untrack(() => {
+      if (version === refreshSeen) return;
+      refreshSeen = version;
+      if (view.connection === "open") send(itemsFrame("refinement"));
+    });
+  });
   // A tab that shows its list asks for its items once connected (and again on Refresh); the server answers.
   $effect(() => {
     if (showList && tab.items._tag === "Unasked" && view.connection === "open") untrack(() => requestItems(mode));
@@ -365,7 +380,8 @@
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
       {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
-      <ItemList {mode} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
+      {#if preparation !== null}<PreparationControl view={preparation} onChange={setPreparation} />{/if}
+      <ItemList {mode} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch

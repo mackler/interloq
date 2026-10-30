@@ -1,6 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
 import type { PreparationCause } from "./preparedComments.ts";
+import type { PreparationStatus } from "./preparationSwitch.ts";
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
@@ -4102,3 +4103,26 @@ export const PREPARED_TERMS_CHOICE_LINE = "The questions and the explanations of
 export const preparationCleanupFailedLine = (item: string, cause: string): string => `The prepared questions' comments on item ${item} could not all be deleted: ${cause}. They are not used again, since the item's refinement record follows them.`;
 /** Why an item whose preparation could not be recorded on it is set aside, as its mark says it (issue #131). */
 export const preparationNotWrittenReason = (reason: string): string => `its prepared questions could not be written to the item: ${reason}`;
+
+// ---- the page's preparation control and marks (issue #131) -------------------------------------------------------
+/** The switch above the Refinement list (requirements Q4); it asserts that the pass may prepare and nothing more. */
+export const PREPARATION_SWITCH_LABEL = "Prepare the questions of marked items";
+/** What the status line under the switch says. */
+export const preparationStatusText = (status: PreparationStatus): string => {
+  switch (status._tag) {
+    case "Off":
+      return "Off: no item is prepared.";
+    case "Idle":
+      return "On: nothing is left to prepare.";
+    case "Preparing":
+      return `Preparing the questions of item ${status.item}: ${status.title}`;
+    case "Unavailable":
+      return `On, but the marked items could not be listed: ${status.notice}`;
+  }
+};
+/** An item's marks in the Refinement list (requirements Q6). */
+export const PREPARING_MARK = "Preparing questions…";
+export const preparedMarkText = (questions: number): string => (questions === 0 ? "No question needed" : `Questions prepared (${questions})`);
+export const setAsideMarkText = (reason: string): string => `Set aside: ${reason}`;
+/** On a prepared item's row (requirements Q5: the page says so): the choice of terms above it does not apply to it. */
+export const PREPARED_TERMS_NOTE = "Its terms were explained and reviewed when it was prepared, so the choice of terms above does not apply to it.";
