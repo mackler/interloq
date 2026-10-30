@@ -36,7 +36,7 @@ import {
   relabelBody,
 } from "./gitlabIssues.ts";
 import { OPENING_LINE, type Refinement } from "./refinement.ts";
-import type { GitlabTrackerConfig } from "./schema.ts";
+import type { GitlabLabeledState, GitlabTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
 import { type CommentId, type ItemComment, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GitlabToken, gitlabCredential } from "./trackerConfig.ts";
@@ -117,15 +117,19 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
     const itemOf = (issue: GitlabIssue): Result.Result<TrackerItem, TrackerError> => Result.mapError(itemOfIssue(config.labels, issue), (failure) => stateFailure(failure, issue.iid));
 
     /** A deployed item is a closed issue (the developer's decision of 9 Oct 2026), and a listing holds open issues only. */
-    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => {
-      if (state === "deployed") return Effect.succeed([]);
-      const params = { state: "opened", labels: config.labels[state], per_page: String(GITLAB_PAGE_SIZE) };
-      const target: GitlabTarget = { kind: "listing", what: `the ${state} issues of ${config.project}` };
+    /** The open issues carrying the state's label and the further labels given, with the extra parameters; an issue without exactly one state label fails the listing. */
+    const listed = (state: GitlabLabeledState, more: readonly string[], extra: Readonly<Record<string, string>>, what: string): Effect.Effect<readonly TrackerItem[], TrackerError> => {
+      const params = { state: "opened", labels: [config.labels[state], ...more].join(","), per_page: String(GITLAB_PAGE_SIZE), ...extra };
+      const target: GitlabTarget = { kind: "listing", what: `${what} of ${config.project}` };
       return Effect.flatMap(pages(params, target, 1, []), (issues): Effect.Effect<readonly TrackerItem[], TrackerError> => {
         const items = Result.all(issues.map(itemOf));
         return Result.isFailure(items) ? Effect.fail(items.failure) : Effect.succeed(items.success.filter((item) => item.state === state));
       });
     };
+    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => (state === "deployed" ? Effect.succeed([]) : listed(state, [], {}, `the ${state} issues`));
+    /** Issue #131: the marked issues in a state, newest first by GitLab's own order; none, and no request, for deployed or with no mark configured. */
+    const listMarked = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> =>
+      state === "deployed" || config.prepareLabel === null ? Effect.succeed([]) : listed(state, [config.prepareLabel], { order_by: "created_at", sort: "desc" }, `the marked ${state} issues`);
 
     /** The issue an id names, with its URL and its item: an id outside GitLab's format is an item that does not exist, and no request is sent. */
     const itemIssueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string; item: TrackerItem }>, TrackerError> =>
@@ -221,7 +225,7 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
           );
         },
       });
-    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments, deleteComment };
+    const tracker: TrackerShape = { list, listMarked, read, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

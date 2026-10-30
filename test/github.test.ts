@@ -352,3 +352,26 @@ test("deleteComment with an item or comment id outside GitHub's format sends not
   assert.equal((await failure(stub, (t) => t.deleteComment(id("12"), commentId("c-1"))))._tag, "TrackerItemNotFound");
   assert.equal(stub.sent().length, 0);
 });
+
+// Issue #131 (requirements Q3, F2): the open items in a state that carry the preparation's mark, newest first.
+const MARKED: GithubTrackerConfig = { ...CONFIG, prepareLabel: "prepare" };
+const withMarked = <A, E>(stub: Stub, use: (tracker: TrackerShape) => Effect.Effect<A, E>): Promise<A> => Effect.runPromise(Effect.flatMap(githubTracker(MARKED, TOKEN), use).pipe(Effect.provide(stub.layer)));
+test("listMarked of unrefined asks for the mark, newest first, and keeps the unrefined issues, pull requests dropped", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(9, ["prepare"]), issue(8, ["prepare", LABELS.refined]), issue(7, ["prepare"], { pull_request: { url: "u" } }), issue(6, ["prepare", "bug"])]) }));
+  assert.deepEqual(ids(await withMarked(stub, (t) => t.listMarked("unrefined"))), ["9", "6"]);
+  const params = stub.sent()[0].url.searchParams;
+  assert.deepEqual([params.get("state"), params.get("per_page"), params.get("labels"), params.get("sort"), params.get("direction")], ["open", "100", "prepare", "created", "desc"]);
+});
+test("listMarked of a labeled state asks for both labels, follows Link, and fails on an ambiguous issue", async () => {
+  const page2 = `${ISSUES}?page=2`;
+  const stub = makeStub((r) => (r.url.searchParams.get("page") === "2" ? json([issue(3, [LABELS.refined, "prepare"])]) : json([issue(4, [LABELS.refined, "prepare"])], 200, { link: `<${page2}>; rel="next"` })));
+  assert.deepEqual(ids(await withMarked(stub, (t) => t.listMarked("refined"))), ["4", "3"]);
+  assert.equal(stub.sent()[0].url.searchParams.get("labels"), `${LABELS.refined},prepare`);
+  const ambiguous = makeStub(() => json([issue(5, [LABELS.refined, LABELS.implementing, "prepare"])]));
+  assert.equal(await Effect.runPromise(Effect.flip(Effect.flatMap(githubTracker(MARKED, TOKEN), (t) => t.listMarked("refined"))).pipe(Effect.map((e) => e._tag), Effect.provide(ambiguous.layer))), "TrackerStateAmbiguous");
+});
+test("listMarked with no preparation label configured sends nothing and lists nothing", async () => {
+  const stub = makeStub(() => json([issue(1, [])]));
+  assert.deepEqual(await withTracker(stub, (t) => t.listMarked("unrefined")), []);
+  assert.equal(stub.sent().length, 0);
+});

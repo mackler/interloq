@@ -102,15 +102,24 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
         failure._tag === "Ambiguous" ? new TrackerStateAmbiguous({ id, labels: failure.labels }) : new TrackerBodyInvalid({ id, message: "the issue is closed and carries no stage label, so it is in no state" }),
       );
 
-    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => {
-      // An open issue with no stage label is unrefined (requirements, Q1), so only the whole open list finds those.
-      const params = state === "unrefined" ? { state: "open", per_page: PAGE_SIZE } : { state: "open", per_page: PAGE_SIZE, labels: config.labels[state] };
-      const target: Target = { kind: "listing", what: `the ${state} issues of ${config.owner}/${config.repo}` };
+    /**
+     * The open issues in a state among those carrying `labels` (none, or several, which GitHub's comma requires all
+     * of), with the extra parameters given; pull requests dropped, an ambiguous issue failing the listing.
+     */
+    const listed = (state: ItemState, labels: readonly string[], extra: Readonly<Record<string, string>>, what: string): Effect.Effect<readonly TrackerItem[], TrackerError> => {
+      const params = { state: "open", per_page: PAGE_SIZE, ...(labels.length === 0 ? {} : { labels: labels.join(",") }), ...extra };
+      const target: Target = { kind: "listing", what: `${what} of ${config.owner}/${config.repo}` };
       return Effect.flatMap(pages(HttpClientRequest.get(issuesUrl).pipe(HttpClientRequest.setUrlParams(params)), target, []), (issues): Effect.Effect<readonly TrackerItem[], TrackerError> => {
         const items = Result.all(issues.filter((issue) => !isPullRequest(issue)).map((issue) => itemOfIssue(issue, String(issue.number))));
         return Result.isFailure(items) ? Effect.fail(items.failure) : Effect.succeed(items.success.filter((item) => item.state === state));
       });
     };
+    // An open issue with no stage label is unrefined (requirements, Q1), so only the whole open list finds those.
+    const stateLabels = (state: ItemState): readonly string[] => (state === "unrefined" ? [] : [config.labels[state]]);
+    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => listed(state, stateLabels(state), {}, `the ${state} issues`);
+    /** Issue #131: the marked issues in a state, newest first by GitHub's own sort; none, and no request, with no mark configured. */
+    const listMarked = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> =>
+      config.prepareLabel === null ? Effect.succeed([]) : listed(state, [...stateLabels(state), config.prepareLabel], { sort: "created", direction: "desc" }, `the marked ${state} issues`);
 
     /** The issue an id names; an id outside GitHub's format and a pull request are items that do not exist. */
     const issueOf = (id: ItemId): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> =>
@@ -186,7 +195,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
           );
         },
       });
-    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments, deleteComment };
+    const tracker: TrackerShape = { list, listMarked, read, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

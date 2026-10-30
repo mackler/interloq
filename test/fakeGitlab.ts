@@ -139,6 +139,7 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
   const after = (operation: TrackerOperation) => scriptedAt(operation, "after");
   const tracker: TrackerShape = {
     list: (state) => Effect.andThen(scripted("list"), adapter.list(state)),
+    listMarked: (state) => Effect.andThen(scripted("listMarked"), adapter.listMarked(state)),
     read: (id) => Effect.andThen(Ref.update(reads, (rs) => [...rs, id]), Effect.andThen(scripted("read"), adapter.read(id))),
     writeRefinement: (id, refinement) => Effect.andThen(scripted("writeRefinement"), Effect.andThen(adapter.writeRefinement(id, refinement), after("writeRefinement"))),
     setState: (id, state) => Effect.andThen(scripted("setState"), Effect.andThen(adapter.setState(id, state), after("setState"))),

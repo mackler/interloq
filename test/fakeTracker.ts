@@ -6,8 +6,8 @@ import { withRefinement } from "../src/refinement.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import { type CommentId, commentIdOf, type ItemComment, type ItemId, type ItemState, type TrackerItem } from "../src/tracker.ts";
 
-/** An item as the fake holds it: what the port shows, whether it is open in the tracker, and its comments (issue #186; none where absent). */
-export type FakeItem = TrackerItem & Readonly<{ open: boolean; comments?: readonly ItemComment[] }>;
+/** An item as the fake holds it: what the port shows, whether it is open in the tracker, and its comments (issue #186; none where absent), and whether it carries the preparation's mark (issue #131). */
+export type FakeItem = TrackerItem & Readonly<{ open: boolean; comments?: readonly ItemComment[]; marked?: boolean }>;
 /** The instant the fake gives every comment it adds. */
 export const FAKE_COMMENT_TIME = "2026-10-29T12:00:00Z";
 /** Issue #131: the id a test gives a comment it seeds, distinct from the ids the fake gives the comments it adds. */
@@ -50,9 +50,11 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
     const replace = (item: FakeItem): Effect.Effect<void> => Ref.update(ref, (s) => ({ ...s, items: s.items.map((i) => (i.id === item.id ? item : i)) }));
     /** Issue #131: the id of a comment the fake adds, `c-1`, `c-2`, …; a seeded comment keeps the id it was given. */
     const newCommentId: Effect.Effect<CommentId> = Ref.modify(ref, (s): readonly [CommentId, State] => [Result.getOrThrow(commentIdOf(`c-${s.nextComment}`)), { ...s, nextComment: s.nextComment + 1 }]);
-    const shown = ({ open: _open, comments: _comments, ...item }: FakeItem): TrackerItem => item;
+    const shown = ({ open: _open, comments: _comments, marked: _marked, ...item }: FakeItem): TrackerItem => item;
     const tracker: TrackerShape = {
       list: (state) => Effect.andThen(scripted("list"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.state === state).map(shown))),
+      // Issue #131: newest first is the reverse of the order the items were given to makeFakeTracker.
+      listMarked: (state) => Effect.andThen(scripted("listMarked"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.marked === true && i.state === state).map(shown).reverse())),
       read: (id) => Effect.andThen(Ref.update(ref, (s) => ({ ...s, reads: [...s.reads, id] })), Effect.andThen(scripted("read"), Effect.map(find(id), shown))),
       writeRefinement: (id, refinement) =>
         Effect.gen(function* () {

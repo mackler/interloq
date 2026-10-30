@@ -147,6 +147,12 @@ export type TrackerError = TrackerUnreachable | TrackerRequestRefused | TrackerA
 export interface TrackerShape {
   /** The open items in a state (requirements, Q2: an item closed in the tracker is in no list). */
   list(state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError>;
+  /**
+   * Issue #131 (requirements Q3, F2): the open items in a state that carry the label that marks an item for
+   * preparation, newest first; empty, with no request sent, where no such label is configured. Which label marks an
+   * item is the adapter's configuration, as for the states.
+   */
+  listMarked(state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError>;
   read(id: ItemId): Effect.Effect<TrackerItem, TrackerError>;
   /** Writes the item's `Refined using Interloq` section: appended once, replaced later; the rest of the body is kept. */
   writeRefinement(id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError>;

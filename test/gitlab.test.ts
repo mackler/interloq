@@ -415,3 +415,19 @@ test("deleteComment with an id outside GitLab's format sends nothing and is Trac
   assert.equal((await failure(stub, (t) => t.deleteComment(id("7"), noteId("c-1"))))._tag, "TrackerItemNotFound");
   assert.equal(stub.sent().length, 0);
 });
+
+// Issue #131 (requirements Q3, F2): the open items in a state that carry the preparation's mark, newest first.
+const MARKED: GitlabTrackerConfig = { ...CONFIG, prepareLabel: "Prepare" };
+const withMarked = <A, E>(stub: Stub, use: (tracker: TrackerShape) => Effect.Effect<A, E>): Promise<A> => Effect.runPromise(Effect.flatMap(gitlabTracker(MARKED, TOKEN), use).pipe(Effect.provide(stub.layer)));
+test("listMarked asks for the state's label and the mark, open, newest first, paged by X-Next-Page", async () => {
+  const stub = makeStub((r) => (r.url.searchParams.get("page") === "2" ? json([issue(3, ["Unrefined", "Prepare"])], 200, { "x-next-page": "" }) : json([issue(9, ["Unrefined", "Prepare"])], 200, { "x-next-page": "2" })));
+  assert.deepEqual(ids(await withMarked(stub, (t) => t.listMarked("unrefined"))), ["9", "3"]);
+  const params = stub.sent()[0].url.searchParams;
+  assert.deepEqual([params.get("labels"), params.get("state"), params.get("order_by"), params.get("sort"), params.get("per_page"), params.get("page")], [`${GITLAB_LABELS.unrefined},Prepare`, "opened", "created_at", "desc", "100", "1"]);
+});
+test("listMarked of deployed, or with no preparation label configured, sends nothing", async () => {
+  const stub = makeStub(() => json([issue(1, [])]));
+  assert.deepEqual(await withMarked(stub, (t) => t.listMarked("deployed")), []);
+  assert.deepEqual(await withTracker(stub, (t) => t.listMarked("unrefined")), []);
+  assert.equal(stub.sent().length, 0);
+});
