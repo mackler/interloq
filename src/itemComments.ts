@@ -32,10 +32,18 @@ export type InterloqComment =
   | Readonly<{ _tag: "StoppedUnrefined"; key: CommentKey; date: string; missing: string }>
   | Readonly<{ _tag: "RefinementRecord"; key: CommentKey; date: string; asked: boolean }>;
 
+/**
+ * Issue #131: the two kinds of a preparation's comments, written by src/preparedComments.ts with
+ * preparationMarkerLine: a prepared question (key `<preparation's key>/q-<n>`) and the preparation's own comment
+ * (key the preparation's key, `runCommentKey` of its records directory name).
+ */
+export type PreparationMarkerKind = "PreparedQuestion" | "Preparation";
+
 /** What a marker line says: its kind, its key and, for a refinement record, whether it asked. */
 export type CommentMarker =
   | Readonly<{ _tag: "SentBack" | "StoppedUnrefined"; key: string }>
-  | Readonly<{ _tag: "RefinementRecord"; key: string; asked: boolean }>;
+  | Readonly<{ _tag: "RefinementRecord"; key: string; asked: boolean }>
+  | Readonly<{ _tag: PreparationMarkerKind; key: string }>;
 
 /** The date a comment carries: the instant's UTC day. */
 export const commentDateOf = (epochMs: number): string => new Date(epochMs).toISOString().slice(0, 10);
@@ -65,7 +73,11 @@ const markerLine = (c: InterloqComment): string => {
   }
 };
 
-const MARKER = /^<!-- interloq:(sent-back|stopped-unrefined|refinement) key=(\S+?)(?: asked=(yes|no))? -->$/u;
+/** Issue #131: the marker line of a preparation's comment, the one source the parser below reads. */
+export const preparationMarkerLine = (kind: PreparationMarkerKind, key: CommentKey): string =>
+  `<!-- interloq:${kind === "Preparation" ? "preparation" : "prepared-question"} key=${key} -->`;
+
+const MARKER = /^<!-- interloq:(sent-back|stopped-unrefined|refinement|preparation|prepared-question) key=(\S+?)(?: asked=(yes|no))? -->$/u;
 const lastLine = (body: string): string | undefined => body.split(/\r\n|\r|\n/u).filter((line) => line.trim() !== "").at(-1);
 
 /** The marker of a comment Interloq wrote, read from the body's last non-blank line, exactly; null for anyone else's comment. */
@@ -75,6 +87,8 @@ export const parseComment = (body: string): CommentMarker | null => {
   const [, kind, key, asked] = match;
   if (kind === "refinement") return asked === undefined ? null : { _tag: "RefinementRecord", key: key!, asked: asked === "yes" };
   if (asked !== undefined) return null;
+  if (kind === "preparation") return { _tag: "Preparation", key: key! };
+  if (kind === "prepared-question") return { _tag: "PreparedQuestion", key: key! };
   return { _tag: kind === "sent-back" ? "SentBack" : "StoppedUnrefined", key: key! };
 };
 
@@ -104,11 +118,14 @@ export const lastRefinementAsked = (comments: readonly ItemComment[]): boolean =
   return records.at(-1) ?? true;
 };
 
-/** The comments a refinement run gives its task (requirements Q3), oldest first, without the refinement records and the marker lines; "" when none remain. */
+/**
+ * The comments a refinement run gives its task (requirements Q3), oldest first, without the refinement records, the
+ * preparation's comments (issue #131: the prepared questions are not the task) and the marker lines; "" when none remain.
+ */
 export const commentsTaskText = (comments: readonly ItemComment[]): string => {
   const shown = comments.flatMap((c) => {
     const marker = parseComment(c.body);
-    if (marker?._tag === "RefinementRecord") return [];
+    if (marker?._tag === "RefinementRecord" || marker?._tag === "Preparation" || marker?._tag === "PreparedQuestion") return [];
     const text = marker === null ? c.body.trim() : withoutMarker(c.body);
     return text === "" ? [] : [`${commentTaskLine(c.created.slice(0, 10))}\n${text}`];
   });

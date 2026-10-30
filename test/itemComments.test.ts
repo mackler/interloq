@@ -40,3 +40,23 @@ test("the comments of a refinement's task: none is empty, records and markers le
 test("a comment's date is the instant's UTC day", () => {
   assert.equal(commentDateOf(Date.UTC(2026, 9, 29, 23, 59)), "2026-10-29");
 });
+
+// Issue #131: the preparation's two markers, recognized here, so the retry reconciles their writes by key.
+test("the preparation's two marker lines parse to their kind and key", async () => {
+  const { keyOf, preparationMarkerLine, runCommentKey } = await import("../src/itemComments.ts");
+  const own = runCommentKey("2026-10-30T00-00-00-000Z-preparation-131");
+  const question = runCommentKey("2026-10-30T00-00-00-000Z-preparation-131", "q-1");
+  assert.deepEqual(parseComment(`words\n\n${preparationMarkerLine("Preparation", own)}`), { _tag: "Preparation", key: own });
+  assert.deepEqual(parseComment(`words\n\n${preparationMarkerLine("PreparedQuestion", question)}`), { _tag: "PreparedQuestion", key: question });
+  assert.equal(keyOf(`x\n${preparationMarkerLine("PreparedQuestion", question)}`), question);
+});
+test("commentsTaskText leaves the preparation's comments out", async () => {
+  const { preparationMarkerLine, runCommentKey } = await import("../src/itemComments.ts");
+  const sent = { id: seededId("1"), body: commentText({ _tag: "SentBack", key: Result.getOrThrow(commentKeyOf("i/verdict-1")), date: "2026-10-02", missing: "The retention period." }), created: "2026-10-02T10:00:00Z" };
+  const mine = { id: seededId("2"), body: "Keep them 30 days.", created: "2026-10-03T08:00:00Z" };
+  const prepared = { id: seededId("3"), body: `A prepared question\n\n${preparationMarkerLine("PreparedQuestion", runCommentKey("p", "q-1"))}`, created: "2026-10-04T08:00:00Z" };
+  const own = { id: seededId("4"), body: `Prepared\n\n${preparationMarkerLine("Preparation", runCommentKey("p"))}`, created: "2026-10-04T08:00:01Z" };
+  const text = commentsTaskText([sent, prepared, mine, own]);
+  assert.equal(text, commentsTaskText([sent, mine]));
+  assert.ok(!text.includes("prepared question") && !text.includes("Prepared"));
+});

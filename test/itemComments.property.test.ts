@@ -52,3 +52,13 @@ test("a run's comment key is always a key commentKeyOf accepts, and a records di
   }), { numRuns: 300 });
   assert.equal(runCommentKey("2026-10-29T09-40-49-531Z-implementation-186", "verdict-2"), "2026-10-29T09-40-49-531Z-implementation-186/verdict-2");
 });
+
+// Issue #131: a preparation's marker line reads back as written.
+test("a body ending in a preparation's marker line parses back to its kind and key", async () => {
+  const { preparationMarkerLine } = await import("../src/itemComments.ts");
+  const root = fc.string({ maxLength: 30 });
+  fc.assert(fc.property(fc.constantFrom("Preparation" as const, "PreparedQuestion" as const), root, fc.option(fc.integer({ min: 1, max: 99 }), { nil: null }), fc.string(), (kind, r, n, words) => {
+    const k = runCommentKey(r, n === null ? null : `q-${n}`);
+    assert.deepEqual(parseComment(`${words}\n\n${preparationMarkerLine(kind, k)}`), { _tag: kind, key: k });
+  }), { numRuns: 200 });
+});
