@@ -1,4 +1,5 @@
 // Issue #147 (S1): properties of the chain's transitions (src/chain.ts) over arbitrary sequences of run ends.
+import { PREPARATION_KEPT_OFF } from "../src/preparationSwitch.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
@@ -90,7 +91,7 @@ test("a restore of Running or Starting always ends the chain; every state round-
           assert.equal(r.chain._tag, "Idle");
           assert.equal(c, null);
         }
-        const file = { version: 2 as const, state: s };
+        const file = { version: 2 as const, state: s, preparation: PREPARATION_KEPT_OFF };
         assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
       }
     }),

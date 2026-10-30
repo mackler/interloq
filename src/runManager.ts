@@ -24,8 +24,10 @@ import { listedItemOf } from "./protocol.ts";
 import { sentBackCount } from "./itemComments.ts";
 import {
   type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  type KeptState,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
+import type { PreparationKept } from "./preparationSwitch.ts";
 import { makeStore } from "./store.ts";
 import { EMPTY_SLOT, endedIn, refusalOf, reserved, runsOf, type Slot as RunSlot } from "./runSlots.ts";
 import { parkHalted } from "./parking.ts";
@@ -90,7 +92,7 @@ export type RunManager = Readonly<{
  * How the chain's state is kept across a restart (issue #147, requirements Q4): plan-review/chain.json by default; a test
  * injects a save it holds or fails. A failure is its text.
  */
-export type ChainPersistence = Readonly<{ save: (state: ChainState) => Effect.Effect<void, string>; remove: Effect.Effect<void, string> }>;
+export type ChainPersistence = Readonly<{ save: (kept: KeptState) => Effect.Effect<void, string>; remove: Effect.Effect<void, string> }>;
 
 /**
  * The runs `haltAll` halted (issue #158): `halted`, those that ended with their halt record written; `unconfirmed`, every
@@ -151,7 +153,7 @@ type Slot = RunSlot<Run>;
  * The next id (one sequence for the server, so that an id names one run in either mode), each mode's slot, and whether
  * the server is ending after an error it could not trace to one run (issue #158), when no run is started.
  */
-type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean; chain: ChainState }>;
+type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean; chain: ChainState; preparation: PreparationKept }>;
 /** Who asked for a start: the page, or the chain of that generation (issue #147). */
 type Origin = Readonly<{ _tag: "manual" }> | Readonly<{ _tag: "chain"; generation: number }>;
 const MANUAL: Origin = { _tag: "manual" };
@@ -205,8 +207,9 @@ export const makeRunManager = (
     };
     // Issue #147 (requirements Q4): the chain as the last server left it, through what a restart does to it.
     const loaded = yield* loadChain(cwd, chainDefaults).pipe(Effect.provide(platform));
-    const [restoredChain, resume] = restored(loaded);
-    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain });
+    const [restoredChain, resume] = restored(loaded.chain);
+    // Issue #131 (requirements F4): the preparation's switch, failures and releases as the last server left them.
+    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain, preparation: loaded.preparation });
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
     const step = yield* makeStepper(state, listeners);
     const publish = (record: (s: State) => readonly [Broadcast | null, State]): Effect.Effect<Broadcast | null> =>
@@ -331,14 +334,15 @@ export const makeRunManager = (
     const continuations = yield* Semaphore.make(1);
     const stderr = (text: string) => Effect.sync(() => void process.stderr.write(`${text}\n`));
     /**
-     * Writes the chain as the State holds it at the moment of writing, never a snapshot taken at the change, under one
+     * Writes the chain, and since issue #131 the preparation's state beside it (one writer for the whole file, so neither
+     * overwrites the other with an older value), as the State holds it at the moment of writing, never a snapshot taken at the change, under one
      * permit, so writes never interleave and whatever write completes last holds the newest state (P1-R3-3). A failed save
      * ends the chain (saveFailed, broadcast) and removes the file, since a missing file restores to an idle chain; where
      * the removal fails too, both failures go to stderr (P1-R1-5).
      */
     const persist: Effect.Effect<Saved> = writes.withPermits(1)(
       Effect.gen(function* () {
-        const saved = yield* Effect.result(Effect.flatMap(Ref.get(state), (s) => kept.save(s.chain)));
+        const saved = yield* Effect.result(Effect.flatMap(Ref.get(state), (s) => kept.save({ chain: s.chain, preparation: s.preparation })));
         if (Result.isSuccess(saved)) return "saved" as const;
         yield* chainStep((s) => [saveFailed(s.chain, saved.failure), null]);
         const removed = yield* Effect.result(kept.remove);
@@ -619,7 +623,7 @@ export const makeRunManager = (
       });
 
     // Issue #147 (Q4): a restored Parking chain is parked again, a restored Ready one started at once if no limit is reached.
-    if (resume !== null || restoredChain !== loaded) yield* settle(resume);
+    if (resume !== null || restoredChain !== loaded.chain) yield* settle(resume);
 
     /** The refusal of an action naming a run that no mode holds now: it belongs to no tab. */
     const ended: Refusal = { refused: "that run has ended", mode: null };

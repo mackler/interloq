@@ -2,6 +2,7 @@
 // run ends, so the machine is not idle while the developer is away. Pure: the whole state of the mode and every decision
 // of it, as data and transitions, so that src/runManager.ts only executes the commands they return. No I/O, no Effect
 // services; also imported by the browser (through src/protocol.ts and web/src/cutoff.ts).
+import { PREPARATION_KEPT_OFF, type PreparationKept, PreparationKeptSchema } from "./preparationSwitch.ts";
 import { type Brand, Effect, Result, Schema } from "effect";
 import { type ItemId, ItemState } from "./tracker.ts";
 import { ABANDONED_EXIT_CODE } from "./prompts.ts";
@@ -205,7 +206,17 @@ const ChainSchema = Schema.Union([
 export type ChainState = Readonly<{ settings: ChainSettings; chain: Chain; generation: number }>;
 export const ChainStateSchema = Schema.Struct({ settings: ChainSettingsSchema, chain: ChainSchema, generation: Count });
 /** `plan-review/chain.json`, as it is written (S9). */
-export const ChainFileSchema = Schema.Struct({ version: Schema.Literal(2), state: ChainStateSchema });
+/**
+ * plan-review/chain.json: the chain's state and, since issue #131 (requirements F4), the preparation's switch, failures
+ * and releases beside it, read as the switch off where absent, so a file written before still decodes.
+ */
+export const ChainFileSchema = Schema.Struct({
+  version: Schema.Literal(2),
+  state: ChainStateSchema,
+  preparation: PreparationKeptSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed(PREPARATION_KEPT_OFF))),
+});
+/** What the web server keeps across a restart: the chain's state and the preparation's (issue #131). */
+export type KeptState = Readonly<{ chain: ChainState; preparation: PreparationKept }>;
 export type ChainFile = typeof ChainFileSchema.Type;
 
 /** What the manager does next for a chain, computed for its generation. */

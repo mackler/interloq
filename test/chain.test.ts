@@ -1,4 +1,5 @@
 // Issue #147 (S1): the chain's pure transitions (src/chain.ts), case by case of the requirements.
+import { PREPARATION_KEPT_OFF } from "../src/preparationSwitch.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
@@ -212,7 +213,7 @@ test("the limits and the cutoff are constructed only from valid values", () => {
 
 test("a saved state round-trips through the file's schema", () => {
   const [p] = ended(startedChain(withRuns(2)), 1, { code: 1, root: root("1"), parked: null, abandoned: null });
-  const file = { version: 2 as const, state: p };
+  const file = { version: 2 as const, state: p, preparation: PREPARATION_KEPT_OFF };
   const decode = Schema.decodeUnknownSync(ChainFileSchema);
   assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
 });
@@ -467,6 +468,6 @@ test("a chain.json written before issue #185 decodes, and one holding a KeptImpl
   const old = { version: 2, state: { settings: DEFAULT_SETTINGS, generation: 1, chain: { _tag: "Idle", ended: null, history: [{ item: "1", title: "one", root: null, outcome: { _tag: "Finished" } }] } } };
   assert.equal(decode(old).state.chain.history.length, 1);
   const [s] = ended(startedChain(), 1, { code: 2, root: root("1"), parked: { _tag: "ParkFailed", message: "m" }, abandoned: { _tag: "KeptImplementing" } });
-  const file = { version: 2 as const, state: s };
+  const file = { version: 2 as const, state: s, preparation: PREPARATION_KEPT_OFF };
   assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
 });
