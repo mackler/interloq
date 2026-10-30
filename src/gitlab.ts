@@ -38,7 +38,7 @@ import {
 import { OPENING_LINE, type Refinement } from "./refinement.ts";
 import type { GitlabTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import { type CommentId, type ItemComment, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GitlabToken, gitlabCredential } from "./trackerConfig.ts";
 
 const TRACKER = "GitLab";
@@ -196,7 +196,32 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
         onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
         onSome: (iid) => Effect.map(notePages(`${issuesUrl}/${iid}/notes`, id, 1, []), commentsOfNotes),
       });
-    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
+    /**
+     * Issue #131: one DELETE of the note, with no read of the issue first: a closed issue is no refusal, since deleting
+     * Interloq's own note changes nothing the developer decided (G-R1-1 forbids reopening, not deleting a note). A note
+     * already gone (404) counts as deleted, so the operation is idempotent and the tracker retry may repeat it; the
+     * mapping is here, not in gitlabStatusFailure, which other requests share. A refused connection is tried again, as
+     * every request is.
+     */
+    const deleteComment = (id: ItemId, comment: CommentId): Effect.Effect<void, TrackerError> =>
+      Option.match(Option.all([iidOf(id), positiveDecimalOf(comment)]), {
+        onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
+        onSome: ([iid, note]) => {
+          const request = HttpClientRequest.delete(`${issuesUrl}/${iid}/notes/${note}`);
+          const target: GitlabTarget = { kind: "item", id };
+          return Effect.flatMap(
+            Effect.catch(execute(authorized(request), 1), (error) =>
+              error.reason._tag === "StatusCodeError" && error.reason.response.status === 404 ? Effect.succeed(null) : Effect.fail(clientFailure(error, request.method, target)),
+            ),
+            (response): Effect.Effect<void, TrackerError> => {
+              if (response === null || response.status === 404) return Effect.void;
+              const refused = gitlabStatusFailure(response.status, request.method, target);
+              return refused === null ? Effect.void : Effect.fail(refused);
+            },
+          );
+        },
+      });
+    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

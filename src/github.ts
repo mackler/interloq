@@ -8,7 +8,7 @@ import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, 
 import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import type { GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import { type CommentId, type ItemComment, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
 import { OPENING_LINE, type Refinement, withRefinement } from "./refinement.ts";
 
@@ -161,7 +161,32 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
         onSome: (number) =>
           Effect.map(commentPages(HttpClientRequest.get(`${issuesUrl}/${number}/comments`).pipe(HttpClientRequest.setUrlParams({ per_page: PAGE_SIZE })), { kind: "item", id }, []), (cs) => cs.map(commentOf)),
       });
-    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
+    /**
+     * Issue #131: one DELETE of the comment, with no read of the issue first, since the comment's URL does not need it.
+     * A comment already gone (404, 410) counts as deleted, so the operation is idempotent and the tracker retry may
+     * repeat it; the mapping is here, not in statusFailure, which other requests share. An id outside GitHub's format,
+     * the item's or the comment's, names nothing and sends nothing.
+     */
+    const deleteComment = (id: ItemId, comment: CommentId): Effect.Effect<void, TrackerError> =>
+      Option.match(Option.all([issueNumberOf(id), positiveDecimalOf(comment)]), {
+        onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
+        onSome: ([, number]) => {
+          const request = HttpClientRequest.delete(`${issuesUrl}/comments/${number}`);
+          const target: Target = { kind: "item", id };
+          const gone = (status: number): boolean => status === 404 || status === 410;
+          return Effect.flatMap(
+            Effect.catch(client.execute(authorized(request)), (error) =>
+              error.reason._tag === "StatusCodeError" && gone(error.reason.response.status) ? Effect.succeed(null) : Effect.fail(clientFailure(error, request.method, target)),
+            ),
+            (response): Effect.Effect<void, TrackerError> => {
+              if (response === null || gone(response.status)) return Effect.void;
+              const refused = statusFailure(response.status, request.method, target);
+              return refused === null ? Effect.void : Effect.fail(refused);
+            },
+          );
+        },
+      });
+    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

@@ -22,7 +22,7 @@ export type FakeTracker = Readonly<{
   /** The next call of `operation` fails with `error`, once; with `state`, only a `setState` to that state matches. */
   failNext: (operation: TrackerOperation, error: TrackerError, state?: ItemState) => Effect.Effect<void>;
   /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied); with `state`, only a `setState` to that state matches (W1-R1-1). */
-  failAfterNext: (operation: "writeRefinement" | "setState" | "comment", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
+  failAfterNext: (operation: "writeRefinement" | "setState" | "comment" | "deleteComment", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
 }>;
 
 /** A scripted failure: before the operation changes anything, or after a write applied its change (issue #171). */
@@ -75,6 +75,12 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
           ),
         ),
       comments: (id) => Effect.andThen(scripted("comments"), Effect.map(find(id), (item) => item.comments ?? [])),
+      // Issue #131: a comment already gone counts as deleted.
+      deleteComment: (id, comment) =>
+        Effect.andThen(
+          scripted("deleteComment"),
+          Effect.flatMap(find(id), (item) => Effect.andThen(replace({ ...item, comments: (item.comments ?? []).filter((c) => c.id !== comment) }), after("deleteComment"))),
+        ),
     };
     return {
       tracker,

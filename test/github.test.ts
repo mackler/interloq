@@ -6,7 +6,7 @@ import { Tracker } from "../src/services.ts";
 import { readRefinement, refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import type { GithubTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
-import { type ItemId, type ItemState, itemIdOf } from "../src/tracker.ts";
+import { commentIdOf, type ItemId, type ItemState, itemIdOf } from "../src/tracker.ts";
 import { type GithubToken, githubCredential } from "../src/trackerConfig.ts";
 import { LABELS } from "./githubLabels.ts";
 import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stubHttp.ts";
@@ -321,4 +321,34 @@ test("a 500 on a comment's POST is TrackerUnreachable with its status", async ()
 test("the token is in no error the adapter produced", () => {
   assert.ok(errors.length >= 10);
   for (const error of errors) assert.ok(!`${JSON.stringify(error)} ${String(error)} ${error.message}`.includes("SECRET123"), JSON.stringify(error));
+});
+
+// Issue #131: Interloq deletes its own comments; a comment already gone counts as deleted.
+const COMMENTS = "https://api.github.com/repos/mackler/interloq/issues/comments";
+const commentId = (text: string) => Result.getOrThrow(commentIdOf(text));
+test("deleteComment sends one DELETE of the comment's URL with the usual headers, and a 204 succeeds", async () => {
+  const stub = makeStub(route({ [`DELETE ${COMMENTS}/77`]: new Response(null, { status: 204 }) }));
+  await withTracker(stub, (t) => t.deleteComment(id("12"), commentId("77")));
+  assert.equal(stub.sent().length, 1);
+  const [r] = stub.sent();
+  assert.equal(`${r.method} ${r.url.origin}${r.url.pathname}`, `DELETE ${COMMENTS}/77`);
+  assert.equal(r.headers["authorization"], "Bearer github_pat_SECRET123");
+  assert.equal(r.headers["accept"], "application/vnd.github+json");
+});
+test("deleteComment of a comment already gone (404) succeeds", async () => {
+  const stub = makeStub(() => json({ message: "Not Found" }, 404));
+  await withTracker(stub, (t) => t.deleteComment(id("12"), commentId("77")));
+  assert.equal(stub.sent().length, 1);
+});
+test("deleteComment: 401 and 403 are TrackerAuthRefused, a 500 TrackerUnreachable with its status", async () => {
+  for (const status of [401, 403]) assert.equal((await failure(makeStub(() => json({}, status)), (t) => t.deleteComment(id("12"), commentId("77"))))._tag, "TrackerAuthRefused");
+  const e = await failure(makeStub(() => json({}, 500)), (t) => t.deleteComment(id("12"), commentId("77")));
+  assert.equal(e._tag, "TrackerUnreachable");
+  assert.equal(e._tag === "TrackerUnreachable" ? e.status : null, 500);
+});
+test("deleteComment with an item or comment id outside GitHub's format sends nothing and is TrackerItemNotFound", async () => {
+  const stub = makeStub(() => new Response(null, { status: 204 }));
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("x12"), commentId("77"))))._tag, "TrackerItemNotFound");
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("12"), commentId("c-1"))))._tag, "TrackerItemNotFound");
+  assert.equal(stub.sent().length, 0);
 });

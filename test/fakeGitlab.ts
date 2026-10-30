@@ -60,6 +60,15 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
       const more = page * size < matching.length;
       return json(matching.slice((page - 1) * size, page * size), 200, { "x-next-page": more ? String(page + 1) : "" });
     }
+    if (parts.at(-2) === "notes" && r.method === "DELETE") {
+      // Issue #131: a note deleted; one already gone is GitLab's 404.
+      const iid = Number(parts.at(-3));
+      const all = notes.get(iid) ?? [];
+      const kept = all.filter((n) => n.id !== Number(last));
+      if (kept.length === all.length) return json({ message: "404 Not found" }, 404);
+      notes.set(iid, kept);
+      return new Response(null, { status: 204 });
+    }
     if (last === "notes") {
       // Issue #186: an issue's notes, paged as the issues are, and a note added.
       const noted = issues.get(Number(parts.at(-2)));
@@ -135,6 +144,7 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     setState: (id, state) => Effect.andThen(scripted("setState"), Effect.andThen(adapter.setState(id, state), after("setState"))),
     comment: (id, text) => Effect.andThen(scripted("comment"), Effect.andThen(adapter.comment(id, text), after("comment"))),
     comments: (id) => Effect.andThen(scripted("comments"), adapter.comments(id)),
+    deleteComment: (id, comment) => Effect.andThen(scripted("deleteComment"), Effect.andThen(adapter.deleteComment(id, comment), after("deleteComment"))),
   };
   const items = Effect.sync((): readonly FakeItem[] =>
     [...server.issues().values()].flatMap((issue) => {

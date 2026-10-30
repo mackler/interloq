@@ -9,7 +9,7 @@ import { readRefinement, refinementOf, withoutRefinement, withRefinement } from 
 import { Tracker } from "../src/services.ts";
 import type { GitlabTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
-import { type ItemId, itemIdOf } from "../src/tracker.ts";
+import { commentIdOf, type ItemId, itemIdOf } from "../src/tracker.ts";
 import { type GitlabToken, gitlabCredential } from "../src/trackerConfig.ts";
 import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
 import { gitlabServer, serverIssue } from "./fakeGitlab.ts";
@@ -388,4 +388,30 @@ test("the token is in no error the adapter produced", () => {
     const shown = `${JSON.stringify(error)} ${String(error)} ${error.message} ${trackerFailureText(error)}`;
     assert.ok(!shown.includes("SECRET123"), JSON.stringify(error));
   }
+});
+
+// Issue #131: Interloq deletes its own notes; a note already gone counts as deleted, and a closed issue is no refusal.
+const noteId = (text: string) => Result.getOrThrow(commentIdOf(text));
+test("deleteComment sends one DELETE of the issue's note with PRIVATE-TOKEN, and a 204 succeeds", async () => {
+  const stub = makeStub(route({ [`DELETE ${ISSUES}/7/notes/55`]: new Response(null, { status: 204 }) }));
+  await withTracker(stub, (t) => t.deleteComment(id("7"), noteId("55")));
+  assert.equal(stub.sent().length, 1);
+  assert.equal(stub.sent()[0].method, "DELETE");
+  assert.equal(stub.sent()[0].headers["private-token"], SECRET);
+});
+test("deleteComment of a note already gone (404) succeeds", async () => {
+  const stub = makeStub(() => json({ message: "404 Not found" }, 404));
+  await withTracker(stub, (t) => t.deleteComment(id("7"), noteId("55")));
+});
+test("deleteComment of a refused connection is tried again, as every request is", async () => {
+  let n = 0;
+  const stub = makeStub(() => (n++ === 0 ? "refused" : new Response(null, { status: 204 })));
+  await withTracker(stub, (t) => t.deleteComment(id("7"), noteId("55")));
+  assert.equal(stub.sent().length, 2);
+});
+test("deleteComment with an id outside GitLab's format sends nothing and is TrackerItemNotFound", async () => {
+  const stub = makeStub(() => new Response(null, { status: 204 }));
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("x"), noteId("55"))))._tag, "TrackerItemNotFound");
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("7"), noteId("c-1"))))._tag, "TrackerItemNotFound");
+  assert.equal(stub.sent().length, 0);
 });

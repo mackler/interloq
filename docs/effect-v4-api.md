@@ -325,6 +325,7 @@ non-2xx status (only `filterStatusOk` does), so the adapter reads `status` itsel
 | `HttpClient.make(f)` | http/HttpClient.d.ts:485 | `f: (request, url: URL, signal, fiber) => Effect<HttpClientResponse, HttpClientError>`; `url` carries the request's URL parameters. The test stub is built with it |
 | `HttpClientRequest.HttpClientRequest` | http/HttpClientRequest.d.ts:47 | `method` :49, `url` :50, `urlParams` :51, `headers` :53 (`Headers.Headers`, http/Headers.d.ts:53, a record of lower-case names, `Redactable`), `body` :54 (`HttpBody.HttpBody`; a JSON body is `HttpBody.Uint8Array`, http/HttpBody.d.ts:201, with `text` and `body`) |
 | `HttpClientRequest.get(url)` / `patch(url)` / `put(url)` | http/HttpClientRequest.d.ts:121 / 145 / 153 | `put` (read 9 Oct 2026): the GitLab adapter's writes, `PUT …/issues/:iid` |
+| `HttpClientRequest.delete(url)` | http/HttpClientRequest.d.ts:158 (exported as `del as delete`) | issue #131: the adapters' deletion of Interloq's own comment, `DELETE …/issues/comments/:id` and `…/issues/:iid/notes/:id` |
 | `HttpClientRequest.setHeader(key, value)` | http/HttpClientRequest.d.ts:248 | dual |
 | `HttpClientRequest.bearerToken(token)` | http/HttpClientRequest.d.ts:373 | sets `Authorization: Bearer <token>`; takes a string or a `Redacted` |
 | `HttpClientRequest.setUrlParams(input)` | http/HttpClientRequest.d.ts:556 | replaces parameters of the same name |
