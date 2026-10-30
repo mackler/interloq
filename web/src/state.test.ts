@@ -16,7 +16,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -2931,5 +2931,126 @@ describe("preparation", () => {
     expect(shownMark(s, item("2", { _tag: "SetAside", reason: "r" }))).toEqual({ _tag: "Preparing" });
     expect(shownMark(s, item("1"))).toBe(null);
     expect(shownMark(s, item("3", { _tag: "Prepared", questions: 2 }))).toEqual({ _tag: "Prepared", questions: 2 });
+  });
+
+  // W2-R1-1 (work review 2): a change of the item being prepared while a Refinement listing is outstanding is asked for
+  // once every outstanding listing has answered, and a listed Preparing the view does not name is not shown.
+  const listed = (items: readonly ListedItem[]): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
+  const sameHello: ServerMessage = { type: "hello", preparation: view({ _tag: "Idle" }), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" };
+
+  test("(i) a change while the list loads is asked for after the answer, and the stale Preparing is hidden", () => {
+    const loading = itemsRequested(listedRefinement(), "refinement");
+    const changed = reduce(reduce(loading, frame(preparing("1"))), frame({ _tag: "Idle" }));
+    expect(changed.itemsRefresh).toBe(loading.itemsRefresh);
+    const answered = reduce(changed, listed([item("1", { _tag: "Preparing" })]));
+    expect(answered.itemsRefresh).toBe(loading.itemsRefresh + 1);
+    expect(answered.refinementOutstanding).toBe(0);
+    expect(answered.itemsRefreshPending).toBe(false);
+    expect(shownMark(answered, item("1", { _tag: "Preparing" }))).toBe(null);
+  });
+
+  test("(ii) during an automatic listing, changes are deferred and the answer asks exactly once", () => {
+    const sent = refreshSent(listedRefinement());
+    const changed = reduce(reduce(sent, frame(preparing("1"))), frame(preparing("2")));
+    expect(changed.itemsRefresh).toBe(sent.itemsRefresh);
+    expect(changed.itemsRefreshPending).toBe(true);
+    expect(reduce(changed, listed([])).itemsRefresh).toBe(sent.itemsRefresh + 1);
+  });
+
+  test("(iii) two overlapping listings: no request after the first answer, exactly one after the second", () => {
+    const both = itemsRequested(refreshSent(listedRefinement()), "refinement");
+    const changed = reduce(both, frame(preparing("1")));
+    const first = reduce(changed, listed([item("1")]));
+    expect(first.itemsRefresh).toBe(both.itemsRefresh);
+    const second = reduce(first, listed([item("1", { _tag: "Preparing" })]));
+    expect(second.itemsRefresh).toBe(both.itemsRefresh + 1);
+    expect(second.refinementOutstanding).toBe(0);
+  });
+
+  test("(iv) with nothing outstanding a change asks at once, exactly once", () => {
+    const s = listedRefinement();
+    const a = reduce(s, frame(preparing("1")));
+    expect(a.itemsRefresh).toBe(s.itemsRefresh + 1);
+    expect(a.itemsRefreshPending).toBe(false);
+  });
+
+  test("(v) an Implementation items frame changes neither the count nor the flag", () => {
+    const deferred = reduce(refreshSent(listedRefinement()), frame(preparing("1")));
+    const after = reduce(deferred, { type: "items", mode: "implementation", result: { _tag: "Listed", items: [] } });
+    expect(after.refinementOutstanding).toBe(1);
+    expect(after.itemsRefreshPending).toBe(true);
+    expect(after.itemsRefresh).toBe(deferred.itemsRefresh);
+  });
+
+  test("(vi) a hello of the same incarnation reissues a lost automatic or deferred listing, and none for a list that loads", () => {
+    const sent = refreshSent(listedRefinement());
+    const helloed = reduce(sent, sameHello);
+    expect(helloed.itemsRefresh).toBe(sent.itemsRefresh + 1);
+    expect(helloed.refinementOutstanding).toBe(0);
+    const deferred = reduce(sent, frame(preparing("1")));
+    const helloedDeferred = reduce(deferred, sameHello);
+    expect(helloedDeferred.itemsRefresh).toBe(deferred.itemsRefresh + 1);
+    expect(helloedDeferred.itemsRefreshPending).toBe(false);
+    const loading = itemsRequested(listedRefinement(), "refinement");
+    const helloedLoading = reduce(loading, sameHello);
+    expect(helloedLoading.itemsRefresh).toBe(loading.itemsRefresh);
+    expect(helloedLoading.modes.refinement.items._tag).toBe("Unasked");
+    expect(helloedLoading.refinementOutstanding).toBe(0);
+  });
+
+  test("(vii) a listed Preparing with no view is hidden; other listed marks are shown", () => {
+    expect(shownMark(initialState, item("1", { _tag: "Preparing" }))).toBe(null);
+    expect(shownMark(initialState, item("2", { _tag: "SetAside", reason: "r" }))).toEqual({ _tag: "SetAside", reason: "r" });
+    expect(shownMark(initialState, item("3", { _tag: "Prepared", questions: 1 }))).toEqual({ _tag: "Prepared", questions: 1 });
+  });
+
+  test("property: the outstanding count is sends less answers, and a change after the last request is always asked for", () => {
+    type Op = Readonly<{ _tag: "frame"; item: string | null }> | Readonly<{ _tag: "manual" }> | Readonly<{ _tag: "answer" }>;
+    const op: fc.Arbitrary<Op> = fc.oneof(
+      fc.record({ _tag: fc.constant("frame" as const), item: fc.constantFrom("1", "2", null) }),
+      fc.constant({ _tag: "manual" as const }),
+      fc.constant({ _tag: "answer" as const }),
+    );
+    fc.assert(
+      fc.property(fc.array(op, { maxLength: 30 }), (ops) => {
+        let state = listedRefinement();
+        let outstanding = 0;
+        let seen = state.itemsRefresh;
+        // Whether a change of the preparing item came after the last request sent, unasked for since.
+        let unasked = false;
+        const autoSend = () => {
+          if (state.itemsRefresh !== seen) {
+            seen = state.itemsRefresh;
+            state = refreshSent(state);
+            outstanding += 1;
+            unasked = false;
+          }
+        };
+        for (const o of ops) {
+          if (o._tag === "frame") {
+            const before = state.preparation === null ? null : (state.preparation.status._tag === "Preparing" ? state.preparation.status.item : null);
+            state = reduce(state, frame(o.item === null ? { _tag: "Idle" } : preparing(o.item)));
+            if (before !== o.item) unasked = true;
+          } else if (o._tag === "manual") {
+            state = itemsRequested(state, "refinement");
+            outstanding += 1;
+            unasked = false;
+          } else if (outstanding > 0) {
+            state = reduce(state, listed([]));
+            outstanding -= 1;
+          }
+          autoSend();
+          expect(state.refinementOutstanding).toBe(outstanding);
+          expect(state.refinementOutstanding).toBeGreaterThanOrEqual(0);
+        }
+        while (outstanding > 0) {
+          state = reduce(state, listed([]));
+          outstanding -= 1;
+          autoSend();
+        }
+        expect(unasked).toBe(false);
+      }),
+      { numRuns: 200 },
+    );
   });
 });

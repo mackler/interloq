@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
+import { PREPARATION_VIEW_OFF, type PreparationStatus } from "../../src/preparationSwitch.ts";
 import { runRootOf } from "../../src/artifacts.ts";
 import { type Component, createRawSnippet, flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -779,6 +779,63 @@ describe("App and the draft", () => {
       const before = ws.sent.length;
       select(root, "implementation");
       expect(sentOf(ws).slice(before).filter((m) => m.type === "items")).toEqual([]);
+    });
+
+    // W2-R1-1 (work review 2 of issue #131): a change of the item being prepared while a Refinement listing is
+    // outstanding is asked for once, after every outstanding listing has answered; a reconnection reissues one.
+    describe("the automatic Refinement listing", () => {
+      const prepView = (status: PreparationStatus) => ({ settings: { enabled: true, generation: 1 }, status });
+      const prep = (status: PreparationStatus) => ({ type: "preparation", view: prepView(status) });
+      const preparingOf = (id: string): PreparationStatus => ({ _tag: "Preparing", item: id, title: `t${id}` });
+      const listedOf = (items: readonly unknown[]) => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
+      const itemsSent = (ws: FakeWebSocket) => sentOf(ws).filter((m) => m.type === "items" && m.mode === "refinement").length;
+      const listedPage = async () => {
+        const page = await begin();
+        page.ws.receive(listedOf([fixture]));
+        return page;
+      };
+
+      test("(a) changes during an automatic listing send nothing until it answers, then exactly one more", async () => {
+        const { ws } = await listedPage();
+        const before = itemsSent(ws);
+        ws.receive(prep(preparingOf("120")));
+        expect(itemsSent(ws)).toBe(before + 1);
+        ws.receive(prep({ _tag: "Idle" }));
+        ws.receive(prep(preparingOf("121")));
+        expect(itemsSent(ws)).toBe(before + 1);
+        ws.receive(listedOf([fixture]));
+        expect(itemsSent(ws)).toBe(before + 2);
+      });
+
+      test("(b) Refresh during an automatic listing, a change, then the answers in reverse order: one request, after the second", async () => {
+        const { root, ws } = await listedPage();
+        const before = itemsSent(ws);
+        ws.receive(prep(preparingOf("120")));
+        one(root, "button[name=refresh]").click();
+        flushSync();
+        expect(itemsSent(ws)).toBe(before + 2);
+        ws.receive(prep({ _tag: "Idle" }));
+        expect(itemsSent(ws)).toBe(before + 2);
+        ws.receive(listedOf([fixture]));
+        expect(itemsSent(ws)).toBe(before + 2);
+        ws.receive(listedOf([{ ...fixture, preparation: { _tag: "Preparing" } }]));
+        expect(itemsSent(ws)).toBe(before + 3);
+      });
+
+      test("(c) a reconnection of the same incarnation during an automatic listing sends one new listing", async () => {
+        vi.useFakeTimers();
+        const { ws } = await listedPage();
+        ws.receive(prep(preparingOf("120")));
+        ws.close();
+        flushSync();
+        vi.advanceTimersByTime(30_000);
+        flushSync();
+        const next = FakeWebSocket.last!;
+        expect(next).not.toBe(ws);
+        next.onopen?.({});
+        next.receive({ type: "hello", preparation: prepView(preparingOf("120")), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+        expect(itemsSent(next)).toBe(1);
+      });
     });
 
     test("an item's button sends start with the tab's mode and the item's id, both from the listed item (the seam with the server)", async () => {

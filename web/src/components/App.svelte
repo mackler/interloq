@@ -32,7 +32,7 @@
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
-  import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -185,6 +185,8 @@
   const offline = $derived(view.connection === "failed");
   // Issue #131: the preparation's switch, on the Refinement tab alone, and a new listing of its items whenever the item
   // being prepared changes while that list is shown, without the loading state, so every row's mark follows the pass.
+  // The automatic listing is counted as outstanding (`refreshSent`, W2-R1-1); a change while one is outstanding is asked
+  // for once every outstanding listing has answered, and a hello reissues one lost with the connection.
   const preparation = $derived(mode === "refinement" ? view.preparation : null);
   const setPreparation = (enabled: boolean) => send(preparationFrame(enabled));
   const itemsRefresh = $derived(view.itemsRefresh);
@@ -194,7 +196,9 @@
     untrack(() => {
       if (version === refreshSeen) return;
       refreshSeen = version;
-      if (view.connection === "open") send(itemsFrame("refinement"));
+      if (view.connection !== "open") return;
+      send(itemsFrame("refinement"));
+      view = refreshSent(view);
     });
   });
   // A tab that shows its list asks for its items once connected (and again on Refresh); the server answers.

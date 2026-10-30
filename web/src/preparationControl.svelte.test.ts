@@ -51,7 +51,7 @@ describe("ItemList's preparation marks", () => {
 
   test("each mark's text on its row, the terms note on a prepared one, and every start enabled", () => {
     const items = [item("1", { _tag: "Prepared", questions: 3 }), item("2", { _tag: "Prepared", questions: 0 }), item("3", { _tag: "SetAside", reason: "its review stopped" }), item("4", { _tag: "Preparing" }), item("5")];
-    const root = list(items, initialState);
+    const root = list(items, { ...initialState, preparation: view({ _tag: "Preparing", item: "4", title: "title 4" }) });
     expect(row(root, "1").textContent).toContain(prompts.preparedMarkText(3));
     expect(row(root, "1").textContent).toContain(prompts.PREPARED_TERMS_NOTE);
     expect(row(root, "2").textContent).toContain(prompts.preparedMarkText(0));
@@ -60,6 +60,14 @@ describe("ItemList's preparation marks", () => {
     expect(row(root, "4").textContent).toContain(prompts.PREPARING_MARK);
     expect(row(root, "5").querySelector("[data-preparation]")).toBe(null);
     for (const id of ["1", "2", "3", "4", "5"]) expect(root.querySelector<HTMLButtonElement>(`[data-item="${id}"]`)!.disabled).toBe(false);
+  });
+
+  // W2-R1-1: the view decides Preparing; a listed Preparing the switch's status does not name is outdated.
+  test("a listed Preparing that the switch's status does not name shows no mark on its row", () => {
+    const state: ViewState = { ...initialState, preparation: view({ _tag: "Idle" }) };
+    const root = list([item("4", { _tag: "Preparing" })], state);
+    expect(row(root, "4").querySelector("[data-preparation]")).toBe(null);
+    expect(row(root, "4").textContent).not.toContain(prompts.PREPARING_MARK);
   });
 
   test("with a listing of no marks, the view's item being prepared shows Preparing on its row alone", () => {
