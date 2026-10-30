@@ -10,6 +10,7 @@ import type { TrackerError } from "../src/services.ts";
 import { ITEM_STATES, type ItemId, type ItemState, type TrackerItem } from "../src/tracker.ts";
 import { landed, retryable, trackerRetryDelays, uncertainWrite, commentLanded } from "../src/trackerRetry.ts";
 import { commentKeyOf, commentText, type InterloqComment } from "../src/itemComments.ts";
+import { seededId } from "./fakeTracker.ts";
 
 const RUNS = { numRuns: 200, seed: 20261015 };
 const ID = "98" as ItemId;
@@ -91,7 +92,7 @@ test("commentLanded holds exactly when some comment carries the key", () => {
     fc.record({ _tag: fc.constant("RefinementRecord" as const), key, date: fc.constant("2026-10-29"), asked: fc.boolean() }),
   );
   fc.assert(fc.property(key, fc.array(comment, { maxLength: 6 }), fc.array(fc.string(), { maxLength: 3 }), (k, cs, others) => {
-    const items = [...cs.map((c) => ({ body: commentText(c), created: "t" })), ...others.map((body) => ({ body, created: "t" }))];
+    const items = [...cs.map((c) => ({ id: seededId(), body: commentText(c), created: "t" })), ...others.map((body) => ({ id: seededId(), body, created: "t" }))];
     const found = Result.isSuccess(commentLanded(k, items));
     assert.equal(found, cs.some((c) => c.key === k));
     if (!found) assert.deepEqual(Result.getFailure(commentLanded(k, items)), Option.some({ kind: "noComment" }));

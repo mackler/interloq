@@ -24,6 +24,7 @@ import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, questionOf, startOf, type TestOptions, tempDir, tempRepo, testWiring } from "./helpers.ts";
+import { seededId } from "./fakeTracker.ts";
 
 const run = Effect.runPromise;
 const noQuestions = { questions_for_user: [] };
@@ -885,7 +886,7 @@ test("W2-R1-1 Stop task after the claim: the run ends 1 with its halt's record, 
 suite("issue #186: a send-back in a chain", () => {
   const MISSING = "The requirements do not say how long a note is kept.";
   const verdict: TestOptions = { steps: [{ output: { reply: { kind: "notRefined", missing: MISSING } } }], reviews: [{ issues: [] }] };
-  const record = (asked: boolean) => ({ body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
+  const record = (asked: boolean) => ({ id: seededId(), body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
   /** The refined items, each refined by a run that asked the developer nothing: a verdict on one is the guard's stop. */
   const unasked = () => fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.state === "refined" ? { ...i, comments: [record(false)] } : i)));
   const itemOf = async (h: Harness, id: string) => (await run(h.tracker.items)).find((i) => i.id === id);

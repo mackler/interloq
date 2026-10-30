@@ -65,3 +65,10 @@ test("relabeled removes every stage label, adds the new state's, and keeps the o
   assert.deepEqual(relabeled([], LABELS, "implementing"), ["stage: implementing"]);
   assert.deepEqual(relabeled(["stage: implementing", "stage: refined"], LABELS, "refined"), ["stage: refined"]);
 });
+
+// Issue #131: every comment carries its id, so Interloq can delete its own.
+test("a GitHub comment as the port's comment carries its id as a string", async () => {
+  const { commentOf, GithubComment } = await import("../src/githubIssues.ts");
+  const comment = commentOf(Schema.decodeUnknownSync(GithubComment)({ id: 77, body: "b", created_at: "2026-10-01T00:00:00Z" }));
+  assert.deepEqual(comment, { id: "77", body: "b", created: "2026-10-01T00:00:00Z" });
+});

@@ -298,9 +298,9 @@ test("an issue's comments follow the Link header to the second page, joined in o
   );
   const comments = await withTracker(stub, (t) => t.comments(id("7")));
   assert.deepEqual(comments, [
-    { body: "first", created: "2026-10-01T00:00:00Z" },
-    { body: "", created: "2026-10-02T00:00:00Z" },
-    { body: "third", created: "2026-10-03T00:00:00Z" },
+    { id: "1", body: "first", created: "2026-10-01T00:00:00Z" },
+    { id: "1", body: "", created: "2026-10-02T00:00:00Z" },
+    { id: "1", body: "third", created: "2026-10-03T00:00:00Z" },
   ]);
   assert.equal(stub.sent()[0].url.pathname, "/repos/mackler/interloq/issues/7/comments");
   assert.equal(stub.sent()[0].url.searchParams.get("per_page"), "100");

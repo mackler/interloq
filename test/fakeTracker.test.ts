@@ -81,3 +81,15 @@ test("a failure after the next write to a named state leaves a setState to anoth
   assert.equal((await run(tracker.read(id("2")))).state, "implemented");
   await run(tracker.setState(id("2"), "implemented"));
 });
+
+// Issue #131: the fake gives each comment it adds a distinct id, and a seeded comment keeps the id it was given.
+test("the fake gives every added comment a distinct id and keeps a seeded comment's", async () => {
+  const { commentIdOf } = await import("../src/tracker.ts");
+  const seeded = { id: Result.getOrThrow(commentIdOf("seed")), body: "s", created: "2026-10-01T00:00:00Z" };
+  const { tracker } = await run(makeFakeTracker([{ ...ITEMS[0], comments: [seeded] }]));
+  await run(tracker.comment(id("1"), "a"));
+  await run(tracker.comment(id("1"), "b"));
+  const ids = (await run(tracker.comments(id("1")))).map((c) => c.id);
+  assert.equal(ids[0], "seed");
+  assert.equal(new Set(ids).size, 3);
+});

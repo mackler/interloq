@@ -18,6 +18,7 @@ import { checkCommandInvalidText, defectRecord, sendBackIncompleteText, sentBack
 import type { RunMode } from "../src/runMode.ts";
 import type { CommandLine } from "../src/schema.ts";
 import { phaseName } from "../src/uiEvents.ts";
+import { seededId } from "./fakeTracker.ts";
 
 const noQuestions = { questions_for_user: [] };
 const runProgram = (probe: WiringProbe, wiring: Wiring): Promise<number> => Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring)));
@@ -293,8 +294,8 @@ for (const mode of ["refinement", "implementation"] as const) {
 const sentBackItem = (): FakeItem => ({
   ...sectionedItem(),
   comments: [
-    { body: commentText({ _tag: "SentBack", key: runCommentKey("earlier-run", "verdict-1"), date: "2026-10-28", missing: "The retention period of a note." }), created: "2026-10-28T10:00:00Z" },
-    { body: "Keep them 30 days.", created: "2026-10-28T11:00:00Z" },
+    { id: seededId(), body: commentText({ _tag: "SentBack", key: runCommentKey("earlier-run", "verdict-1"), date: "2026-10-28", missing: "The retention period of a note." }), created: "2026-10-28T10:00:00Z" },
+    { id: seededId(), body: "Keep them 30 days.", created: "2026-10-28T11:00:00Z" },
   ],
 });
 for (const mode of ["refinement", "implementation"] as const) {
@@ -694,7 +695,7 @@ describe("issue #186: how a send-back ends", () => {
   const notRefinedExec = { status: "not_refined" as const, summary: "S1 done", question: MISSING, remainingWork: "S2", userInput: null, checks: [] };
   const verdictMidWork = { steps: [{ output: noQuestions, plan: "v1" }], reviews: [{ issues: [] }, { issues: [] }], execs: [notRefinedExec] };
   /** The item, whose last refinement asked the developer nothing where `asked` is false: the guard of requirements Q5. */
-  const itemAsked = (asked: boolean): FakeItem => ({ ...scriptedItem, comments: [{ body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" }] });
+  const itemAsked = (asked: boolean): FakeItem => ({ ...scriptedItem, comments: [{ id: seededId(), body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" }] });
   const started = (probe: WiringProbe, wiring: Wiring, signal?: FaultSignal) => {
     const concluded = Effect.runSync(Ref.make(Option.none<Conclusion>()));
     const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring, signal, undefined, undefined, concluded)));

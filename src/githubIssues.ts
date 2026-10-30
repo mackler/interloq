@@ -2,7 +2,7 @@
 // a state change, the next page of a listing and an id's issue number. Pure; the edge is src/github.ts.
 import { Option, Result, Schema } from "effect";
 import type { GithubLabels } from "./schema.ts";
-import { ITEM_STATES, type ItemComment, type ItemId, itemUrlFrom, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { ITEM_STATES, type ItemComment, type ItemId, itemUrlFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 /**
  * The fields of GitHub's issue object the adapter reads; the many others are ignored. A label is an object with a
@@ -20,11 +20,11 @@ export const GithubIssue = Schema.Struct({
 });
 export type GithubIssue = typeof GithubIssue.Type;
 
-/** A comment on an issue as GitHub sends it, the fields read (issue #186): its body, null for an empty one, and when it was made. */
-export const GithubComment = Schema.Struct({ body: Schema.NullOr(Schema.String), created_at: Schema.String });
+/** A comment on an issue as GitHub sends it, the fields read (issue #186): its id (issue #131), its body, null for an empty one, and when it was made. */
+export const GithubComment = Schema.Struct({ id: Schema.Int, body: Schema.NullOr(Schema.String), created_at: Schema.String });
 export type GithubComment = typeof GithubComment.Type;
 /** A GitHub comment as the port's comment: a null body is "". */
-export const commentOf = (comment: GithubComment): ItemComment => ({ body: comment.body ?? "", created: comment.created_at });
+export const commentOf = (comment: GithubComment): ItemComment => ({ id: numericCommentId(comment.id), body: comment.body ?? "", created: comment.created_at });
 
 /** A closed issue with no stage label: by the developer's decision a closed issue is never unrefined. */
 export type NoState = Readonly<{ _tag: "NoState" }>;

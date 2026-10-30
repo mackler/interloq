@@ -361,8 +361,8 @@ test("an issue's notes are listed oldest first across pages, without GitLab's sy
   );
   const comments = await withTracker(stub, (t) => t.comments(id("7")));
   assert.deepEqual(comments, [
-    { body: "first", created: "2026-10-01T00:00:00Z" },
-    { body: "third", created: "2026-10-03T00:00:00Z" },
+    { id: "1", body: "first", created: "2026-10-01T00:00:00Z" },
+    { id: "3", body: "third", created: "2026-10-03T00:00:00Z" },
   ]);
   const params = stub.sent()[0].url.searchParams;
   assert.equal(where(stub.sent()[0]), `GET ${ISSUES}/7/notes`);

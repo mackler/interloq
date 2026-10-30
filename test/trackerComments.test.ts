@@ -3,13 +3,13 @@ import { test } from "node:test";
 import { Effect, Option, Result } from "effect";
 import { TrackerUnreachable } from "../src/errors.ts";
 import { type ItemId, itemIdOf } from "../src/tracker.ts";
-import { type FakeItem, makeFakeTracker } from "./fakeTracker.ts";
+import { type FakeItem, makeFakeTracker, seededId } from "./fakeTracker.ts";
 
 // Issue #186, requirements Q3: the tracker port's comment operations, over the fake tracker.
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 const ITEMS: readonly FakeItem[] = [
   { id: id("1"), title: "one", body: "", state: "implementing", open: true, url: Option.none() },
-  { id: id("2"), title: "two", body: "", state: "refined", open: true, url: Option.none(), comments: [{ body: "earlier", created: "2026-10-01T00:00:00Z" }] },
+  { id: id("2"), title: "two", body: "", state: "refined", open: true, url: Option.none(), comments: [{ id: seededId(), body: "earlier", created: "2026-10-01T00:00:00Z" }] },
 ];
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
 

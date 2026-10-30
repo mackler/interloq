@@ -13,12 +13,13 @@ import type { ItemComment } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
 import { fakeTrackerOf, type ScriptedAnswer, scriptedItem, tempRepo, testLayer, TEST_ROOT } from "./helpers.ts";
 import { Result } from "effect";
+import { seededId } from "./fakeTracker.ts";
 
 // Issue #186: an item whose verdict stood is sent back (parked, commented, unrefined), or stopped by the guard of
 // requirements Q5 (parked, commented, implementing); a failed parking writes nothing; a tracker failure after the
 // parking is SendBackIncomplete with the parking's note; an interruption during the parking lets it complete.
 const git = (dir: string, ...args: string[]): string => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" }).trim();
-const record = (asked: boolean): ItemComment => ({ body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
+const record = (asked: boolean): ItemComment => ({ id: seededId(), body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
 const itemWith = (comments: readonly ItemComment[]): FakeItem => ({ ...scriptedItem, state: "implementing", comments });
 const branch = Result.getOrThrow(parkBranchOf(scriptedItem.id, TEST_ROOT));
 

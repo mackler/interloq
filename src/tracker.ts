@@ -40,10 +40,23 @@ export const itemUrlFrom = (text: string | undefined): Option.Option<ItemUrl> =>
 export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState; url: Option.Option<ItemUrl> }>;
 
 /**
- * A comment on an item (issue #186, requirements Q3): its text as the tracker holds it and `created`, the ISO-8601
+ * A comment on an item (issue #186, requirements Q3): its id (issue #131), its text as the tracker holds it and `created`, the ISO-8601
  * instant the tracker reports. Interloq writes its own send-backs and refinement records as comments (src/itemComments.ts).
  */
-export type ItemComment = Readonly<{ body: string; created: string }>;
+export type ItemComment = Readonly<{ id: CommentId; body: string; created: string }>;
+
+/**
+ * A comment's id in its tracker (issue #131): a text with a character other than whitespace, built by commentIdOf alone.
+ * Each adapter owns its format (GitHub's comment id, GitLab's note id, both numbers in their JSON, kept as text), and
+ * Interloq addresses a comment by it to delete its own.
+ */
+export type CommentId = Brand.Branded<string, "CommentId">;
+/** Why a text is not a comment id: it is blank. */
+export type InvalidCommentId = Readonly<{ _tag: "InvalidCommentId"; text: string }>;
+export const commentIdOf = (text: string): Result.Result<CommentId, InvalidCommentId> =>
+  text.trim() === "" ? Result.fail({ _tag: "InvalidCommentId", text }) : Result.succeed(text as CommentId);
+/** The comment id of a tracker's numeric id: its decimal text, never blank, so it needs no check. */
+export const numericCommentId = (n: number): CommentId => String(n) as CommentId;
 
 /**
  * A positive decimal integer without leading zeros that is a safe integer, or none: the one rule of a GitHub issue
