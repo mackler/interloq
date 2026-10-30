@@ -1966,3 +1966,31 @@ test("a credential of the inherited environment named in the error result is red
   assert.equal(line?.result_text, "OAuth token [redacted] has expired");
   assert.ok(!fs.readFileSync(path.join(fake.dir, "usage.jsonl"), "utf8").includes(token));
 });
+
+// ---- issue #49: the live output of an execution call -----------------------------------------------------------------
+const bashUse = (id: string, command: string, background = false): SDKMessage =>
+  ({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input: background ? { command, run_in_background: true } : { command } }] }, parent_tool_use_id: null, session_id: "s" }) as unknown as SDKMessage;
+const bashResult = (id: string, text: string): SDKMessage =>
+  ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: text }] }, parent_tool_use_id: null, session_id: "s" }) as unknown as SDKMessage;
+
+test("issue #49: an execution call's command and background task reach the live panel, the task's tail from its output file", async () => {
+  const fake = await planner([messages(init(), bashUse("t1", "git status"), bashResult("t1", "clean\n"), bashUse("t2", "npm test", true), started("b1"), notification("b1", "completed", "/tmp/b1.out"), success(report))]);
+  fake.sdk.outputFiles.set("/tmp/b1.out", "\u001b[32mall 12 passed\u001b[0m\n");
+  await run(fake.planner.executing("implement the plan", noReporter));
+  const brief = fake.ui.outputs.map((e) => (e._tag === "Printed" ? `Printed ${e.key} ${e.text}` : e._tag === "Finished" ? `Finished ${e.key} ${e.status._tag}` : e._tag === "Touched" ? `Touched ${e.name}` : `${e._tag} ${e.key}`));
+  assert.deepEqual(brief, ["Started claude:t1", "Printed claude:t1 clean\n", "Finished claude:t1 Succeeded", "Started task:b1", "Printed task:b1 all 12 passed\n", "Finished task:b1 Succeeded"]);
+});
+
+test("issue #49: an interrupted execution call ends its open command Unknown on the live panel", async () => {
+  const fake = await planner([
+    async function* (call) {
+      yield init();
+      yield bashUse("t9", "sleep 600");
+      await aborted(call.options);
+    },
+  ]);
+  const fiber = Effect.runFork(fake.planner.executing("implement the plan", noReporter).pipe(Effect.provideService(Decider, noDecider)));
+  for (let i = 0; i < 200 && fake.ui.outputs.length === 0; i++) await sleep(5);
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.deepEqual(fake.ui.outputs.map((e) => (e._tag === "Finished" ? `Finished ${e.status._tag}` : e._tag)), ["Started", "Finished Unknown"]);
+});

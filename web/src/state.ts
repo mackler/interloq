@@ -1178,6 +1178,9 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // [visibility of system status] The socket's reconnection keeps trying; the page says why it is disconnected.
       // A failed page stays failed: it no longer reconnects, so it must not claim to.
       return notice({ ...state, connection: state.connection === "failed" ? "failed" : "reconnecting" }, SERVER_CLOSED_NOTICE);
+    case "output":
+      // Issue #49: the live output is never folded here; the panel's own buffer (web/src/livePanel.ts) takes it.
+      return state;
     case "event": {
       // Issue #120: an event belongs to the mode its run's Started named.
       const mode = message.event._tag === "Started" ? message.event.mode : state.runModes[message.run];

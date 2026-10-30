@@ -8,6 +8,7 @@ import { Schema } from "effect";
 import { excerptOf, RUN_MODES } from "../src/runMode.ts";
 import { itemIdOf, itemUrlOf } from "../src/tracker.ts";
 import { ON_EXPIRIES, chainSettingsOf, type ClientMessage, currentIds, listedItemOf, PresentedQuestionSchema, decodeClient, decodeServer, inSnapshot, type RunEvent, type RunRecord, type ServerMessage, type Stamped } from "../src/protocol.ts";
+import type { ProcessKey } from "../src/liveOutput.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
 import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, WorkResponse } from "../src/schema.ts";
@@ -521,4 +522,18 @@ test("an Asked without deciding decodes with null; deciding and PromptWithdrawn 
   assert.deepEqual(decoded(decodeServer(JSON.stringify(deciding))), deciding);
   const withdrawn = { ...frame, event: { _tag: "PromptWithdrawn", prompt: 4 } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(withdrawn))), withdrawn);
+});
+
+test("issue #49: an output frame round-trips, and one with an unknown status does not decode", () => {
+  const frames: ServerMessage[] = [
+    { type: "output", run: 2, event: { _tag: "Started", key: "suite:1" as ProcessKey, name: "suite" } },
+    { type: "output", run: 2, event: { _tag: "Printed", key: "suite:1" as ProcessKey, name: "suite", text: "ok <b>`x`</b>\n" } },
+    { type: "output", run: 2, event: { _tag: "Progress", key: "claude:t" as ProcessKey, name: "npm test", seconds: 3.5 } },
+    { type: "output", run: 2, event: { _tag: "Finished", key: "suite:1" as ProcessKey, name: "suite", status: { _tag: "Signaled", signal: "SIGTERM" } } },
+    { type: "output", run: 2, event: { _tag: "Touched", name: "Read a.txt" } },
+  ];
+  for (const f of frames) assert.deepEqual(decodeServer(JSON.stringify(f)), Result.succeed(f));
+  const bad = { type: "output", run: 2, event: { _tag: "Finished", key: "suite:1", name: "suite", status: { _tag: "Vanished" } } };
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify(bad))));
+  assert.ok(Result.isFailure(decodeServer(JSON.stringify({ type: "output", run: 2, event: { _tag: "Started", key: " ", name: "x" } }))));
 });

@@ -13,7 +13,7 @@ import { SUITE_CLOSE_GRACE_MS, suiteRunner } from "../src/suiteExec.ts";
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "suite-exec-"));
 after(() => fs.rmSync(DIR, { recursive: true, force: true }));
 const line = (text: string): CommandLine => Result.getOrThrow(commandLineOf(text));
-const run = (command: string, ceilingMs = 10_000, env: Record<string, string | undefined> = process.env) => Effect.runPromise(suiteRunner(env).run(line(command), DIR, ceilingMs));
+const run = (command: string, ceilingMs = 10_000, env: Record<string, string | undefined> = process.env) => Effect.runPromise(suiteRunner(env).run(line(command), DIR, ceilingMs, () => undefined));
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -78,7 +78,7 @@ test("a command past the ceiling is killed with its process group and fails as t
 test("an interrupted run kills its process group, and nothing is uncaught", async () => {
   await noneUncaught(async () => {
     const pidFile = path.join(DIR, "interrupted.pid");
-    const fiber = Effect.runFork(suiteRunner(process.env).run(line(`sleep 30 & echo $! > ${pidFile}; wait`), DIR, 10_000));
+    const fiber = Effect.runFork(suiteRunner(process.env).run(line(`sleep 30 & echo $! > ${pidFile}; wait`), DIR, 10_000, () => undefined));
     for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) await sleep(20);
     await Effect.runPromise(Fiber.interrupt(fiber));
     const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
@@ -93,7 +93,7 @@ test("the command runs in the given directory with the given environment", async
 });
 
 test("a directory that does not exist fails as not started", async () => {
-  const result = await Effect.runPromise(suiteRunner(process.env).run(line("true"), path.join(DIR, "missing"), 1000));
+  const result = await Effect.runPromise(suiteRunner(process.env).run(line("true"), path.join(DIR, "missing"), 1000, () => undefined));
   assert.equal(result._tag, "Failed");
   assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
 });
@@ -152,7 +152,7 @@ test("an interrupted run stops reading an output a detached descendant holds, an
   let pid: number | null = null;
   try {
     await noneUncaught(async () => {
-      const fiber = Effect.runFork(suiteRunner(process.env).run(line(command), DIR, 10_000));
+      const fiber = Effect.runFork(suiteRunner(process.env).run(line(command), DIR, 10_000, () => undefined));
       for (let i = 0; i < 150 && !fs.existsSync(pidFile); i++) await sleep(20);
       const writerPid = Number(fs.readFileSync(pidFile, "utf8").trim());
       pid = writerPid;
@@ -169,8 +169,22 @@ test("an interrupted run stops reading an output a detached descendant holds, an
 test("a command spawn refuses synchronously fails as not started, and nothing is uncaught", async () => {
   await noneUncaught(async () => {
     // The cast bypasses commandLineOf on purpose, to reach the edge with a value the constructor refuses.
-    const result = await Effect.runPromise(suiteRunner(process.env).run("echo ok\u0000" as CommandLine, DIR, 1000));
+    const result = await Effect.runPromise(suiteRunner(process.env).run("echo ok\u0000" as CommandLine, DIR, 1000, () => undefined));
     assert.equal(result._tag, "Failed");
     assert.equal(result._tag === "Failed" ? result.reason.kind : null, "notStarted");
   });
+});
+
+test("issue #49: onOutput receives every chunk of both streams in order, together the result's output, and nothing after an interruption", async () => {
+  const chunks: string[] = [];
+  const result = await Effect.runPromise(suiteRunner(process.env).run(line("echo one; sleep 0.1; echo two >&2; sleep 0.1; echo three"), DIR, 10_000, (t) => void chunks.push(t)));
+  assert.ok(chunks.length >= 3, `chunks: ${JSON.stringify(chunks)}`);
+  assert.equal(chunks.join(""), result.output);
+  assert.equal(result.output, "one\ntwo\nthree\n");
+  const late: string[] = [];
+  const fiber = Effect.runFork(suiteRunner(process.env).run(line("echo first; sleep 0.5; echo after"), DIR, 10_000, (t) => void late.push(t)));
+  for (let i = 0; i < 100 && late.length === 0; i++) await sleep(10);
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  await sleep(800);
+  assert.deepEqual(late, ["first\n"]);
 });

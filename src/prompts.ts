@@ -16,6 +16,7 @@ import type { ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
 import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type SuiteStop, type WorkFailure } from "./suite.ts";
+import type { ProcessStatus } from "./liveOutput.ts";
 import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
@@ -4051,4 +4052,42 @@ export const sendBackIncompleteText = (item: string, ending: "sentBack" | "stopp
   const parked = park._tag === "Parked" ? `its work is parked on the branch ${park.branch}` : park._tag === "NothingParked" ? "it had no work to park" : "its parking did not complete";
   const meant = ending === "sentBack" ? "sent back to refinement" : "stopped and left implementing";
   return `item ${item} was to be ${meant}; ${parked}, but a tracker step after the parking failed: ${cause}`;
+};
+
+// Issue #49: the live panel of the dashboard, which shows what running processes print.
+/** The panel's region name. */
+export const LIVE_OUTPUT_NAME = "Output of the running process";
+/** The note under the panel's header: what it holds and that Interloq does not compose it. */
+export const LIVE_OUTPUT_NOTE = "What running processes print, as they print it, since this tab connected. Interloq does not write or check this text.";
+/** The panel's header before anything printed. */
+export const LIVE_OUTPUT_EMPTY = "Nothing has printed since this tab connected.";
+/** The panel's header once no process runs and lines remain. */
+export const OUTPUT_FINISHED_HEADER = "No process is running; the lines below are from processes that have ended.";
+/** The prefix of the suite's lines. */
+export const SUITE_OUTPUT_NAME = "suite";
+/** The prefix of Codex's reasoning summaries. */
+export const CODEX_REASONING_NAME = "Codex reasoning";
+/** The panel's header while processes run: each named, with its elapsed time where known. */
+export const outputRunningHeader = (running: readonly Readonly<{ name: string; seconds: number | null }>[]): string =>
+  `Still running: ${running.map((p) => (p.seconds === null ? p.name : `${p.name} (${durationText(p.seconds * 1000)})`)).join(", ")}`;
+/** The line the panel adds when a process ends: its name and how it ended, where known. */
+export const outputEndedLine = (name: string, status: ProcessStatus): string => {
+  switch (status._tag) {
+    case "Exited":
+      return `${name} ended with exit code ${status.code}`;
+    case "Signaled":
+      return `${name} ended by the signal ${status.signal}`;
+    case "TimedOut":
+      return `${name} ended: stopped at its time limit`;
+    case "NotStarted":
+      return `${name} ended: it could not start`;
+    case "Failed":
+      return `${name} ended with an error`;
+    case "Succeeded":
+      return `${name} ended`;
+    case "Stopped":
+      return `${name} ended: stopped`;
+    case "Unknown":
+      return `${name} ended; how is not known`;
+  }
 };

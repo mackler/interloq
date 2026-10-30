@@ -5,6 +5,8 @@ import * as prompts from "../../src/prompts.ts";
 import { plainBlocks, plainPieces } from "../../src/pieces.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import { shownOf } from "./test-setup.ts";
+import type { ProcessKey } from "../../src/liveOutput.ts";
+import { applyOutput, COMPACT_PANEL_LINES, EMPTY_PANEL, type LivePanel } from "./livePanel.ts";
 import { type AnsweredEntry, type Dashboard as DashboardView, emptyDashboard, emptyRun, type RunView } from "./state.ts";
 
 // Issue #22: the "You and Interloq" panel as a dashboard, mounted in jsdom.
@@ -123,5 +125,46 @@ describe("the dashboard", () => {
     expect(target.querySelector("[data-answers-heading] button")).not.toBe(null);
     const open = mountDashboard(run, { compact: true, answersOpen: true });
     expect(open.target.querySelectorAll("[data-answers] [data-answer]").length).toBe(2);
+  });
+});
+
+// Issue #49: the live panel, plain preformatted text, in the full and the compact dashboard at all times.
+describe("the live panel in the dashboard", () => {
+  const mountWith = (output: LivePanel, compact = false) => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    mounted.push(mount(Dashboard, { target, props: { run: runWith({}), answersOpen: false, compact, onAnswers: () => undefined, output } }));
+    flushSync();
+    return target;
+  };
+  const region = (target: HTMLElement) => target.querySelector(`section[aria-label="${prompts.LIVE_OUTPUT_NAME}"]`);
+  const K = "claude:t1" as ProcessKey;
+
+  test("a line with markup is shown as its characters, never as markup", () => {
+    const panel = applyOutput(EMPTY_PANEL, { _tag: "Printed", key: K, name: "cat", text: "<b>x</b> `y`\n" });
+    const target = mountWith(panel);
+    const pre = region(target)?.querySelector("pre");
+    expect(pre?.textContent).toContain("<b>x</b> `y`");
+    expect(pre?.querySelector("b")).toBe(null);
+    expect(pre?.querySelector("code")).toBe(null);
+  });
+
+  test("the empty, running and finished headers, and the note", () => {
+    expect(region(mountWith(EMPTY_PANEL))?.textContent).toContain(prompts.LIVE_OUTPUT_EMPTY);
+    expect(region(mountWith(EMPTY_PANEL))?.textContent).toContain(prompts.LIVE_OUTPUT_NOTE);
+    const running = applyOutput(EMPTY_PANEL, { _tag: "Started", key: K, name: "npm test" });
+    expect(region(mountWith(running))?.textContent).toContain(prompts.outputRunningHeader([{ name: "npm test", seconds: null }]));
+    const ended = applyOutput(applyOutput(running, { _tag: "Printed", key: K, name: "npm test", text: "ok\n" }), { _tag: "Finished", key: K, name: "npm test", status: { _tag: "Exited", code: 0 } });
+    const target = mountWith(ended);
+    expect(region(target)?.textContent).toContain(prompts.OUTPUT_FINISHED_HEADER);
+    expect(region(target)?.querySelector("pre")?.textContent).toContain("npm test | ok");
+  });
+
+  test("the compact dashboard shows the panel with four lines and keeps finished output", () => {
+    const panel = Array.from({ length: 8 }, (_, i) => i).reduce<LivePanel>((p, i) => applyOutput(p, { _tag: "Printed", key: K, name: "ls", text: `line ${i}\n` }), EMPTY_PANEL);
+    const ended = applyOutput(panel, { _tag: "Finished", key: K, name: "ls", status: { _tag: "Succeeded" } });
+    const pre = region(mountWith(ended, true))?.querySelector("pre");
+    expect(pre?.textContent?.split("\n").filter((l) => l !== "").length).toBe(COMPACT_PANEL_LINES);
+    expect(pre?.textContent).toContain("line 7");
   });
 });

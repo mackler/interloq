@@ -12,5 +12,6 @@ export const observingQuestions = (ui: UiShape, seen: Ref.Ref<boolean>): UiShape
   askMessage: (prompt) => ui.askMessage(prompt),
   nextQuestion: Effect.suspend(() => ui.nextQuestion),
   enterQuestion: (question) => ui.enterQuestion(question),
+  output: (event) => ui.output(event),
   notify: (event) => (event._tag === "QuestionPresented" ? Effect.andThen(Ref.set(seen, true), ui.notify(event)) : ui.notify(event)),
 });

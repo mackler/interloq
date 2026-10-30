@@ -71,6 +71,7 @@ test("the seam with the classifier: the reviewer fails such a turn with Transpor
   const fake = new FakeSdk();
   const sdk: AgentSdk = {
     inheritedEnv: fake.inheritedEnv,
+    readOutputTail: (p) => fake.readOutputTail(p),
     query: (p) => fake.query(p),
     stepReporter: (h) => fake.stepReporter(h),
     startThread: (options) => codexThread(Result.succeed(exe), options ?? {}, process.env),

@@ -703,6 +703,26 @@ describe("App and the draft", () => {
     });
   }
 
+  // Issue #49: the live panel holds only what arrived over this connection: a hello empties it.
+  test("an output frame shows its line in the panel, and a second hello empties the panel", async () => {
+    const { root, ws } = await openPage();
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+    ws.receive({ type: "output", run: 1, event: { _tag: "Printed", key: "suite:1", name: "suite", text: "ok 1 the parser\n" } });
+    expect(one(root, "[data-live-output] pre").textContent).toContain("suite | ok 1 the parser");
+    ws.receive({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+    expect(one(root, "[data-live-output] pre").textContent).not.toContain("ok 1 the parser");
+    expect(one(root, "[data-live-output]").textContent).toContain(prompts.LIVE_OUTPUT_EMPTY);
+  });
+
+  test("with a question pending, the compact dashboard shows the panel", async () => {
+    const { root, ws } = await openPage();
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    ws.receive({ type: "output", run: 1, event: { _tag: "Touched", name: "Read src/a.ts" } });
+    expect(root.querySelector("[name=answer]")).not.toBe(null);
+    const panel = one(root, `section[aria-label="${prompts.DASHBOARD_COMPACT_NAME}"] [data-live-output]`);
+    expect(panel.textContent).toContain("Read src/a.ts");
+  });
+
   // W1-R1-1: above the list, the bar names the server's project, not the ended run's.
   test("after a run has ended, Back to the list shows the server's identification in the top bar and the title", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);

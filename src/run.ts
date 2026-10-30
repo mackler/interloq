@@ -1,7 +1,8 @@
 // The complete run: planning phase K, execution phase K and work review K, until Claude Code reports
 // 'finished' and the work review converges.
 
-import { Clock, Effect, Exit, Option, Ref, Result } from "effect";
+import { Clock, Effect, Exit, Fiber, Option, Queue, Ref, Result } from "effect";
+import { NEW_SANITIZER, type ProcessKey, processKeyOf, type Sanitizer, sanitizeChunk } from "./liveOutput.ts";
 import { commentDateOf, commentText, runCommentKey } from "./itemComments.ts";
 import { observingQuestions } from "./questionsSeen.ts";
 import { rootName } from "./park.ts";
@@ -13,7 +14,7 @@ import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
 import { questionPhase } from "./interview.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
-import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
+import { continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, SUITE_OUTPUT_NAME, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -26,7 +27,7 @@ import * as S from "./schema.ts";
 import { Decider, Planner, type PlannerShape, RunConfig, type Services, type StepReporter, Store, type StoreError, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { runTrackerEnv, type TrackerRetryEnv, type TrackerWrite, writeWithRetry } from "./trackerRetry.ts";
 import { countOfKind, foreseenPhases as foreseen, type Iteration, iterationsOf, type NumberedPhaseKind, type Phase, phaseName } from "./uiEvents.ts";
-import { SUITE_TAIL_LINES, type SuiteStop, suiteOutcomeOf, suiteVerdictOf, tailLines } from "./suite.ts";
+import { SUITE_TAIL_LINES, type SuiteResult, type SuiteStop, suiteOutcomeOf, suiteStatusOf, suiteVerdictOf, tailLines } from "./suite.ts";
 import { firstPlanValidation, planField, planSubject, planValidation, savePlan, verdictSubject, workSubject } from "./subjects.ts";
 import { type SentBack, sendBack } from "./sendBack.ts";
 
@@ -329,6 +330,32 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
      * suite-<n>.log, its end notified; a pass or a failure of the work is said and written to conversation.md here, a
      * stop outside the work by `finalSuite`, once the rail foresees what follows it (issue #181).
      */
+    /**
+     * Issue #49: the suite run with its output on the live panel as it arrives: its Started, each chunk sanitized by one
+     * sanitizer held for the run, and its Finished once every chunk was passed on; Stopped where Stop task ends it.
+     * The runner's callback puts each chunk on a queue in arrival order; a fiber of the phase passes them on; null ends it.
+     */
+    const liveSuite = (key: ProcessKey, runSuite: (onOutput: (text: string) => void) => Effect.Effect<SuiteResult>) =>
+      Effect.gen(function* () {
+        const name = SUITE_OUTPUT_NAME;
+        const chunks = yield* Queue.unbounded<string | null>();
+        yield* ui.output({ _tag: "Started", key, name });
+        const forward = (sanitizer: Sanitizer): Effect.Effect<void> =>
+          Queue.take(chunks).pipe(
+            Effect.flatMap((chunk) => {
+              if (chunk === null) return Effect.void;
+              const [next, text] = sanitizeChunk(sanitizer, chunk);
+              return (text === "" ? Effect.void : ui.output({ _tag: "Printed", key, name, text })).pipe(Effect.andThen(forward(next)));
+            }),
+          );
+        const forwarder = yield* Effect.forkChild(forward(NEW_SANITIZER));
+        const result = yield* runSuite((text) => void Queue.offerUnsafe(chunks, text));
+        Queue.offerUnsafe(chunks, null);
+        yield* Fiber.join(forwarder);
+        yield* ui.output({ _tag: "Finished", key, name, status: suiteStatusOf(result) });
+        return result;
+      }).pipe(Effect.onInterrupt(() => ui.output({ _tag: "Finished", key, name: SUITE_OUTPUT_NAME, status: { _tag: "Stopped" } })));
+
     const suitePhase = (command: S.CommandLine, n: number) =>
       Effect.gen(function* () {
         const runner = yield* SuiteRunner;
@@ -336,7 +363,8 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
         const name = label("suite", n);
         yield* ui.notify({ _tag: "PhaseBegan", phase });
         yield* sayAndWrite(suiteBeganLine(name, command));
-        const result = yield* runner.run(command, store.project, config.suiteTimeoutMinutes * 60_000);
+        const runSuite = (onOutput: (text: string) => void) => runner.run(command, store.project, config.suiteTimeoutMinutes * 60_000, onOutput);
+        const result = yield* Result.match(processKeyOf({ kind: "suite", run: n }), { onFailure: () => runSuite(() => undefined), onSuccess: (key) => liveSuite(key, runSuite) });
         yield* store.saveSuiteLog(n, result.output);
         const log = recordPath(store.root, { kind: "suiteLog", n });
         yield* ui.notify({ _tag: "PhaseEnded", phase, result: suiteOutcomeOf(result) });

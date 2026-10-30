@@ -13,7 +13,8 @@ import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
 import { answerExpiredText, limitAnswerExpiredText, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
-import { Reviewer, Tracker } from "../src/services.ts";
+import { Reviewer, Tracker, type UiShape } from "../src/services.ts";
+import type { OutputEvent } from "../src/liveOutput.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
 import type { RunEvent } from "../src/protocol.ts";
@@ -855,4 +856,30 @@ test("turning the mode off while a question counts down stops the countdown at i
   assert.equal(await run(h.manager.answer(h.manager.incarnation, id, asked.prompt, "PostgreSQL")), null);
   await ended(h, id);
   assert.equal(endCode(h, id), 0);
+});
+
+test("issue #49: a run's output is broadcast to a subscriber, kept out of its events and the replay, and dropped once it ended", async () => {
+  const repo = tempRepo();
+  let reach = (): void => undefined;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const uis: UiShape[] = [];
+  const wiringOf = reviewing(repo, () => reach(), Effect.never);
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], (options) => wiringOf(options));
+  const outputs: Broadcast[] = [];
+  const manager = await run(
+    makeRunManager((ui) => (uis.push(ui), { ...wiringOf({ tracker: h.tracker, steps: [{ output: noQuestions, plan: "v1" }] }), ui: Effect.succeed(ui) }), repo, [], "test", trackerAccessOf(h.tracker), OFF_SETTINGS).pipe(Effect.provide(platformLayer)),
+  );
+  await run(manager.subscribe((b: Broadcast) => Effect.sync(() => void (b._tag === "output" ? outputs.push(b) : undefined))).pipe(Scope.provide(h.scope)));
+  const id = await run(manager.start(startOf("implementation", nextItem(h, "implementation"))));
+  assert.equal(typeof id, "number");
+  await reached;
+  const event: OutputEvent = { _tag: "Touched", name: "Read a.txt" };
+  await run(uis[0]!.output(event));
+  assert.deepEqual(outputs, [{ _tag: "output", run: id, event }]);
+  const replay = await run(manager.replay);
+  assert.ok(!JSON.stringify(replay).includes("Read a.txt"));
+  await run(manager.stop(manager.incarnation, id as number));
+  for (let i = 0; i < 200 && (await run(manager.current)).implementation !== null; i++) await sleep(10);
+  await run(uis[0]!.output(event));
+  assert.equal(outputs.length, 1);
 });

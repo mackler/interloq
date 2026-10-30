@@ -6,7 +6,8 @@ import { Clock, Deferred, Duration, Effect, Exit, Layer, Ref, Result } from "eff
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
-import { type BackgroundState, type CallOutcome, checkBackground, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
+import { type BackgroundState, type CallOutcome, checkBackground, claudeOpenProcesses, claudeOutputOf, EMPTY_CLAUDE_OUTPUT, type OutputCommand, toolTarget, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
+import { plainOutput } from "./liveOutput.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode, type ProcessEnd, processEndOf } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
@@ -372,10 +373,29 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             }),
           ),
         );
+      // Issue #49: the call's live output, folded per message; every process left open is ended with the call.
+      const output = yield* Ref.make(EMPTY_CLAUDE_OUTPUT);
+      const live = (command: OutputCommand): Effect.Effect<void> =>
+        command._tag === "Emit"
+          ? ui.output(command.event)
+          : Effect.tryPromise({ try: () => sdk.readOutputTail(command.path), catch: () => null }).pipe(
+              Effect.catch(() => Effect.succeed(null)),
+              Effect.flatMap((tail) => {
+                const text = tail === null ? "" : plainOutput(tail);
+                return text === "" ? Effect.void : ui.output({ _tag: "Printed", key: command.key, name: command.name, text });
+              }),
+            );
+      const endOpen = Ref.get(output).pipe(Effect.flatMap((state) => Effect.forEach(claudeOpenProcesses(state), (e) => ui.output(e), { discard: true })));
       const consume = Effect.gen(function* () {
         for (let message = yield* next(); message !== null; message = yield* next()) {
           seen.push(message);
           yield* observe(message);
+          const received = message;
+          const commands = yield* Ref.modify(output, (state) => {
+            const [nextState, emitted] = claudeOutputOf(state, received);
+            return [emitted, nextState] as const;
+          });
+          yield* Effect.forEach(commands, live, { discard: true });
           if (message.type === "system" && message.subtype === "init") {
             yield* Ref.set(session, message.session_id);
             if ((yield* Ref.get(announcedModel)) !== message.model) {
@@ -386,8 +406,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             for (const block of message.message.content) {
               if (show === "text" && block.type === "text" && block.text.trim() !== "") yield* ui.notify({ _tag: "ClaudeSaid", text: block.text.trim() });
               if (block.type === "tool_use" && block.name !== "StructuredOutput") {
-                const input = block.input as Record<string, unknown>;
-                const target = String(input?.file_path ?? input?.pattern ?? input?.command ?? "");
+                const target = toolTarget(block.input);
                 yield* ui.notify({ _tag: "ToolUsed", agent: "claude", tool: block.name, target, callId });
                 if (show === "tools") yield* ui.say(`  [claude: ${block.name} ${target}]`);
               }
@@ -421,7 +440,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
         controller.abort();
         await iterator.return?.().catch(() => undefined);
       });
-      yield* consume.pipe(Effect.ensuring(close));
+      yield* consume.pipe(Effect.ensuring(Effect.andThen(endOpen, close)));
       if (yield* Deferred.isDone(callbackFailure)) return yield* Deferred.await(callbackFailure);
       return yield* recorded(reduceMessages(seen, streamError, streamCode, processEnd));
     }).pipe(

@@ -109,6 +109,12 @@ export class FakeSdk implements AgentSdk {
   }
 
   /** The server a live binding would build; the handler is kept for `reportStep`. */
+  /** Issue #49: the background tasks' output files, by path; a path not here cannot be read. */
+  readonly outputFiles = new Map<string, string>();
+  readOutputTail(path: string): Promise<string | null> {
+    return Promise.resolve(this.outputFiles.get(path) ?? null);
+  }
+
   stepReporter(handler: StepHandler): McpServerConfig {
     return { type: "sdk", name: REPORT_STEP_SERVER, instance: { handler } } as unknown as McpServerConfig;
   }

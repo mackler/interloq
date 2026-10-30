@@ -107,7 +107,7 @@ const typedFailure = async <E>(effect: Effect.Effect<unknown, E>): Promise<E> =>
 test("a startThread that throws makes startPhase fail with CodexCallFailed, not a defect", async () => {
   const store = await run(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
   const fake = new FakeSdk();
-  const sdk: AgentSdk = { inheritedEnv: fake.inheritedEnv, query: (params) => fake.query(params), stepReporter: (handler) => fake.stepReporter(handler), startThread: () => { throw new Error("spawn codex ENOENT"); } };
+  const sdk: AgentSdk = { inheritedEnv: fake.inheritedEnv, readOutputTail: (p) => fake.readOutputTail(p), query: (params) => fake.query(params), stepReporter: (handler) => fake.stepReporter(handler), startThread: () => { throw new Error("spawn codex ENOENT"); } };
   const deps = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Sdk, sdk), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
   const codex = await run(makeCodexReviewer.pipe(Effect.provide(deps)));
   const error = await typedFailure(codex.startPhase);
@@ -264,4 +264,34 @@ test("seam: the plan's and the work's subjects review with the effect review, ev
   assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS).reviewSchema, S.EffectReview);
   assert.equal(workSubject("t", 1, false, execution, S.NO_STEP_CHECKS).respond.schema, S.WorkResponse);
   for (const subject of [questionSubject("t"), termsSubject([]), requirementsSubject(), decisionSubject(1, 1, "f", (a) => Effect.succeed({ value: a, notes: [] }) as never)]) assert.equal(subject.reviewSchema, S.Review, subject.heading);
+});
+
+// Issue #49: a turn's command output and reasoning reach the live panel, and an item left open is ended at the turn's end.
+const running = (id: string, output: string): ThreadEvent => ({ type: "item.updated", item: { id, type: "command_execution", command: "npm test", aggregated_output: output, status: "in_progress" } }) as ThreadEvent;
+
+test("a streamed turn's updated command output and its end reach the live panel", async () => {
+  const events = [running("c1", "one\n"), running("c1", "one\ntwo\n"), ...command("c1", "npm test")];
+  const fake = await reviewer([turn(JSON.stringify({ issues: [] }), undefined, events)]);
+  const session = await run(fake.reviewer.startPhase);
+  await run(session.review("review", S.Review));
+  assert.deepEqual(fake.ui.outputs.map((e) => (e._tag === "Printed" ? e.text : e._tag)), ["Started", "one\n", "two\n", "ok", "Finished"]);
+});
+
+test("a turn that fails while a command runs ends that command Unknown, and the completed one is not ended again", async () => {
+  const events = [...command("c1", "git diff"), running("c2", "partial"), ...turnFailed("stream lost")];
+  const fake = await reviewer([events]);
+  const session = await run(fake.reviewer.startPhase);
+  await typedFailure(session.review("review", S.Review));
+  const ends = fake.ui.outputs.flatMap((e) => (e._tag === "Finished" ? [[e.key, e.status._tag]] : []));
+  assert.deepEqual(ends, [["codex:codex-1:c1", "Exited"], ["codex:codex-1:c2", "Unknown"]]);
+});
+
+test("two turns that reuse an item id give two Started and Finished pairs under different keys", async () => {
+  const one = turn(JSON.stringify({ issues: [] }), undefined, command("item_0", "ls"));
+  const fake = await reviewer([one, [...one]]);
+  const session = await run(fake.reviewer.startPhase);
+  await run(session.review("review", S.Review));
+  await run(session.review("review", S.Review));
+  const pairs = fake.ui.outputs.flatMap((e) => (e._tag === "Started" || e._tag === "Finished" ? [`${e._tag} ${e.key}`] : []));
+  assert.deepEqual(pairs, ["Started codex:codex-1:item_0", "Finished codex:codex-1:item_0", "Started codex:codex-2:item_0", "Finished codex:codex-2:item_0"]);
 });

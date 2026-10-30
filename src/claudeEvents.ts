@@ -9,6 +9,7 @@ import type { ExecContinuation, ExecOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
 import { type ClaudeFailure, type ProcessEnd, rejectionOf } from "./transport.ts";
 import { backgroundKilledText } from "./prompts.ts";
+import { type OutputEvent, plainOutput, type ProcessKey, processKeyOf, processNameOf, type ProcessStatus } from "./liveOutput.ts";
 
 export type Question = Readonly<{ question: string; options: readonly Readonly<{ label: string; description: string }>[] }>;
 /** A recorded AskUserQuestion stop of an execution call. */
@@ -213,3 +214,119 @@ export const nameTasks = (names: ReadonlyMap<string, string>, message: SDKMessag
 };
 /** The one naming rule of a task in the wait's texts (issue #161): the description `nameTasks` recorded, else its id. */
 export const taskName = (names: ReadonlyMap<string, string>, id: string): string => names.get(id) ?? id;
+
+// ---- the live output of a Claude Code call (issue #49) ---------------------------------------------------------------
+// The Agent SDK sends no foreground command's output before it returns (sdk.d.ts of 0.3.283: tool_progress carries the
+// elapsed time alone, task messages no text): a command shows its name and elapsed time while it runs and its output
+// when its result arrives; a background task shows its name, and its output from its output file at its end.
+
+/** What the adapter does for the live panel: emit an event, or read a task's output file and emit its tail. */
+export type OutputCommand = Readonly<{ _tag: "Emit"; event: OutputEvent }> | Readonly<{ _tag: "Tail"; key: ProcessKey; name: string; path: string }>;
+
+/**
+ * The live output's state of one call: the foreground commands running, by tool_use_id, with their names; the
+ * background tasks as `foldBackground` and `nameTasks` see them; every non-ambient task seen in a task_started with its
+ * description (a foreground task may move to the background later); and the tasks started on the panel and not ended.
+ */
+export type ClaudeOutputState = Readonly<{
+  commands: ReadonlyMap<string, string>;
+  background: BackgroundState;
+  names: ReadonlyMap<string, string>;
+  seenTasks: ReadonlyMap<string, string>;
+  openTasks: ReadonlyMap<string, string>;
+}>;
+export const EMPTY_CLAUDE_OUTPUT: ClaudeOutputState = { commands: new Map(), background: NO_BACKGROUND, names: new Map(), seenTasks: new Map(), openTasks: new Map() };
+
+const emit = (event: OutputEvent): OutputCommand => ({ _tag: "Emit", event });
+const withEntry = (m: ReadonlyMap<string, string>, k: string, v: string): ReadonlyMap<string, string> => new Map([...m, [k, v]]);
+const withoutEntry = (m: ReadonlyMap<string, string>, k: string): ReadonlyMap<string, string> => new Map([...m].filter(([key]) => key !== k));
+const keyed = (source: Parameters<typeof processKeyOf>[0], f: (key: ProcessKey) => readonly OutputCommand[]): readonly OutputCommand[] => {
+  const built = processKeyOf(source);
+  return Result.isSuccess(built) ? f(built.success) : [];
+};
+/** The target of a tool use as the activity line names it (`ToolUsed` in src/claude.ts). */
+export const toolTarget = (input: unknown): string => {
+  const i = (typeof input === "object" && input !== null ? input : {}) as Record<string, unknown>;
+  return String(i.file_path ?? i.pattern ?? i.command ?? "");
+};
+const resultText = (content: unknown): string =>
+  typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.flatMap((b: unknown) => (typeof b === "object" && b !== null && (b as { type?: unknown }).type === "text" ? [String((b as { text?: unknown }).text ?? "")] : [])).join("\n")
+      : "";
+const statusOfTask = (status: TaskEnd["status"]): ProcessStatus => (status === "completed" ? { _tag: "Succeeded" } : status === "failed" ? { _tag: "Failed" } : { _tag: "Stopped" });
+
+/** The live output of one message of a call (issue #49), pure. */
+export const claudeOutputOf = (state: ClaudeOutputState, message: SDKMessage): readonly [ClaudeOutputState, readonly OutputCommand[]] => {
+  if (message.type === "assistant") {
+    let s = state;
+    const out: OutputCommand[] = [];
+    for (const block of message.message.content) {
+      if (block.type !== "tool_use" || block.name === "StructuredOutput") continue;
+      const input = (typeof block.input === "object" && block.input !== null ? block.input : {}) as Record<string, unknown>;
+      if (block.name === "Bash") {
+        if (input.run_in_background === true) continue;
+        const name = processNameOf(String(input.command ?? ""));
+        const id = block.id;
+        out.push(...keyed({ kind: "claude", id }, (key) => ((s = { ...s, commands: withEntry(s.commands, id, name) }), [emit({ _tag: "Started", key, name })])));
+      } else out.push(emit({ _tag: "Touched", name: processNameOf(`${block.name} ${toolTarget(input)}`) }));
+    }
+    return [s, out];
+  }
+  if (message.type === "tool_progress") {
+    const name = state.commands.get(message.tool_use_id);
+    return name === undefined ? [state, []] : [state, keyed({ kind: "claude", id: message.tool_use_id }, (key) => [emit({ _tag: "Progress", key, name, seconds: message.elapsed_time_seconds })])];
+  }
+  if (message.type === "user") {
+    const content = message.message.content;
+    if (typeof content === "string") return [state, []];
+    let s = state;
+    const out: OutputCommand[] = [];
+    for (const block of content) {
+      if (block.type !== "tool_result") continue;
+      const name = s.commands.get(block.tool_use_id);
+      if (name === undefined) continue;
+      s = { ...s, commands: withoutEntry(s.commands, block.tool_use_id) };
+      const text = plainOutput(resultText(block.content));
+      const status: ProcessStatus = block.is_error === true ? { _tag: "Failed" } : { _tag: "Succeeded" };
+      out.push(...keyed({ kind: "claude", id: block.tool_use_id }, (key) => [...(text === "" ? [] : [emit({ _tag: "Printed", key, name, text })]), emit({ _tag: "Finished", key, name, status })]));
+    }
+    return [s, out];
+  }
+  if (message.type !== "system") return [state, []];
+  const background = foldBackground(state.background, message);
+  const names = nameTasks(state.names, message);
+  let s: ClaudeOutputState = { ...state, background, names };
+  const out: OutputCommand[] = [];
+  const start = (id: string, name: string): void => {
+    if (s.openTasks.has(id) || background.ambient.has(id) || background.ended.some((e) => e.taskId === id)) return;
+    out.push(...keyed({ kind: "task", id }, (key) => ((s = { ...s, openTasks: withEntry(s.openTasks, id, name) }), [emit({ _tag: "Started", key, name })])));
+  };
+  if (message.subtype === "task_started" && message.ambient !== true) s = { ...s, seenTasks: withEntry(s.seenTasks, message.task_id, message.description) };
+  for (const id of background.pending) if (!state.background.pending.has(id)) start(id, taskName(names, id));
+  if (message.subtype === "task_updated" && message.patch.is_backgrounded === true) {
+    const description = s.seenTasks.get(message.task_id);
+    if (description !== undefined) start(message.task_id, description);
+  }
+  if (message.subtype === "task_notification" && message.ambient !== true) {
+    const name = s.openTasks.get(message.task_id);
+    if (name !== undefined) {
+      s = { ...s, openTasks: withoutEntry(s.openTasks, message.task_id) };
+      out.push(...keyed({ kind: "task", id: message.task_id }, (key) => [{ _tag: "Tail", key, name, path: message.output_file }, emit({ _tag: "Finished", key, name, status: statusOfTask(message.status) })]));
+    }
+  }
+  // A task on the panel later marked ambient is ended there: how is not known.
+  for (const [id, name] of s.openTasks) {
+    if (!background.ambient.has(id)) continue;
+    s = { ...s, openTasks: withoutEntry(s.openTasks, id) };
+    out.push(...keyed({ kind: "task", id }, (key) => [emit({ _tag: "Finished", key, name, status: { _tag: "Unknown" } })]));
+  }
+  return [s, out];
+};
+
+/** The end of every command and task of the call still open on the panel (issue #49), for the call's end. */
+export const claudeOpenProcesses = (state: ClaudeOutputState): readonly OutputEvent[] => [
+  ...[...state.commands].flatMap(([id, name]) => keyed({ kind: "claude", id }, (key) => [emit({ _tag: "Finished", key, name, status: { _tag: "Unknown" } })])),
+  ...[...state.openTasks].flatMap(([id, name]) => keyed({ kind: "task", id }, (key) => [emit({ _tag: "Finished", key, name, status: { _tag: "Unknown" } })])),
+].flatMap((c) => (c._tag === "Emit" ? [c.event] : []));

@@ -1,5 +1,6 @@
 // Issue #162 (requirements G-R1-1, F1): the whole suite that Interloq runs after the review of the work finds nothing left to correct, as data (pure).
 // The runner is the edge src/suiteExec.ts; the port is `SuiteRunner` in src/services.ts.
+import type { ProcessStatus } from "./liveOutput.ts";
 
 /** Why a suite run failed: its exit code, the signal that ended it, the bound it exceeded, or the shell not starting. */
 export type SuiteFailure =
@@ -55,5 +56,20 @@ export const suiteVerdictOf = (result: SuiteResult): SuiteVerdict => {
     case "timedOut":
     case "notStarted":
       return { _tag: "Stopped", reason };
+  }
+};
+
+/** Issue #49: how a suite run ended, as the live panel's ended line states it. */
+export const suiteStatusOf = (result: SuiteResult): ProcessStatus => {
+  if (result._tag === "Passed") return { _tag: "Exited", code: 0 };
+  switch (result.reason.kind) {
+    case "exit":
+      return { _tag: "Exited", code: result.reason.code };
+    case "signal":
+      return { _tag: "Signaled", signal: result.reason.signal };
+    case "timedOut":
+      return { _tag: "TimedOut" };
+    case "notStarted":
+      return { _tag: "NotStarted" };
   }
 };

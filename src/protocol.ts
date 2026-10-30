@@ -10,6 +10,7 @@ import { excerptOf, RunMode } from "./runMode.ts";
 import { itemUrlOf, type TrackerItem } from "./tracker.ts";
 import { ATTACHED_KINDS } from "./question.ts";
 import { type ChainSettings, type ChainState, ChainStateSchema, cutoffOf, runLimitOf } from "./chain.ts";
+import type { OutputEvent } from "./liveOutput.ts";
 
 /**
  * Issue #185: what happens when a question's wait for an answer runs out: the run is abandoned, or (a review's round or
@@ -157,7 +158,9 @@ export type ServerMessage =
   /** The chain's whole state after a change (issue #147); every tab receives it. */
   | Readonly<{ type: "chain"; state: ChainState }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
-  | Readonly<{ type: "closing" }>;
+  | Readonly<{ type: "closing" }>
+  /** Issue #49: what a running process of the run printed, live only: in no replay, and never sent again. */
+  | Readonly<{ type: "output"; run: number; event: OutputEvent }>;
 
 const Int = S.NonNegativeInt;
 const Str = Schema.String;
@@ -305,6 +308,26 @@ export const ClientMessageSchema = Schema.Union([
   }),
 ]);
 const CurrentRunsSchema = Schema.Struct({ refinement: Schema.Array(Int), implementation: Schema.NullOr(Int) });
+// Issue #49: the live output.
+const ProcessKeySchema = Str.check(Schema.isPattern(/\S/u)).pipe(Schema.brand("ProcessKey"));
+const ProcessStatusSchema = Schema.Union([
+  tagged("Exited", { code: Schema.Int }),
+  tagged("Signaled", { signal: Str }),
+  tagged("TimedOut", {}),
+  tagged("NotStarted", {}),
+  tagged("Failed", {}),
+  tagged("Succeeded", {}),
+  tagged("Stopped", {}),
+  tagged("Unknown", {}),
+]);
+const OutputEventSchema = Schema.Union([
+  tagged("Started", { key: ProcessKeySchema, name: Str }),
+  tagged("Printed", { key: ProcessKeySchema, name: Str, text: Str }),
+  tagged("Progress", { key: ProcessKeySchema, name: Str, seconds: Schema.Finite }),
+  tagged("Finished", { key: ProcessKeySchema, name: Str, status: ProcessStatusSchema }),
+  tagged("Touched", { name: Str }),
+]);
+
 export const ServerMessageSchema = Schema.Union([
   typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
@@ -315,6 +338,7 @@ export const ServerMessageSchema = Schema.Union([
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("chain", { state: ChainStateSchema }),
   typed("closing", {}),
+  typed("output", { run: Int, event: OutputEventSchema }),
 ]);
 
 // The declared types and the schemas' types are the same: each is assignable to the other.
@@ -326,6 +350,7 @@ void same<Same<typeof StampedSchema.Type, Stamped>>();
 void same<Same<typeof RunUiStateSchema.Type, RunUiState>>();
 void same<Same<typeof ClientMessageSchema.Type, ClientMessage>>();
 void same<Same<typeof ServerMessageSchema.Type, ServerMessage>>();
+void same<Same<typeof OutputEventSchema.Type, OutputEvent>>();
 
 const strict = { onExcessProperty: "error" as const };
 const decodeWith = <A>(schema: Schema.Decoder<A>) => {

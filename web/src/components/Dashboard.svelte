@@ -15,10 +15,13 @@
   import AnsweredQuestion from "./AnsweredQuestion.svelte";
   import Disclosure from "./Disclosure.svelte";
   import StatusLine from "./StatusLine.svelte";
+  import LiveOutput from "./LiveOutput.svelte";
+  import { COMPACT_PANEL_LINES, EMPTY_PANEL, type LivePanel, PANEL_LINES } from "../livePanel.ts";
 
   const NAME = "You and Interloq";
-  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; compact?: boolean };
-  let { run, answersOpen, onAnswers, compact = false }: Props = $props();
+  // Issue #49: `output`, the run's live panel as this tab received it, shown in both forms at all times.
+  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; compact?: boolean; output?: LivePanel };
+  let { run, answersOpen, onAnswers, compact = false, output = EMPTY_PANEL }: Props = $props();
   const d = $derived(run.dashboard);
   const last = $derived(lastAnswer(d));
   const listId = $derived(`dashboard-answers-${run.id}-${compact ? "compact" : "full"}`);
@@ -37,6 +40,7 @@
     {/if}
   {/if}
   <StatusLine status={d.status} retry={run.retry?.wait ?? null} wait={run.limitWait} {compact} />
+  {#if compact}<LiveOutput panel={output} lines={COMPACT_PANEL_LINES} />{/if}
   <div class="regions">
     {#if !compact}
       {#if d.interviewHelp !== null}<p class="help m3-font-body-small" data-interview-help>{d.interviewHelp}</p>{/if}
@@ -64,6 +68,7 @@
       </div>
     {/if}
   </div>
+  {#if !compact}<LiveOutput panel={output} lines={PANEL_LINES} />{/if}
 </section>
 
 <style>

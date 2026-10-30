@@ -8,10 +8,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import { Effect, Exit, Fiber } from "effect";
 import { exitCodeOf, program } from "../src/program.ts";
-import { attachedHeading, FULL_SUITE_PHASE, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
+import { attachedHeading, FULL_SUITE_PHASE, SUITE_OUTPUT_NAME, suitePassedLine, suiteRepeatLine, suiteStoppedText, TRANSPORT_ANSWERS } from "../src/prompts.ts";
 import { recordPath, type RunRoot } from "../src/artifacts.ts";
 import { blocksText, piecesText } from "../src/pieces.ts";
 import type { SuiteResult } from "../src/suite.ts";
+import type { OutputEvent } from "../src/liveOutput.ts";
 import { fakeTrackerOf, finished, presentedQuestions, scriptedItem, scriptedStart, tempRepo, testWiring } from "./helpers.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -179,4 +180,43 @@ test("(k) the automatic repeat is once per run: a later stop in another iteratio
   assert.match(history, /[Ss]uite run 1\b/u);
   assert.match(history, /automatic repeat/u);
   assert.equal(planningsBegan(probe.ui.notified), 2);
+});
+
+// Issue #49: the suite's output reaches the live panel as it arrives, sanitized, and never the run's records.
+const ESC = "\u001b";
+const suiteOutputs = (outputs: readonly OutputEvent[]): OutputEvent[] => outputs.filter((e) => e._tag !== "Touched" && e.key.startsWith("suite:"));
+
+test("(m) the suite's chunks reach the panel sanitized between its Started and its Finished, and none reaches conversation.md", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE } });
+  probe.suite.printed.push(["ok 1 the first\n", `ok 2 ${ESC}[3`, "2mgreen", `${ESC}[0m\nunique-marker-49\n`]);
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const events = suiteOutputs(probe.ui.outputs);
+  assert.deepEqual(events[0], { _tag: "Started", key: "suite:1", name: SUITE_OUTPUT_NAME });
+  assert.deepEqual(events.at(-1), { _tag: "Finished", key: "suite:1", name: SUITE_OUTPUT_NAME, status: { _tag: "Exited", code: 0 } });
+  const printed = events.flatMap((e) => (e._tag === "Printed" ? [e.text] : []));
+  assert.equal(printed.join(""), "ok 1 the first\nok 2 green\nunique-marker-49\n");
+  assert.ok(!fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes("unique-marker-49"));
+});
+
+test("(n) a failing suite's Finished carries its exit code", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    suite: [failing],
+    config: { suiteCommand: SUITE },
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  const ends = suiteOutputs(probe.ui.outputs).filter((e) => e._tag === "Finished");
+  assert.deepEqual(ends.map((e) => (e._tag === "Finished" ? [e.key, e.status] : null)), [["suite:1", { _tag: "Exited", code: 1 }], ["suite:2", { _tag: "Exited", code: 0 }]]);
+});
+
+test("(o) Stop task during the suite leaves a Finished with Stopped as its last output event", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, suite: ["hang"], config: { suiteCommand: SUITE } });
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)));
+  for (let i = 0; i < 600 && probe.suite.runs.length === 0; i++) await sleep(50);
+  await Effect.runPromise(Fiber.interrupt(fiber));
+  assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 130);
+  const events = suiteOutputs(probe.ui.outputs);
+  assert.deepEqual(events.at(-1), { _tag: "Finished", key: "suite:1", name: SUITE_OUTPUT_NAME, status: { _tag: "Stopped" } });
 });

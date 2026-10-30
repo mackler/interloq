@@ -6,7 +6,7 @@ import { CodexCallFailed, TransportFault } from "./errors.ts";
 import { classifyCodex, errorCode } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
-import { reduceTurn, toolEventOf } from "./codexEvents.ts";
+import { codexOpenItems, codexOutputOf, EMPTY_CODEX_OUTPUT, reduceTurn, toolEventOf } from "./codexEvents.ts";
 import type { SdkThread } from "./sdk.ts";
 import { REVIEW_PURPOSE, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
 
@@ -39,6 +39,8 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
       const events = streamed.events;
       const seen: ThreadEvent[] = [];
       const reported = new Set<string>();
+      // Issue #49: the turn's live output, folded per event; every item left open is ended when the turn ends.
+      const output = yield* Ref.make(EMPTY_CODEX_OUTPUT);
       const consume = Effect.gen(function* () {
         for (;;) {
           const step = yield* Effect.tryPromise({ try: () => events.next(), catch: turnFailedWith });
@@ -47,6 +49,12 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
           if (step.value.type === "error") {
             yield* ui.notify({ _tag: "AgentReconnecting", agent: "codex", by: "sdk", attempt: null, of: null, delayMs: null, detail: step.value.message, callId });
           }
+          const event = step.value;
+          const live = yield* Ref.modify(output, (state) => {
+            const [next, emitted] = codexOutputOf(state, event, callId);
+            return [emitted, next] as const;
+          });
+          yield* Effect.forEach(live, (e) => ui.output(e), { discard: true });
           const tool = toolEventOf(reported, step.value, callId);
           if (tool !== null) {
             reported.add(tool.id);
@@ -58,7 +66,8 @@ const session = (store: StoreShape, ui: UiShape, thread: SdkThread, nextCallId: 
         controller.abort();
         await events.return(undefined).catch(() => undefined);
       });
-      yield* consume.pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : close)));
+      const endOpen = Ref.get(output).pipe(Effect.flatMap((state) => Effect.forEach(codexOpenItems(state), (e) => ui.output(e), { discard: true })));
+      yield* consume.pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? endOpen : Effect.andThen(endOpen, close))));
       const outcome = reduceTurn(seen);
       if (outcome.kind === "failed") return yield* Effect.fail(turnFailure(outcome.message));
       if (outcome.usage !== null) yield* store.recordUsage({ agent: "codex", thread: thread.id, inputTokens: outcome.usage.input_tokens, outputTokens: outcome.usage.output_tokens });

@@ -32,6 +32,7 @@ import { parkHalted } from "./parking.ts";
 import type { RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { type AnswerTiming, makeWebUi, type WebUi } from "./webUi.ts";
+import type { OutputEvent } from "./liveOutput.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
 export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
@@ -39,8 +40,13 @@ export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number;
 export type UiBroadcast = Readonly<{ _tag: "ui"; run: number; state: RunUiState }>;
 /** The chain's whole state after a change (issue #147). */
 export type ChainBroadcast = Readonly<{ _tag: "chain"; state: ChainState }>;
+/**
+ * Issue #49: what a run's running process printed, live only: never recorded, without a seq, never in the replay, and
+ * broadcast only while its run is in progress.
+ */
+export type OutputBroadcast = Readonly<{ _tag: "output"; run: number; event: OutputEvent }>;
 /** What a listener receives, in the order of publication. */
-export type Broadcast = EventBroadcast | UiBroadcast | ChainBroadcast;
+export type Broadcast = EventBroadcast | UiBroadcast | ChainBroadcast | OutputBroadcast;
 /** The snapshot a tab starts from: the runs' records and, beside them, their shared states (issue #87). */
 export type Replay = Readonly<{ runs: readonly RunRecord[]; ui: readonly RunUi[] }>;
 /** Why an action of the page was not carried out; shown to the user in the tab of its mode, or in none (issue #120). */
@@ -209,6 +215,15 @@ export const makeRunManager = (
     const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain });
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
     const step = yield* makeStepper(state, listeners);
+    // Issue #49: a run's live output goes to every listener, outside the publisher's step, changing no State.
+    const emitOutput = (id: number, event: OutputEvent): Effect.Effect<void> =>
+      Ref.get(state).pipe(
+        Effect.flatMap((s) =>
+          modeOf(s, id, ["current"]) === null
+            ? Effect.void
+            : Ref.get(listeners).pipe(Effect.flatMap((set) => Effect.forEach([...set], (listener) => listener({ _tag: "output", run: id, event }), { discard: true }))),
+        ),
+      );
     const publish = (record: (s: State) => readonly [Broadcast | null, State]): Effect.Effect<Broadcast | null> =>
       step((s) => {
         const [b, next] = record(s);
@@ -379,7 +394,7 @@ export const makeRunManager = (
         );
         if (Result.isFailure(kept)) return yield* record(store, { _tag: "NotReturned", cause: describe(kept.failure) });
         if (kept.success) return;
-        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }) };
+        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), output: () => Effect.void, enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }) };
         const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
         const written = yield* withTracker((t) =>
           t.read(item).pipe(
@@ -505,7 +520,7 @@ export const makeRunManager = (
         // W2-R1-1 of issue #192: the code the program computed, which a Stop task during its uninterruptible ending
         // cannot overrule; a run ended before its records or by a defect leaves it empty, and exitCodeOf decides.
         const concluded = yield* Ref.make(Option.none<Conclusion>());
-        const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))), answerTimingOf(mode, seconds, idRef));
+        const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))), answerTimingOf(mode, seconds, idRef), (event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => emitOutput(rid, event))));
         // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
         // to keep its item implementing rests on the chain's own decision; while closing nothing is granted.
         const claim = Ref.get(idRef).pipe(

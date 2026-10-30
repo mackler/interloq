@@ -1,7 +1,10 @@
 // Pure decoding of the events of a streamed Codex turn (plan step 1.8): the tool uses for the activity line.
 
 import type { ThreadEvent } from "@openai/codex-sdk";
+import { Result } from "effect";
 import type { UiEvent } from "./uiEvents.ts";
+import { NEW_SANITIZER, type OutputEvent, type ProcessKey, processKeyOf, processNameOf, type ProcessStatus, sanitizeChunk, sanitizeEnd, type Sanitizer } from "./liveOutput.ts";
+import { CODEX_REASONING_NAME } from "./prompts.ts";
 
 export type ToolUse = Readonly<{ id: string; event: Extract<UiEvent, { _tag: "ToolUsed" }> }>;
 
@@ -54,3 +57,73 @@ export const reduceTurn = (events: readonly ThreadEvent[]): TurnOutcome => {
   const usage = { input_tokens: completed.usage.input_tokens ?? 0, output_tokens: completed.usage.output_tokens ?? 0 };
   return { kind: "ok", finalResponse: last, usage, notices };
 };
+
+/**
+ * Issue #49: one Codex item whose text the live panel shows: a command (its `aggregated_output`) or a reasoning summary
+ * (its `text`). `raw` is the item's text already passed on, unsanitized, `sanitizer` the state after it.
+ */
+export type CodexItemOutput = Readonly<{ kind: "command" | "reasoning"; key: ProcessKey; name: string; raw: string; sanitizer: Sanitizer; finished: boolean }>;
+/** The live output's state of one Codex turn: its items by id, and the items already named as touched. */
+export type CodexOutputState = Readonly<{ items: ReadonlyMap<string, CodexItemOutput>; touched: ReadonlySet<string> }>;
+export const EMPTY_CODEX_OUTPUT: CodexOutputState = { items: new Map(), touched: new Set() };
+
+type ItemEvent = Extract<ThreadEvent, { type: "item.started" | "item.updated" | "item.completed" }>;
+
+/**
+ * The live output of one event of a turn (issue #49), pure. The SDK sends a running command's item again as its
+ * `aggregated_output` grows, and a reasoning item as its `text` grows: the new suffix is passed on through the item's
+ * sanitizer, and a text that no longer begins with what was passed on is passed on whole, the sanitizer reset. A search
+ * and a file change are one Touched each. Every key carries `callId`, since each turn is a CLI invocation of its own.
+ */
+export const codexOutputOf = (state: CodexOutputState, event: ThreadEvent, callId: string): readonly [CodexOutputState, readonly OutputEvent[]] => {
+  if (event.type !== "item.started" && event.type !== "item.updated" && event.type !== "item.completed") return [state, []];
+  const item = event.item;
+  switch (item.type) {
+    case "command_execution":
+      return textItem(state, event, callId, "command", item.command, item.aggregated_output, () =>
+        item.exit_code !== undefined ? { _tag: "Exited", code: item.exit_code } : item.status === "failed" ? { _tag: "Failed" } : { _tag: "Unknown" },
+      );
+    case "reasoning":
+      return textItem(state, event, callId, "reasoning", CODEX_REASONING_NAME, item.text, () => ({ _tag: "Succeeded" }));
+    case "web_search":
+      return touched(state, item.id, `search ${item.query}`);
+    case "file_change":
+      return event.type === "item.completed" ? touched(state, item.id, `edit ${item.changes.map((c) => c.path).join(", ")}`) : [state, []];
+    default:
+      return [state, []];
+  }
+};
+
+const touched = (state: CodexOutputState, id: string, name: string): readonly [CodexOutputState, readonly OutputEvent[]] =>
+  state.touched.has(id) ? [state, []] : [{ ...state, touched: new Set([...state.touched, id]) }, [{ _tag: "Touched", name: processNameOf(name) }]];
+
+const textItem = (
+  state: CodexOutputState,
+  event: ItemEvent,
+  callId: string,
+  kind: "command" | "reasoning",
+  label: string,
+  text: string,
+  status: () => ProcessStatus,
+): readonly [CodexOutputState, readonly OutputEvent[]] => {
+  const id = event.item.id;
+  const known = state.items.get(id);
+  if (known?.finished === true) return [state, []];
+  const built = known === undefined ? processKeyOf({ kind: kind === "command" ? "codex" : "reasoning", callId, item: id }) : Result.succeed(known.key);
+  if (Result.isFailure(built)) return [state, []];
+  const key = built.success;
+  const name = known?.name ?? (kind === "command" ? processNameOf(label) : label);
+  const start: readonly OutputEvent[] = known === undefined ? [{ _tag: "Started", key, name }] : [];
+  const before = known ?? { kind, key, name, raw: "", sanitizer: NEW_SANITIZER, finished: false };
+  const continues = text.startsWith(before.raw);
+  const [sanitizer, printed] = sanitizeChunk(continues ? before.sanitizer : NEW_SANITIZER, continues ? text.slice(before.raw.length) : text);
+  const print: readonly OutputEvent[] = printed === "" ? [] : [{ _tag: "Printed", key, name, text: printed }];
+  const finished = event.type === "item.completed";
+  const end: readonly OutputEvent[] = finished ? [{ _tag: "Finished", key, name, status: status() }] : [];
+  const after: CodexItemOutput = { ...before, raw: text, sanitizer: finished ? sanitizeEnd(sanitizer) : sanitizer, finished };
+  return [{ ...state, items: new Map([...state.items, [id, after]]) }, [...start, ...print, ...end]];
+};
+
+/** The end of every item of the turn not yet finished (issue #49), for the turn's end: how it ended is not known. */
+export const codexOpenItems = (state: CodexOutputState): readonly OutputEvent[] =>
+  [...state.items.values()].flatMap((i) => (i.finished ? [] : [{ _tag: "Finished", key: i.key, name: i.name, status: { _tag: "Unknown" } } satisfies OutputEvent]));

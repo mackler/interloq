@@ -6,6 +6,7 @@ import type { RunError } from "../src/errors.ts";
 import * as prompts from "../src/prompts.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import { makeWebUi, type WebUi } from "../src/webUi.ts";
+import type { OutputEvent } from "../src/liveOutput.ts";
 
 // Plan step 3.2: the web Ui turns the Ui calls into events and waits for the first answer to a prompt.
 const run = Effect.runPromise;
@@ -419,4 +420,14 @@ test("closing a frame's scope removes it: the prompt is no longer pending", asyn
   await run(Fiber.interrupt(fiber));
   assert.equal(await run(ui.pending), null);
   assert.equal(await run(ui.answer(prompt, "1")), "notWaiting");
+});
+
+test("issue #49: output goes to the live channel alone, never to the run's events", async () => {
+  const events: RunEvent[] = [];
+  const live: OutputEvent[] = [];
+  const ui = await run(makeWebUi((e) => Effect.sync(() => void events.push(e)), undefined, (e) => Effect.sync(() => void live.push(e))));
+  const event: OutputEvent = { _tag: "Touched", name: "Read a.txt" };
+  await run(ui.output(event));
+  assert.deepEqual(live, [event]);
+  assert.deepEqual(events, []);
 });

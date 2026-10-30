@@ -19,6 +19,7 @@ import { piecesText } from "./pieces.ts";
 import type { Asked, OnExpiry, RunEvent } from "./protocol.ts";
 import type { AskKind, DuringAnswer, QuestionFrame, UiShape } from "./services.ts";
 import { promptOf } from "./userPrompts.ts";
+import type { OutputEvent } from "./liveOutput.ts";
 
 /**
  * Issue #185: how long a question of the run waits for an answer, read at each prompt and again at its deadline: null
@@ -91,7 +92,8 @@ const withFrame = (p: Prompts, id: number, change: (f: Frame) => Frame): Prompts
 const secondsOf = (countdown: NonNullable<Asked["countdown"]>): number => Math.round((countdown.untilMs - countdown.fromMs) / 1000);
 
 /** `sink` must not block: it records and offers the event (src/runManager.ts, makePublisher), so the answer's protected step stays short. */
-export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing: AnswerTiming = NO_TIMING): Effect.Effect<WebUi> =>
+/** Issue #49: `live` receives the Ui's output events, which never reach `sink`, so nothing of them is recorded. */
+export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing: AnswerTiming = NO_TIMING, live: (event: OutputEvent) => Effect.Effect<void> = () => Effect.void): Effect.Effect<WebUi> =>
   Effect.gen(function* () {
     // The dialogue is serialized: a second concurrent prompt waits for the first answer, and is timed only when shown.
     const dialogue = yield* Semaphore.make(1);
@@ -224,6 +226,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
         ),
       nextQuestion: Ref.updateAndGet(questions, (n) => n + 1),
       enterQuestion,
+      output: live,
       ask,
       askMessage,
       // The take, the Answered event and the completion of the prompt are one uninterruptible step (finding 11 of

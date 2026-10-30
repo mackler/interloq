@@ -20,6 +20,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import type { Schema, Scope } from "effect";
 import type { RunError } from "../src/errors.ts";
 import type { LimitReset } from "../src/limitReset.ts";
+import type { OutputEvent } from "../src/liveOutput.ts";
 import type { ClaudeFailure } from "../src/transport.ts";
 import { callFailure } from "../src/claude.ts";
 import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
@@ -130,6 +131,8 @@ export class ScriptedUi implements UiShape {
   readonly order: string[] = [];
   /** Issue #185: what each prompt's expiry would do, in the order asked. */
   readonly expiries: OnExpiry[] = [];
+  /** Issue #49: the live output events, in the order emitted. */
+  readonly outputs: OutputEvent[] = [];
   private lastPresented: AskedQuestion | null = null;
   private questions = 0;
   private readonly answers: ScriptedAnswer[];
@@ -155,6 +158,9 @@ export class ScriptedUi implements UiShape {
   }
   say(text: string): Effect.Effect<void> {
     return Effect.sync(() => void this.said.push(text));
+  }
+  output(event: OutputEvent): Effect.Effect<void> {
+    return Effect.sync(() => void this.outputs.push(event));
   }
   get nextQuestion(): Effect.Effect<number> {
     return Effect.sync(() => ++this.questions);
@@ -717,9 +723,12 @@ export class ScriptedSuite implements SuiteRunnerShape {
   constructor(results: ReadonlyArray<SuiteResult | "hang">) {
     this.results = [...results];
   }
-  run(command: S.CommandLine, cwd: string, ceilingMs: number): Effect.Effect<SuiteResult> {
+  /** Issue #49: the chunks each run prints through `onOutput` before its result, in order. */
+  readonly printed: Array<readonly string[]> = [];
+  run(command: S.CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void): Effect.Effect<SuiteResult> {
     return Effect.suspend(() => {
       this.runs.push({ command, cwd, ceilingMs });
+      for (const chunk of this.printed.shift() ?? []) onOutput(chunk);
       const next = this.results.shift() ?? { _tag: "Passed", output: "all passed\n", ms: 1 };
       return next === "hang" ? Effect.never : Effect.succeed(next);
     });

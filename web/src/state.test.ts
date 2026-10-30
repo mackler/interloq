@@ -2887,3 +2887,11 @@ describe("issue #144: the Implementation tab's list during a run", () => {
     );
   });
 });
+
+// Issue #49: the reducer never folds the live output; the panel's own buffer takes it.
+describe("output frames", () => {
+  test("an output frame leaves the view unchanged", () => {
+    const view = fold([hello(), { type: "replay", ui: [], runs: [] }]);
+    expect(reduce(view, { type: "output", run: 1, event: { _tag: "Touched", name: "Read a.txt" } })).toBe(view);
+  });
+});

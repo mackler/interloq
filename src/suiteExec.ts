@@ -43,7 +43,7 @@ const resultOf = (end: RunEnd, output: string, ms: number): SuiteResult => {
  * output to close, so a descendant outside the group that holds the output cannot delay the result; on interruption it
  * stops reading at once too (W3-R1-2). */
 export const suiteRunner = (env: Readonly<Record<string, string | undefined>>): SuiteRunnerShape => ({
-  run: (command: CommandLine, cwd: string, ceilingMs: number): Effect.Effect<SuiteResult> =>
+  run: (command: CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void): Effect.Effect<SuiteResult> =>
     Effect.callback<SuiteResult>((resume) => {
       const started = Date.now();
       const chunks: string[] = [];
@@ -83,7 +83,11 @@ export const suiteRunner = (env: Readonly<Record<string, string | undefined>>): 
       for (const stream of [child.stdout, child.stderr]) {
         stream.on("error", () => undefined);
         stream.setEncoding("utf8");
-        stream.on("data", (text: string) => void chunks.push(text));
+        stream.on("data", (text: string) => {
+          chunks.push(text);
+          // Issue #49: the live panel's copy, in arrival order, never after the run settled.
+          if (!settled) onOutput(text);
+        });
       }
       timer = setTimeout(() => {
         killGroup(child.pid);

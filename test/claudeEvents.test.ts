@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
-import { decodeQuestions, decodeToolTarget, interpretExecution, NOT_REFINED_BLANK_REASON, reduceMessages } from "../src/claudeEvents.ts";
+import { claudeOpenProcesses, claudeOutputOf, type ClaudeOutputState, decodeQuestions, decodeToolTarget, EMPTY_CLAUDE_OUTPUT, interpretExecution, NOT_REFINED_BLANK_REASON, type OutputCommand, reduceMessages } from "../src/claudeEvents.ts";
+import { changed, notification, started } from "./backgroundMessages.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { assistantText, failure, init, limitError, limitResult, rateLimit, success } from "./fakeSdk.ts";
 
@@ -214,4 +215,50 @@ test("interpretExecution carries the report's checks to the outcome", () => {
   assert.deepEqual(interpretExecution(complete({ status: "continuing", summary: "s", question: "", remaining_work: "w", missing: "", checks }), null).checks, checks);
   assert.deepEqual(interpretExecution(complete({ status: "blocked", summary: "s", question: "q", remaining_work: "w", missing: "", checks }), { question: "q?", input: "a" }).checks, checks);
   assert.deepEqual(interpretExecution(complete({ status: "finished", summary: "s", question: "" }), null).checks, []);
+});
+
+// Issue #49: the live output of a Claude Code call.
+const meta = { uuid: "00000000-0000-0000-0000-000000000000", session_id: "session-1" };
+const toolUse = (id: string, name: string, input: Record<string, unknown>): SDKMessage =>
+  ({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] }, parent_tool_use_id: null, ...meta }) as unknown as SDKMessage;
+const toolResult = (id: string, content: unknown, isError = false): SDKMessage =>
+  ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] }, parent_tool_use_id: null, ...meta }) as unknown as SDKMessage;
+const progress = (id: string, seconds: number): SDKMessage => ({ type: "tool_progress", tool_use_id: id, tool_name: "Bash", parent_tool_use_id: null, elapsed_time_seconds: seconds, ...meta }) as unknown as SDKMessage;
+const moved = (id: string): SDKMessage => ({ type: "system", subtype: "task_updated", task_id: id, patch: { is_backgrounded: true }, ...meta }) as unknown as SDKMessage;
+const commandsOf = (messages: readonly SDKMessage[]): { state: ClaudeOutputState; out: OutputCommand[] } =>
+  messages.reduce<{ state: ClaudeOutputState; out: OutputCommand[] }>(
+    (acc, m) => {
+      const [state, commands] = claudeOutputOf(acc.state, m);
+      return { state, out: [...acc.out, ...commands] };
+    },
+    { state: EMPTY_CLAUDE_OUTPUT, out: [] },
+  );
+const brief = (c: OutputCommand): string =>
+  c._tag === "Tail" ? `Tail ${c.key} ${c.path}` : c.event._tag === "Touched" ? `Touched ${c.event.name}` : c.event._tag === "Printed" ? `Printed ${c.event.key} ${JSON.stringify(c.event.text)}` : c.event._tag === "Finished" ? `Finished ${c.event.key} ${c.event.status._tag}` : c.event._tag === "Progress" ? `Progress ${c.event.key} ${c.event.seconds}` : `Started ${c.event.key} ${c.event.name}`;
+
+test("a foreground Bash starts, reports its time, and ends with its error result's output", () => {
+  const { out, state } = commandsOf([toolUse("t1", "Bash", { command: "npm test" }), progress("t1", 4), toolResult("t1", [{ type: "text", text: "\u001b[31mnot ok 1\u001b[0m" }], true)]);
+  assert.deepEqual(out.map(brief), ["Started claude:t1 npm test", "Progress claude:t1 4", 'Printed claude:t1 "not ok 1"', "Finished claude:t1 Failed"]);
+  assert.deepEqual(claudeOpenProcesses(state), []);
+});
+
+test("a backgrounded Bash starts nothing itself; its task starts and ends with its output file", () => {
+  const { out } = commandsOf([toolUse("t2", "Bash", { command: "npm test", run_in_background: true }), started("b1"), toolResult("t2", "running in the background"), notification("b1", "completed", "/tmp/b1.out")]);
+  assert.deepEqual(out.map(brief), ["Started task:b1 task b1", "Tail task:b1 /tmp/b1.out", "Finished task:b1 Succeeded"]);
+});
+
+test("a task first seen in background_tasks_changed starts under its description", () => {
+  const { out } = commandsOf([changed([["b2", false]]), notification("b2", "stopped", "/tmp/b2.out")]);
+  assert.deepEqual(out.map(brief), ["Started task:b2 task b2", "Tail task:b2 /tmp/b2.out", "Finished task:b2 Stopped"]);
+});
+
+test("a foreground task moved to the background by task_updated starts under its description and ends by its notification", () => {
+  const { out } = commandsOf([started("f1", { backgrounded: false }), moved("f1"), notification("f1", "failed", "/tmp/f1.out")]);
+  assert.deepEqual(out.map(brief), ["Started task:f1 task f1", "Tail task:f1 /tmp/f1.out", "Finished task:f1 Failed"]);
+});
+
+test("an ambient task is ignored; a Read is one Touched line; an open command ends Unknown at the call's end", () => {
+  const { out, state } = commandsOf([started("a1", { ambient: true }), notification("a1", "completed", "/tmp/a"), toolUse("r1", "Read", { file_path: "src/a.ts" }), toolUse("t3", "Bash", { command: "sleep 9" })]);
+  assert.deepEqual(out.map(brief), ["Touched Read src/a.ts", "Started claude:t3 sleep 9"]);
+  assert.deepEqual(claudeOpenProcesses(state), [{ _tag: "Finished", key: "claude:t3", name: "sleep 9", status: { _tag: "Unknown" } }]);
 });

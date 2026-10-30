@@ -6,6 +6,7 @@ import { HttpPlatform, HttpServerRequest, HttpServerResponse } from "effect/http
 import { Socket } from "effect/socket";
 import { chainSettingsOf, type ClientMessage, decodeClient, inSnapshot, type ServerMessage } from "./protocol.ts";
 import type { Broadcast, Refusal, RunManager } from "./runManager.ts";
+import { backlogAdmit, backlogTake, EMPTY_BACKLOG, type OutputBacklog } from "./liveOutput.ts";
 
 /** What the server's handler needs besides the request. */
 export type WebServerServices = HttpServerRequest.HttpServerRequest | Scope.Scope | HttpPlatform.HttpPlatform | FileSystem.FileSystem | Path.Path;
@@ -44,17 +45,33 @@ export const makeWebServer = (manager: RunManager, distDir: string, queueBound: 
 /** The bound of a tab's forwarding queue (finding 13 of docs/gui-review.md; requirements, open point 1). */
 export const QUEUE_BOUND = 1000;
 
+/** Issue #49: the bound of a tab's backlog of live output, past which `backlogAdmit` compacts it. */
+export const OUTPUT_BACKLOG_BOUND = 500;
+
+/** A tab's live output not yet sent (issue #49), and the signal that wakes its forwarder after each admit. */
+export type OutputChannel = Readonly<{ backlog: Ref.Ref<OutputBacklog>; wake: Queue.Queue<void> }>;
+
 /**
  * A tab's subscription to the broadcast (finding 13): events go to a queue of at most `bound`; `overflowed` is
  * completed when the tab has fallen that far behind, so that the session closes it and the tab recovers by replay.
+ * Issue #49: the live output never enters that queue, so a burst of it never closes the tab; it goes to the tab's own
+ * backlog, compacted past OUTPUT_BACKLOG_BOUND, which never drops the end of a process the tab was told of.
  */
-export const subscribeBounded = (manager: Pick<RunManager, "subscribe">, bound: number): Effect.Effect<Readonly<{ queue: Queue.Queue<Broadcast>; overflowed: Deferred.Deferred<void> }>, never, Scope.Scope> =>
+export const subscribeBounded = (
+  manager: Pick<RunManager, "subscribe">,
+  bound: number,
+): Effect.Effect<Readonly<{ queue: Queue.Queue<Broadcast>; overflowed: Deferred.Deferred<void>; output: OutputChannel }>, never, Scope.Scope> =>
   Effect.gen(function* () {
     // A dropping queue: its offer never suspends, so the run and the other tabs never wait for a slow tab.
     const queue = yield* Queue.dropping<Broadcast>(bound);
     const overflowed = yield* Deferred.make<void>();
-    yield* manager.subscribe((event) => Queue.offer(queue, event).pipe(Effect.flatMap((taken) => (taken ? Effect.void : Deferred.succeed(overflowed, undefined).pipe(Effect.asVoid)))));
-    return { queue, overflowed };
+    const output: OutputChannel = { backlog: yield* Ref.make(EMPTY_BACKLOG), wake: yield* Queue.sliding<void>(1) };
+    yield* manager.subscribe((event) =>
+      event._tag === "output"
+        ? Ref.update(output.backlog, (b) => backlogAdmit(b, { run: event.run, event: event.event }, OUTPUT_BACKLOG_BOUND)).pipe(Effect.andThen(Queue.offer(output.wake, undefined)), Effect.asVoid)
+        : Queue.offer(queue, event).pipe(Effect.flatMap((taken) => (taken ? Effect.void : Deferred.succeed(overflowed, undefined).pipe(Effect.asVoid)))),
+    );
+    return { queue, overflowed, output };
   });
 
 /** The handler of every request. */
@@ -103,7 +120,7 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
       if (reader._tag === "None") return;
       const writer = yield* socket.writer;
       const send = (message: ServerMessage) => writer.write(JSON.stringify(message)).pipe(Effect.ignore);
-      const { queue: buffered, overflowed } = yield* subscribeBounded(manager, queueBound);
+      const { queue: buffered, overflowed, output } = yield* subscribeBounded(manager, queueBound);
       const { runs, ui } = yield* manager.replay;
       yield* send({ type: "hello", location: manager.location, current: yield* manager.current, incarnation: manager.incarnation, chain: yield* manager.chain });
       yield* send({ type: "replay", runs, ui });
@@ -122,10 +139,22 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
               // Issue #147: every frame carries the whole state, so none is filtered by the replay.
               yield* send({ type: "chain", state: event.state });
               break;
+            case "output":
+              // Issue #49: never offered to this queue (subscribeBounded); the output's own forwarder sends it.
+              break;
           }
         }
       });
       yield* Effect.forkScoped(forward);
+      // Issue #49: the live output, in no snapshot, so never filtered; its order against the event frames is not kept.
+      const forwardOutput = Effect.gen(function* () {
+        for (;;) {
+          yield* Queue.take(output.wake);
+          const handed = yield* Ref.modify(output.backlog, (b) => backlogTake(b));
+          for (const envelope of handed) yield* send({ type: "output", run: envelope.run, event: envelope.event });
+        }
+      });
+      yield* Effect.forkScoped(forwardOutput);
 
       // Issue #120: a refusal names the mode of the tab whose action it was, or none.
       const refuse = (r: Refusal | null) => (r === null ? Effect.void : send({ type: "refused", mode: r.mode, reason: r.refused }));

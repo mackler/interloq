@@ -27,5 +27,7 @@ export type AgentSdk = {
    * under the name REPORT_STEP_SERVER of src/prompts.ts; `handler` answers each call.
    */
   stepReporter(handler: StepHandler): McpServerConfig;
+  /** Issue #49: the last 8 KiB of a background task's output file, for the live panel, or null where it cannot be read. */
+  readOutputTail(path: string): Promise<string | null>;
   startThread(options?: ThreadOptions): SdkThread;
 };

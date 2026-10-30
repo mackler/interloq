@@ -23,6 +23,7 @@ import type { AgentSdk } from "./sdk.ts";
 import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
+import type { OutputEvent } from "./liveOutput.ts";
 
 /** Which reply of a round a raw save holds: the review, the response, or corrective turn k (issue #151). */
 export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }>;
@@ -82,6 +83,11 @@ export interface UiShape {
    * prompts this question's asking shows. The frame is removed when the Scope closes. Each call makes a distinct frame.
    */
   readonly enterQuestion: (question: number) => Effect.Effect<QuestionFrame, never, Scope.Scope>;
+  /**
+   * Issue #49: what a running process prints, live only: never recorded, never among the run's events, in its replay or
+   * in conversation.md, and dropped where no tab listens.
+   */
+  readonly output: (event: OutputEvent) => Effect.Effect<void>;
 }
 export class Ui extends Context.Service<Ui, UiShape>()("plan-review/Ui") {}
 
@@ -164,8 +170,12 @@ export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-revi
  * failure of the command is a Failed value; the runner itself never fails.
  */
 export interface SuiteRunnerShape {
-  /** Runs `command` in `cwd`, a run past `ceilingMs` stopped and failed as timed out (issue #181: the run's own limit). */
-  run(command: CommandLine, cwd: string, ceilingMs: number): Effect.Effect<SuiteResult>;
+  /**
+   * Runs `command` in `cwd`, a run past `ceilingMs` stopped and failed as timed out (issue #181: the run's own limit).
+   * Issue #49: `onOutput` is called with each chunk of stdout or stderr in arrival order while the run lasts, never after
+   * it settled; a plain callback, since the runner is an edge in Node's callbacks and a forked Effect per chunk could reorder them.
+   */
+  run(command: CommandLine, cwd: string, ceilingMs: number, onOutput: (text: string) => void): Effect.Effect<SuiteResult>;
 }
 export class SuiteRunner extends Context.Service<SuiteRunner, SuiteRunnerShape>()("plan-review/SuiteRunner") {}
 

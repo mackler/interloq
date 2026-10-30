@@ -24,6 +24,7 @@ import { codexThread } from "../src/codexExec.ts";
 import type { AgentSdk } from "../src/sdk.ts";
 import { FakeSdk } from "./fakeSdk.ts";
 import { DEFAULT_SETTINGS, initialState as initialChain, OFF_SETTINGS } from "../src/chain.ts";
+import type { ProcessKey } from "../src/liveOutput.ts";
 const helloChain = initialChain(DEFAULT_SETTINGS);
 
 const run = Effect.runPromise;
@@ -711,6 +712,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
   const fake = new FakeSdk();
   const sdk: AgentSdk = {
     inheritedEnv: fake.inheritedEnv,
+    readOutputTail: (p) => fake.readOutputTail(p),
     query: (p) => fake.query(p),
     stepReporter: (h) => fake.stepReporter(h),
     startThread: (options) => {
@@ -814,4 +816,66 @@ test("the page's hold frame reaches the manager's hold with its incarnation, run
     assert.deepEqual(holds, [["test", 3, 7]]);
     a.close();
   });
+});
+
+// Issue #49: the live output reaches a tab outside its bounded event queue and outside the replay.
+test("output frames reach the tab outside its event queue: a burst never closes it, its ends arrive, each with its run", async () => {
+  const listeners: ((b: Broadcast) => Effect.Effect<void>)[] = [];
+  const time = "2026-10-30T07:00:00.000Z";
+  const started = (id: number): Stamped => ({ time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: id === 1 ? "refinement" : "implementation", item: { id: `${id}`, title: "t" } } });
+  const fake: RunManager = {
+    location: "/p",
+    incarnation: "test",
+    subscribe: (listener) => Effect.acquireRelease(Effect.sync(() => void listeners.push(listener)), () => Effect.sync(() => void listeners.splice(listeners.indexOf(listener), 1))).pipe(Effect.asVoid),
+    replay: Effect.succeed({ runs: [{ id: 1, events: [started(1)] }, { id: 2, events: [started(2)] }], ui: [] }),
+    current: Effect.succeed({ refinement: [1], implementation: 2 }),
+    start: () => Effect.succeed({ refused: "not in this test", mode: null }),
+    listItems: () => Effect.succeed({ mode: "implementation", result: { _tag: "Unavailable", notice: "not in this test" } }),
+    stop: () => Effect.succeed(null),
+    answer: () => Effect.succeed(null),
+    hold: () => Effect.succeed(null),
+    setUi: () => Effect.succeed(null),
+    haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
+    chain: Effect.succeed(initialChain(OFF_SETTINGS)),
+    setChain: () => Effect.succeed(initialChain(OFF_SETTINGS)),
+  };
+  const key = "suite:1" as ProcessKey;
+  const other = "claude:t1" as ProcessKey;
+  await run(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const web = yield* makeWebServer(fake, dist(), 3);
+        yield* HttpServer.serveEffect(web.handler);
+        yield* Effect.addFinalizer(() => web.closeAll);
+        const address = (yield* HttpServer.HttpServer).address;
+        const port = address._tag === "UnixPathAddress" ? 0 : address.port;
+        yield* Effect.promise(async () => {
+          const tab = await watch(port);
+          await until("the subscription", () => listeners.length === 1);
+          const emit = (b: Broadcast) => run(listeners[0]!(b));
+          await emit({ _tag: "output", run: 2, event: { _tag: "Started", key, name: "suite" } });
+          await emit({ _tag: "output", run: 1, event: { _tag: "Started", key: other, name: "ls" } });
+          await run(Effect.forEach(Array.from({ length: 5_000 }, (_, i) => i), (i) => listeners[0]!({ _tag: "output", run: 2, event: { _tag: "Printed", key, name: "suite", text: `line ${i}\n` } }), { discard: true }));
+          await emit({ _tag: "output", run: 1, event: { _tag: "Finished", key: other, name: "ls", status: { _tag: "Succeeded" } } });
+          await emit({ _tag: "output", run: 2, event: { _tag: "Finished", key, name: "suite", status: { _tag: "Exited", code: 0 } } });
+          const outputs = () => tab.messages.flatMap((m) => (m.type === "output" ? [m] : []));
+          await until("both ends", () => outputs().filter((m) => m.event._tag === "Finished").length === 2);
+          assert.equal(tab.closedAt(), null);
+          assert.deepEqual(refusals(tab), []);
+          const of = (run: number) => outputs().filter((m) => m.run === run).map((m) => m.event);
+          assert.deepEqual(of(1).map((e) => e._tag), ["Started", "Finished"]);
+          const suite = of(2);
+          assert.equal(suite[0]?._tag, "Started");
+          assert.equal(suite.at(-1)?._tag, "Finished");
+          assert.deepEqual(suite.at(-2), { _tag: "Printed", key, name: "suite", text: "line 4999\n" });
+          // A reconnection's replay holds none of it.
+          const again = await connect(port);
+          await until("the replay", () => again.messages.some((m) => m.type === "replay"));
+          assert.ok(!again.messages.some((m) => m.type === "output"));
+          assert.ok(!JSON.stringify(again.messages).includes("line 4999"));
+          again.close();
+        });
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
 });

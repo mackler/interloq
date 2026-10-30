@@ -43,8 +43,12 @@
   import QuestionPane from "./QuestionPane.svelte";
   import TimelineRail from "./TimelineRail.svelte";
   import TopBar from "./TopBar.svelte";
+  import { EMPTY_OUTPUTS, EMPTY_PANEL, type LiveOutputs, outputsAfter } from "../livePanel.ts";
 
   let view = $state<ViewState>(initialState);
+  // Issue #49: the live panels, kept beside the view and never folded by the reducer: only what arrived over this
+  // connection, so every hello empties them.
+  let outputs = $state<LiveOutputs>(EMPTY_OUTPUTS);
   /**
    * An answer to the shown run's prompt. Issue #142: the request for the question's terms keeps the text typed beside
    * it, carried to the prompt that asks the same question again with its explanations.
@@ -105,6 +109,8 @@
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     connection = connect(url, {
       onMessage: (m) => {
+        if (m.type === "hello") outputs = EMPTY_OUTPUTS;
+        if (m.type === "output") outputs = outputsAfter(outputs, m);
         view = reduce(view, m);
         reconcileDrafts();
         if (view.needsReconnect) connection?.reconnect();
@@ -424,7 +430,7 @@
       <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} />
+          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={outputs.get(run.id) ?? EMPTY_PANEL} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">
@@ -445,7 +451,7 @@
         <!-- Issue #22 (F1): the status line and every earlier answer stay reachable while the question or the decision page
              takes the column; below the question, so that it and its first answer keep their place at the top. -->
         {#if deciding || asking}
-          <div class="dashboard-compact" class:asking={asking && !deciding}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} /></div>
+          <div class="dashboard-compact" class:asking={asking && !deciding}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={outputs.get(run.id) ?? EMPTY_PANEL} /></div>
         {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}
