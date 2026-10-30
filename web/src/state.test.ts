@@ -1,3 +1,5 @@
+import { PREPARATION_VIEW_OFF, type PreparationStatus, type PreparationView } from "../../src/preparationSwitch.ts";
+import type { ListedItem } from "../../src/protocol.ts";
 import fc from "fast-check";
 import type { SubjectId } from "../../src/artifacts.ts";
 import { shownOf } from "./test-setup.ts";
@@ -14,7 +16,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -24,7 +26,7 @@ import type { ItemId } from "../../src/tracker.ts";
 const runOf = (s: ViewState, mode: RunMode): RunView | null => shownRun(s, mode).run;
 /** The run before a mode's newest that the page holds. */
 const lastOf = (s: ViewState, mode: RunMode): RunView | null => s.modes[mode].runs.at(-2) ?? null;
-const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
+const hello = (current: number | null = 1): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: current }, incarnation: "a" });
 const started: RunEvent = { _tag: "Started", project: "/p", location: "/p", task: "the task", mode: "implementation", item: { id: "1", title: "the task" } };
 const said = (text: string): RunEvent => ({ _tag: "Said", text });
 const notified = (event: UiEvent): RunEvent => ({ _tag: "Notified", event });
@@ -603,7 +605,7 @@ describe("runs, replay and gaps", () => {
   });
 
   test("a hello turns a mode's Loading items Unasked and leaves a listed mode as it is (S16)", () => {
-    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0 }];
+    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
     const listed = fold([hello(null), { type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "unchecked" } }]);
     const s = fold([hello(null)], itemsRequested(listed, "implementation"));
     expect(s.modes.implementation.items).toEqual({ _tag: "Unasked" });
@@ -611,8 +613,8 @@ describe("runs, replay and gaps", () => {
   });
 
   // W3-R1-1 of work review 3: a tracker id of one server names nothing in another, which may serve another project.
-  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location, current: { refinement: [], implementation: null }, incarnation });
-  const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0 }];
+  const helloAt = (location: string, incarnation: string): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location, current: { refinement: [], implementation: null }, incarnation });
+  const listedItems = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
 
   test("a hello of another incarnation drops a listed mode's items, so the tab asks the new server (W3-R1-1)", () => {
     const s = fold([helloAt("/projects/old", "a"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: listedItems, terms: "unchecked" } }, helloAt("/projects/new", "b")]);
@@ -657,7 +659,7 @@ describe("runs, replay and gaps", () => {
         return reduce(state, helloAt(`/projects/${step.incarnation}`, step.incarnation));
       case "listed":
       {
-        const items = Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e", url: null, sentBack: 0 }));
+        const items = Array.from({ length: step.count }, (_, n) => ({ id: `${state.incarnation}:${n}`, title: "t", excerpt: "e", url: null, sentBack: 0, preparation: null }));
         return reduce(state, step.mode === "refinement" ? { type: "items", mode: step.mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { type: "items", mode: step.mode, result: { _tag: "Listed", items } });
       }
       case "unavailable":
@@ -692,7 +694,7 @@ describe("runs, replay and gaps", () => {
       fc.property(itemsArb, itemsArb, fc.constantFrom("a", "b"), (r, i, incarnation) => {
         const base = fold([hello(null)]);
         const state: ViewState = { ...base, modes: { refinement: { ...base.modes.refinement, items: r }, implementation: { ...base.modes.implementation, items: i } } };
-        const s = reduce(state, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+        const s = reduce(state, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
         expect([s.modes.refinement.items._tag, s.modes.implementation.items._tag]).not.toContain("Loading");
       }),
       { numRuns: 50 },
@@ -700,7 +702,7 @@ describe("runs, replay and gaps", () => {
   });
 
   test("an items frame sets its mode's items alone and clears its refusal; a request shows the tab loading", () => {
-    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0 }];
+    const items = [{ id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null }];
     const loading = itemsRequested(fold([hello(null), { type: "refused", mode: "implementation", reason: "r" }]), "implementation");
     expect(loading.modes.implementation.items).toEqual({ _tag: "Loading" });
     const s = fold([{ type: "items", mode: "implementation", result: { _tag: "Listed", items } }], loading);
@@ -764,11 +766,11 @@ describe("runs, replay and gaps", () => {
 // Finding 12 of docs/gui-review.md: a hello from another incarnation clears the view of the earlier server's runs.
 describe("a server restart", () => {
   test("a hello with a new incarnation clears the old run's view; the same incarnation keeps it", () => {
-    const withRun = reduce(reduce(initialState, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: started }] }] });
+    const withRun = reduce(reduce(initialState, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), { type: "replay", ui: [], runs: [{ id: 3, events: [{ time: at(0), event: started }] }] });
     expect(runOf(withRun, "implementation")?.id).toBe(3);
     expect(withRun.incarnation).toBe("a");
-    expect(runOf(reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), "implementation")?.id).toBe(3);
-    const restarted = reduce(withRun, { type: "hello", chain: helloChain, location: "/w", current: { refinement: [], implementation: null }, incarnation: "b" });
+    expect(runOf(reduce(withRun, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: 3 }, incarnation: "a" }), "implementation")?.id).toBe(3);
+    const restarted = reduce(withRun, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: null }, incarnation: "b" });
     expect([runOf(restarted, "implementation"), lastOf(restarted, "implementation"), restarted.incarnation]).toEqual([null, null, "b"]);
     const next = reduce(restarted, { type: "event", run: 1, seq: 0, time: at(0), event: { ...started, task: "u" } as RunEvent });
     expect(runOf(next, "implementation")?.id).toBe(1);
@@ -1693,7 +1695,7 @@ describe("the shared state of a run's page", () => {
     expect(runOf(s, "implementation")?.ui).toEqual(state(0));
   });
   test("a hello of another incarnation drops the state with the runs", () => {
-    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }]);
+    const s = fold([...live([started]), { type: "ui", run: 1, state: state(2, scope(1, "e1")) }, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }]);
     expect(runOf(s, "implementation")).toBe(null);
   });
   test("after any order of the server's states, the view holds the state of the highest version", () => {
@@ -2059,7 +2061,7 @@ describe("the countdown of a retry's wait", () => {
 describe("two modes", () => {
   const startedIn = (mode: "refinement" | "implementation", id: string): RunEvent => ({ ...started, mode, item: { id, title: `item ${id}` } } as RunEvent);
   const events = (run: number, list: readonly RunEvent[]): ServerMessage[] => stamp(list).map(({ time, event }, seq): ServerMessage => ({ type: "event", run, seq, time, event }));
-  const helloBoth: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [1], implementation: 2 }, incarnation: "a" };
+  const helloBoth: ServerMessage = { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: 2 }, incarnation: "a" };
   const refinement = [startedIn("refinement", "11"), said("refining"), asked(1, prompts.interviewMessagePrompt)];
   const implementation = [startedIn("implementation", "1"), said("implementing"), notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } }), asked(1, prompts.decisionPrompt)];
 
@@ -2095,7 +2097,7 @@ describe("two modes", () => {
 
 describe("the tab shown before the user chooses one", () => {
   const startedIn = (mode: "refinement" | "implementation"): RunEvent => ({ ...started, mode, item: { id: "1", title: "t" } } as RunEvent);
-  const helloImpl: ServerMessage = { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: 1 }, incarnation: "a" };
+  const helloImpl: ServerMessage = { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: 1 }, incarnation: "a" };
   const replayOf = (mode: "refinement" | "implementation", more: readonly RunEvent[] = []): ServerMessage => ({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn(mode), ...more]) }] });
 
   test("a replay shows the tab of a run in progress; a choice of the user stands", () => {
@@ -2108,9 +2110,9 @@ describe("the tab shown before the user chooses one", () => {
 // Issue #142 (requirements Q3): the Refinement tab's control shows the configured choice of terms until the user changes
 // it; his choice applies to the next refinement alone, and the next shows the configured value again.
 describe("the choice of terms", () => {
-  const items = [{ id: "11", title: "t", excerpt: "e", url: null, sentBack: 0 }];
+  const items = [{ id: "11", title: "t", excerpt: "e", url: null, sentBack: 0, preparation: null }];
   const listed = (terms: "checked" | "unchecked" | "onRequest"): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms } });
-  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+  const helloAt = (incarnation: string): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const startedRefinement: RunEvent = { ...started, mode: "refinement", item: { id: "11", title: "t" } } as RunEvent;
 
   test("the listing's value is shown; a choice replaces it, survives a Refresh, and a refinement's Started resets it", () => {
@@ -2356,7 +2358,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
 describe("the chain", () => {
   test("the hello sets it, a chain frame replaces it, and a hello of another incarnation replaces it again", () => {
     expect(initialState.chain).toBeNull();
-    const hello = (incarnation: string, chain: ChainState): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+    const hello = (incarnation: string, chain: ChainState): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
     const first = reduce(initialState, hello("a", helloChain));
     expect(first.chain).toEqual(helloChain);
     const changed = configured(helloChain, OFF_SETTINGS, null);
@@ -2387,7 +2389,7 @@ describe("chainShown", () => {
 // Issue #147, the work review of 21 Oct 2026 (W1-R1-1), S29: the frames not yet acknowledged held by the page.
 describe("chain pending", () => {
   const CUTOFF = "2026-10-21T07:00:00.000Z";
-  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
   const open = reduce(initialState, helloOf("a"));
   const shownOf = (view: ViewState) => chainShown(view, (iso) => iso)!;
   const server = helloChain.settings;
@@ -2463,7 +2465,7 @@ describe("chain pending", () => {
 describe("several refinement runs", () => {
   const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
-  const helloOf = (refinement: readonly number[]): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement, implementation: null }, incarnation: "a" });
+  const helloOf = (refinement: readonly number[]): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement, implementation: null }, incarnation: "a" });
   const empty = fold([helloOf([]), { type: "replay", ui: [], runs: [] }]);
   const a = [refining("11"), said("refining 11"), asked(1, prompts.interviewMessagePrompt)];
   const b = [refining("12"), said("refining 12"), asked(1, prompts.interviewMessagePrompt)];
@@ -2516,7 +2518,7 @@ describe("several refinement runs", () => {
     const replay: ServerMessage = { type: "replay", ui: [], runs: [{ id: 1, events: stamp([...a, { _tag: "Ended", code: 130 }]) }, { id: 2, events: stamp(b) }] };
     expect(reduce(closed, replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
     expect(reduce(reduce(closed, helloOf([2])), replay).modes.refinement.runs.map((r) => r.id)).toEqual([2]);
-    expect(reduce(closed, { type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }).closed).toEqual([]);
+    expect(reduce(closed, { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" }).closed).toEqual([]);
   });
 
   test("a newer refinement of the same item replaces the held ended one", () => {
@@ -2582,7 +2584,7 @@ describe("several refinement runs", () => {
 describe("the presented runs", () => {
   const refining = (item: string): RunEvent => ({ ...started, mode: "refinement", item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
-  const empty = fold([{ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }]);
+  const empty = fold([{ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" }, { type: "replay", ui: [], runs: [] }]);
   const two = fold([...eventsOf(1, [refining("11"), said("x")]), ...eventsOf(2, [refining("12"), asked(1, prompts.interviewMessagePrompt)])], empty);
 
   test("presented: the implementation tab's run under one key, and each refinement run under its own, in start order", () => {
@@ -2779,7 +2781,7 @@ describe("a question kept while its analysis is prepared", () => {
 describe("issue #144: the Implementation tab's list during a run", () => {
   const implementing = (item: string): RunEvent => ({ ...started, item: { id: item, title: `item ${item}` } } as RunEvent);
   const eventsOf = (run: number, list: readonly RunEvent[], from = 0): ServerMessage[] => stamp(list).map(({ time, event }, i): ServerMessage => ({ type: "event", run, seq: from + i, time, event }));
-  const helloOf = (implementation: number | null, incarnation = "a"): ServerMessage => ({ type: "hello", chain: helloChain, location: "/p", current: { refinement: [], implementation }, incarnation });
+  const helloOf = (implementation: number | null, incarnation = "a"): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation }, incarnation });
   const replayOf = (runs: readonly Readonly<{ id: number; events: readonly RunEvent[] }>[]): ServerMessage => ({ type: "replay", ui: [], runs: runs.map((r) => ({ id: r.id, events: stamp(r.events) })) });
   const empty = fold([helloOf(null), replayOf([])]);
   const question = asked(1, prompts.interviewMessagePrompt);
@@ -2893,5 +2895,234 @@ describe("output frames", () => {
   test("an output frame leaves the view unchanged", () => {
     const view = fold([hello(), { type: "replay", ui: [], runs: [] }]);
     expect(reduce(view, { type: "output", run: 1, event: { _tag: "Touched", name: "Read a.txt" } })).toBe(view);
+  });
+});
+
+// Issue #131 (S18): the preparation's switch, its status and the marks of the Refinement list.
+describe("preparation", () => {
+  const view = (status: PreparationStatus, enabled = true): PreparationView => ({ settings: { enabled, generation: 1 }, status });
+  const frame = (status: PreparationStatus): ServerMessage => ({ type: "preparation", view: view(status) });
+  const item = (id: string, preparation: ListedItem["preparation"] = null): ListedItem => ({ id, title: `t${id}`, excerpt: "", url: null, sentBack: 0, preparation });
+  const listedRefinement = (): ViewState => {
+    const helloed = reduce(initialState, { type: "hello", preparation: view({ _tag: "Off" }, false), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+    return reduce(selectMode(helloed, "refinement"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: [item("1"), item("2", { _tag: "SetAside", reason: "r" })], terms: "checked" } });
+  };
+  const preparing = (id: string): PreparationStatus => ({ _tag: "Preparing", item: id, title: `t${id}` });
+
+  test("the hello sets the view and a preparation frame replaces it", () => {
+    const s = listedRefinement();
+    expect(s.preparation).toEqual(view({ _tag: "Off" }, false));
+    expect(reduce(s, frame({ _tag: "Idle" })).preparation).toEqual(view({ _tag: "Idle" }));
+  });
+
+  test("each change of the item being prepared asks for the Refinement items again; a frame that leaves it unchanged does not", () => {
+    const s = listedRefinement();
+    const asks = (before: ViewState, status: PreparationStatus) => reduce(before, frame(status)).itemsRefresh > before.itemsRefresh;
+    expect(asks(s, preparing("1"))).toBe(true);
+    const idle = reduce(s, frame({ _tag: "Idle" }));
+    expect(asks(idle, preparing("1"))).toBe(true);
+    const a = reduce(s, frame(preparing("1")));
+    expect(asks(a, preparing("2"))).toBe(true);
+    expect(asks(a, { _tag: "Idle" })).toBe(true);
+    expect(asks(s, { _tag: "Idle" })).toBe(false);
+    expect(asks(a, preparing("1"))).toBe(false);
+  });
+
+  test("no request while a run is shown in the Refinement tab", () => {
+    const s = listedRefinement();
+    const shown = { ...s, modes: { ...s.modes, refinement: { ...s.modes.refinement, focus: { _tag: "Run" as const, run: 1 } } } };
+    expect(reduce(shown, frame(preparing("1"))).itemsRefresh).toBe(shown.itemsRefresh);
+  });
+
+  test("shownMark gives Preparing for the item the view names, whatever its listed mark, and the listed mark for every other", () => {
+    const s = reduce(listedRefinement(), frame(preparing("2")));
+    expect(shownMark(s, item("2", { _tag: "SetAside", reason: "r" }))).toEqual({ _tag: "Preparing" });
+    expect(shownMark(s, item("1"))).toBe(null);
+    expect(shownMark(s, item("3", { _tag: "Prepared", questions: 2 }))).toEqual({ _tag: "Prepared", questions: 2 });
+  });
+
+  // W2-R1-1 (work review 2): a change of the item being prepared while a Refinement listing is outstanding is asked for
+  // once every outstanding listing has answered, and a listed Preparing the view does not name is not shown.
+  const listed = (items: readonly ListedItem[]): ServerMessage => ({ type: "items", mode: "refinement", result: { _tag: "Listed", items, terms: "checked" } });
+  const sameHello: ServerMessage = { type: "hello", preparation: view({ _tag: "Idle" }), chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" };
+
+  test("(i) a change while the list loads is asked for after the answer, and the stale Preparing is hidden", () => {
+    const loading = itemsRequested(listedRefinement(), "refinement");
+    const changed = reduce(reduce(loading, frame(preparing("1"))), frame({ _tag: "Idle" }));
+    expect(changed.itemsRefresh).toBe(loading.itemsRefresh);
+    const answered = reduce(changed, listed([item("1", { _tag: "Preparing" })]));
+    expect(answered.itemsRefresh).toBe(loading.itemsRefresh + 1);
+    expect(answered.refinementOutstanding).toBe(0);
+    expect(answered.itemsRefreshPending).toBe(false);
+    expect(shownMark(answered, item("1", { _tag: "Preparing" }))).toBe(null);
+  });
+
+  test("(ii) during an automatic listing, changes are deferred and the answer asks exactly once", () => {
+    const sent = refreshSent(listedRefinement());
+    const changed = reduce(reduce(sent, frame(preparing("1"))), frame(preparing("2")));
+    expect(changed.itemsRefresh).toBe(sent.itemsRefresh);
+    expect(changed.itemsRefreshPending).toBe(true);
+    expect(reduce(changed, listed([])).itemsRefresh).toBe(sent.itemsRefresh + 1);
+  });
+
+  test("(iii) two overlapping listings: no request after the first answer, exactly one after the second", () => {
+    const both = itemsRequested(refreshSent(listedRefinement()), "refinement");
+    const changed = reduce(both, frame(preparing("1")));
+    const first = reduce(changed, listed([item("1")]));
+    expect(first.itemsRefresh).toBe(both.itemsRefresh);
+    const second = reduce(first, listed([item("1", { _tag: "Preparing" })]));
+    expect(second.itemsRefresh).toBe(both.itemsRefresh + 1);
+    expect(second.refinementOutstanding).toBe(0);
+  });
+
+  test("(iv) with nothing outstanding a change asks at once, exactly once", () => {
+    const s = listedRefinement();
+    const a = reduce(s, frame(preparing("1")));
+    expect(a.itemsRefresh).toBe(s.itemsRefresh + 1);
+    expect(a.itemsRefreshPending).toBe(false);
+  });
+
+  test("(v) an Implementation items frame changes neither the count nor the flag", () => {
+    const deferred = reduce(refreshSent(listedRefinement()), frame(preparing("1")));
+    const after = reduce(deferred, { type: "items", mode: "implementation", result: { _tag: "Listed", items: [] } });
+    expect(after.refinementOutstanding).toBe(1);
+    expect(after.itemsRefreshPending).toBe(true);
+    expect(after.itemsRefresh).toBe(deferred.itemsRefresh);
+  });
+
+  test("(vi) a hello of the same incarnation reissues a lost automatic or deferred listing, and none for a list that loads", () => {
+    const sent = refreshSent(listedRefinement());
+    const helloed = reduce(sent, sameHello);
+    expect(helloed.itemsRefresh).toBe(sent.itemsRefresh + 1);
+    expect(helloed.refinementOutstanding).toBe(0);
+    const deferred = reduce(sent, frame(preparing("1")));
+    const helloedDeferred = reduce(deferred, sameHello);
+    expect(helloedDeferred.itemsRefresh).toBe(deferred.itemsRefresh + 1);
+    expect(helloedDeferred.itemsRefreshPending).toBe(false);
+    const loading = itemsRequested(listedRefinement(), "refinement");
+    const helloedLoading = reduce(loading, sameHello);
+    expect(helloedLoading.itemsRefresh).toBe(loading.itemsRefresh);
+    expect(helloedLoading.modes.refinement.items._tag).toBe("Unasked");
+    expect(helloedLoading.refinementOutstanding).toBe(0);
+  });
+
+  // W3-R1-1 (work review 3): a hello of the same incarnation asks again, once, for a Refinement list shown and listed,
+  // whatever was outstanding, since a preparation frame missed while disconnected cannot be told from the hello.
+  test("(viii) a same-incarnation hello with nothing outstanding asks for the shown, listed list once", () => {
+    const a = reduce(reduce(listedRefinement(), frame(preparing("1"))), listed([item("1", { _tag: "Preparing" })]));
+    expect(a.refinementOutstanding).toBe(0);
+    expect(a.itemsRefreshPending).toBe(false);
+    const helloed = reduce(a, sameHello);
+    expect(helloed.itemsRefresh).toBe(a.itemsRefresh + 1);
+    expect(helloed.refinementOutstanding).toBe(0);
+    expect(helloed.itemsRefreshPending).toBe(false);
+    expect(shownMark(helloed, item("1", { _tag: "Preparing" }))).toBe(null);
+  });
+
+  test("(ix) a same-incarnation hello with the list loading asks nothing; the list becomes Unasked", () => {
+    const loading = itemsRequested(listedRefinement(), "refinement");
+    const helloed = reduce(loading, sameHello);
+    expect(helloed.itemsRefresh).toBe(loading.itemsRefresh);
+    expect(helloed.modes.refinement.items._tag).toBe("Unasked");
+  });
+
+  test("(x) a hello of another incarnation asks nothing", () => {
+    const s = listedRefinement();
+    expect(reduce(s, { ...sameHello, incarnation: "b" } as ServerMessage).itemsRefresh).toBe(s.itemsRefresh);
+  });
+
+  test("(xi) a same-incarnation hello with a run shown in the Refinement tab, or the Implementation tab selected, asks nothing", () => {
+    const s = listedRefinement();
+    const runShown = { ...s, modes: { ...s.modes, refinement: { ...s.modes.refinement, focus: { _tag: "Run" as const, run: 1 } } } };
+    expect(reduce(runShown, sameHello).itemsRefresh).toBe(runShown.itemsRefresh);
+    const other = selectMode(s, "implementation");
+    expect(reduce(other, sameHello).itemsRefresh).toBe(other.itemsRefresh);
+  });
+
+  test("(xii) a same-incarnation hello with an automatic listing outstanding and a deferred change asks exactly once", () => {
+    const deferred = reduce(refreshSent(listedRefinement()), frame(preparing("1")));
+    expect(deferred.itemsRefreshPending).toBe(true);
+    expect(reduce(deferred, sameHello).itemsRefresh).toBe(deferred.itemsRefresh + 1);
+  });
+
+  test("property: a hello asks once exactly for a shown, listed Refinement list of the same incarnation, and resets the count and the flag", () => {
+    const itemsOf = { Unasked: { _tag: "Unasked" }, Loading: { _tag: "Loading" }, Listed: { _tag: "Listed", items: [item("1")], terms: "checked" }, Unavailable: { _tag: "Unavailable", notice: "n" } } as const;
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 3 }),
+        fc.boolean(),
+        fc.constantFrom("Unasked", "Loading", "Listed", "Unavailable"),
+        fc.constantFrom<RunMode>("refinement", "implementation"),
+        fc.boolean(),
+        fc.boolean(),
+        (outstanding, pending, tag, selected, onList, same) => {
+          const base = listedRefinement();
+          const refinement = { ...base.modes.refinement, items: itemsOf[tag] as ItemsViewOf, focus: onList ? ({ _tag: "List" } as const) : ({ _tag: "Run", run: 1 } as const) };
+          const before: ViewState = { ...selectMode(base, selected), modes: { ...base.modes, refinement }, refinementOutstanding: outstanding, itemsRefreshPending: pending };
+          const after = reduce(before, same ? sameHello : ({ ...sameHello, incarnation: "b" } as ServerMessage));
+          const asks = same && selected === "refinement" && onList && after.modes.refinement.items._tag === "Listed";
+          expect(after.itemsRefresh - before.itemsRefresh).toBe(asks ? 1 : 0);
+          expect(after.refinementOutstanding).toBe(0);
+          expect(after.itemsRefreshPending).toBe(false);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  test("(vii) a listed Preparing with no view is hidden; other listed marks are shown", () => {
+    expect(shownMark(initialState, item("1", { _tag: "Preparing" }))).toBe(null);
+    expect(shownMark(initialState, item("2", { _tag: "SetAside", reason: "r" }))).toEqual({ _tag: "SetAside", reason: "r" });
+    expect(shownMark(initialState, item("3", { _tag: "Prepared", questions: 1 }))).toEqual({ _tag: "Prepared", questions: 1 });
+  });
+
+  test("property: the outstanding count is sends less answers, and a change after the last request is always asked for", () => {
+    type Op = Readonly<{ _tag: "frame"; item: string | null }> | Readonly<{ _tag: "manual" }> | Readonly<{ _tag: "answer" }>;
+    const op: fc.Arbitrary<Op> = fc.oneof(
+      fc.record({ _tag: fc.constant("frame" as const), item: fc.constantFrom("1", "2", null) }),
+      fc.constant({ _tag: "manual" as const }),
+      fc.constant({ _tag: "answer" as const }),
+    );
+    fc.assert(
+      fc.property(fc.array(op, { maxLength: 30 }), (ops) => {
+        let state = listedRefinement();
+        let outstanding = 0;
+        let seen = state.itemsRefresh;
+        // Whether a change of the preparing item came after the last request sent, unasked for since.
+        let unasked = false;
+        const autoSend = () => {
+          if (state.itemsRefresh !== seen) {
+            seen = state.itemsRefresh;
+            state = refreshSent(state);
+            outstanding += 1;
+            unasked = false;
+          }
+        };
+        for (const o of ops) {
+          if (o._tag === "frame") {
+            const before = state.preparation === null ? null : (state.preparation.status._tag === "Preparing" ? state.preparation.status.item : null);
+            state = reduce(state, frame(o.item === null ? { _tag: "Idle" } : preparing(o.item)));
+            if (before !== o.item) unasked = true;
+          } else if (o._tag === "manual") {
+            state = itemsRequested(state, "refinement");
+            outstanding += 1;
+            unasked = false;
+          } else if (outstanding > 0) {
+            state = reduce(state, listed([]));
+            outstanding -= 1;
+          }
+          autoSend();
+          expect(state.refinementOutstanding).toBe(outstanding);
+          expect(state.refinementOutstanding).toBeGreaterThanOrEqual(0);
+        }
+        while (outstanding > 0) {
+          state = reduce(state, listed([]));
+          outstanding -= 1;
+          autoSend();
+        }
+        expect(unasked).toBe(false);
+      }),
+      { numRuns: 200 },
+    );
   });
 });

@@ -13,19 +13,25 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
+import { ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
-import { type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
+import { type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
-import { type ItemId, itemIdOf } from "./tracker.ts";
+import { type ItemComment, type ItemId, itemIdOf, type TrackerItem } from "./tracker.ts";
 import { identify, type MountTable } from "./hostDir.ts";
 import type { CurrentRuns, ItemsAnswer, ItemsResult, RunEvent, StartRequest, RunRecord, RunUi, Stamped } from "./protocol.ts";
 import { listedItemOf } from "./protocol.ts";
 import { sentBackCount } from "./itemComments.ts";
 import {
   type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  type KeptState,
 } from "./chain.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
+import { failureCounts, isReleased, type PreparationKept, type PreparationMark, type PreparationView, switched, withFailure, withoutFailure, withoutRelease, withRelease } from "./preparationSwitch.ts";
+import { type Candidate, makePreparationPass, type PreparationPass } from "./preparationPass.ts";
+import { prepareItem } from "./preparation.ts";
+import { unattendedUi } from "./preparationUi.ts";
+import { digestOf, markOf, preparationOf } from "./preparedComments.ts";
 import { makeStore } from "./store.ts";
 import { EMPTY_SLOT, endedIn, refusalOf, reserved, runsOf, type Slot as RunSlot } from "./runSlots.ts";
 import { parkHalted } from "./parking.ts";
@@ -45,8 +51,10 @@ export type ChainBroadcast = Readonly<{ _tag: "chain"; state: ChainState }>;
  * broadcast only while its run is in progress.
  */
 export type OutputBroadcast = Readonly<{ _tag: "output"; run: number; event: OutputEvent }>;
+/** The preparation's switch and status after a change (issue #131). */
+export type PreparationBroadcast = Readonly<{ _tag: "preparation"; view: PreparationView }>;
 /** What a listener receives, in the order of publication. */
-export type Broadcast = EventBroadcast | UiBroadcast | ChainBroadcast | OutputBroadcast;
+export type Broadcast = EventBroadcast | UiBroadcast | ChainBroadcast | OutputBroadcast | PreparationBroadcast;
 /** The snapshot a tab starts from: the runs' records and, beside them, their shared states (issue #87). */
 export type Replay = Readonly<{ runs: readonly RunRecord[]; ui: readonly RunUi[] }>;
 /** Why an action of the page was not carried out; shown to the user in the tab of its mode, or in none (issue #120). */
@@ -88,6 +96,10 @@ export type RunManager = Readonly<{
   haltAll: (message: string) => Effect.Effect<HaltReport>;
   /** The chain's state (issue #147). */
   chain: Effect.Effect<ChainState>;
+  /** The preparation's switch and status (issue #131). */
+  preparation: Effect.Effect<PreparationView>;
+  /** Turns the preparation's switch on or off (issue #131, requirements Q4): on wakes the pass, off stops it. */
+  setPreparation: (enabled: boolean) => Effect.Effect<PreparationView>;
   /** Changes the chain's settings at once; turning the mode off ends a chain and never interrupts a run (issue #147). */
   setChain: (settings: ChainSettings) => Effect.Effect<ChainState>;
 }>;
@@ -96,7 +108,7 @@ export type RunManager = Readonly<{
  * How the chain's state is kept across a restart (issue #147, requirements Q4): plan-review/chain.json by default; a test
  * injects a save it holds or fails. A failure is its text.
  */
-export type ChainPersistence = Readonly<{ save: (state: ChainState) => Effect.Effect<void, string>; remove: Effect.Effect<void, string> }>;
+export type ChainPersistence = Readonly<{ save: (kept: KeptState) => Effect.Effect<void, string>; remove: Effect.Effect<void, string> }>;
 
 /**
  * The runs `haltAll` halted (issue #158): `halted`, those that ended with their halt record written; `unconfirmed`, every
@@ -157,7 +169,7 @@ type Slot = RunSlot<Run>;
  * The next id (one sequence for the server, so that an id names one run in either mode), each mode's slot, and whether
  * the server is ending after an error it could not trace to one run (issue #158), when no run is started.
  */
-type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean; chain: ChainState }>;
+type State = Readonly<{ nextId: number; runs: Readonly<Record<RunMode, Slot>>; closing: boolean; chain: ChainState; preparation: PreparationKept }>;
 /** Who asked for a start: the page, or the chain of that generation (issue #147). */
 type Origin = Readonly<{ _tag: "manual" }> | Readonly<{ _tag: "chain"; generation: number }>;
 const MANUAL: Origin = { _tag: "manual" };
@@ -179,6 +191,21 @@ const changedIn = (slot: Slot, id: number, change: (r: Run) => Run): Slot => {
 const withSlot = (s: State, mode: RunMode, slot: Slot): State => ({ ...s, runs: { ...s.runs, [mode]: slot } });
 
 /**
+ * Issue #131: an item's mark in the Refinement list: Preparing where the pass prepares it now; else a durable failure
+ * that still counts, as set aside; else none where the developer released its set-aside by pressing Refine; else what
+ * its comments say (markOf). A failure that no longer counts never overrides the comments.
+ */
+const markFor = (kept: PreparationKept, preparing: ItemId | null, item: TrackerItem, comments: readonly ItemComment[]): PreparationMark | null => {
+  if (preparing === item.id) return { _tag: "Preparing" };
+  const generation = kept.settings.generation;
+  const failure = kept.failures.find((f) => f.item === item.id && failureCounts(f, digestOf(item), generation));
+  if (failure !== undefined) return { _tag: "SetAside", reason: preparationNotWrittenReason(failure.reason) };
+  const found = preparationOf(comments, item, generation);
+  if (found._tag === "SetAside" && isReleased(kept, item.id, found.key)) return null;
+  return markOf(found);
+};
+
+/**
  * The manager over a wiring per run (the live one of src/web.ts with the run's web Ui; the run's mode, so that a test may script each mode). The state is one Ref: the
  * next id (never reused while the process lives) and, per mode, its slot (src/runSlots.ts): the implementation run in
  * progress and the last finished one (issue #120), the refinement runs in progress and the ended one of each item
@@ -191,7 +218,7 @@ const withSlot = (s: State, mode: RunMode, slot: Slot): State => ({ ...s, runs: 
  * server was started in. The tracker is reached through `access`: the configuration of `cwd` and the tracker it names.
  */
 export const makeRunManager = (
-  wiring: (ui: WebUi, mode: RunMode) => Wiring,
+  wiring: (ui: UiShape, mode: RunMode) => Wiring,
   cwd: string,
   mounts: MountTable,
   incarnation: string,
@@ -211,8 +238,9 @@ export const makeRunManager = (
     };
     // Issue #147 (requirements Q4): the chain as the last server left it, through what a restart does to it.
     const loaded = yield* loadChain(cwd, chainDefaults).pipe(Effect.provide(platform));
-    const [restoredChain, resume] = restored(loaded);
-    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain });
+    const [restoredChain, resume] = restored(loaded.chain);
+    // Issue #131 (requirements F4): the preparation's switch, failures and releases as the last server left them.
+    const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain, preparation: loaded.preparation });
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
     const step = yield* makeStepper(state, listeners);
     // Issue #49: a run's live output goes to every listener, outside the publisher's step, changing no State.
@@ -270,6 +298,8 @@ export const makeRunManager = (
             return [{ changed: chain !== s.chain, command }, [{ _tag: "event", run: id, seq: run.events.length, time, event }, ...chainChange(s.chain, chain)], { ...moved, chain }];
           }).pipe(Effect.flatMap(({ changed, command }) => (changed ? settle(command) : Effect.void))),
         ),
+        // Issue #131: the end of any run wakes the preparation pass, since an item it skipped as refining may now be eligible.
+        Effect.andThen(Effect.suspend(() => pass.wake)),
         Effect.asVoid,
       );
 
@@ -325,10 +355,18 @@ export const makeRunManager = (
       // its send-backs counted; a failure of any of them answers the listing with its notice.
       withTracker((t, config) =>
         t.list(listedState(mode)).pipe(
-          Effect.flatMap((items) => Effect.forEach(items, (item) => Effect.map(t.comments(item.id), (comments) => listedItemOf(item, sentBackCount(comments))), { concurrency: 4 })),
+          Effect.flatMap((items) => Effect.forEach(items, (item) => Effect.map(t.comments(item.id), (comments) => ({ item, comments })), { concurrency: 4 })),
+          // Issue #131 (requirements Q6): each Refinement item's mark, from the State and the pass as they are now.
+          Effect.flatMap((listed) =>
+            Effect.map(Effect.all([Ref.get(state), pass.current]), ([s, preparing]) =>
+              listed.map(({ item, comments }) => listedItemOf(item, sentBackCount(comments), mode === "refinement" ? markFor(s.preparation, preparing, item, comments) : null)),
+            ),
+          ),
           Effect.map((items) => ({ items, terms: config.terms })),
         ),
       ).pipe(
+        // A listing of the Refinement tab wakes the pass (the tab asks each time it is shown).
+        Effect.tap(() => (mode === "refinement" ? pass.wake : Effect.void)),
         Effect.map((listed): ItemsAnswer => {
           const unavailable = (notice: string) => ({ _tag: "Unavailable", notice }) as const;
           if (mode === "refinement") return { mode, result: Result.isFailure(listed) ? unavailable(listed.failure) : { _tag: "Listed", ...listed.success } };
@@ -346,14 +384,15 @@ export const makeRunManager = (
     const continuations = yield* Semaphore.make(1);
     const stderr = (text: string) => Effect.sync(() => void process.stderr.write(`${text}\n`));
     /**
-     * Writes the chain as the State holds it at the moment of writing, never a snapshot taken at the change, under one
+     * Writes the chain, and since issue #131 the preparation's state beside it (one writer for the whole file, so neither
+     * overwrites the other with an older value), as the State holds it at the moment of writing, never a snapshot taken at the change, under one
      * permit, so writes never interleave and whatever write completes last holds the newest state (P1-R3-3). A failed save
      * ends the chain (saveFailed, broadcast) and removes the file, since a missing file restores to an idle chain; where
      * the removal fails too, both failures go to stderr (P1-R1-5).
      */
     const persist: Effect.Effect<Saved> = writes.withPermits(1)(
       Effect.gen(function* () {
-        const saved = yield* Effect.result(Effect.flatMap(Ref.get(state), (s) => kept.save(s.chain)));
+        const saved = yield* Effect.result(Effect.flatMap(Ref.get(state), (s) => kept.save({ chain: s.chain, preparation: s.preparation })));
         if (Result.isSuccess(saved)) return "saved" as const;
         yield* chainStep((s) => [saveFailed(s.chain, saved.failure), null]);
         const removed = yield* Effect.result(kept.remove);
@@ -362,6 +401,32 @@ export const makeRunManager = (
         return "lost" as const;
       }),
     );
+
+    // ---- issue #131: the unattended preparation of the marked items' questions ----
+    // The git-index hazard stays out of reach: a preparation builds no baseline tree and no work-review diff, which only
+    // an implementation run builds, and the manager still allows one implementation run at a time.
+    /** The preparation's state in one step of the publisher, broadcast with the status the pass shows. */
+    const preparationStep = (change: (kept: PreparationKept) => PreparationKept): Effect.Effect<void> =>
+      Effect.flatMap(pass.status, (status) => Effect.asVoid(publish((s) => {
+        const preparation = change(s.preparation);
+        return [preparation === s.preparation ? null : { _tag: "preparation", view: { settings: preparation.settings, status } }, { ...s, preparation }];
+      })));
+    const preparationView: Effect.Effect<PreparationView> = Effect.suspend(() => Effect.all([Ref.get(state), pass.status])).pipe(Effect.map(([s, status]) => ({ settings: s.preparation.settings, status })));
+    /** A tracker request of the server's own made with no question and no record, a failure ignored: the deletion of a released set-aside. */
+    const silentEnv = (ui: UiShape, config: Config): TrackerRetryEnv =>
+      unattendedTrackerEnv({ ui, settings: config, record: () => Effect.void, ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" });
+    const pass: PreparationPass = yield* makePreparationPass({
+      kept: Effect.map(Ref.get(state), (s) => s.preparation),
+      closing: Effect.map(Ref.get(state), (s) => s.closing),
+      candidates: withTracker((t) =>
+        t.listMarked("unrefined").pipe(Effect.flatMap((items) => Effect.forEach(items, (item) => Effect.map(t.comments(item.id), (comments): Candidate => ({ item, comments })), { concurrency: 4 }))),
+      ),
+      refining: Effect.map(Ref.get(state), (s) => s.runs.refinement.current.map((r) => r.item)),
+      prepare: (item, comments, generation) => Effect.flatMap(unattendedUi, ({ ui }) => prepareItem({ project: cwd, item, comments, generation }, wiring(ui, "refinement"))),
+      recordFailure: (failure) => Effect.andThen(preparationStep((k) => withFailure(k, failure)), Effect.asVoid(persist)),
+      dropReleases: (items) => Effect.andThen(preparationStep((k) => items.reduce(withoutRelease, k)), Effect.asVoid(persist)),
+      publish: (status) => Effect.asVoid(publish((s) => [{ _tag: "preparation", view: { settings: s.preparation.settings, status } }, s])),
+    });
 
     /**
      * Issue #192 (S11): a chained halt whose claimed parking kept nothing gives its item back to refined, before the chain
@@ -507,9 +572,17 @@ export const makeRunManager = (
         const busy = refusalOf(mode, before.runs[mode], id.success);
         if (busy !== null) return refused(busy);
         // Issue #185: the configuration the read already loads gives the wait of the run's questions.
-        const read = yield* withTracker((t, config) => t.read(id.success).pipe(Effect.map((item) => ({ item, seconds: config.answerTimeoutSeconds }))));
+        // Issue #131: a refinement's start also reads the item's comments, one of the server's own requests, not repeated;
+        // a failure refuses the start before anything is reserved, released or persisted.
+        const read = yield* withTracker((t, config) =>
+          t.read(id.success).pipe(
+            Effect.flatMap((item) => (mode === "refinement" ? Effect.map(t.comments(item.id), (comments) => ({ item, comments })) : Effect.succeed({ item, comments: [] as readonly ItemComment[] }))),
+            Effect.map(({ item, comments }) => ({ item, comments, seconds: config.answerTimeoutSeconds })),
+          ),
+        );
         if (Result.isFailure(read)) return refused(read.failure);
-        const { item, seconds } = read.success;
+        const { item, seconds, comments } = read.success;
+        const found = preparationOf(comments, item, before.preparation.settings.generation);
         if (item.state !== listedState(mode)) return refused(itemMovedText(item.id, listedState(mode), item.state));
         const gate = yield* Deferred.make<void>();
         const signal = yield* makeFaultSignal;
@@ -599,6 +672,26 @@ export const makeRunManager = (
                 return refused(chainSaveRefusedText("the file system refused both"));
               }
             }
+            // Issue #131 (requirements G-R1-1): pressing Refine stops the item's preparation (at once; nothing waits for its
+            // cleanup) and releases an item set aside, durably, before the run can run, stop or the server restart; the
+            // release does not depend on the set-aside comment's deletion, which follows detached and wakes the pass.
+            if (mode === "refinement") {
+              yield* pass.stopItem(item.id);
+              const failed = (yield* Ref.get(state)).preparation.failures.some((f) => f.item === item.id);
+              if (found._tag === "SetAside" || failed) {
+                yield* preparationStep((k) => withoutFailure(found._tag === "SetAside" ? withRelease(k, { item: item.id, key: found.key }) : k, item.id));
+                yield* persist;
+              }
+              if (found._tag === "SetAside") {
+                const ids = found.ids;
+                yield* Effect.forkDetach(
+                  Effect.flatMap(unattendedUi, ({ ui }) =>
+                    withTracker((t, config) => Effect.forEach(ids, (comment) => writeWithRetry(t, { kind: "deleteComment", item: item.id, comment }, silentEnv(ui, config)).pipe(Effect.ignore), { discard: true })),
+                  ).pipe(Effect.andThen(pass.wake)),
+                  { startImmediately: true },
+                );
+              }
+            }
             yield* Ref.set(idRef, runId);
             yield* append(runId, { _tag: "Started", project: cwd, location: identify(mounts, cwd), task: Result.getOrElse(taskTextOf(mode, item, []), () => item.title), mode, item: { id: item.id, title: item.title } });
             yield* Deferred.succeed(gate, undefined);
@@ -619,6 +712,9 @@ export const makeRunManager = (
     const haltAll = (message: string): Effect.Effect<HaltReport> =>
       Effect.gen(function* () {
         const runs = yield* Ref.modify(state, (s): readonly [readonly Run[], State] => [RUN_MODES.flatMap((m) => s.runs[m].current), { ...s, closing: true }]);
+        // Issue #131: the pass is shut down at once (no permit, no wait for a preparation's cleanup, nothing written), so
+        // the switch saved in chain.json resumes on the restart.
+        yield* pass.shutdown;
         yield* Effect.forEach(runs, (r) => Deferred.fail(r.signal.fault, new ServerFault({ message })), { discard: true });
         const within = (ms: number) => (r: Run) => Fiber.await(r.fiber).pipe(Effect.timeoutOption(`${ms} millis`), Effect.map(Option.isSome));
         const graced = yield* Effect.forEach(runs, within(bounds.graceMs), { concurrency: "unbounded" });
@@ -634,7 +730,9 @@ export const makeRunManager = (
       });
 
     // Issue #147 (Q4): a restored Parking chain is parked again, a restored Ready one started at once if no limit is reached.
-    if (resume !== null || restoredChain !== loaded) yield* settle(resume);
+    if (resume !== null || restoredChain !== loaded.chain) yield* settle(resume);
+    // Issue #131 (requirements F4): a restored switch that is on resumes preparing; one that is off prepares nothing.
+    if (loaded.preparation.settings.enabled) yield* pass.wake;
 
     /** The refusal of an action naming a run that no mode holds now: it belongs to no tab. */
     const ended: Refusal = { refused: "that run has ended", mode: null };
@@ -659,6 +757,17 @@ export const makeRunManager = (
       listItems,
       haltAll,
       chain: Ref.get(state).pipe(Effect.map((s) => s.chain)),
+      preparation: preparationView,
+      // Issue #131: the switch set and broadcast, then saved, in one uninterruptible region as setChain's; on wakes, off stops.
+      setPreparation: (enabled) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* preparationStep((k) => switched(k, enabled));
+            yield* persist;
+            yield* enabled ? pass.wake : pass.stop;
+            return yield* preparationView;
+          }),
+        ),
       // The change and its save are one uninterruptible region (work review 1 of 28 Oct 2026, W1-R1-2), as start's
       // reservation, persist of Running and gate release are: the server forks setChain in the tab's scope, and a tab
       // closed meanwhile must not leave settings applied and broadcast but missing from plan-review/chain.json. persist

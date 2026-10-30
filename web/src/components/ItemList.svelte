@@ -23,13 +23,16 @@
   import type { ListedItem } from "../../../src/protocol.ts";
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
-  import { ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
+  import type { PreparationMark } from "../../../src/preparationSwitch.ts";
+  import { PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
   import type { ItemsView, StartableItems } from "../state.ts";
 
   // Issue #185: `abandoned`, the items whose run in the current chain stopped waiting for an answer, which carry a mark,
   // so an item back in the refined list does not look untouched [visibility of system status].
-  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
-  let { mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), onTerms = () => undefined, onStart, onRefresh }: Props = $props();
+  // Issue #131 (requirements Q6): `markOf`, what a row shows of its preparation (shownMark of web/src/state.ts).
+  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
+  let { mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh }: Props = $props();
+  const markText = (mark: PreparationMark): string => (mark._tag === "Preparing" ? PREPARING_MARK : mark._tag === "Prepared" ? preparedMarkText(mark.questions) : setAsideMarkText(mark.reason));
   const texts = $derived(TAB_TEXTS[mode]);
   const inProgress = (id: string): boolean => startable._tag === "Except" && startable.items.includes(id);
   const startableItem = (id: string): boolean => startable._tag === "Except" && !startable.items.includes(id);
@@ -71,12 +74,15 @@
               {#if item.url === null}{itemHeadline(item.id, item.title)}{:else}<a href={item.url} target="_blank" rel="noopener noreferrer">{itemHeadline(item.id, item.title)}</a>{/if}
             </p>
             {#if item.excerpt !== ""}<p class="supporting" data-supporting>{item.excerpt}</p>{/if}
+            {#if markOf(item)?._tag === "Prepared"}<p class="supporting" data-prepared-terms>{PREPARED_TERMS_NOTE}</p>{/if}
           </div>
           <div class="trailing">
             <!-- Issue #186 (F1): how many times Interloq sent the item back to refinement, and nothing more. -->
             {#if item.sentBack > 0}<span class="in-progress m3-font-label-medium" data-sent-back>{sentBackCountText(item.sentBack)}</span>{/if}
             {#if abandoned.has(item.id)}<span class="in-progress m3-font-label-medium" data-abandoned>{ABANDONED_IN_CHAIN}</span>{/if}
             {#if inProgress(item.id)}<span class="in-progress m3-font-label-medium">{ITEM_IN_PROGRESS}</span>{/if}
+            <!-- Issue #131: the item's preparation, set aside in the error color; the start stays enabled for every mark. -->
+            {#if markOf(item) !== null}<span class="in-progress m3-font-label-medium" class:error={markOf(item)?._tag === "SetAside"} data-preparation>{markText(markOf(item)!)}</span>{/if}
             <Button variant="text" type="button" name="start" data-item={item.id} disabled={!startableItem(item.id) || offline} onclick={() => onStart(item)}>{texts.action}</Button>
           </div>
         </li>
@@ -97,6 +103,7 @@
   .body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .trailing { flex: none; display: flex; align-items: center; gap: 0.5rem; }
   .in-progress { color: var(--m3c-on-surface-variant); }
+  .in-progress.error { color: var(--m3c-error); }
   /* Body large and body medium, set here since the m3-font classes are absent from the build. */
   .headline, .supporting { margin: 0; font-family: var(--m3-font); }
   .headline { font-size: 1rem; line-height: 1.5; font-weight: 400; color: var(--m3c-on-surface); }

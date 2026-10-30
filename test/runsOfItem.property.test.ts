@@ -54,3 +54,15 @@ test("items 1, 10 and 1-2 side by side, with names that are no run's", () => {
   assert.deepEqual(implementationRootsOf(names, "1-2", OWN), [runRootOf("implementation", "1-2", t2)]);
   assert.equal(itemInRoot("1-2"), "1_2");
 });
+
+// Issue #131: a preparation's records directory, runs/<start time>-preparation-<item>, is never an implementation root.
+test("a preparation's root has its own form and is never among the item's implementation roots", () => {
+  fc.assert(
+    fc.property(arbItem, arbInstant, fc.integer({ min: 1, max: 4 }), (item, t, k) => {
+      const root = runRootOf("preparation", item, t);
+      assert.equal(root, `${RUNS_DIR}/${t.replace(/[:.]/g, "-")}-preparation-${itemInRoot(item)}`);
+      assert.deepEqual(implementationRootsOf([nameOf(suffixedRoot(root, k))], item, OWN), []);
+    }),
+    RUNS,
+  );
+});

@@ -20,7 +20,7 @@ import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
 import type { LimitWait, LimitWaitBegan, CallFailure, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
-import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 import type { Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 import type { OutputEvent } from "./liveOutput.ts";
@@ -153,6 +153,12 @@ export type TrackerError = TrackerUnreachable | TrackerRequestRefused | TrackerA
 export interface TrackerShape {
   /** The open items in a state (requirements, Q2: an item closed in the tracker is in no list). */
   list(state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError>;
+  /**
+   * Issue #131 (requirements Q3, F2): the open items in a state that carry the label that marks an item for
+   * preparation, newest first; empty, with no request sent, where no such label is configured. Which label marks an
+   * item is the adapter's configuration, as for the states.
+   */
+  listMarked(state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError>;
   read(id: ItemId): Effect.Effect<TrackerItem, TrackerError>;
   /** Writes the item's `Refined using Interloq` section: appended once, replaced later; the rest of the body is kept. */
   writeRefinement(id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError>;
@@ -161,6 +167,11 @@ export interface TrackerShape {
   comment(id: ItemId, text: string): Effect.Effect<void, TrackerError>;
   /** The item's comments, oldest first (issue #186); a tracker's own notes of a change are not comments. */
   comments(id: ItemId): Effect.Effect<readonly ItemComment[], TrackerError>;
+  /**
+   * Deletes one of the item's comments (issue #131: Interloq deletes its own preparation's comments). A comment
+   * already gone counts as deleted, so the operation is idempotent and the tracker retry may repeat it.
+   */
+  deleteComment(id: ItemId, comment: CommentId): Effect.Effect<void, TrackerError>;
 }
 export class Tracker extends Context.Service<Tracker, TrackerShape>()("plan-review/Tracker") {}
 

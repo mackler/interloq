@@ -23,7 +23,7 @@ import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
 import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
-import { E2E_ITEMS } from "./ports.ts";
+import { E2E_ITEMS, PREPARED_ITEM } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
 import type { RunMode } from "../src/runMode.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, issue, respond, type TestOptions, tempRepo, testWiring, trackerAccessOf, questionOf, entryOf, para, ack, summaryReply } from "../test/helpers.ts";
@@ -348,10 +348,17 @@ const BY_MODE: Partial<Record<string, Readonly<Record<RunMode, TestOptions>>>> =
 const CHAIN_LATER: TestOptions = { steps: [{ output: noQuestions, plan: "1. [ ] the step\n", hang: true }] };
 let chainRuns = 0;
 const chainScript = (): TestOptions => (++chainRuns === 1 ? SCENARIOS.converge : CHAIN_LATER);
+// Issue #131: the server of the preparation: its first wiring prepares the marked item's one question, unattended; the
+// second is the refinement run of that item, which asks the prepared question at once and needs only its answer's
+// closing reply and the requirements review.
+const PREPARE_LIST: TestOptions = { steps: SCENARIOS.interview!.steps, reviews: [{ issues: [] }] };
+const PREPARED_RUN: TestOptions = { closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }], reviews: [{ issues: [] }] };
+let prepareWirings = 0;
+const prepareScript = (): TestOptions => (++prepareWirings === 1 ? PREPARE_LIST : PREPARED_RUN);
 // Issue #120: the server of a project whose tracker cannot be reached: no tracker is configured, so each tab shows a notice.
 SCENARIOS.noTracker = SCENARIOS.converge;
 const name = process.env.SCENARIO ?? "converge";
-const scenarioOf = (mode: RunMode): TestOptions => (name === "chain" ? chainScript() : (BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge));
+const scenarioOf = (mode: RunMode): TestOptions => (name === "chain" ? chainScript() : name === "prepare" ? prepareScript() : (BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge));
 const port = Number(process.env.PORT ?? "8101");
 const repo = tempRepo();
 const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
@@ -360,7 +367,7 @@ const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
  * The project's tracker of the scenario (issue #120), in memory: refined items for the implementation runs and unrefined
  * ones for the refinement runs, enough for every test of a server, since each run moves its item on.
  */
-const tracker = fakeTrackerOf(E2E_ITEMS);
+const tracker = fakeTrackerOf(name === "prepare" ? [...E2E_ITEMS, PREPARED_ITEM] : E2E_ITEMS);
 const access = name === "noTracker" ? { ...trackerAccessOf(tracker), tracker: () => Result.fail(new NoTracker()) } : trackerAccessOf(tracker);
 
 const main = Effect.gen(function* () {

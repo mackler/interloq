@@ -12,7 +12,7 @@ const GITLAB = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
 test("a GitLab tracker with its project and four distinct labels decodes", () => {
   const decoded = decode(GITLAB);
   assert.ok(Result.isSuccess(decoded));
-  assert.deepEqual(decoded.success, GITLAB);
+  assert.deepEqual(decoded.success, { ...GITLAB, prepareLabel: null });
 });
 
 test("labels with spaces and a project in a subgroup are accepted", () => {
@@ -57,4 +57,15 @@ test("two states sharing a label are refused on the later state's path, naming t
   assert.ok(Result.isFailure(decoded));
   assert.match(decoded.failure.message, /implementing/u);
   assert.match(decoded.failure.message, /the label "Refined" of implementing is another state's too: each state needs a label of its own/u);
+});
+
+// Issue #131 (requirements Q3, F2): the label that marks an item for preparation, null where absent.
+test("a GitLab tracker's prepareLabel defaults to null; a label decodes; a blank one, one with a comma or a state's label is refused", () => {
+  const absent = decode(GITLAB);
+  assert.ok(Result.isSuccess(absent));
+  assert.equal(absent.success.prepareLabel, null);
+  const given = decode({ ...GITLAB, prepareLabel: "Prepare" });
+  assert.ok(Result.isSuccess(given));
+  assert.equal(given.success.prepareLabel, "Prepare");
+  for (const label of [" ", "Prepare,Now", GITLAB_LABELS.refined]) assert.ok(Result.isFailure(decode({ ...GITLAB, prepareLabel: label })), label);
 });

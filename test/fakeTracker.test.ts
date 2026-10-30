@@ -81,3 +81,43 @@ test("a failure after the next write to a named state leaves a setState to anoth
   assert.equal((await run(tracker.read(id("2")))).state, "implemented");
   await run(tracker.setState(id("2"), "implemented"));
 });
+
+// Issue #131: the fake gives each comment it adds a distinct id, and a seeded comment keeps the id it was given.
+test("the fake gives every added comment a distinct id and keeps a seeded comment's", async () => {
+  const { commentIdOf } = await import("../src/tracker.ts");
+  const seeded = { id: Result.getOrThrow(commentIdOf("seed")), body: "s", created: "2026-10-01T00:00:00Z" };
+  const { tracker } = await run(makeFakeTracker([{ ...ITEMS[0], comments: [seeded] }]));
+  await run(tracker.comment(id("1"), "a"));
+  await run(tracker.comment(id("1"), "b"));
+  const ids = (await run(tracker.comments(id("1")))).map((c) => c.id);
+  assert.equal(ids[0], "seed");
+  assert.equal(new Set(ids).size, 3);
+});
+
+// Issue #131: the fake deletes a comment; one already gone succeeds; a scripted failure fails it.
+test("the fake deletes a comment, a missing one succeeds, and failNext scripts a failure", async () => {
+  const { tracker, failNext } = await run(makeFakeTracker(ITEMS));
+  await run(tracker.comment(id("1"), "a"));
+  await run(tracker.comment(id("1"), "b"));
+  const [first] = await run(tracker.comments(id("1")));
+  await run(tracker.deleteComment(id("1"), first.id));
+  assert.deepEqual((await run(tracker.comments(id("1")))).map((c) => c.body), ["b"]);
+  await run(tracker.deleteComment(id("1"), first.id));
+  const error = new TrackerUnreachable({ tracker: "GitHub", message: "down", status: null });
+  await run(failNext("deleteComment", error));
+  assert.equal(await run(Effect.flip(tracker.deleteComment(id("1"), first.id))), error);
+});
+
+// Issue #131: the fake lists the marked open items of a state, newest first: the reverse of the order they were given.
+test("the fake's listMarked gives the marked open items of the state in the reverse of the order given", async () => {
+  const items: readonly FakeItem[] = [
+    { id: id("1"), title: "one", body: "", state: "unrefined", open: true, url: Option.none(), marked: true },
+    { id: id("2"), title: "two", body: "", state: "unrefined", open: true, url: Option.none() },
+    { id: id("3"), title: "three", body: "", state: "unrefined", open: true, url: Option.none(), marked: true },
+    { id: id("4"), title: "four", body: "", state: "unrefined", open: false, url: Option.none(), marked: true },
+    { id: id("5"), title: "five", body: "", state: "refined", open: true, url: Option.none(), marked: true },
+  ];
+  const { tracker } = await run(makeFakeTracker(items));
+  assert.deepEqual((await run(tracker.listMarked("unrefined"))).map((i) => i.id), ["3", "1"]);
+  assert.equal("marked" in (await run(tracker.listMarked("unrefined")))[0]!, false);
+});

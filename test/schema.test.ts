@@ -57,9 +57,9 @@ const userEntry = { id: "A", phase: 1, round: 2, source: "user", problem: "p", a
 const usage = { version: 2, agent: "claude", time: "2026-09-24T00:00:00.000Z", session: null, num_turns: 0, total_cost_usd: 0 };
 // Issue #120, part 1: the tracker key.
 type PerState = { unrefined: string; refined: string; implementing: string; implemented: string; deployed: string };
-type GithubTrackerShape = { kind: "github"; owner: string; repo: string; labels: PerState };
+type GithubTrackerShape = { kind: "github"; owner: string; repo: string; labels: PerState; prepareLabel: string | null };
 /** The GitLab tracker: four labels, deployed being a closed issue. */
-type GitlabTrackerShape = { kind: "gitlab"; project: string; labels: { unrefined: string; refined: string; implementing: string; implemented: string } };
+type GitlabTrackerShape = { kind: "gitlab"; project: string; labels: { unrefined: string; refined: string; implementing: string; implemented: string }; prepareLabel: string | null };
 const config: typeof S.Config.Type = { ignorePaths: ["a.txt"], maxRounds: 5, maxIdleRounds: 2, maxTransportRetries: 3, transportRetryDelaySeconds: 5, maxTrackerRetries: 5, trackerRetryDelaySeconds: 15, costWarningUsd: 5, codexTurnInputLimit: 500000, suiteTimeoutMinutes: 40, answerTimeoutSeconds: 120, countMinor: true, execPermissionMode: "auto", claudeModel: null, codexModel: null, tracker: null, terms: "unchecked", checkCommands: [], suiteCommand: null };
 
 test("each schema decodes a valid sample and its type matches the legacy type", () => {

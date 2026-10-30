@@ -1,5 +1,7 @@
 // Prompt texts. All paths are relative to the project directory.
 
+import type { PreparationCause } from "./preparedComments.ts";
+import type { PreparationStatus } from "./preparationSwitch.ts";
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
@@ -1603,6 +1605,8 @@ export function writeCheckText(item: string, check: WriteCheck): string {
       return `After the last attempt, item ${item} was in the state ${check.held.state}.`;
     case "noComment":
       return `After the last attempt, item ${item} held no comment of the run's.`;
+    case "commentPresent":
+      return `After the last attempt, item ${item} still held the comment that was to be deleted.`;
   }
 }
 
@@ -1621,6 +1625,8 @@ export function trackerOperationText(op: TrackerOperation): string {
       return `adding a comment to item ${op.item}`;
     case "comments":
       return `reading the comments of item ${op.item}`;
+    case "deleteComment":
+      return `deleting Interloq's comment ${op.comment} on item ${op.item}`;
   }
 }
 /** A repeat of a failed tracker request, as the page and conversation.md show it. */
@@ -2117,7 +2123,7 @@ export function draftWithdrawnNotice(text: string): string {
 export const SERVER_CLOSED_NOTICE = "The server has ended. The page reconnects when it is started again.";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
-const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold", string> = {
+const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation", string> = {
   answer: "Your answer was not sent",
   // Issue #185.
   hold: "That you are working on the question was not sent, so its countdown may still run",
@@ -2126,6 +2132,8 @@ const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "c
   start: "The start of the run was not sent",
   items: "The request for the tab's items was not sent",
   chain: "The change of the setting that starts the next refined item was not sent",
+  // Issue #131.
+  preparation: "Turning the preparation of marked items' questions on or off was not sent",
 };
 const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = {
   ended: "the run has ended",
@@ -2136,7 +2144,7 @@ const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = 
  * An action that was not sent: queued while disconnected and overtaken by the reconnection, or refused because the page
  * has stopped reconnecting. A disconnected answer says where its text is: in the answer field, or quoted and kept.
  */
-export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
+export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
   const base = `${NOT_SENT_SUBJECT[kind]}: ${NOT_SENT_REASON[reason]}.`;
   if (kind !== "answer" || reason !== "disconnected") return base;
   return quoted === undefined ? `${base} Its text is still in the answer field.` : `${base} Its text is kept under “${UNSENT_HEADING}”: «${quoted}»`;
@@ -4091,3 +4099,68 @@ export const outputEndedLine = (name: string, status: ProcessStatus): string => 
       return `${name} ended; how is not known`;
   }
 };
+// ---- the unattended preparation of an item's questions (issue #131) ----------------------------------------------
+
+/** The heading of a prepared question's comment on the item, which a person reading the issue sees. */
+export const preparedQuestionHeading = (n: number, count: number): string => `**Interloq prepared question ${n} of ${count} for this item.**`;
+/** What a prepared question's comment says will become of it. */
+export const PREPARED_QUESTION_NOTE = "Interloq asks this question, as Codex reviewed it, at once when Refine is pressed on this item.";
+/** The heading of a prepared question's explanations of its terms in its comment. */
+export const PREPARED_TERMS_HEADING = "Terms:";
+/** The preparation's own comment when the questions were prepared (requirements Q1 and G-R1-2: a count of 0 is a preparation that needed no question). */
+export const preparationPreparedText = (date: string, count: number): string =>
+  count === 0
+    ? `Interloq prepared this item on ${date}: Claude Code and Codex agreed that no question needs the developer's answer, so pressing Refine writes its requirements without asking anything. A change of the item's title or text discards this preparation.`
+    : `Interloq prepared ${count} question${count === 1 ? "" : "s"} for this item on ${date}. They are asked at once when Refine is pressed, and a change of the item's title or text discards them.`;
+/** Why an item was set aside, in words: the comment's, the page's mark's and conversation.md's. */
+export const preparationCauseText = (cause: PreparationCause): string => {
+  switch (cause._tag) {
+    case "Paused":
+      return `its question review stopped for a decision of the developer's: ${cause.question}`;
+    case "Failed":
+      return `the preparation failed: ${cause.reason}`;
+    case "TooLong":
+      return `question ${cause.question} with its explanations is longer than a comment may be`;
+  }
+};
+/** The preparation's own comment when the item was set aside (requirements G-R1-1), with the three ways it is released. */
+export const preparationSetAsideText = (date: string, cause: PreparationCause): string =>
+  `Interloq stopped preparing this item's questions on ${date}, because ${preparationCauseText(cause)}. It prepares the item again when its title or text changes, when the preparation switch is turned off and on again, or once Refine is pressed on it.`;
+/** The first line of a preparation's conversation.md. */
+export const preparationStartedLine = (item: string, title: string): string => `Interloq prepares the questions of item ${item} (${title}) unattended: the question list, its review and the explanations of its terms.`;
+/** A preparation's outcome lines in its conversation.md. */
+export const preparationPreparedLine = (item: string, count: number): string => `Prepared ${count} question${count === 1 ? "" : "s"} for item ${item}, written as comments on the item.`;
+export const preparationSetAsideLine = (item: string, cause: PreparationCause): string => `Item ${item} was set aside, because ${preparationCauseText(cause)}.`;
+export const preparationNotWrittenLine = (item: string, reason: string): string => `The preparation of item ${item} could not be recorded on the item: ${reason}`;
+export const PREPARATION_STOPPED = "**Preparation stopped.**";
+/** A refinement run that uses a current preparation (issue #131): which one, by its comment key, its records directory's name. */
+export const preparationUsedLine = (key: string): string => `This item's questions were prepared and reviewed in advance (${key}); the first one is asked at once.`;
+/** In place of the terms choice line (requirements Q5): for a prepared item the Refinement tab's choice of terms has no effect. */
+export const PREPARED_TERMS_CHOICE_LINE = "The questions and the explanations of their terms come from the preparation, which Codex reviewed; the Refinement tab's choice of terms has no effect for this item.";
+/** A deletion of the preparation's comments after the item was refined that failed for good; the run does not halt. */
+export const preparationCleanupFailedLine = (item: string, cause: string): string => `The prepared questions' comments on item ${item} could not all be deleted: ${cause}. They are not used again, since the item's refinement record follows them.`;
+/** Why an item whose preparation could not be recorded on it is set aside, as its mark says it (issue #131). */
+export const preparationNotWrittenReason = (reason: string): string => `its prepared questions could not be written to the item: ${reason}`;
+
+// ---- the page's preparation control and marks (issue #131) -------------------------------------------------------
+/** The switch above the Refinement list (requirements Q4); it asserts that the pass may prepare and nothing more. */
+export const PREPARATION_SWITCH_LABEL = "Prepare the questions of marked items";
+/** What the status line under the switch says. */
+export const preparationStatusText = (status: PreparationStatus): string => {
+  switch (status._tag) {
+    case "Off":
+      return "Off: no item is prepared.";
+    case "Idle":
+      return "On: nothing is left to prepare.";
+    case "Preparing":
+      return `Preparing the questions of item ${status.item}: ${status.title}`;
+    case "Unavailable":
+      return `On, but the marked items could not be listed: ${status.notice}`;
+  }
+};
+/** An item's marks in the Refinement list (requirements Q6). */
+export const PREPARING_MARK = "Preparing questions…";
+export const preparedMarkText = (questions: number): string => (questions === 0 ? "No question needed" : `Questions prepared (${questions})`);
+export const setAsideMarkText = (reason: string): string => `Set aside: ${reason}`;
+/** On a prepared item's row (requirements Q5: the page says so): the choice of terms above it does not apply to it. */
+export const PREPARED_TERMS_NOTE = "Its terms were explained and reviewed when it was prepared, so the choice of terms above does not apply to it.";

@@ -25,6 +25,7 @@ import { commentText, runCommentKey } from "../src/itemComments.ts";
 import { askedInPlanReview, issue, respond, startOf, withoutReturnLine } from "./helpers.ts";
 import { finished, scriptedPlan, scriptedTask, scriptedStart, type TestOptions, tempDir, tempRepo, testWiring, questionOf, currentOf, plain, ack, summaryReply, questionEntry, runDirOf, runDirsOf, fakeTrackerOf, MANAGER_ITEMS, trackerAccessOf } from "./helpers.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
+import { seededId } from "./fakeTracker.ts";
 
 // Plan step 3.3: the run manager with scripted clients over the scripted wiring (and once over the real adapters).
 const run = Effect.runPromise;
@@ -598,7 +599,7 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
   const h = await harness(repo, []);
   for (const mode of ["refinement", "implementation"] as const) {
     const listed = await run(h.manager.listItems(mode));
-    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0 }));
+    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null }));
     // Issue #125: the listing carries each item's address, null where the tracker gave none, and both occur.
     assert.deepEqual(new Set(items.map((i) => i.url === null)), new Set([true, false]));
     // Issue #142: the Refinement tab's listing carries the configured choice of terms, which its control starts at.
@@ -621,8 +622,8 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
 // markers (one per send-back's key); a comment listing that fails is the listing's notice, as a failed listing is.
 test("listItems counts each item's send-backs from its comments; a failed comment listing is a notice", async () => {
   const repo = tempRepo();
-  const sentBack = (key: string) => ({ body: commentText({ _tag: "SentBack", key: runCommentKey(key, "verdict-1"), date: "2026-10-28", missing: "m" }), created: "2026-10-28T00:00:00Z" });
-  const twice = ITEMS.map((i) => (i.state === "unrefined" && i.id === ITEMS.find((x) => x.state === "unrefined")!.id ? { ...i, comments: [sentBack("run-a"), { body: "a developer's note", created: "t" }, sentBack("run-b"), sentBack("run-b")] } : i));
+  const sentBack = (key: string) => ({ id: seededId(), body: commentText({ _tag: "SentBack", key: runCommentKey(key, "verdict-1"), date: "2026-10-28", missing: "m" }), created: "2026-10-28T00:00:00Z" });
+  const twice = ITEMS.map((i) => (i.state === "unrefined" && i.id === ITEMS.find((x) => x.state === "unrefined")!.id ? { ...i, comments: [sentBack("run-a"), { id: seededId(), body: "a developer's note", created: "t" }, sentBack("run-b"), sentBack("run-b")] } : i));
   const tracker = fakeTrackerOf(twice);
   const h = await harness(repo, [], undefined, [], tracker);
   const listed = await run(h.manager.listItems("refinement"));

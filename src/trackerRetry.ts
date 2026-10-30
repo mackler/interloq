@@ -14,14 +14,16 @@ import { backoffDelays } from "./retry.ts";
 import type { Config } from "./schema.ts";
 import { type Decider, RunConfig, Store, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { keyOf } from "./itemComments.ts";
-import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 
 /** A write of a run to its item: the requirements written back, or the item's state set. */
 export type TrackerWrite =
   | Readonly<{ kind: "writeRefinement"; item: ItemId; refinement: Refinement }>
   | Readonly<{ kind: "setState"; item: ItemId; state: ItemState }>
   /** Issue #186: a comment Interloq writes, its `key` the unique key its marker line carries (src/itemComments.ts). */
-  | Readonly<{ kind: "comment"; item: ItemId; text: string; key: string }>;
+  | Readonly<{ kind: "comment"; item: ItemId; text: string; key: string }>
+  /** Issue #131: the deletion of one of Interloq's own comments, idempotent, since a comment already gone counts as deleted. */
+  | Readonly<{ kind: "deleteComment"; item: ItemId; comment: CommentId }>;
 
 /** A request of a run to its tracker: the first read of its item, the read of its comments (issue #186), or one of its writes. */
 export type TrackerOperation = Readonly<{ kind: "read"; item: ItemId }> | Readonly<{ kind: "comments"; item: ItemId }> | TrackerWrite;
@@ -51,8 +53,17 @@ export type { HeldState, WriteCheck } from "./errors.ts";
 export const commentLanded = (key: string, comments: readonly ItemComment[]): Result.Result<void, HeldState> =>
   comments.some((c) => keyOf(c.body) === key) ? Result.succeed(undefined) : Result.fail({ kind: "noComment" });
 
+/** Issue #131: whether a deletion is done, decided by the comment's id: done exactly when no comment of the item has it. */
+export const commentDeleted = (id: CommentId, comments: readonly ItemComment[]): Result.Result<void, HeldState> =>
+  comments.some((c) => c.id === id) ? Result.fail({ kind: "commentPresent" }) : Result.succeed(undefined);
+
+/** The writes whose outcome a read of the item shows. */
+type ItemWrite = Extract<TrackerWrite, { kind: "writeRefinement" | "setState" }>;
+/** The writes repeated as they are, read back after a server error: every write but a comment, which is reconciled by its key. */
+type RepeatableWrite = Exclude<TrackerWrite, { kind: "comment" }>;
+
 /** Success when the item already holds the write's outcome; otherwise what it held. A malformed section is another section. */
-export const landed = (write: Exclude<TrackerWrite, { kind: "comment" }>, item: TrackerItem): Result.Result<void, HeldState> => {
+export const landed = (write: ItemWrite, item: TrackerItem): Result.Result<void, HeldState> => {
   switch (write.kind) {
     case "writeRefinement": {
       const section = readRefinement(item.body);
@@ -159,22 +170,34 @@ export const readWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerR
 export const readCommentsWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<readonly ItemComment[], TrackerError | RunError> =>
   readRetried(env, { kind: "comments", item }, tracker.comments(item));
 
-const sent = (tracker: TrackerShape, write: Exclude<TrackerWrite, { kind: "comment" }>): Effect.Effect<void, TrackerError> =>
-  write.kind === "writeRefinement" ? tracker.writeRefinement(write.item, write.refinement) : tracker.setState(write.item, write.state);
+const sent = (tracker: TrackerShape, write: RepeatableWrite): Effect.Effect<void, TrackerError> => {
+  switch (write.kind) {
+    case "writeRefinement":
+      return tracker.writeRefinement(write.item, write.refinement);
+    case "setState":
+      return tracker.setState(write.item, write.state);
+    case "deleteComment":
+      return tracker.deleteComment(write.item, write.comment);
+  }
+};
+
+/** What a read-back after a server error shows of a write: the item for a write to it, its comments for a deletion (issue #131). */
+const readBack = (tracker: TrackerShape, write: RepeatableWrite): Effect.Effect<Result.Result<void, HeldState>, TrackerError> =>
+  write.kind === "deleteComment" ? Effect.map(tracker.comments(write.item), (comments) => commentDeleted(write.comment, comments)) : Effect.map(tracker.read(write.item), (item) => landed(write, item));
 
 /**
  * One attempt at a write. A server error is followed by a read of the item (requirements Q2): where the item already
  * holds the write's outcome, the write counts as done, said and recorded; otherwise the failure carries what the item
  * held, and a read-back that fails leaves the item unchecked.
  */
-const writeAttempt = (tracker: TrackerShape, write: Exclude<TrackerWrite, { kind: "comment" }>, env: TrackerRetryEnv): Effect.Effect<Attempted<void>, AttemptFailed | RunError> =>
+const writeAttempt = (tracker: TrackerShape, write: RepeatableWrite, env: TrackerRetryEnv): Effect.Effect<Attempted<void>, AttemptFailed | RunError> =>
   Effect.catch(
     Effect.map(sent(tracker, write), (): Attempted<void> => ({ value: undefined, landed: null })),
     (error): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => {
       if (!uncertainWrite(error) || error._tag !== "TrackerUnreachable") return Effect.fail(attemptFailed(error, UNCHECKED));
-      return Effect.flatMap(Effect.result(tracker.read(write.item)), (read): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => {
+      return Effect.flatMap(Effect.result(readBack(tracker, write)), (read): Effect.Effect<Attempted<void>, AttemptFailed | RunError> => {
         if (Result.isFailure(read)) return Effect.fail(attemptFailed(error, UNCHECKED));
-        const outcome = landed(write, read.success);
+        const outcome = read.success;
         if (Result.isFailure(outcome)) return Effect.fail(attemptFailed(error, { kind: "held", held: outcome.failure }));
         const line = prompts.trackerWriteLandedLine(error.tracker, prompts.trackerOperationText(write));
         return env.ui.say(line).pipe(Effect.andThen(env.record(`${line}\n\n`)), Effect.as({ value: undefined, landed: error.tracker }));

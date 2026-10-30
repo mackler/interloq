@@ -144,7 +144,7 @@ test("the tracker key defaults to null and accepts a GitHub tracker with its fiv
   assert.equal(defaultConfig.tracker, null);
   const decoded = decodeConfigText("/p/config.json", trackerText(GITHUB));
   assert.ok(Result.isSuccess(decoded));
-  assert.deepEqual(decoded.success.tracker, GITHUB);
+  assert.deepEqual(decoded.success.tracker, { ...GITHUB, prepareLabel: null });
 });
 
 test("a tracker with a missing or blank coordinate, an unknown state, a missing state or a shared label is ConfigInvalid", () => {
@@ -182,7 +182,7 @@ test("the project's tracker replaces the shared one whole", async () => {
   const { project, shared, projectFile } = setup();
   fs.writeFileSync(shared, trackerText(GITHUB));
   fs.writeFileSync(projectFile, trackerText({ ...GITHUB, owner: "someone", repo: "else" }));
-  assert.deepEqual((await load(project, shared)).tracker, { ...GITHUB, owner: "someone", repo: "else" });
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITHUB, owner: "someone", repo: "else", prepareLabel: null });
 });
 
 // The GitLab tracker: the project's path and four state labels, deployed being a closed issue; refused before any call
@@ -192,7 +192,7 @@ const GITLAB = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
 test("a configuration file with a GitLab tracker loads", async () => {
   const { project, shared, projectFile } = setup();
   fs.writeFileSync(projectFile, trackerText(GITLAB));
-  assert.deepEqual((await load(project, shared)).tracker, GITLAB);
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITLAB, prepareLabel: null });
 });
 
 test("a GitLab tracker with a bad project, a missing state, a deployed label, a bad or shared label or a token is ConfigInvalid under tracker", () => {
@@ -219,7 +219,7 @@ test("the project's GitLab tracker replaces a shared GitHub one whole", async ()
   const { project, shared, projectFile } = setup();
   fs.writeFileSync(shared, trackerText(GITHUB));
   fs.writeFileSync(projectFile, trackerText(GITLAB));
-  assert.deepEqual((await load(project, shared)).tracker, GITLAB);
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITLAB, prepareLabel: null });
 });
 
 // Issue #122: the amount above which one Claude Code request's cost is warned about, validated under behavior 9.
@@ -283,4 +283,19 @@ test("terms defaults to unchecked, and the project's file replaces the shared on
   assert.equal((await load(project, shared)).terms, "checked");
   fs.writeFileSync(projectFile, JSON.stringify({ terms: "onRequest" }));
   assert.equal((await load(project, shared)).terms, "onRequest");
+});
+
+// Issue #131 (requirements Q3, F2): the label that marks an item for preparation, null where absent.
+test("a GitHub tracker's prepareLabel defaults to null, a non-blank label decodes, a blank one or a state's label is ConfigInvalid", () => {
+  const absent = decodeConfigText("/p/config.json", trackerText(GITHUB));
+  assert.ok(Result.isSuccess(absent));
+  assert.equal(absent.success.tracker?.prepareLabel, null);
+  const given = decodeConfigText("/p/config.json", trackerText({ ...GITHUB, prepareLabel: "prepare" }));
+  assert.ok(Result.isSuccess(given));
+  assert.equal(given.success.tracker?.prepareLabel, "prepare");
+  for (const [what, label] of [["blank", " "], ["a state's label", LABELS.refined]] as const) {
+    const decoded = decodeConfigText("/p/config.json", trackerText({ ...GITHUB, prepareLabel: label }));
+    assert.ok(Result.isFailure(decoded), `${what} was accepted`);
+    assert.equal(decoded.failure._tag, "ConfigInvalid", what);
+  }
 });

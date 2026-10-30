@@ -9,6 +9,7 @@ import { type ParkNote, ParkNoteSchema } from "./chain.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { OnExpiry } from "./protocol.ts";
+import type { TrackerError } from "./services.ts";
 import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
@@ -204,6 +205,8 @@ export const HeldStateSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("state"), state: ItemState }),
   // Issue #186: the item held no comment carrying the write's key.
   Schema.Struct({ kind: Schema.Literal("noComment") }),
+  // Issue #131: the item still held the comment a deletion was to remove.
+  Schema.Struct({ kind: Schema.Literal("commentPresent") }),
 ]);
 export type HeldState = typeof HeldStateSchema.Type;
 /** Issue #171 (requirements Q2): what a halt says about the item after the last write: what it held, or that it could not be checked. */
@@ -464,3 +467,7 @@ export const haltMessage = (error: unknown): string | null => {
   const decoded = decodeRunError(error);
   return decoded === null ? null : `HALTED: ${describe(decoded)}`;
 };
+
+const TRACKER_ERROR_TAGS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
+/** Whether a failure is one of the tracker port's (TrackerError), so that trackerFailureText says it; the one statement of the test. */
+export const isTrackerError = <E extends Readonly<{ _tag: string }>>(error: E | TrackerError): error is TrackerError => TRACKER_ERROR_TAGS.has(error._tag);

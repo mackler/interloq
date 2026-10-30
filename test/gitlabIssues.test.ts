@@ -151,3 +151,13 @@ test("an aggregate carrying Node's own code ECONNREFUSED is judged by its errors
 test("descriptionTooLongText names the length and the limit", () => {
   assert.equal(descriptionTooLongText({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: 1_000_001 }), "the refinement would make the issue's description 1000001 characters long, more than GitLab's limit of 1000000");
 });
+
+// Issue #131: every comment carries its id, so Interloq can delete its own.
+test("a GitLab note as the port's comment carries its id as a string, a system note still dropped", async () => {
+  const { commentsOfNotes } = await import("../src/gitlabIssues.ts");
+  const comments = commentsOfNotes([
+    { id: 5, body: "a", created_at: "2026-10-01T00:00:00Z", system: false },
+    { id: 6, body: "added label", created_at: "2026-10-02T00:00:00Z", system: true },
+  ]);
+  assert.deepEqual(comments, [{ id: "5", body: "a", created: "2026-10-01T00:00:00Z" }]);
+});

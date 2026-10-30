@@ -10,7 +10,7 @@ import { type Refinement, type SectionMalformed, withRefinement } from "./refine
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
 import { GITLAB_LABELED_STATES, type GitlabLabeledState, type GitlabLabels } from "./schema.ts";
-import { type ItemComment, type ItemId, type ItemState, itemUrlFrom, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type ItemComment, type ItemId, type ItemState, itemUrlFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 const TRACKER = "GitLab";
 
@@ -91,7 +91,7 @@ export const gitlabPageProblem = (current: number, next: Option.Option<number>, 
 export const GitlabNote = Schema.Struct({ id: Schema.Int, body: Schema.String, created_at: Schema.String, system: Schema.Boolean });
 export type GitlabNote = typeof GitlabNote.Type;
 /** The notes that are comments, as the port's comments, in their order. */
-export const commentsOfNotes = (notes: readonly GitlabNote[]): readonly ItemComment[] => notes.filter((n) => !n.system).map((n) => ({ body: n.body, created: n.created_at }));
+export const commentsOfNotes = (notes: readonly GitlabNote[]): readonly ItemComment[] => notes.filter((n) => !n.system).map((n) => ({ id: numericCommentId(n.id), body: n.body, created: n.created_at }));
 
 /** GitLab's limit on an issue's description, by its documentation; unproven by a real call. */
 export const GITLAB_DESCRIPTION_LIMIT = 1_000_000;

@@ -2,7 +2,7 @@
 
 import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
-import { clarification } from "./conversation.ts";
+import { clarification, type TermsOffer } from "./conversation.ts";
 import * as prompts from "./prompts.ts";
 import { planningCall, reviewLoop } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
@@ -43,15 +43,15 @@ const termsBeforeInterview = (task: string, agreed: QuestionsFile["questions"], 
   }
 };
 
-/** Runs before planning phase 1 and ends with requirements.md written. */
-export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<void, RunError, Services> =>
+/**
+ * Issue #131: the part of the question phase that needs no one (steps 1 to 3): the question list, its review, the agreed
+ * list recorded, and, where it is not empty, its terms as the choice has them. Returns the agreed list. An unattended
+ * preparation runs it alone; a refinement run runs it unless a current preparation supplies its result.
+ */
+export const prepareQuestionList = (task: string, terms: TermsMode): Effect.Effect<QuestionsFile["questions"], RunError, Services> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
-
-    yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "questions" } });
-    yield* store.converse(`${prompts.termsChoiceLine(terms)}\n\n`);
-    yield* ui.say(prompts.termsChoiceLine(terms));
     yield* ui.say(prompts.questionListLine);
     const generated = yield* planningCall(prompts.questionListPrompt(task), S.QuestionList, "planning", "records", questionListValidation());
     yield* writeQuestions(task, generated.output);
@@ -61,6 +61,19 @@ export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<voi
 
     const agreed = (yield* store.loadQuestions()).questions;
     yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: agreed })}\n`);
+    // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
+    if (agreed.length > 0) yield* termsBeforeInterview(task, agreed, terms);
+    return agreed;
+  });
+
+/**
+ * Issue #131: the part of the question phase that is nothing but the developer (step 4): the clarification of the agreed
+ * list and the review of its result, or, for an empty list, requirements.md with no question.
+ */
+export const askAgreed = (task: string, agreed: QuestionsFile["questions"], termsOffer: TermsOffer): Effect.Effect<void, RunError, Services> =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const ui = yield* Ui;
     // Issue #83 (the developer's instruction of 4 Oct 2026): an empty agreed list is no reason to pause; planning starts.
     if (agreed.length === 0) {
       yield* store.writeRequirements(`# Requirements\n\n## Task\n\n${task}\n\nNo question was needed.\n`);
@@ -68,11 +81,22 @@ export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<voi
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
       return;
     }
-    // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
-    yield* termsBeforeInterview(task, agreed, terms);
     yield* ui.say(`\nThe agreed list contains ${agreed.length} question(s).`);
-    yield* clarification(agreed.map((q) => q.id), terms === "onRequest" ? { kind: "onRequest", task } : { kind: "never" });
+    yield* clarification(agreed.map((q) => q.id), termsOffer);
 
     const reviewed = yield* reviewLoop(requirementsSubject());
     yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: reviewed.result });
+  });
+
+/** Runs before planning phase 1 and ends with requirements.md written. */
+export const questionPhase = (task: string, terms: TermsMode): Effect.Effect<void, RunError, Services> =>
+  Effect.gen(function* () {
+    const store = yield* Store;
+    const ui = yield* Ui;
+
+    yield* ui.notify({ _tag: "PhaseBegan", phase: { kind: "questions" } });
+    yield* store.converse(`${prompts.termsChoiceLine(terms)}\n\n`);
+    yield* ui.say(prompts.termsChoiceLine(terms));
+    const agreed = yield* prepareQuestionList(task, terms);
+    yield* askAgreed(task, agreed, terms === "onRequest" ? { kind: "onRequest", task } : { kind: "never" });
   });

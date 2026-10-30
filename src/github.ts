@@ -8,7 +8,7 @@ import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, 
 import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import type { GithubTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import { type CommentId, type ItemComment, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
 import { OPENING_LINE, type Refinement, withRefinement } from "./refinement.ts";
 
@@ -102,15 +102,24 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
         failure._tag === "Ambiguous" ? new TrackerStateAmbiguous({ id, labels: failure.labels }) : new TrackerBodyInvalid({ id, message: "the issue is closed and carries no stage label, so it is in no state" }),
       );
 
-    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => {
-      // An open issue with no stage label is unrefined (requirements, Q1), so only the whole open list finds those.
-      const params = state === "unrefined" ? { state: "open", per_page: PAGE_SIZE } : { state: "open", per_page: PAGE_SIZE, labels: config.labels[state] };
-      const target: Target = { kind: "listing", what: `the ${state} issues of ${config.owner}/${config.repo}` };
+    /**
+     * The open issues in a state among those carrying `labels` (none, or several, which GitHub's comma requires all
+     * of), with the extra parameters given; pull requests dropped, an ambiguous issue failing the listing.
+     */
+    const listed = (state: ItemState, labels: readonly string[], extra: Readonly<Record<string, string>>, what: string): Effect.Effect<readonly TrackerItem[], TrackerError> => {
+      const params = { state: "open", per_page: PAGE_SIZE, ...(labels.length === 0 ? {} : { labels: labels.join(",") }), ...extra };
+      const target: Target = { kind: "listing", what: `${what} of ${config.owner}/${config.repo}` };
       return Effect.flatMap(pages(HttpClientRequest.get(issuesUrl).pipe(HttpClientRequest.setUrlParams(params)), target, []), (issues): Effect.Effect<readonly TrackerItem[], TrackerError> => {
         const items = Result.all(issues.filter((issue) => !isPullRequest(issue)).map((issue) => itemOfIssue(issue, String(issue.number))));
         return Result.isFailure(items) ? Effect.fail(items.failure) : Effect.succeed(items.success.filter((item) => item.state === state));
       });
     };
+    // An open issue with no stage label is unrefined (requirements, Q1), so only the whole open list finds those.
+    const stateLabels = (state: ItemState): readonly string[] => (state === "unrefined" ? [] : [config.labels[state]]);
+    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => listed(state, stateLabels(state), {}, `the ${state} issues`);
+    /** Issue #131: the marked issues in a state, newest first by GitHub's own sort; none, and no request, with no mark configured. */
+    const listMarked = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> =>
+      config.prepareLabel === null ? Effect.succeed([]) : listed(state, [...stateLabels(state), config.prepareLabel], { sort: "created", direction: "desc" }, `the marked ${state} issues`);
 
     /** The issue an id names; an id outside GitHub's format and a pull request are items that do not exist. */
     const issueOf = (id: ItemId): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> =>
@@ -161,7 +170,32 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
         onSome: (number) =>
           Effect.map(commentPages(HttpClientRequest.get(`${issuesUrl}/${number}/comments`).pipe(HttpClientRequest.setUrlParams({ per_page: PAGE_SIZE })), { kind: "item", id }, []), (cs) => cs.map(commentOf)),
       });
-    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
+    /**
+     * Issue #131: one DELETE of the comment, with no read of the issue first, since the comment's URL does not need it.
+     * A comment already gone (404, 410) counts as deleted, so the operation is idempotent and the tracker retry may
+     * repeat it; the mapping is here, not in statusFailure, which other requests share. An id outside GitHub's format,
+     * the item's or the comment's, names nothing and sends nothing.
+     */
+    const deleteComment = (id: ItemId, comment: CommentId): Effect.Effect<void, TrackerError> =>
+      Option.match(Option.all([issueNumberOf(id), positiveDecimalOf(comment)]), {
+        onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
+        onSome: ([, number]) => {
+          const request = HttpClientRequest.delete(`${issuesUrl}/comments/${number}`);
+          const target: Target = { kind: "item", id };
+          const gone = (status: number): boolean => status === 404 || status === 410;
+          return Effect.flatMap(
+            Effect.catch(client.execute(authorized(request)), (error) =>
+              error.reason._tag === "StatusCodeError" && gone(error.reason.response.status) ? Effect.succeed(null) : Effect.fail(clientFailure(error, request.method, target)),
+            ),
+            (response): Effect.Effect<void, TrackerError> => {
+              if (response === null || gone(response.status)) return Effect.void;
+              const refused = statusFailure(response.status, request.method, target);
+              return refused === null ? Effect.void : Effect.fail(refused);
+            },
+          );
+        },
+      });
+    const tracker: TrackerShape = { list, listMarked, read, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

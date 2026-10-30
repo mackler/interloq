@@ -36,9 +36,9 @@ import {
   relabelBody,
 } from "./gitlabIssues.ts";
 import { OPENING_LINE, type Refinement } from "./refinement.ts";
-import type { GitlabTrackerConfig } from "./schema.ts";
+import type { GitlabLabeledState, GitlabTrackerConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import type { ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import { type CommentId, type ItemComment, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GitlabToken, gitlabCredential } from "./trackerConfig.ts";
 
 const TRACKER = "GitLab";
@@ -117,15 +117,19 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
     const itemOf = (issue: GitlabIssue): Result.Result<TrackerItem, TrackerError> => Result.mapError(itemOfIssue(config.labels, issue), (failure) => stateFailure(failure, issue.iid));
 
     /** A deployed item is a closed issue (the developer's decision of 9 Oct 2026), and a listing holds open issues only. */
-    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => {
-      if (state === "deployed") return Effect.succeed([]);
-      const params = { state: "opened", labels: config.labels[state], per_page: String(GITLAB_PAGE_SIZE) };
-      const target: GitlabTarget = { kind: "listing", what: `the ${state} issues of ${config.project}` };
+    /** The open issues carrying the state's label and the further labels given, with the extra parameters; an issue without exactly one state label fails the listing. */
+    const listed = (state: GitlabLabeledState, more: readonly string[], extra: Readonly<Record<string, string>>, what: string): Effect.Effect<readonly TrackerItem[], TrackerError> => {
+      const params = { state: "opened", labels: [config.labels[state], ...more].join(","), per_page: String(GITLAB_PAGE_SIZE), ...extra };
+      const target: GitlabTarget = { kind: "listing", what: `${what} of ${config.project}` };
       return Effect.flatMap(pages(params, target, 1, []), (issues): Effect.Effect<readonly TrackerItem[], TrackerError> => {
         const items = Result.all(issues.map(itemOf));
         return Result.isFailure(items) ? Effect.fail(items.failure) : Effect.succeed(items.success.filter((item) => item.state === state));
       });
     };
+    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => (state === "deployed" ? Effect.succeed([]) : listed(state, [], {}, `the ${state} issues`));
+    /** Issue #131: the marked issues in a state, newest first by GitLab's own order; none, and no request, for deployed or with no mark configured. */
+    const listMarked = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> =>
+      state === "deployed" || config.prepareLabel === null ? Effect.succeed([]) : listed(state, [config.prepareLabel], { order_by: "created_at", sort: "desc" }, `the marked ${state} issues`);
 
     /** The issue an id names, with its URL and its item: an id outside GitLab's format is an item that does not exist, and no request is sent. */
     const itemIssueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string; item: TrackerItem }>, TrackerError> =>
@@ -196,7 +200,32 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
         onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
         onSome: (iid) => Effect.map(notePages(`${issuesUrl}/${iid}/notes`, id, 1, []), commentsOfNotes),
       });
-    const tracker: TrackerShape = { list, read, writeRefinement, setState, comment, comments };
+    /**
+     * Issue #131: one DELETE of the note, with no read of the issue first: a closed issue is no refusal, since deleting
+     * Interloq's own note changes nothing the developer decided (G-R1-1 forbids reopening, not deleting a note). A note
+     * already gone (404) counts as deleted, so the operation is idempotent and the tracker retry may repeat it; the
+     * mapping is here, not in gitlabStatusFailure, which other requests share. A refused connection is tried again, as
+     * every request is.
+     */
+    const deleteComment = (id: ItemId, comment: CommentId): Effect.Effect<void, TrackerError> =>
+      Option.match(Option.all([iidOf(id), positiveDecimalOf(comment)]), {
+        onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
+        onSome: ([iid, note]) => {
+          const request = HttpClientRequest.delete(`${issuesUrl}/${iid}/notes/${note}`);
+          const target: GitlabTarget = { kind: "item", id };
+          return Effect.flatMap(
+            Effect.catch(execute(authorized(request), 1), (error) =>
+              error.reason._tag === "StatusCodeError" && error.reason.response.status === 404 ? Effect.succeed(null) : Effect.fail(clientFailure(error, request.method, target)),
+            ),
+            (response): Effect.Effect<void, TrackerError> => {
+              if (response === null || response.status === 404) return Effect.void;
+              const refused = gitlabStatusFailure(response.status, request.method, target);
+              return refused === null ? Effect.void : Effect.fail(refused);
+            },
+          );
+        },
+      });
+    const tracker: TrackerShape = { list, listMarked, read, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

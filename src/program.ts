@@ -4,11 +4,12 @@
 import { type Brand, Cause, Clock, Context, Data, Deferred, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered } from "./errors.ts";
+import { CheckCommandInvalid, ConfigInvalid, DecisionFormatUnreadable, describe, FileSystemError, isTrackerError, type RunError, type ServerFault, type NoTracker, type TrackerCredentialMissing, trackerFailureText, type UserStopped, type NoAnswer, type SendBackUnanswered } from "./errors.ts";
 import { heldTrackerEnv, readCommentsWithRetry, readWithRetry, type TrackerRetryEnv, writeWithRetry } from "./trackerRetry.ts";
 import { itemReturnOf, type Parking, type ReturnFacts, type RunEnding } from "./itemReturn.ts";
 import { ABANDONED_EXIT_CODE, abandonAfterSendBackLine, abandonedRecord, blankItemText, defectRecord, haltRecord, itemNotReturnedLine, itemReturnedLine, itemStartedLine, TRANSPORT_ANSWERS, serverFaultRecord, sessionsLine, sectionMalformedText, taskFinishedLine } from "./prompts.ts";
-import { type ImplementationEnd, implementationRun, refinementRun, run } from "./run.ts";
+import { type ImplementationEnd, implementationRun, refinementRun, run, type UsedPreparation } from "./run.ts";
+import { preparationOf } from "./preparedComments.ts";
 import type { AgentSdk } from "./sdk.ts";
 import { Planner, type Reviewer, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { type Config, NO_STEP_CHECKS, stepChecksOf, type TermsMode } from "./schema.ts";
@@ -48,6 +49,16 @@ export type Wiring = Readonly<{
   store?: (store: StoreShape) => StoreShape;
 }>;
 
+/**
+ * Issue #131: the preparation a refinement run uses, read from the comments it already read: a current, complete,
+ * unspent one (preparationOf with no generation, since the switch's generation concerns a set-aside alone), else none,
+ * and the run is today's question phase. Pressing Refine has no third behavior.
+ */
+const usedPreparationOf = (comments: readonly ItemComment[], item: TrackerItem): UsedPreparation | null => {
+  const found = preparationOf(comments, item, null);
+  return found._tag === "Prepared" ? found : null;
+};
+
 /** The task of a run: a text with at least one character other than whitespace (issue #88). */
 export type Task = Brand.Branded<string, "Task">;
 /** A task that is empty or whitespace alone, which no run is started with. */
@@ -83,8 +94,6 @@ export const taskTextOf = (mode: RunMode, item: TrackerItem, comments: readonly 
 /** What a run starts with until the program reads its item (S5 of issue #120 replaces it with RunStart). */
 export type TaskStart = Readonly<{ task: Task; project: string }>;
 
-const TRACKER_ERROR_TAGS: ReadonlySet<string> = new Set<TrackerError["_tag"]>(["TrackerUnreachable", "TrackerRequestRefused", "TrackerAuthRefused", "TrackerItemNotFound", "TrackerBodyInvalid", "TrackerStateAmbiguous"]);
-const isTrackerError = (error: TrackerError | RunError): error is TrackerError => TRACKER_ERROR_TAGS.has(error._tag);
 
 /** The developer's format of the representation of a decision (docs/decision-making.md), beside the program. */
 export const DECISION_FORMAT = fileURLToPath(new URL("../docs/decision-making.md", import.meta.url));
@@ -111,7 +120,7 @@ type StartedKind = Readonly<{ mode: "refinement"; terms: TermsMode }> | Readonly
  * What a run has read before its records exist: its task, and its tracker (none for a run started from a task); and
  * `held`, the records of the first read's repeats (issue #171), written to conversation.md once the run creates it.
  */
-type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null; held: readonly string[] }>;
+type Readied = Readonly<{ task: Task; tracker: Layer.Layer<Tracker> | null; requirements: Refinement | null; held: readonly string[]; prepared: UsedPreparation | null }>;
 
 /**
  * The server's fault as a run sees it (issue #158): `fault` is failed with ServerFault when the server meets an error it
@@ -199,7 +208,7 @@ export const program = (
           if (Result.isFailure(section)) return Result.fail({ _tag: "Halt", reason: sectionMalformedText(item.id, section.failure.reason), held: heldRecords });
           return Result.mapBoth(taskTextOf(start.mode, item, comments.success), {
             onFailure: (e): Unready => ({ _tag: "Halt", reason: e._tag === "BlankTask" ? blankItemText(item.id) : sectionMalformedText(item.id, e.reason), held: heldRecords }),
-            onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success), held: heldRecords }),
+            onSuccess: (task): Readied => ({ task, tracker: layer.success, requirements: Option.getOrNull(section.success), held: heldRecords, prepared: usedPreparationOf(comments.success, item) }),
           });
         }),
     },
@@ -212,7 +221,7 @@ export const program = (
 
 /** The program started from a task, as the run manager starts it until S10 of issue #120 (removed there). */
 export const programOfTask = (start: TaskStart, wiring: Wiring): Effect.Effect<number, never, Scope.Scope> =>
-  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed<Readied>({ task: start.task, tracker: null, requirements: null, held: [] })) }, wiring);
+  programWith({ project: start.project, kind: { mode: "implementation" }, item: "task" as ItemId, task: () => Effect.succeed(Result.succeed<Readied>({ task: start.task, tracker: null, requirements: null, held: [], prepared: null })) }, wiring);
 
 /**
  * The signal's fault fails when the server meets an error it cannot trace to one run (issue #158): every stage of the
@@ -352,7 +361,7 @@ const programWith = (
 
       // Issue #162: an implementation run decodes its check commands and checks their npm scripts against the project's
       // package.json; a refinement run reads neither setting, so a malformed value never refuses it.
-      if (mode === "refinement") return { config, decisionFormat, task, tracker, requirements, held, checks: NO_STEP_CHECKS } as const;
+      if (mode === "refinement") return { config, decisionFormat, task, tracker, requirements, held, prepared: taskRead.success.prepared, checks: NO_STEP_CHECKS } as const;
       const checks = stepChecksOf(config);
       if (Result.isFailure(checks)) {
         const { key, path: inside, message } = checks.failure;
@@ -371,7 +380,7 @@ const programWith = (
       }
       const problems = manifestProblems(listedCommands(checks.success), manifest.value);
       if (problems.length > 0) return yield* haltedBeforeRecords(describe(new CheckCommandInvalid({ problems })), held);
-      return { config, decisionFormat, task, tracker, requirements, held, checks: checks.success } as const;
+      return { config, decisionFormat, task, tracker, requirements, held, prepared: null, checks: checks.success } as const;
     });
     // Issue #158: the run's directory once allocated, so that a fault after the allocation records its halt there.
     const rootRef = allocated ?? (yield* Ref.make<Option.Option<RunRoot>>(Option.none()));
@@ -424,7 +433,7 @@ const programWith = (
     const prepared = yield* orFault(prepare, []);
     if (Exit.isFailure(prepared)) return yield* stageFailed(prepared.cause, []);
     if (typeof prepared.value === "number") return prepared.value;
-    const { config, decisionFormat, task, tracker, requirements, held, checks } = prepared.value;
+    const { config, decisionFormat, task, tracker, requirements, held, checks, prepared: preparation } = prepared.value;
 
     /**
      * The run's directory, its store and its services, raced with the fault (W1-R1-1 of issue #158). The allocation
@@ -556,7 +565,7 @@ const programWith = (
       kind.mode === "refinement"
         ? tracker === null
           ? Effect.die(new Error("a refinement run is started from an item, with its tracker"))
-          : refinementRun(task, start.item, kind.terms, held).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
+          : refinementRun(task, start.item, kind.terms, held, preparation).pipe(Effect.provide(tracker), Effect.provide(context), Effect.as({ mode: "refinement" } as const))
         : (tracker === null ? run(task, checks) : implementationRun(task, start.item, requirements, checks, held).pipe(Effect.provide(tracker))).pipe(
             Effect.provide(context),
             Effect.map((end) => ({ mode: "implementation", end }) as const),

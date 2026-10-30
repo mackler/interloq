@@ -6,14 +6,14 @@ import { Tracker } from "../src/services.ts";
 import { readRefinement, refinementOf, withoutRefinement, withRefinement } from "../src/refinement.ts";
 import type { GithubTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
-import { type ItemId, type ItemState, itemIdOf } from "../src/tracker.ts";
+import { commentIdOf, type ItemId, type ItemState, itemIdOf } from "../src/tracker.ts";
 import { type GithubToken, githubCredential } from "../src/trackerConfig.ts";
 import { LABELS } from "./githubLabels.ts";
 import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stubHttp.ts";
 
 // Issue #120, part 1: the GitHub adapter over a stub HTTP client.
 const TOKEN: GithubToken = Result.getOrThrow(githubCredential({ INTERLOQ_GITHUB_TOKEN: "github_pat_SECRET123" }));
-const CONFIG: GithubTrackerConfig = { kind: "github", owner: "mackler", repo: "interloq", labels: LABELS };
+const CONFIG: GithubTrackerConfig = { kind: "github", owner: "mackler", repo: "interloq", labels: LABELS, prepareLabel: null };
 const ISSUES = "https://api.github.com/repos/mackler/interloq/issues";
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 
@@ -298,9 +298,9 @@ test("an issue's comments follow the Link header to the second page, joined in o
   );
   const comments = await withTracker(stub, (t) => t.comments(id("7")));
   assert.deepEqual(comments, [
-    { body: "first", created: "2026-10-01T00:00:00Z" },
-    { body: "", created: "2026-10-02T00:00:00Z" },
-    { body: "third", created: "2026-10-03T00:00:00Z" },
+    { id: "1", body: "first", created: "2026-10-01T00:00:00Z" },
+    { id: "1", body: "", created: "2026-10-02T00:00:00Z" },
+    { id: "1", body: "third", created: "2026-10-03T00:00:00Z" },
   ]);
   assert.equal(stub.sent()[0].url.pathname, "/repos/mackler/interloq/issues/7/comments");
   assert.equal(stub.sent()[0].url.searchParams.get("per_page"), "100");
@@ -321,4 +321,57 @@ test("a 500 on a comment's POST is TrackerUnreachable with its status", async ()
 test("the token is in no error the adapter produced", () => {
   assert.ok(errors.length >= 10);
   for (const error of errors) assert.ok(!`${JSON.stringify(error)} ${String(error)} ${error.message}`.includes("SECRET123"), JSON.stringify(error));
+});
+
+// Issue #131: Interloq deletes its own comments; a comment already gone counts as deleted.
+const COMMENTS = "https://api.github.com/repos/mackler/interloq/issues/comments";
+const commentId = (text: string) => Result.getOrThrow(commentIdOf(text));
+test("deleteComment sends one DELETE of the comment's URL with the usual headers, and a 204 succeeds", async () => {
+  const stub = makeStub(route({ [`DELETE ${COMMENTS}/77`]: new Response(null, { status: 204 }) }));
+  await withTracker(stub, (t) => t.deleteComment(id("12"), commentId("77")));
+  assert.equal(stub.sent().length, 1);
+  const [r] = stub.sent();
+  assert.equal(`${r.method} ${r.url.origin}${r.url.pathname}`, `DELETE ${COMMENTS}/77`);
+  assert.equal(r.headers["authorization"], "Bearer github_pat_SECRET123");
+  assert.equal(r.headers["accept"], "application/vnd.github+json");
+});
+test("deleteComment of a comment already gone (404) succeeds", async () => {
+  const stub = makeStub(() => json({ message: "Not Found" }, 404));
+  await withTracker(stub, (t) => t.deleteComment(id("12"), commentId("77")));
+  assert.equal(stub.sent().length, 1);
+});
+test("deleteComment: 401 and 403 are TrackerAuthRefused, a 500 TrackerUnreachable with its status", async () => {
+  for (const status of [401, 403]) assert.equal((await failure(makeStub(() => json({}, status)), (t) => t.deleteComment(id("12"), commentId("77"))))._tag, "TrackerAuthRefused");
+  const e = await failure(makeStub(() => json({}, 500)), (t) => t.deleteComment(id("12"), commentId("77")));
+  assert.equal(e._tag, "TrackerUnreachable");
+  assert.equal(e._tag === "TrackerUnreachable" ? e.status : null, 500);
+});
+test("deleteComment with an item or comment id outside GitHub's format sends nothing and is TrackerItemNotFound", async () => {
+  const stub = makeStub(() => new Response(null, { status: 204 }));
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("x12"), commentId("77"))))._tag, "TrackerItemNotFound");
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("12"), commentId("c-1"))))._tag, "TrackerItemNotFound");
+  assert.equal(stub.sent().length, 0);
+});
+
+// Issue #131 (requirements Q3, F2): the open items in a state that carry the preparation's mark, newest first.
+const MARKED: GithubTrackerConfig = { ...CONFIG, prepareLabel: "prepare" };
+const withMarked = <A, E>(stub: Stub, use: (tracker: TrackerShape) => Effect.Effect<A, E>): Promise<A> => Effect.runPromise(Effect.flatMap(githubTracker(MARKED, TOKEN), use).pipe(Effect.provide(stub.layer)));
+test("listMarked of unrefined asks for the mark, newest first, and keeps the unrefined issues, pull requests dropped", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}`]: json([issue(9, ["prepare"]), issue(8, ["prepare", LABELS.refined]), issue(7, ["prepare"], { pull_request: { url: "u" } }), issue(6, ["prepare", "bug"])]) }));
+  assert.deepEqual(ids(await withMarked(stub, (t) => t.listMarked("unrefined"))), ["9", "6"]);
+  const params = stub.sent()[0].url.searchParams;
+  assert.deepEqual([params.get("state"), params.get("per_page"), params.get("labels"), params.get("sort"), params.get("direction")], ["open", "100", "prepare", "created", "desc"]);
+});
+test("listMarked of a labeled state asks for both labels, follows Link, and fails on an ambiguous issue", async () => {
+  const page2 = `${ISSUES}?page=2`;
+  const stub = makeStub((r) => (r.url.searchParams.get("page") === "2" ? json([issue(3, [LABELS.refined, "prepare"])]) : json([issue(4, [LABELS.refined, "prepare"])], 200, { link: `<${page2}>; rel="next"` })));
+  assert.deepEqual(ids(await withMarked(stub, (t) => t.listMarked("refined"))), ["4", "3"]);
+  assert.equal(stub.sent()[0].url.searchParams.get("labels"), `${LABELS.refined},prepare`);
+  const ambiguous = makeStub(() => json([issue(5, [LABELS.refined, LABELS.implementing, "prepare"])]));
+  assert.equal(await Effect.runPromise(Effect.flip(Effect.flatMap(githubTracker(MARKED, TOKEN), (t) => t.listMarked("refined"))).pipe(Effect.map((e) => e._tag), Effect.provide(ambiguous.layer))), "TrackerStateAmbiguous");
+});
+test("listMarked with no preparation label configured sends nothing and lists nothing", async () => {
+  const stub = makeStub(() => json([issue(1, [])]));
+  assert.deepEqual(await withTracker(stub, (t) => t.listMarked("unrefined")), []);
+  assert.equal(stub.sent().length, 0);
 });

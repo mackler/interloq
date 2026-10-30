@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -943,5 +943,26 @@ test.describe("the tests of the chain server, in order", () => {
     await control.locator("label.switch").click();
     await expect(control.getByRole("status")).toContainText(`Turned off. The run of item #${second} goes on to its end`);
     await expect(page.locator("button[name=stop]")).toBeEnabled();
+  });
+});
+
+// Issue #131: the preparation over the real server. The switch on the Refinement tab prepares the marked item
+// unattended; its row then says its questions are prepared, and Refine shows the first question with no list-writing step.
+test.describe("the tests of the prepare server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(35) a marked item is prepared, then Refine asks its first question at once", async ({ page }) => {
+    await page.goto(url("prepare"));
+    await expect(page.getByText("connected", { exact: true })).toBeVisible();
+    await toTheList(page, "refinement");
+    const control = page.getByRole("region", { name: PREPARATION_SWITCH_LABEL });
+    await control.locator("label.switch").click();
+    const row = listOf(page).locator("li", { hasText: "Marked item 151" });
+    await expect(row).toContainText(preparedMarkText(1), { timeout: 60_000 });
+    await row.locator("button[name=start]").click();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    // Gather Requirements lists its steps, but no review cycle ran in this run before the question.
+    await expect(rail(page)).toContainText(stepLabel("formulate"));
+    await expect(rail(page)).not.toContainText(/cycle/i);
   });
 });

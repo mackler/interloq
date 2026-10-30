@@ -2,6 +2,7 @@
 // the same way. Pure: no Node import (the browser imports this module).
 
 import { Effect, Option, Result, Schema } from "effect";
+import { type PreparationMark, PreparationMarkSchema, type PreparationView, PreparationViewSchema } from "./preparationSwitch.ts";
 import * as S from "./schema.ts";
 import { NUMBERED_PHASE_KINDS, type UiEvent } from "./uiEvents.ts";
 import { DECISION_SECTIONS, type RunUiState, type UiFlag } from "./uiState.ts";
@@ -100,7 +101,9 @@ export type ClientMessage =
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>
   /** The chain's settings (issue #147): the mode on or off, a number of runs and the resolved cutoff instant, each optional. */
-  | Readonly<{ type: "chain"; settings: ChainFrameSettings }>;
+  | Readonly<{ type: "chain"; settings: ChainFrameSettings }>
+  /** Issue #131 (requirements Q4): the preparation's switch turned on or off. */
+  | Readonly<{ type: "preparation"; enabled: boolean }>;
 /** The chain's settings as the page sends them: the run limit a positive whole number, the cutoff an ISO instant. */
 export type ChainFrameSettings = Readonly<{ enabled: boolean; runs: number | null; cutoff: string | null }>;
 /** The settings a decoded chain frame names; a value its schema let through that the constructors refuse is the reason. */
@@ -115,12 +118,13 @@ export const chainSettingsOf = (frame: ChainFrameSettings): Result.Result<ChainS
  * An item as a tab lists it (issue #120): its id, its title, enough of its text to choose by, and (issue #125) the
  * address of its page in its tracker, null where the tracker gave none. No credential.
  */
-export type ListedItem = Readonly<{ id: string; title: string; excerpt: string; url: string | null; sentBack: number }>;
+export type ListedItem = Readonly<{ id: string; title: string; excerpt: string; url: string | null; sentBack: number; preparation: PreparationMark | null }>;
 /**
  * The one way the server lists an item (issue #125): the page links to exactly the address the adapter read. Issue #186
  * (F1): `sentBack`, how many times Interloq sent the item back to refinement, counted from its comments.
  */
-export const listedItemOf = (item: TrackerItem, sentBack: number): ListedItem => ({ id: item.id, title: item.title, excerpt: excerptOf(item.body), url: Option.getOrNull(item.url), sentBack });
+/** Issue #131 (requirements Q6): `preparation`, the item's mark in the Refinement list, none in the Implementation list. */
+export const listedItemOf = (item: TrackerItem, sentBack: number, preparation: PreparationMark | null = null): ListedItem => ({ id: item.id, title: item.title, excerpt: excerptOf(item.body), url: Option.getOrNull(item.url), sentBack, preparation });
 /** A tab's items, or the notice of why the tracker could not list them; never both. */
 export type ItemsResult = Readonly<{ _tag: "Listed"; items: readonly ListedItem[] }> | Unavailable;
 /** Why the tracker or the configuration could not list a tab's items. */
@@ -147,6 +151,8 @@ export type ServerMessage =
       incarnation: string;
       /** The chain's state (issue #147). */
       chain: ChainState;
+      /** The preparation's switch and status (issue #131). */
+      preparation: PreparationView;
     }>
   | Readonly<{ type: "replay"; runs: readonly RunRecord[]; ui: readonly RunUi[] }>
   | Readonly<{ type: "event"; run: number; seq: number; time: string; event: RunEvent }>
@@ -157,6 +163,8 @@ export type ServerMessage =
   | Readonly<{ type: "ui"; run: number; state: RunUiState }>
   /** The chain's whole state after a change (issue #147); every tab receives it. */
   | Readonly<{ type: "chain"; state: ChainState }>
+  /** The preparation's switch and status after a change (issue #131); every tab receives it. */
+  | Readonly<{ type: "preparation"; view: PreparationView }>
   /** The server is ending (finding 15 of docs/gui-review.md); the tab's socket is closed after this. */
   | Readonly<{ type: "closing" }>
   /** Issue #49: what a running process of the run printed, live only: in no replay, and never sent again. */
@@ -288,7 +296,7 @@ const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });
 
 /** An item's address as the page receives it: what itemUrlOf accepts, so a frame naming another scheme never decodes. */
 const ItemUrlStr = Str.check(Schema.makeFilter((text: string) => Result.isSuccess(itemUrlOf(text)) || "an item's address must be an absolute https address"));
-const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str, url: Schema.NullOr(ItemUrlStr), sentBack: Int }));
+const ListedItemsSchema = Schema.Array(Schema.Struct({ id: Str, title: Str, excerpt: Str, url: Schema.NullOr(ItemUrlStr), sentBack: Int, preparation: Schema.NullOr(PreparationMarkSchema) }));
 const UnavailableSchema = tagged("Unavailable", { notice: Str });
 
 export const ClientMessageSchema = Schema.Union([
@@ -306,6 +314,7 @@ export const ClientMessageSchema = Schema.Union([
       cutoff: Schema.NullOr(Str.check(Schema.makeFilter((text: string) => Result.isSuccess(cutoffOf(text)) || "a cutoff must be an ISO instant with its zone"))),
     }),
   }),
+  typed("preparation", { enabled: Schema.Boolean }),
 ]);
 const CurrentRunsSchema = Schema.Struct({ refinement: Schema.Array(Int), implementation: Schema.NullOr(Int) });
 // Issue #49: the live output.
@@ -329,7 +338,7 @@ const OutputEventSchema = Schema.Union([
 ]);
 
 export const ServerMessageSchema = Schema.Union([
-  typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema }),
+  typed("hello", { location: Str, current: CurrentRunsSchema, incarnation: Str, chain: ChainStateSchema, preparation: PreparationViewSchema }),
   typed("replay", { runs: Schema.Array(RunRecordSchema), ui: Schema.Array(RunUiSchema) }),
   typed("event", { run: Int, seq: Int, time: Str, event: RunEventSchema }),
   typed("items", { mode: Schema.Literal("refinement"), result: Schema.Union([tagged("Listed", { items: ListedItemsSchema, terms: S.TermsMode }), UnavailableSchema]) }),
@@ -337,6 +346,7 @@ export const ServerMessageSchema = Schema.Union([
   typed("refused", { mode: Schema.NullOr(RunMode), reason: Str }),
   typed("ui", { run: Int, state: RunUiStateSchema }),
   typed("chain", { state: ChainStateSchema }),
+  typed("preparation", { view: PreparationViewSchema }),
   typed("closing", {}),
   typed("output", { run: Int, event: OutputEventSchema }),
 ]);

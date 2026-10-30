@@ -10,7 +10,7 @@ import * as prompts from "../src/prompts.ts";
 import { PresentedQuestionSchema } from "../src/protocol.ts";
 import type { QuestionOrigin } from "../src/question.ts";
 import { refinementOf } from "../src/refinement.ts";
-import type { ItemId } from "../src/tracker.ts";
+import type { CommentId, ItemId } from "../src/tracker.ts";
 
 const ID = "98" as ItemId;
 
@@ -21,6 +21,8 @@ test("trackerOperationText names a read and each write with its item", () => {
   // Issue #186: a comment and the listing of the comments.
   assert.equal(prompts.trackerOperationText({ kind: "comment", item: ID, text: "t", key: "k" }), "adding a comment to item 98");
   assert.equal(prompts.trackerOperationText({ kind: "comments", item: ID }), "reading the comments of item 98");
+  // Issue #131.
+  assert.equal(prompts.trackerOperationText({ kind: "deleteComment", item: ID, comment: "77" as CommentId }), "deleting Interloq's comment 77 on item 98");
   assert.equal(prompts.writeCheckText("98", { kind: "held", held: { kind: "noComment" } }), "After the last attempt, item 98 held no comment of the run's.");
 });
 

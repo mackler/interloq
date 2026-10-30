@@ -1,4 +1,5 @@
 // Issue #147 (S10): the chain over the run manager, the scripted wiring and the fake tracker, in temporary repositories.
+import { PREPARATION_KEPT_OFF } from "../src/preparationSwitch.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -24,6 +25,7 @@ import { Tracker, type TrackerShape } from "../src/services.ts";
 import type { RunEvent } from "../src/protocol.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, questionOf, startOf, type TestOptions, tempDir, tempRepo, testWiring } from "./helpers.ts";
+import { seededId } from "./fakeTracker.ts";
 
 const run = Effect.runPromise;
 const noQuestions = { questions_for_user: [] };
@@ -191,7 +193,7 @@ test("a passed cutoff ends the chain and says so, after a restart past it too", 
   // A manager made from a saved Ready chain whose cutoff has passed starts nothing.
   const repo = identified();
   const ready: ChainState = { settings: settings(null, "2000-01-01T00:00:00.000Z"), generation: 1, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } };
-  await run(saveChain(repo, ready).pipe(Effect.provide(platformLayer)));
+  await run(saveChain(repo, { chain: ready, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
   const restarted = await harness([converging], { repo });
   await idle(restarted);
   assert.equal(startedRuns(restarted).length, 0);
@@ -251,18 +253,18 @@ test("a restart: from Running or Starting nothing starts and the chain says the 
     { _tag: "Starting", item: "4", title: "t", generation: 1, count: 1, halts: [], history: [] },
   ] as const) {
     const repo = identified();
-    await run(saveChain(repo, { settings: DEFAULT_SETTINGS, generation: 1, chain: chain as never }).pipe(Effect.provide(platformLayer)));
+    await run(saveChain(repo, { chain: { settings: DEFAULT_SETTINGS, generation: 1, chain: chain as never }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
     const h = await harness([converging], { repo });
     await idle(h);
     assert.equal(startedRuns(h).length, 0);
     assert.deepEqual((await chainOf(h)).chain._tag === "Idle" && (await chainOf(h)).chain, { _tag: "Idle", ended: { _tag: "ServerEnded", item: "4" }, history: [] });
     await until("the restored chain on disk", async () => {
       const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-      return onDisk.chain._tag === "Idle" && onDisk.chain.ended?._tag === "ServerEnded";
+      return onDisk.chain.chain._tag === "Idle" && onDisk.chain.chain.ended?._tag === "ServerEnded";
     });
   }
   const repo = identified();
-  await run(saveChain(repo, { settings: settings(2), generation: 1, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } }).pipe(Effect.provide(platformLayer)));
+  await run(saveChain(repo, { chain: { settings: settings(2), generation: 1, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
   const h = await harness([converging], { repo });
   await idle(h);
   assert.equal(startedRuns(h).length, 1);
@@ -274,7 +276,7 @@ test("haltAll during a chained run leaves the file at Running, and the next mana
   await until("the chained run", () => startedRuns(h).length === 2);
   await run(h.manager.haltAll("write EPIPE"));
   const onDisk = await run(loadChain(h.repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-  assert.equal(onDisk.chain._tag, "Running");
+  assert.equal(onDisk.chain.chain._tag, "Running");
   const next = await harness([converging], { repo: h.repo });
   await idle(next);
   assert.equal(startedRuns(next).length, 0);
@@ -286,7 +288,7 @@ test("a manual start while a halted run's work is being parked is refused until 
   const held = new Promise<void>((r) => (release = r));
   let saves = 0;
   const live = (repo: string): ChainPersistence => ({
-    save: (state) => Effect.suspend(() => (state.chain._tag === "Parking" && ++saves === 1 ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
+    save: (kept) => Effect.suspend(() => (kept.chain.chain._tag === "Parking" && ++saves === 1 ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
     remove: Effect.void,
   });
   const repo = identified();
@@ -306,7 +308,7 @@ test("persistence is ordered: a held save holds a start's Running, and the file 
   let saves = 0;
   const repo = identified();
   const persistence: ChainPersistence = {
-    save: (state) => Effect.suspend(() => (++saves === 1 ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
+    save: (kept) => Effect.suspend(() => (++saves === 1 ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
     remove: Effect.void,
   };
   const h = await harness([{ ...converging, steps: [{ output: noQuestions, plan: "v1", hang: true }] }], { repo, persistence });
@@ -320,7 +322,7 @@ test("persistence is ordered: a held save holds a start's Running, and the file 
   await Promise.all([configuring, starting]);
   await until("the run's start", () => startedRuns(h).length === 1);
   const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-  assert.equal(onDisk.chain._tag, "Running");
+  assert.equal(onDisk.chain.chain._tag, "Running");
   await run(h.manager.haltAll("end"));
   const next = await harness([converging], { repo });
   await idle(next);
@@ -331,7 +333,7 @@ test("a failed save of Starting starts nothing and removes the file", async () =
   const repo = identified();
   let removed = false;
   const persistence: ChainPersistence = {
-    save: (state) => (state.chain._tag === "Starting" ? Effect.fail("disk full") : saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+    save: (kept) => (kept.chain.chain._tag === "Starting" ? Effect.fail("disk full") : saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
     remove: Effect.sync(() => void (removed = true)),
   };
   const h = await harness([converging, converging], { repo, persistence });
@@ -343,7 +345,7 @@ test("a failed save of Starting starts nothing and removes the file", async () =
 });
 
 test("a failed save of a start's Running: with the file removed the run goes and the chain ends; with neither, the start is refused", async () => {
-  const failing = (removal: Effect.Effect<void, string>): ChainPersistence => ({ save: (state) => (state.chain._tag === "Running" ? Effect.fail("disk full") : Effect.void), remove: removal });
+  const failing = (removal: Effect.Effect<void, string>): ChainPersistence => ({ save: (kept) => (kept.chain.chain._tag === "Running" ? Effect.fail("disk full") : Effect.void), remove: removal });
   const goes = await harness([converging], { persistence: failing(Effect.void) });
   const id = await begin(goes, "1");
   await idle(goes);
@@ -365,7 +367,7 @@ test("a restart from Parking finishes the parking and continues with the next it
   await run(store.writeBaseline());
   committedWork(repo);
   const parking: ChainState = { settings: settings(2), generation: 1, chain: { _tag: "Parking", item: "1" as ItemId, root, then: null, generation: 1, count: 1, halts: [{ item: "1" as ItemId, times: 1 }], history: [] } };
-  await run(saveChain(repo, parking).pipe(Effect.provide(platformLayer)));
+  await run(saveChain(repo, { chain: parking, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
   const tracker = fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.id === "1" ? { ...i, state: "implementing" as const } : i)));
   const h = await harness([converging], { repo, tracker });
   await idle(h);
@@ -398,7 +400,7 @@ test("a cutoff that passes while the next item's read is held refuses that start
 const leftOnly = (repo: string) => fs.writeFileSync(path.join(repo, "left.txt"), "left uncommitted\n");
 /** A persistence over chain.json whose save fails while `failing()` is true; its removal removes the file. */
 const flagged = (repo: string, failing: () => boolean): ChainPersistence => ({
-  save: (state) => Effect.suspend(() => (failing() ? Effect.fail("disk full") : saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
+  save: (kept) => Effect.suspend(() => (failing() ? Effect.fail("disk full") : saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
   remove: removeChain(repo).pipe(Effect.provide(platformLayer), Effect.mapError(String)),
 });
 const haltedBranches = (repo: string) => git(repo, "branch", "--list", "interloq/halted/*", "--format=%(refname:short)").split("\n").filter((b) => b !== "");
@@ -409,9 +411,9 @@ test("haltAll while the save of Parking is held: nothing is parked, and chain.js
   let holding = false;
   const repo = identified();
   const persistence: ChainPersistence = {
-    save: (state) =>
-      Effect.suspend(() => (state.chain._tag === "Parking" && !holding ? ((holding = true), Effect.promise(() => held)) : Effect.void)).pipe(
-        Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+    save: (kept) =>
+      Effect.suspend(() => (kept.chain.chain._tag === "Parking" && !holding ? ((holding = true), Effect.promise(() => held)) : Effect.void)).pipe(
+        Effect.andThen(saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
       ),
     remove: Effect.void,
   };
@@ -426,7 +428,7 @@ test("haltAll while the save of Parking is held: nothing is parked, and chain.js
   assert.equal(git(repo, "rev-parse", "HEAD"), start);
   assert.match(git(repo, "status", "--porcelain"), /left\.txt/);
   const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-  assert.equal(onDisk.chain._tag, "Parking");
+  assert.equal(onDisk.chain.chain._tag, "Parking");
 });
 
 test("a failed save during a running parking keeps starts refused until the work is on its branch, then ends SaveFailed", async () => {
@@ -491,9 +493,9 @@ test("a chained start out of Ready waits for a held save of the limits before it
   let holding = false;
   const repo = identified();
   const persistence: ChainPersistence = {
-    save: (state) =>
-      Effect.suspend(() => (state.settings.limits.runs === 5 && !holding ? ((holding = true), Effect.promise(() => saveHeld)) : Effect.void)).pipe(
-        Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+    save: (kept) =>
+      Effect.suspend(() => (kept.chain.settings.limits.runs === 5 && !holding ? ((holding = true), Effect.promise(() => saveHeld)) : Effect.void)).pipe(
+        Effect.andThen(saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
       ),
     remove: Effect.void,
   };
@@ -513,8 +515,8 @@ test("a chained start out of Ready waits for a held save of the limits before it
   const second = order.filter((i) => i !== order[0])[0];
   assert.equal(startedRuns(h)[1]?.item, second);
   const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-  assert.equal(onDisk.chain._tag === "Running" && onDisk.chain.item, second);
-  assert.equal(onDisk.settings.limits.runs, 5);
+  assert.equal(onDisk.chain.chain._tag === "Running" && onDisk.chain.chain.item, second);
+  assert.equal(onDisk.chain.settings.limits.runs, 5);
   await run(h.manager.haltAll("end"));
   const next = await harness([converging], { repo });
   await idle(next);
@@ -567,9 +569,9 @@ const gatedPersistence = (repo: string) =>
     const gate = yield* Deferred.make<void>();
     let armed = false;
     const persistence: ChainPersistence = {
-      save: (state) =>
+      save: (kept) =>
         Effect.suspend(() => (armed ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(gate))) : Effect.void)).pipe(
-          Effect.andThen(saveChain(repo, state).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
+          Effect.andThen(saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String))),
         ),
       remove: Effect.void,
     };
@@ -587,7 +589,7 @@ const interruptHeld = <A, E>(fiber: Fiber.Fiber<A, E>, gate: Deferred.Deferred<v
     yield* Deferred.succeed(gate, undefined);
     yield* Fiber.await(interrupter);
   });
-const runsOnDisk = (repo: string) => run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer))).then((s) => s.settings.limits.runs);
+const runsOnDisk = (repo: string) => run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer))).then((s) => s.chain.settings.limits.runs);
 const runsRestored = async (repo: string) => {
   const next = await harness([converging], { repo });
   return (await chainOf(next)).settings.limits.runs;
@@ -647,7 +649,7 @@ test("start interrupted during its Running save: the run is reserved, started an
   assert.equal(typeof id, "number", "no implementation run is reserved");
   assert.deepEqual(startedRuns(h), [{ run: id, item }]);
   const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-  assert.equal(onDisk.chain._tag === "Running" && onDisk.chain.item, item);
+  assert.equal(onDisk.chain.chain._tag === "Running" && onDisk.chain.chain.item, item);
   releaseRun();
   await until("the run's end", () => endCode(h, id!) !== undefined);
   await until("no slot holding the run", async () => (await run(h.manager.current)).implementation !== id);
@@ -885,7 +887,7 @@ test("W2-R1-1 Stop task after the claim: the run ends 1 with its halt's record, 
 suite("issue #186: a send-back in a chain", () => {
   const MISSING = "The requirements do not say how long a note is kept.";
   const verdict: TestOptions = { steps: [{ output: { reply: { kind: "notRefined", missing: MISSING } } }], reviews: [{ issues: [] }] };
-  const record = (asked: boolean) => ({ body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
+  const record = (asked: boolean) => ({ id: seededId(), body: commentText({ _tag: "RefinementRecord", key: runCommentKey("refinement-run"), date: "2026-10-28", asked }), created: "2026-10-28T00:00:00Z" });
   /** The refined items, each refined by a run that asked the developer nothing: a verdict on one is the guard's stop. */
   const unasked = () => fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.state === "refined" ? { ...i, comments: [record(false)] } : i)));
   const itemOf = async (h: Harness, id: string) => (await run(h.tracker.items)).find((i) => i.id === id);
@@ -1038,7 +1040,7 @@ test("abandon: a parking that fails ends the chain ParkFailed, the item implemen
   // The chain's save is detached from the run's end, so the restart waits for the file to hold the ended chain.
   await until("the ended chain on disk", async () => {
     const onDisk = await run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
-    return onDisk.chain._tag === "Idle" && onDisk.chain.ended?._tag === "ParkFailed" && onDisk.chain.history.length > 0;
+    return onDisk.chain.chain._tag === "Idle" && onDisk.chain.chain.ended?._tag === "ParkFailed" && onDisk.chain.chain.history.length > 0;
   });
   for (const state of [live, await chainOf(await harness([], { repo, tracker: h.tracker }))]) {
     const entry = state.chain.history[0]!;

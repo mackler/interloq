@@ -45,7 +45,7 @@ const githubServer = (scripted: Answer[]) => {
 const refine = async (scripted: Answer[]) => {
   const server = githubServer(scripted);
   const stub = makeStub(server.handler);
-  const tracker = Effect.runSync(githubTracker({ kind: "github", owner: "mackler", repo: "interloq", labels: LABELS }, TOKEN).pipe(Effect.provide(stub.layer)));
+  const tracker = Effect.runSync(githubTracker({ kind: "github", owner: "mackler", repo: "interloq", labels: LABELS, prepareLabel: null }, TOKEN).pipe(Effect.provide(stub.layer)));
   const { layer, probe } = testLayer(tempRepo(), oneQuestion);
   const exit = await Effect.runPromiseExit(refinementRun("Retry\n\nRepeat a failed request.", ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe, server, stub };
@@ -56,8 +56,9 @@ test("a write-back whose read of the item reaches no answer once is repeated, an
   assert.ok(Exit.isSuccess(exit), Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "");
   assert.ok(Option.isSome(Result.getOrThrow(readRefinement(server.issue().body))));
   assert.deepEqual(server.issue().labels.map((l) => l.name), [LABELS.refined]);
-  // The writes' reads: the requirements (twice, the first unanswered), the refinement's record (issue #186) and the state.
-  assert.equal(stub.sent().filter((r) => r.method === "GET").length, 4, "the read was not repeated");
+  // The writes' reads: the requirements (twice, the first unanswered), the refinement's record (issue #186) and the
+  // state, and then the item's comments, which a refinement reads to use or release a preparation (issue #131).
+  assert.equal(stub.sent().filter((r) => r.method === "GET").length, 5, "the read was not repeated");
 });
 
 test("a refused credential is not repeated: the refinement halts with TrackerStepFailed and asks nothing", async () => {

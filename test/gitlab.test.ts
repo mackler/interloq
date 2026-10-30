@@ -9,7 +9,7 @@ import { readRefinement, refinementOf, withoutRefinement, withRefinement } from 
 import { Tracker } from "../src/services.ts";
 import type { GitlabTrackerConfig } from "../src/schema.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
-import { type ItemId, itemIdOf } from "../src/tracker.ts";
+import { commentIdOf, type ItemId, itemIdOf } from "../src/tracker.ts";
 import { type GitlabToken, gitlabCredential } from "../src/trackerConfig.ts";
 import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
 import { gitlabServer, serverIssue } from "./fakeGitlab.ts";
@@ -18,7 +18,7 @@ import { type Answer, json, makeStub, type SentRequest, type Stub } from "./stub
 // The GitLab adapter over a stub HTTP client, asserting the requests it sends as well as what it returns.
 const SECRET = "glpat-SECRET123";
 const TOKEN: GitlabToken = Result.getOrThrow(gitlabCredential({ INTERLOQ_GITLAB_TOKEN: SECRET }));
-const CONFIG: GitlabTrackerConfig = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
+const CONFIG: GitlabTrackerConfig = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS, prepareLabel: null };
 const ISSUES = "https://gitlab.com/api/v4/projects/adammackler%2Fiou-notes/issues";
 const id = (text: string): ItemId => Result.getOrThrow(itemIdOf(text));
 
@@ -361,8 +361,8 @@ test("an issue's notes are listed oldest first across pages, without GitLab's sy
   );
   const comments = await withTracker(stub, (t) => t.comments(id("7")));
   assert.deepEqual(comments, [
-    { body: "first", created: "2026-10-01T00:00:00Z" },
-    { body: "third", created: "2026-10-03T00:00:00Z" },
+    { id: "1", body: "first", created: "2026-10-01T00:00:00Z" },
+    { id: "3", body: "third", created: "2026-10-03T00:00:00Z" },
   ]);
   const params = stub.sent()[0].url.searchParams;
   assert.equal(where(stub.sent()[0]), `GET ${ISSUES}/7/notes`);
@@ -388,4 +388,46 @@ test("the token is in no error the adapter produced", () => {
     const shown = `${JSON.stringify(error)} ${String(error)} ${error.message} ${trackerFailureText(error)}`;
     assert.ok(!shown.includes("SECRET123"), JSON.stringify(error));
   }
+});
+
+// Issue #131: Interloq deletes its own notes; a note already gone counts as deleted, and a closed issue is no refusal.
+const noteId = (text: string) => Result.getOrThrow(commentIdOf(text));
+test("deleteComment sends one DELETE of the issue's note with PRIVATE-TOKEN, and a 204 succeeds", async () => {
+  const stub = makeStub(route({ [`DELETE ${ISSUES}/7/notes/55`]: new Response(null, { status: 204 }) }));
+  await withTracker(stub, (t) => t.deleteComment(id("7"), noteId("55")));
+  assert.equal(stub.sent().length, 1);
+  assert.equal(stub.sent()[0].method, "DELETE");
+  assert.equal(stub.sent()[0].headers["private-token"], SECRET);
+});
+test("deleteComment of a note already gone (404) succeeds", async () => {
+  const stub = makeStub(() => json({ message: "404 Not found" }, 404));
+  await withTracker(stub, (t) => t.deleteComment(id("7"), noteId("55")));
+});
+test("deleteComment of a refused connection is tried again, as every request is", async () => {
+  let n = 0;
+  const stub = makeStub(() => (n++ === 0 ? "refused" : new Response(null, { status: 204 })));
+  await withTracker(stub, (t) => t.deleteComment(id("7"), noteId("55")));
+  assert.equal(stub.sent().length, 2);
+});
+test("deleteComment with an id outside GitLab's format sends nothing and is TrackerItemNotFound", async () => {
+  const stub = makeStub(() => new Response(null, { status: 204 }));
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("x"), noteId("55"))))._tag, "TrackerItemNotFound");
+  assert.equal((await failure(stub, (t) => t.deleteComment(id("7"), noteId("c-1"))))._tag, "TrackerItemNotFound");
+  assert.equal(stub.sent().length, 0);
+});
+
+// Issue #131 (requirements Q3, F2): the open items in a state that carry the preparation's mark, newest first.
+const MARKED: GitlabTrackerConfig = { ...CONFIG, prepareLabel: "Prepare" };
+const withMarked = <A, E>(stub: Stub, use: (tracker: TrackerShape) => Effect.Effect<A, E>): Promise<A> => Effect.runPromise(Effect.flatMap(gitlabTracker(MARKED, TOKEN), use).pipe(Effect.provide(stub.layer)));
+test("listMarked asks for the state's label and the mark, open, newest first, paged by X-Next-Page", async () => {
+  const stub = makeStub((r) => (r.url.searchParams.get("page") === "2" ? json([issue(3, ["Unrefined", "Prepare"])], 200, { "x-next-page": "" }) : json([issue(9, ["Unrefined", "Prepare"])], 200, { "x-next-page": "2" })));
+  assert.deepEqual(ids(await withMarked(stub, (t) => t.listMarked("unrefined"))), ["9", "3"]);
+  const params = stub.sent()[0].url.searchParams;
+  assert.deepEqual([params.get("labels"), params.get("state"), params.get("order_by"), params.get("sort"), params.get("per_page"), params.get("page")], [`${GITLAB_LABELS.unrefined},Prepare`, "opened", "created_at", "desc", "100", "1"]);
+});
+test("listMarked of deployed, or with no preparation label configured, sends nothing", async () => {
+  const stub = makeStub(() => json([issue(1, [])]));
+  assert.deepEqual(await withMarked(stub, (t) => t.listMarked("deployed")), []);
+  assert.deepEqual(await withTracker(stub, (t) => t.listMarked("unrefined")), []);
+  assert.equal(stub.sent().length, 0);
 });
