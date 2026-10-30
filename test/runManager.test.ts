@@ -598,7 +598,7 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
   const h = await harness(repo, []);
   for (const mode of ["refinement", "implementation"] as const) {
     const listed = await run(h.manager.listItems(mode));
-    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0 }));
+    const items = ITEMS.filter((i) => i.state === listedState(mode)).map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null }));
     // Issue #125: the listing carries each item's address, null where the tracker gave none, and both occur.
     assert.deepEqual(new Set(items.map((i) => i.url === null)), new Set([true, false]));
     // Issue #142: the Refinement tab's listing carries the configured choice of terms, which its control starts at.

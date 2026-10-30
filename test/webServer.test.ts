@@ -1,3 +1,4 @@
+import { PREPARATION_OFF } from "../src/preparationSwitch.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -302,7 +303,7 @@ test("a start in a project that does not exist is refused with the reason and it
     const a = await connect(port);
     a.send(itemsFrame("refinement"));
     await until("the items", () => a.messages.some((m) => m.type === "items"));
-    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0 })), terms: "unchecked" } });
+    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null })), terms: "unchecked" } });
     a.close();
   });
 });
@@ -497,6 +498,8 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
     setChain: () => Effect.succeed(initialChain(OFF_SETTINGS)),
+    preparation: Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
+    setPreparation: () => Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
   };
   await run(
     Effect.scoped(

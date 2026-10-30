@@ -27,7 +27,7 @@ import { suiteRunner } from "./suiteExec.ts";
 import { liveSdk } from "./sdkLive.ts";
 import { distMissingMessage, parsePort, WEB_USAGE } from "./webArgs.ts";
 import { makeWebServer } from "./webServer.ts";
-import type { WebUi } from "./webUi.ts";
+import type { UiShape } from "./services.ts";
 import { DEFAULT_SETTINGS } from "./chain.ts";
 
 const port = parsePort(process.argv.slice(2));
@@ -44,7 +44,7 @@ if (!fs.existsSync(indexFile)) {
 
 const sdk = liveSdk();
 /** The live wiring of a run, with the run's web Ui. */
-const wiringOf = (ui: WebUi): Wiring => ({
+const wiringOf = (ui: UiShape): Wiring => ({
   ui: Effect.succeed(ui),
   platform: platformLayer,
   sdk,

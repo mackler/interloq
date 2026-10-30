@@ -23,6 +23,8 @@ export type FakeTracker = Readonly<{
   failNext: (operation: TrackerOperation, error: TrackerError, state?: ItemState) => Effect.Effect<void>;
   /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied); with `state`, only a `setState` to that state matches (W1-R1-1). */
   failAfterNext: (operation: "writeRefinement" | "setState" | "comment" | "deleteComment", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
+  /** Issue #131: the developer edits the item in the tracker (its title or text). */
+  edit: (id: ItemId, change: (item: FakeItem) => FakeItem) => Effect.Effect<void>;
 }>;
 
 /** A scripted failure: before the operation changes anything, or after a write applied its change (issue #171). */
@@ -90,5 +92,6 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
       reads: Effect.map(Ref.get(ref), (s) => s.reads),
       failNext: (operation, error, state) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "before", ...(state === undefined ? {} : { state }) }] })),
       failAfterNext: (operation, error, state) => Ref.update(ref, (s): State => ({ ...s, failures: [...s.failures, { operation, error, when: "after", ...(state === undefined ? {} : { state }) }] })),
+      edit: (id, change) => Ref.update(ref, (s): State => ({ ...s, items: s.items.map((i) => (i.id === id ? change(i) : i)) })),
     };
   });

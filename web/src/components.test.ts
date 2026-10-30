@@ -151,8 +151,8 @@ test("every author's message carries its author as class and data-author", () =>
 // Issue #120: a tab's items, each with a button that starts the tab's run; the page never calls the tracker.
 describe("ItemList", () => {
   const items = [
-    { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120", sentBack: 0 },
-    { id: "121", title: "No address", excerpt: "", url: null, sentBack: 0 },
+    { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: "https://github.com/mackler/interloq/issues/120", sentBack: 0, preparation: null },
+    { id: "121", title: "No address", excerpt: "", url: null, sentBack: 0, preparation: null },
   ];
   const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "refinement", items: { _tag: "Listed", items }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined, ...props });
 
@@ -244,7 +244,7 @@ describe("ItemList", () => {
 
   // Issue #186 (F1): how many times Interloq sent an item back, beside it, in its text from sentBackCountText; none at 0.
   test("an item sent back twice shows the count beside it, and an item never sent back shows none", () => {
-    const counted = [{ ...items[0]!, sentBack: 2 }, items[1]!];
+    const counted = [{ ...items[0]!, sentBack: 2, preparation: null }, items[1]!];
     const root = show(ItemList, { mode: "refinement", items: { _tag: "Listed", items: counted }, startable: { _tag: "Except", items: [] }, onStart: () => undefined, onRefresh: () => undefined });
     const [first, second] = [...root.querySelectorAll("ul > li")];
     expect(first!.querySelector(".trailing [data-sent-back]")?.textContent).toBe(prompts.sentBackCountText(2));
@@ -727,7 +727,7 @@ describe("App and the draft", () => {
       flushSync();
     };
     const startedIn = (mode: RunMode, id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode, item: { id, title: "t" } });
-    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0 };
+    const fixture = { id: "120", title: "Two modes", excerpt: "Make the page two tabs.", url: null, sentBack: 0, preparation: null };
     const begin = async () => {
       vi.stubGlobal("WebSocket", FakeWebSocket);
       const { default: App } = await import("./components/App.svelte");
@@ -1612,7 +1612,7 @@ describe("App: several refinement runs", () => {
     const { root, ws } = await open([1]);
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
     clickRunTab(root, "list");
-    ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null, sentBack: 0 }, { id: "12", title: "b", excerpt: "", url: null, sentBack: 0 }], terms: "checked" } });
+    ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [{ id: "11", title: "a", excerpt: "", url: null, sentBack: 0, preparation: null }, { id: "12", title: "b", excerpt: "", url: null, sentBack: 0, preparation: null }], terms: "checked" } });
     expect((one(root, 'button[name=start][data-item="11"]') as HTMLButtonElement).disabled).toBe(true);
     expect((one(root, 'button[name=start][data-item="12"]') as HTMLButtonElement).disabled).toBe(false);
     expect(root.querySelector("section.items")?.textContent).toContain(prompts.ITEM_IN_PROGRESS);
@@ -3112,7 +3112,7 @@ describe("QuestionPane: the countdown (issue #185)", () => {
 
 describe("ItemList: an item abandoned in the chain (issue #185)", () => {
   test("carries the mark, and an item not abandoned does not", () => {
-    const items = [{ id: "1", title: "one", excerpt: "", url: null, sentBack: 0 }, { id: "2", title: "two", excerpt: "", url: null, sentBack: 0 }];
+    const items = [{ id: "1", title: "one", excerpt: "", url: null, sentBack: 0, preparation: null }, { id: "2", title: "two", excerpt: "", url: null, sentBack: 0, preparation: null }];
     const root = show(ItemList, { mode: "implementation", items: { _tag: "Listed", items }, startable: { _tag: "Except", items: [] }, abandoned: new Set(["1"]), onStart: () => undefined, onRefresh: () => undefined });
     const marks = [...root.querySelectorAll("[data-abandoned]")];
     expect(marks.length).toBe(1);
@@ -3162,7 +3162,7 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
   const headline = (root: HTMLElement) => root.querySelector("h2.header")?.textContent?.trim();
   const field = (root: HTMLElement) => one(root, "[name=answer]") as HTMLTextAreaElement;
   const runName = prompts.runTabName({ id: "21", title: "title 21" });
-  const listed = { _tag: "Listed", items: [{ id: "22", title: "the next refined item", excerpt: "", url: null, sentBack: 0 }] };
+  const listed = { _tag: "Listed", items: [{ id: "22", title: "the next refined item", excerpt: "", url: null, sentBack: 0, preparation: null }] };
   const open = async (events: readonly unknown[], current: number | null = 1) => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const { default: App } = await import("./components/App.svelte");

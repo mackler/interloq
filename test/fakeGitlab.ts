@@ -159,6 +159,7 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     reads: Ref.get(reads),
     failNext: (operation, error) => Ref.update(failures, (fs): readonly Scripted[] => [...fs, { operation, error, when: "before" }]),
     failAfterNext: (operation, error) => Ref.update(failures, (fs): readonly Scripted[] => [...fs, { operation, error, when: "after" }]),
+    edit: () => Effect.die(new Error("the GitLab fake has no edit; edit its server instead")),
     sent: stub.sent,
     close: server.close,
     server,

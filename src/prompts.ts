@@ -4098,3 +4098,5 @@ export const preparationUsedLine = (key: string): string => `This item's questio
 export const PREPARED_TERMS_CHOICE_LINE = "The questions and the explanations of their terms come from the preparation, which Codex reviewed; the Refinement tab's choice of terms has no effect for this item.";
 /** A deletion of the preparation's comments after the item was refined that failed for good; the run does not halt. */
 export const preparationCleanupFailedLine = (item: string, cause: string): string => `The prepared questions' comments on item ${item} could not all be deleted: ${cause}. They are not used again, since the item's refinement record follows them.`;
+/** Why an item whose preparation could not be recorded on it is set aside, as its mark says it (issue #131). */
+export const preparationNotWrittenReason = (reason: string): string => `its prepared questions could not be written to the item: ${reason}`;

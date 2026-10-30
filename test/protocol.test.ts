@@ -198,7 +198,7 @@ const client: fc.Arbitrary<ClientMessage> = fc.oneof(
 );
 /** Issue #125: an https address, as an adapter's itemUrlOf accepts. */
 const httpsUrl = fc.tuple(fc.stringMatching(/^[a-z0-9]{1,10}$/u), fc.stringMatching(/^[a-z0-9/]{0,12}$/u)).map(([host, path]) => `https://${host}.example/${path}`);
-const listedItem = fc.record({ id: text, title: text, excerpt: text, url: fc.option(httpsUrl, { nil: null }), sentBack: fc.nat(9) });
+const listedItem = fc.record({ id: text, title: text, excerpt: text, url: fc.option(httpsUrl, { nil: null }), sentBack: fc.nat(9), preparation: fc.constantFrom(null, { _tag: "Preparing" as const }, { _tag: "Prepared" as const, questions: 2 }, { _tag: "SetAside" as const, reason: "r" }) });
 const server: fc.Arbitrary<ServerMessage> = fc.oneof(
   fc.record({ type: fc.constant("hello" as const), location: text, current: fc.record({ refinement: fc.array(nat, { maxLength: 3 }), implementation: fc.option(nat, { nil: null }) }), incarnation: text, chain: fc.constant(initialState(DEFAULT_SETTINGS)) }),
   fc.constant({ type: "closing" as const }),
@@ -227,7 +227,7 @@ const decoded = <A>(r: Result.Result<A, string>): A => {
 
 // Issue #125: an item's address reaches the page only as an https address, or null where the tracker gave none.
 test("an items frame whose item's address is not https does not decode; one with an https address or null does", () => {
-  const frame = (url: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "1", title: "t", excerpt: "", url, sentBack: 0 }] } });
+  const frame = (url: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "1", title: "t", excerpt: "", url, sentBack: 0, preparation: null }] } });
   assert.ok(Result.isFailure(decodeServer(frame("javascript:alert(1)"))));
   assert.ok(Result.isFailure(decodeServer(frame("http://github.com/x"))));
   assert.ok(Result.isSuccess(decodeServer(frame("https://github.com/mackler/interloq/issues/125"))));
@@ -237,13 +237,13 @@ test("an items frame whose item's address is not https does not decode; one with
 test("listedItemOf: the id, the title, the excerpt of the body, and the address or null", () => {
   const item = { id: Result.getOrThrow(itemIdOf("7")), title: "Seven", body: "The body.", state: "refined" as const };
   const page = Result.getOrThrow(itemUrlOf("https://github.com/mackler/interloq/issues/7"));
-  assert.deepEqual(listedItemOf({ ...item, url: Option.some(page) }, 0), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: page, sentBack: 0 });
-  assert.deepEqual(listedItemOf({ ...item, url: Option.none() }, 2), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: null, sentBack: 2 });
+  assert.deepEqual(listedItemOf({ ...item, url: Option.some(page) }, 0), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: page, sentBack: 0, preparation: null });
+  assert.deepEqual(listedItemOf({ ...item, url: Option.none() }, 2), { id: "7", title: "Seven", excerpt: excerptOf("The body."), url: null, sentBack: 2, preparation: null });
 });
 
 // Issue #186 (F1): the count of send-backs crosses the protocol as a non-negative whole number.
 test("an items frame's sentBack decodes as a non-negative whole number, and a negative or a fraction is refused", () => {
-  const frame = (sentBack: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "7", title: "t", excerpt: "", url: null, sentBack }] } });
+  const frame = (sentBack: unknown) => JSON.stringify({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [{ id: "7", title: "t", excerpt: "", url: null, sentBack, preparation: null }] } });
   assert.ok(Result.isSuccess(decodeServer(frame(2))));
   assert.ok(Result.isSuccess(decodeServer(frame(0))));
   assert.ok(Result.isFailure(decodeServer(frame(-1))));
