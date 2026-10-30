@@ -838,6 +838,25 @@ describe("App and the draft", () => {
       });
     });
 
+    // W3-R1-1 (work review 3 of issue #131): a frame missed while disconnected cannot be told from the hello, so a
+    // reconnection of the same incarnation asks again, once, for the Refinement list it shows.
+    test("a reconnection of the same incarnation with nothing outstanding sends one Refinement listing", async () => {
+      vi.useFakeTimers();
+      const { ws } = await begin();
+      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      flushSync();
+      ws.close();
+      flushSync();
+      vi.advanceTimersByTime(30_000);
+      flushSync();
+      const next = FakeWebSocket.last!;
+      expect(next).not.toBe(ws);
+      next.onopen?.({});
+      next.receive({ type: "hello", preparation: { settings: { enabled: true, generation: 1 }, status: { _tag: "Idle" } }, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+      flushSync();
+      expect(sentOf(next).filter((m) => m.type === "items" && m.mode === "refinement").length).toBe(1);
+    });
+
     test("an item's button sends start with the tab's mode and the item's id, both from the listed item (the seam with the server)", async () => {
       const { root, ws } = await begin();
       select(root, "implementation");

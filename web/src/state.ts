@@ -1179,10 +1179,12 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(currentOf(message.current, m)) : reconnectedMode(state.modes[m], currentOf(message.current, m))])) as Record<RunMode, ModeView>;
       const helloed: ViewState = { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, preparation: message.preparation, ...chainAfterHello(state, message.chain, restarted) };
-      // W2-R1-1: an automatic listing or a deferred change was lost with the old connection; a list still shown is asked
-      // for again once. A list that became Unasked asks by itself.
-      const lost = (state.refinementOutstanding > 0 || state.itemsRefreshPending) && refinementListShown(helloed) && helloed.modes.refinement.items._tag === "Listed";
-      return { ...helloed, itemsRefresh: lost ? helloed.itemsRefresh + 1 : helloed.itemsRefresh, refinementOutstanding: 0, itemsRefreshPending: false };
+      // W3-R1-1: a reconnection of the same incarnation asks again, once, for a Refinement list still shown and listed,
+      // whatever was outstanding: a preparation frame, an automatic listing or a deferred change may have been lost with
+      // the old connection, and the hello cannot tell which. It costs one listing per reconnection while the list is
+      // shown. A list that became Unasked asks by itself; another incarnation's list is dropped.
+      const ask = !restarted && refinementListShown(helloed) && helloed.modes.refinement.items._tag === "Listed";
+      return { ...helloed, itemsRefresh: ask ? helloed.itemsRefresh + 1 : helloed.itemsRefresh, refinementOutstanding: 0, itemsRefreshPending: false };
     }
     case "replay": {
       // Issue #87: each replayed run's shared state, held by the server beside its events. Issue #120: each run goes to the

@@ -2998,6 +2998,70 @@ describe("preparation", () => {
     expect(helloedLoading.refinementOutstanding).toBe(0);
   });
 
+  // W3-R1-1 (work review 3): a hello of the same incarnation asks again, once, for a Refinement list shown and listed,
+  // whatever was outstanding, since a preparation frame missed while disconnected cannot be told from the hello.
+  test("(viii) a same-incarnation hello with nothing outstanding asks for the shown, listed list once", () => {
+    const a = reduce(reduce(listedRefinement(), frame(preparing("1"))), listed([item("1", { _tag: "Preparing" })]));
+    expect(a.refinementOutstanding).toBe(0);
+    expect(a.itemsRefreshPending).toBe(false);
+    const helloed = reduce(a, sameHello);
+    expect(helloed.itemsRefresh).toBe(a.itemsRefresh + 1);
+    expect(helloed.refinementOutstanding).toBe(0);
+    expect(helloed.itemsRefreshPending).toBe(false);
+    expect(shownMark(helloed, item("1", { _tag: "Preparing" }))).toBe(null);
+  });
+
+  test("(ix) a same-incarnation hello with the list loading asks nothing; the list becomes Unasked", () => {
+    const loading = itemsRequested(listedRefinement(), "refinement");
+    const helloed = reduce(loading, sameHello);
+    expect(helloed.itemsRefresh).toBe(loading.itemsRefresh);
+    expect(helloed.modes.refinement.items._tag).toBe("Unasked");
+  });
+
+  test("(x) a hello of another incarnation asks nothing", () => {
+    const s = listedRefinement();
+    expect(reduce(s, { ...sameHello, incarnation: "b" } as ServerMessage).itemsRefresh).toBe(s.itemsRefresh);
+  });
+
+  test("(xi) a same-incarnation hello with a run shown in the Refinement tab, or the Implementation tab selected, asks nothing", () => {
+    const s = listedRefinement();
+    const runShown = { ...s, modes: { ...s.modes, refinement: { ...s.modes.refinement, focus: { _tag: "Run" as const, run: 1 } } } };
+    expect(reduce(runShown, sameHello).itemsRefresh).toBe(runShown.itemsRefresh);
+    const other = selectMode(s, "implementation");
+    expect(reduce(other, sameHello).itemsRefresh).toBe(other.itemsRefresh);
+  });
+
+  test("(xii) a same-incarnation hello with an automatic listing outstanding and a deferred change asks exactly once", () => {
+    const deferred = reduce(refreshSent(listedRefinement()), frame(preparing("1")));
+    expect(deferred.itemsRefreshPending).toBe(true);
+    expect(reduce(deferred, sameHello).itemsRefresh).toBe(deferred.itemsRefresh + 1);
+  });
+
+  test("property: a hello asks once exactly for a shown, listed Refinement list of the same incarnation, and resets the count and the flag", () => {
+    const itemsOf = { Unasked: { _tag: "Unasked" }, Loading: { _tag: "Loading" }, Listed: { _tag: "Listed", items: [item("1")], terms: "checked" }, Unavailable: { _tag: "Unavailable", notice: "n" } } as const;
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 3 }),
+        fc.boolean(),
+        fc.constantFrom("Unasked", "Loading", "Listed", "Unavailable"),
+        fc.constantFrom<RunMode>("refinement", "implementation"),
+        fc.boolean(),
+        fc.boolean(),
+        (outstanding, pending, tag, selected, onList, same) => {
+          const base = listedRefinement();
+          const refinement = { ...base.modes.refinement, items: itemsOf[tag] as ItemsViewOf, focus: onList ? ({ _tag: "List" } as const) : ({ _tag: "Run", run: 1 } as const) };
+          const before: ViewState = { ...selectMode(base, selected), modes: { ...base.modes, refinement }, refinementOutstanding: outstanding, itemsRefreshPending: pending };
+          const after = reduce(before, same ? sameHello : ({ ...sameHello, incarnation: "b" } as ServerMessage));
+          const asks = same && selected === "refinement" && onList && after.modes.refinement.items._tag === "Listed";
+          expect(after.itemsRefresh - before.itemsRefresh).toBe(asks ? 1 : 0);
+          expect(after.refinementOutstanding).toBe(0);
+          expect(after.itemsRefreshPending).toBe(false);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
   test("(vii) a listed Preparing with no view is hidden; other listed marks are shown", () => {
     expect(shownMark(initialState, item("1", { _tag: "Preparing" }))).toBe(null);
     expect(shownMark(initialState, item("2", { _tag: "SetAside", reason: "r" }))).toEqual({ _tag: "SetAside", reason: "r" });
