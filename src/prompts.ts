@@ -14,7 +14,7 @@ import type { Skipped, SkipProblem, TurnProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
 import type { ItemState } from "./tracker.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
-import type { ProcessEnd } from "./transport.ts";
+import type { NetworkCode, ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
 import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type SuiteStop, type WorkFailure } from "./suite.ts";
@@ -3042,6 +3042,13 @@ export function usageLimitTryingAgainLine(agent: "claude" | "codex"): string {
 export function backgroundRetryLine(agent: "claude" | "codex", what: string, count: number, seconds: number): string {
   return `${agentName(agent)} could not be reached for ${what}; trying again in the background every ${durationText(seconds * 1000)} while you answer, try ${count}`;
 }
+/**
+ * Issue #201: a try for an unreachable network after the retries are used up, as the page and conversation.md show it:
+ * the code that shows no answer was reached, the try counted from 1, and its wait; no bound, since there is none.
+ */
+export function networkRetryLine(agent: "claude" | "codex", what: string, code: NetworkCode, attempt: number, delaySeconds: number): string {
+  return `${agentName(agent)} could not be reached for ${what}: the network is unreachable (${code}); try ${attempt} in ${durationText(delaySeconds * 1000)}. Interloq keeps trying and continues by itself once ${agentName(agent)} answers; nothing is asked.`;
+}
 /** The end of a wait for a usage limit (issue #68). */
 export function usageLimitLiftedLine(agent: "claude" | "codex", waitedMs: number): string {
   return `${agentName(agent)}: the usage limit has lifted after ${durationText(waitedMs)}; continuing`;
@@ -3235,6 +3242,13 @@ export const executionContinuePrompt = `This execution phase was interrupted: th
 /** The program's retry on the page's activity line, after the agent's name: a count of attempts, not progress. */
 export function retryActivity(attempt: number, of: number, fault: string): string {
   return `connection lost, retry ${attempt} of ${of} (${fault})`;
+}
+/**
+ * Issue #201: a wait for an unreachable network on the page's activity line, after the agent's name: what is waited for
+ * and the try, never an end.
+ */
+export function networkRetryActivity(code: NetworkCode, attempt: number): string {
+  return `network unreachable (${code}), waiting for it to return; try ${attempt}`;
 }
 /** The SDK's own reconnection on the page's activity line, after the call's label. */
 export function reconnectingActivity(attempt: number | null, of: number | null, detail: string): string {

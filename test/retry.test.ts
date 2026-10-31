@@ -9,7 +9,9 @@ import { DECIDE, parseTransportAnswer } from "../src/input.ts";
 import { transportOptions } from "../src/offer.ts";
 import { platformLayer } from "../src/platform.ts";
 import * as prompts from "../src/prompts.ts";
-import { retryDelays, USAGE_LIMIT_MARGIN_SECONDS, withTransportRetry } from "../src/retry.ts";
+import { type Exhaustion, retryDelays, USAGE_LIMIT_MARGIN_SECONDS, withTransportRetry } from "../src/retry.ts";
+import { exhaustedStep, type ExhaustionKind, networkRetryDelaySeconds } from "../src/retryPolicy.ts";
+import type { NetworkCode } from "../src/transport.ts";
 import { type LimitReset, timeOfDayIn, USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import * as S from "../src/schema.ts";
 import { Decider, type DeciderShape, RunConfig, Store, Ui } from "../src/services.ts";
@@ -24,9 +26,12 @@ import { piecesText } from "../src/pieces.ts";
 // Issue #26 (plan step S18): a call that failed from a transport fault is made again with backoff; when the retries are
 // exhausted, the user chooses between another set of retries and a stop.
 
-const fault = (message = "stream disconnected before completion") => new TransportFault({ agent: "codex", message, status: null });
+const fault = (message = "stream disconnected before completion", networkCode: NetworkCode | null = null) => new TransportFault({ agent: "codex", message, status: null, networkCode });
+/** Issue #201: the fault of an unreachable network. */
+const NET_FAULT = "getaddrinfo EAI_AGAIN api.openai.com";
+const netFault = () => fault(NET_FAULT, "EAI_AGAIN");
 
-type Script = ReadonlyArray<"fault" | "ok" | "other">;
+type Script = ReadonlyArray<"fault" | "net" | "ok" | "other">;
 /** An attempt that follows a script, and records its numbers. */
 const scripted = (script: Script) => {
   const calls: number[] = [];
@@ -34,7 +39,7 @@ const scripted = (script: Script) => {
     Effect.suspend((): Effect.Effect<string, TransportFault | CodexCallFailed> => {
       calls.push(n);
       const step = script[calls.length - 1] ?? "ok";
-      return step === "fault" ? Effect.fail(fault()) : step === "other" ? Effect.fail(new CodexCallFailed({ message: "usage limit" })) : Effect.succeed(`reply ${n}`);
+      return step === "fault" ? Effect.fail(fault()) : step === "net" ? Effect.fail(netFault()) : step === "other" ? Effect.fail(new CodexCallFailed({ message: "usage limit" })) : Effect.succeed(`reply ${n}`);
     });
   return { calls, attempt };
 };
@@ -177,7 +182,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
   for (const agent of ["codex", "claude"] as const) {
     explained.length = 0;
     const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop], decider);
-    const attempt = () => Effect.fail(new TransportFault({ agent, message: "read ECONNRESET", status: null }));
+    const attempt = () => Effect.fail(new TransportFault({ agent, message: "read ECONNRESET", status: null, networkCode: null }));
     await exitOf(withTransportRetry(agent, "review", "the review", attempt, Effect.void), layer);
     const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
     if (agent === "codex") {
@@ -195,7 +200,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
 test("at the exhaustion pause, the attached material holds the attempts and the whole fault; the question does not", async () => {
   const long = `stream disconnected: <endpoint> ${"e".repeat(2500)}`;
   const { layer, ui, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
-  await exitOf(withTransportRetry("claude", "review", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null })), Effect.void), layer);
+  await exitOf(withTransportRetry("claude", "review", "the review", () => Effect.fail(new TransportFault({ agent: "claude", message: long, status: null, networkCode: null })), Effect.void), layer);
   const [q] = ui.notified.flatMap((e) => (e._tag === "QuestionPresented" ? [e.question] : []));
   assert.ok(!piecesText(q.question).includes(long.slice(0, 40)), piecesText(q.question));
   assert.deepEqual(q.attached, { kind: "fault", blocks: prompts.transportDetails(3, long) });
@@ -473,7 +478,7 @@ test("each retry announces its wait's start and end; the next attempt starts at 
 // budget; when the retries are used up and the last failure was a process ending, it passes through without a pause.
 const SIGBUS_TEXT = "Claude Code process terminated by signal SIGBUS";
 const ended = (n: number) => new ProcessEnded({ agent: "claude", message: SIGBUS_TEXT, end: { kind: "signal", signal: "SIGBUS" }, attempts: n });
-const claudeFault = () => new TransportFault({ agent: "claude", message: "read ECONNRESET", status: null });
+const claudeFault = () => new TransportFault({ agent: "claude", message: "read ECONNRESET", status: null, networkCode: null });
 type EndScript = ReadonlyArray<"ended" | "fault" | "ok">;
 const endingScripted = (script: EndScript) => {
   const calls: number[] = [];
@@ -586,3 +591,86 @@ test("background: Retry again at the question once the developer waits starts a 
   assert.equal(ui.asked.length, 1);
   assert.deepEqual(ui.notified.filter((e) => e._tag === "TransportRetrying").map((e) => (e._tag === "TransportRetrying" ? e.attempt : 0)), [1, 2, 1]);
 });
+
+// Issue #201: a fault carrying a network code, once the retries are used up, is tried again with no limit and nothing
+// asked, the waits doubling on to the ceiling, each try notified (NetworkRetrying), said and written.
+const SETUP_CONFIG = { ...S.defaultConfig, maxTransportRetries: 2, transportRetryDelaySeconds: 0.01 };
+const configuredMs = retryDelays(SETUP_CONFIG).map((d) => d * 1000);
+const networkMs = (k: number) => networkRetryDelaySeconds(SETUP_CONFIG, k) * 1000;
+
+test("network: faults with a network code beyond the retries are tried again with nothing asked, until success", async () => {
+  const { layer, ui, conversation } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const { calls, attempt } = scripted(["net", "net", "net", "net", "net", "net", "ok"]);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 7"));
+  assert.deepEqual(ui.asked, []);
+  const tries = 6 - configuredMs.length;
+  const networkSleeps = Array.from({ length: tries }, (_, k) => networkMs(k + 1));
+  assert.deepEqual(sleeps, [...configuredMs, ...networkSleeps]);
+  assert.equal(ui.notified.filter((e) => e._tag === "TransportRetrying").length, configuredMs.length);
+  const network = ui.notified.flatMap((e) => (e._tag === "NetworkRetrying" ? [e] : []));
+  assert.deepEqual(network.map((e) => [e.attempt, e.code, e.delaySeconds, e.untilMs - e.fromMs, e.what, e.purpose]), networkSleeps.map((ms, k) => [k + 1, "EAI_AGAIN", ms / 1000, ms, "the review", "review"]));
+  for (let k = 1; k <= tries; k++) assert.ok(conversation().includes(prompts.networkRetryLine("codex", "the review", "EAI_AGAIN", k, networkMs(k) / 1000)), `try ${k} not written`);
+  assert.equal(ui.notified.at(-1)?._tag, "TransportRecovered");
+  assert.deepEqual(calls, [1, 2, 3, 4, 5, 6, 7]);
+});
+
+test("network: a fault without a code after network tries asks at that failure", async () => {
+  const { layer, ui } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+  const { clock } = steppingClock(START);
+  const { calls, attempt } = scripted(["net", "net", "net", "net", "fault"]);
+  const error = errorOf(await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock)), layer));
+  assert.equal(error._tag, "AgentUnreachable");
+  assert.equal(ui.asked.length, 1);
+  assert.deepEqual(calls, [1, 2, 3, 4, 5]);
+});
+
+test("network: an interruption during a network wait ends the call: no further attempt", async () => {
+  const { layer, ui } = await setup([]);
+  const started = await Effect.runPromise(Latch.make(false));
+  const { clock } = steppingClock(START, (ms) => (ms === networkMs(1) ? started.open.pipe(Effect.andThen(Effect.never)) : Effect.void));
+  const { calls, attempt } = scripted(["net", "net", "net", "ok"]);
+  const fiber = Effect.runFork(withTransportRetry("codex", "review", "the review", attempt, Effect.void).pipe(withClock(clock), Effect.provide(layer)));
+  // The wait begins, or the call ends without one (then the assertions below fail rather than hang).
+  await Promise.race([Effect.runPromise(started.await), Effect.runPromise(Fiber.await(fiber))]);
+  const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+  assert.ok(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+  assert.deepEqual(calls, [1, 2, 3]);
+  assert.equal(ui.notified.filter((e) => e._tag === "NetworkRetrying").length, 1);
+});
+
+test("network: the background policy with a coded fault uses the network wait, not five minutes", async () => {
+  const { layer, ui } = await setup([]);
+  const { clock, sleeps } = steppingClock(START);
+  const { attempt } = scripted(["net", "net", "net", "ok"]);
+  const exit = await exitOf(withTransportRetry("claude", "review", "an interview turn", attempt, Effect.void, background(() => false)).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 4"));
+  assert.deepEqual(sleeps, [...configuredMs, networkMs(1)]);
+  assert.deepEqual(ui.asked, []);
+});
+
+// Issue #201: the seam between the policy a caller passes and what withTransportRetry does once the retries are used
+// up: for every policy, waiting flag and code, the observed action is the one exhaustedStep gives.
+const policyOf = (kind: ExhaustionKind, waiting: boolean): Exhaustion => (kind === "background" ? background(() => waiting) : { kind });
+for (const kind of ["ask", "fail", "background"] as const) {
+  for (const waiting of [false, true]) {
+    for (const code of [null, "EAI_AGAIN"] as const) {
+      const expected = exhaustedStep(kind, waiting, code).kind;
+      test(`seam: ${kind}, waiting ${waiting}, code ${code ?? "none"}: the combinator does ${expected}`, async () => {
+        const { layer, ui, conversation } = await setup([prompts.TRANSPORT_ANSWERS.stop]);
+        const { clock, sleeps } = steppingClock(START);
+        const step = code === null ? "fault" : "net";
+        const { attempt } = scripted([...configuredMs.map(() => step), step, "ok"]);
+        const exit = await exitOf(withTransportRetry("codex", "review", "the review", attempt, Effect.void, policyOf(kind, waiting)).pipe(withClock(clock)), layer);
+        const observed =
+          ui.asked.length === 1 ? "ask"
+          : Exit.isFailure(exit) && errorOf(exit)._tag === "AgentUnreachable" ? "fail"
+          : sleeps.at(-1) === BACKGROUND_MS && conversation().includes(prompts.backgroundRetryLine("codex", "the review", 1, USAGE_LIMIT_RETRY_SECONDS)) ? "background"
+          : sleeps.at(-1) === networkMs(1) && ui.notified.some((e) => e._tag === "NetworkRetrying") ? "network"
+          : "unknown";
+        assert.equal(observed, expected);
+      });
+    }
+  }
+}

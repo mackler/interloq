@@ -938,10 +938,8 @@ test("an execution call that fails for another reason is aborted, as before: no 
 });
 
 test("faults beyond the retries, then Stop at the exhaustion pause: executing fails with AgentUnreachable", async () => {
-  const dropping: Script = () => (async function* () {
-    yield init();
-    throw econnreset();
-  })();
+  // A 503 carries no network code (issue #201), so its exhausted retries still ask.
+  const dropping: Script = messages(init(), { type: "result", subtype: "success", is_error: true, api_error_status: 503, terminal_reason: "api_error", result: "API Error: 503 upstream", total_cost_usd: 0, num_turns: 1 } as unknown as SDKMessage);
   const fake = await planner([dropping, dropping], [prompts.TRANSPORT_ANSWERS.stop], quickRetry);
   await assert.rejects(run(fake.planner.executing("implement the plan", noReporter)), (e: unknown) => tag(e) === "AgentUnreachable");
   assert.equal(fake.sdk.calls.length, 2);
@@ -1908,7 +1906,8 @@ test("a stream that throws ECONNRESET records its code for each attempt", async 
   await run(Effect.result(planningCall("write the plan", schema)).pipe(Effect.provideService(Planner, fake.planner), Effect.provide(fake.deps)));
   const lines = failedLines(fake.dir);
   assert.ok(lines.length >= 2, `expected a line per attempt, found ${lines.length}`);
-  for (const line of lines) assert.equal(line.stream_code, "ECONNRESET");
+  // Issue #201: ECONNRESET is a network code, so the call is tried on past its retries until the fake has no script left.
+  for (const line of lines.slice(0, 2)) assert.equal(line.stream_code, "ECONNRESET");
 });
 
 test("an SDK that fails to start records one line with the start error as its message", async () => {
@@ -2013,4 +2012,25 @@ test("issue #49 (W1-R1-1): a background task's end reaches the live panel when S
   await Effect.runPromise(Fiber.interrupt(fiber));
   const ofTask = fake.ui.outputs.filter((e) => e._tag !== "Touched" && e.key === "task:b1");
   assert.deepEqual(ofTask.map((e) => (e._tag === "Finished" ? `Finished ${e.status._tag}` : e._tag)), ["Started", "Finished Succeeded"]);
+});
+
+// Issue #201: an execution call whose stream fails with a network code named only in its message is tried beyond the
+// configured retries with nothing asked, each try resuming the session with the continue prompt.
+test("issue #201: an execution call unreachable beyond its retries, by a code in the message alone, is tried again with nothing asked", async () => {
+  const unreachable: Script = () => (async function* () {
+    yield init("session-exec");
+    throw new Error("connect ENETUNREACH");
+  })();
+  const second: Script = () => (async function* () {
+    yield init("session-exec");
+    yield success(report);
+  })();
+  const failures = quickRetry.maxTransportRetries + 3;
+  const fake = await planner([...Array.from({ length: failures }, () => unreachable), second], [], quickRetry);
+  const outcome = await run(fake.planner.executing("implement the plan", () => Effect.succeed({ text: "ok", isError: false })));
+  assert.equal(outcome.status, "finished");
+  assert.equal(fake.sdk.calls.length, failures + 1);
+  for (const call of fake.sdk.calls.slice(1)) assert.equal(call.prompt, prompts.executionContinuePrompt);
+  assert.deepEqual(fake.ui.asked, []);
+  assert.equal(fake.ui.notified.filter((e) => e._tag === "NetworkRetrying").length, failures - quickRetry.maxTransportRetries);
 });

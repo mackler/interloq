@@ -9,7 +9,7 @@ import { pathOf } from "./artifacts.ts";
 import { type BackgroundState, type CallOutcome, checkBackground, claudeOpenProcesses, claudeOutputOf, EMPTY_CLAUDE_OUTPUT, type OutputCommand, toolTarget, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
 import { plainOutput } from "./liveOutput.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
-import { type ClaudeFailure, classifyClaude, errorCode, type ProcessEnd, processEndOf } from "./transport.ts";
+import { type ClaudeFailure, classifyClaude, errorCode, networkCodeOf, type ProcessEnd, processEndOf } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
 import { costWarningOf } from "./usage.ts";
 import type { ExecCallOutcome } from "./schema.ts";
@@ -43,7 +43,12 @@ export const callFailure = (message: string, failure: ClaudeFailure | null): Cla
   const kind = classifyClaude(failure === null ? null : { ...failure, processEnd: null });
   switch (kind.kind) {
     case "transport":
-      return new TransportFault({ agent: "claude", message, status: failure?.apiStatus ?? null });
+      return new TransportFault({
+        agent: "claude",
+        message,
+        status: failure?.apiStatus ?? null,
+        networkCode: networkCodeOf(failure?.streamCode ?? null, [message, failure?.resultText ?? "", failure?.retrySeen?.error ?? ""]),
+      });
     case "limited":
       return new UsageLimited({ agent: "claude", message, reset: kind.reset, limitType: kind.limitType });
     case "contextTooLong":
@@ -366,7 +371,9 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           Effect.catch((e) =>
             Effect.sync(() => {
               streamError = failed(e);
-              streamCode = errorCode(e);
+              // Issue #201: a code the thrown value names only in its message is its code, so both classifications
+              // and the claude_call_failed line see the same fact.
+              streamCode = errorCode(e) ?? networkCodeOf(null, [streamError]);
               // Issue #157: an aborted call (Stop task, or the adapter's own abort) is never read as a process ending.
               processEnd = controller.signal.aborted ? null : processEndOf(e);
               return null;

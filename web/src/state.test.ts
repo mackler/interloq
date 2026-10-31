@@ -2352,6 +2352,25 @@ describe("a wait outlives calls other than the one it waits for", () => {
     for (const s of both([...before, notified(limited), notified(reviewCall), notified({ _tag: "UsageLimitLifted", agent: "claude", waitedMs: 600_000 })])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified({ _tag: "TransportRecovered", agent: "claude" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
   });
+
+  // Issue #201: a try for an unreachable network shows what is waited for and counts down to the next try; it is no
+  // pending prompt, so the tab carries no waiting mark.
+  const networkWait: UiEvent = { _tag: "NetworkRetrying", agent: "claude", purpose: "interview", what: "an interview turn", attempt: 2, code: "EAI_AGAIN", delaySeconds: 60, fault: "API Error (EAI_AGAIN)", fromMs: FROM, untilMs: FROM + 60_000 };
+  const networkText = `Claude — ${prompts.networkRetryActivity("EAI_AGAIN", 2)}`;
+
+  test("a network try sets the retry with its wait and the status, and is no pending prompt", () => {
+    for (const s of both([...before, notified(networkWait)])) {
+      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "claude", purpose: "interview", text: prompts.networkRetryActivity("EAI_AGAIN", 2), wait: { fromMs: FROM, untilMs: FROM + 60_000 } });
+      expect(statusOf(s)).toBe(networkText);
+      expect(modeWaiting(s, "implementation")).toBe(false);
+    }
+  });
+
+  test("a network try is cleared like a retry: by the waited call's next start, by the recovery, and shown again after an unrelated call", () => {
+    for (const s of both([...before, notified(networkWait), notified(interviewAgain)])) expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
+    for (const s of both([...before, notified(networkWait), notified({ _tag: "TransportRecovered", agent: "claude" })])) expect(runOf(s, "implementation")?.retry).toBe(null);
+    for (const s of both([...before, notified(networkWait), notified(reviewCall), notified(reviewEnded)])) expect(statusOf(s)).toBe(networkText);
+  });
 });
 
 // Issue #147 (S11): the chain's state from the hello and from every chain frame.

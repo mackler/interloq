@@ -21,7 +21,7 @@ import type { Schema, Scope } from "effect";
 import type { RunError } from "../src/errors.ts";
 import type { LimitReset } from "../src/limitReset.ts";
 import type { OutputEvent } from "../src/liveOutput.ts";
-import type { ClaudeFailure } from "../src/transport.ts";
+import type { ClaudeFailure, NetworkCode } from "../src/transport.ts";
 import { callFailure } from "../src/claude.ts";
 import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
@@ -341,7 +341,7 @@ export const questionEntry = (id: string, question: string, answers: readonly (r
  * `callFailed` fails it with ClaudeCallFailed, as the adapter fails a usage limit without one; `sessionTooLong` fails it
  * with ClaudeSessionTooLong, as the adapter fails a request refused because its session is too long (issue #122).
  */
-export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effect.die(new Error(defect))`, an error of Interloq that is not a typed error. */ defect?: string; /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
+export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effect.die(new Error(defect))`, an error of Interloq that is not a typed error. */ defect?: string; /** Issue #170: fails the call by the adapter's own mapping, callFailure of src/claude.ts, from these facts. */ failure?: Readonly<{ message: string; facts: ClaudeFailure }>; fault?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; sessionTooLong?: string; limit?: Readonly<{ reset: LimitReset; limitType: string | null }>; callFailed?: string; output?: unknown; /** The text of the plan's one step (issue #6): a call whose schema carries the plan returns it as data. */ plan?: string; touchProject?: boolean; hang?: boolean; resultText?: string; onCall?: () => void; editRecord?: { file: string; content: string | null }; usage?: boolean; /** Issue #184: the call waits for this promise (interruptibly) before it returns its output or failure. */ gate?: () => Promise<void> };
 
 /** What one scripted execution does besides its outcome (issue #6): report_step calls, and hooks around them. */
 /** `unreachable` fails the call with AgentUnreachable after its reports, as the adapter does when the user stops at the exhaustion pause (issue #26). */
@@ -469,7 +469,7 @@ export class ScriptedPlanner implements PlannerShape {
         this.contextCapabilities.push(capability);
         const step = this.contexts.shift();
         if (step?.editRecord !== undefined) fs.writeFileSync(path.join(this.state.records(), step.editRecord.file), step.editRecord.content ?? "");
-        if (step?.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
+        if (step?.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null, networkCode: step.faultCode ?? null }));
         if (step?.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
         if (step?.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "changed\n");
         return Effect.succeed({ output: step === undefined ? scriptedContextReply(prompt) : typeof step.output === "function" ? (step.output as (p: string) => unknown)(prompt) : step.output, resultText: "", costUsd: 0.01 });
@@ -507,7 +507,7 @@ export class ScriptedPlanner implements PlannerShape {
         }
       }
       if (step.usage) this.recordUsage();
-      if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
+      if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null, networkCode: step.faultCode ?? null }));
       if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
       if (step.defect !== undefined) return Effect.die(new Error(step.defect));
       if (step.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
@@ -532,7 +532,7 @@ export class ScriptedPlanner implements PlannerShape {
   /** The outcome of a scripted step of the interview: its failure, or its output. */
   private outcome(step: PlanningStep, schema: Schema.Top): Effect.Effect<{ output: unknown; resultText: string; costUsd: number | null }, TransportFault | UsageLimited | ClaudeCallFailed | ClaudeSessionTooLong> {
     step.onCall?.();
-    if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null }));
+    if (step.fault !== undefined) return Effect.fail(new TransportFault({ agent: "claude", message: step.fault, status: null, networkCode: step.faultCode ?? null }));
     if (step.callFailed !== undefined) return Effect.fail(new ClaudeCallFailed({ message: step.callFailed }));
     if (step.sessionTooLong !== undefined) return Effect.fail(new ClaudeSessionTooLong({ message: step.sessionTooLong }));
     if (step.failure !== undefined) return Effect.fail(callFailure(step.failure.message, step.failure.facts));
@@ -612,7 +612,7 @@ export class ScriptedPlanner implements PlannerShape {
  * `raw` replaces the reply text, for a reply that is not a review (or not JSON). `inputTokens` is the turn's input as
  * Codex would report it (issue #165), null without one.
  */
-export type ReviewStep = Review & { inputTokens?: number; fault?: string; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
+export type ReviewStep = Review & { inputTokens?: number; fault?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
 
 export class ScriptedReviewer implements ReviewerShape {
   phases = 0;
@@ -633,7 +633,7 @@ export class ScriptedReviewer implements ReviewerShape {
       review: (prompt: string): Effect.Effect<ReviewReply, TransportFault> =>
         this.gated(prompt).pipe(
           Effect.andThen(Effect.sync(() => this.turn(prompt, phase))),
-          Effect.flatMap((reply) => (reply.fault === null ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens }) : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null })))),
+          Effect.flatMap((reply) => (reply.fault === null ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens }) : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null, networkCode: reply.faultCode })))),
         ),
     };
   });
@@ -647,7 +647,7 @@ export class ScriptedReviewer implements ReviewerShape {
   /** One scripted turn: its effects on the files, then its reply text, or the fault it fails with. */
   /** The reviews of the terms (S17), apart from `reviews`; without one, a terms review raises no issue. */
   termsReviews: ReviewStep[] = [];
-  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null } {
+  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null } {
     this.prompts.push(prompt);
     this.callPhases.push(phase);
     const terms = prompt.includes(`/${pathOf({ kind: "terms" })}`);
@@ -658,7 +658,7 @@ export class ScriptedReviewer implements ReviewerShape {
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
     if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map(withIssueEffect) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map(withIssueEffect) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null };
   }
 }
 

@@ -219,3 +219,24 @@ test("Claude: a process ending wins over transport evidence", () => {
   assert.equal(classifyClaude(f({ processEnd: bus, retrySeen: { status: 503, error: "server_error" } })).kind, "processEnded");
   assert.equal(classifyClaude(f({ processEnd: bus, streamCode: "ECONNRESET" })).kind, "processEnded");
 });
+
+// Issue #201: the codes a disconnected machine gives are transport evidence for both agents, and an error result whose
+// text names a network code (the incident of 30 Oct 2026) is a transport fault unless permanent evidence wins.
+const INCIDENT_TEXT = "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)";
+
+test("Claude: the codes of an unreachable network are retried (issue #201)", () => {
+  for (const code of ["ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN"]) assert.equal(isRetried(f({ streamCode: code })), true, code);
+});
+
+test("Codex: the codes of an unreachable network are retried, by code or in the message (issue #201)", () => {
+  assert.equal(classifyCodex("the connection failed", "ENETUNREACH"), true);
+  assert.equal(classifyCodex("getaddrinfo ENOTFOUND api.openai.com"), true);
+  assert.equal(classifyCodex("connect EHOSTUNREACH 1.2.3.4:443"), true);
+  assert.equal(classifyCodex("ENETDOWN"), true);
+});
+
+test("Claude: an error result naming a network code is retried; a 401 beside it is not (issue #201)", () => {
+  assert.equal(isRetried(f({ resultText: INCIDENT_TEXT })), true);
+  assert.equal(isRetried(f({ resultText: INCIDENT_TEXT, apiStatus: 401 })), false);
+  assert.equal(isRetried(f({ resultText: "API Error: XEAI_AGAINY" })), false);
+});

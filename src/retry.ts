@@ -9,6 +9,7 @@ import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import type { Config } from "./schema.ts";
+import { exhaustedStep, networkRetryDelaySeconds } from "./retryPolicy.ts";
 import type { LimitWaitBegan } from "./usage.ts";
 import { type Decider, RunConfig, Store, Ui } from "./services.ts";
 
@@ -24,7 +25,9 @@ import { type LimitWaitState, NO_LIMIT_WAIT, planLimitWait, USAGE_LIMIT_MARGIN_S
 export { USAGE_LIMIT_MARGIN_SECONDS };
 
 /**
- * What a call does when its transport retries are used up: "ask" the exhaustion pause; "fail" AgentUnreachable at once,
+ * What a call does when its transport retries are used up, unless the last fault carries a network code (issue #201:
+ * then every policy but "fail" tries again with no limit and nothing asked, `exhaustedStep` of src/retryPolicy.ts):
+ * "ask" the exhaustion pause; "fail" AgentUnreachable at once,
  * for a call whose failure the caller handles (the context call of a question, S10: it must not ask a question of its
  * own before the question it explains); "background" (issue #184, decision G-R1-1) try again every
  * USAGE_LIMIT_RETRY_SECONDS with no limit and nothing asked while `waiting` is false, the developer still answering the
@@ -46,7 +49,10 @@ const isLimited = (e: unknown): e is UsageLimited => typeof e === "object" && e 
  * Runs `attempt(1)`, and on a TransportFault runs it again with backoff (`retryDelays`): each retry is notified, said and
  * recorded in conversation.md, waits on the Clock (interruptible), and runs `beforeRetry`, the caller's guard, before
  * `attempt(n + 1)`. When the retries are exhausted the user decides, with decision support's offer: another set of
- * retries (the backoff starts again), or a stop, which fails with AgentUnreachable. A ProcessEnded (issue #157, an
+ * retries (the backoff starts again), or a stop, which fails with AgentUnreachable; except that a fault carrying a
+ * network code (issue #201) is tried again with no limit and nothing asked, waits doubling on to
+ * NETWORK_RETRY_CEILING_SECONDS, each try notified (NetworkRetrying), said and written, until the call succeeds, fails
+ * otherwise, or is interrupted (Stop task); "fail" is never waited for. A ProcessEnded (issue #157, an
  * execution call's Claude Code process that ended) is retried in the same way under the same budget, and when the
  * retries are used up it passes through as it is, with no pause, whatever `onExhausted` says. Any other failure passes
  * through. A UsageLimited (issues #68 and #170) is waited out for as long as planLimitWait decides, with no question
@@ -75,6 +81,10 @@ export const withTransportRetry = <A, E, R>(
     let faulted = false;
     /** The background tries of this call since its retries were last used up (issue #184). */
     let tries = 0;
+    /** The tries for an unreachable network since the retries were last used up (issue #201). */
+    let networkTries = 0;
+    /** Sleeps on the Clock until `untilMs` (interruptible, so Stop task ends the wait). */
+    const sleepUntil = (untilMs: number) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Effect.sleep(Duration.millis(Math.max(untilMs - now, 0)))));
     for (let n = 1; ; n++) {
       const result = yield* Effect.result(attempt(n));
       if (Result.isSuccess(result)) {
@@ -124,28 +134,54 @@ export const withTransportRetry = <A, E, R>(
         const untilMs = fromMs + delay * 1000;
         yield* ui.notify({ _tag: "TransportRetrying", agent, purpose, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
         yield* say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message));
-        yield* Effect.sleep(Duration.millis(Math.max(untilMs - (yield* Clock.currentTimeMillis), 0)));
-      } else if (onExhausted.kind === "background" && !(yield* onExhausted.waiting)) {
-        // Issue #184 (G-R1-1): while the developer answers agreed questions nothing is asked; the call is tried again
-        // every USAGE_LIMIT_RETRY_SECONDS with no limit. No TransportRetrying is sent, whose "retry n of m" would claim a
-        // bound there is not. The sleep ends at once when the developer comes to wait for Claude Code.
-        tries++;
-        yield* say(prompts.backgroundRetryLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
-        yield* Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), onExhausted.untilWaiting);
-      } else if (onExhausted.kind === "fail") {
-        return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: error.message }));
-      } else {
-        const origin: QuestionOrigin = { kind: "transport", agent, what, attempts: n, fault: error.message };
-        // S10 (G-R1-1): the context of a pause for Claude Code is the program's own at once, since a context call would
-        // need the agent that cannot be reached; a pause for Codex gets its context from Claude Code (S12).
-        const facts = prompts.transportFacts(agent, what, n, error.message);
-        const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, error.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
-        const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null);
-        const choice = parseTransportAnswer(answer) ?? "stop";
-        yield* store.converse(prompts.transportDecisionLine(choice, agent, what));
-        if (choice === "stop") return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: error.message }));
-        retried = 0;
-        tries = 0;
+        yield* sleepUntil(untilMs);
+        yield* beforeRetry;
+        continue;
+      }
+      // The retries are used up; a ProcessEnded has passed through above, so the failure is a TransportFault.
+      const fault = error as TransportFault;
+      const waiting = onExhausted.kind === "background" ? yield* onExhausted.waiting : false;
+      const step = exhaustedStep(onExhausted.kind, waiting, fault.networkCode);
+      switch (step.kind) {
+        case "network": {
+          // Issue #201: the network is unreachable; the call is tried again with no limit and nothing asked, the waits
+          // doubling on to NETWORK_RETRY_CEILING_SECONDS. NetworkRetrying, not TransportRetrying, whose "retry n of m"
+          // would claim a bound there is not. Only Stop task ends it.
+          networkTries++;
+          const delaySeconds = networkRetryDelaySeconds(config, networkTries);
+          const fromMs = yield* Clock.currentTimeMillis;
+          const untilMs = fromMs + delaySeconds * 1000;
+          yield* ui.notify({ _tag: "NetworkRetrying", agent, purpose, what, attempt: networkTries, code: step.code, delaySeconds, fault: fault.message, fromMs, untilMs });
+          yield* say(prompts.networkRetryLine(agent, what, step.code, networkTries, delaySeconds));
+          yield* sleepUntil(untilMs);
+          break;
+        }
+        case "background": {
+          // Issue #184 (G-R1-1): while the developer answers agreed questions nothing is asked; the call is tried again
+          // every USAGE_LIMIT_RETRY_SECONDS with no limit. No TransportRetrying is sent, whose "retry n of m" would claim
+          // a bound there is not. The sleep ends at once when the developer comes to wait for Claude Code.
+          tries++;
+          yield* say(prompts.backgroundRetryLine(agent, what, tries, USAGE_LIMIT_RETRY_SECONDS));
+          if (onExhausted.kind === "background") yield* Effect.raceFirst(Effect.sleep(Duration.seconds(USAGE_LIMIT_RETRY_SECONDS)), onExhausted.untilWaiting);
+          break;
+        }
+        case "fail":
+          return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: fault.message }));
+        case "ask": {
+          const origin: QuestionOrigin = { kind: "transport", agent, what, attempts: n, fault: fault.message };
+          // S10 (G-R1-1): the context of a pause for Claude Code is the program's own at once, since a context call would
+          // need the agent that cannot be reached; a pause for Codex gets its context from Claude Code (S12).
+          const facts = prompts.transportFacts(agent, what, n, fault.message);
+          const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.transportExhaustedQuestion(agent, what)), options: transportOptions(), attached: attachedOf("fault", prompts.transportDetails(n, fault.message)), ...(agent === "codex" ? { explain: facts } : {}), decision: null };
+          const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.transportPrompt, draft, (a) => parseTransportAnswer(a) !== null);
+          const choice = parseTransportAnswer(answer) ?? "stop";
+          yield* store.converse(prompts.transportDecisionLine(choice, agent, what));
+          if (choice === "stop") return yield* Effect.fail(new AgentUnreachable({ agent, attempts: n, lastFault: fault.message }));
+          retried = 0;
+          tries = 0;
+          networkTries = 0;
+          break;
+        }
       }
       yield* beforeRetry;
     }

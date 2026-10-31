@@ -110,8 +110,32 @@ export type FailureKind =
  */
 export const CONTEXT_TOO_LONG_PATTERN = /prompt is too long/i;
 
-/** The error codes of Node.js that name a dropped, refused or timed-out connection. */
-export const NETWORK_CODES: readonly string[] = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "EAI_AGAIN"];
+/**
+ * The error codes of Node.js that name a dropped, refused or timed-out connection, or a network that cannot be reached
+ * (issue #201 added `ENOTFOUND`, `EHOSTUNREACH`, `ENETUNREACH` and `ENETDOWN`). Each is transport evidence for both
+ * agents, and a fault that carries one is tried again without limit once its retries are used up (src/retryPolicy.ts).
+ */
+export const NETWORK_CODES = ["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "EAI_AGAIN", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN"] as const;
+export type NetworkCode = (typeof NETWORK_CODES)[number];
+
+/** Whether a code is one of the network codes. */
+export const isNetworkCode = (code: string): code is NetworkCode => (NETWORK_CODES as readonly string[]).includes(code);
+
+/** A network code named as a whole word in a text. */
+const NAMED_NETWORK_CODE = new RegExp(`\\b(${NETWORK_CODES.join("|")})\\b`);
+
+/**
+ * The network code a failure carried (issue #201): the code given if it is a network code, else the first network code
+ * named as a whole word in the texts, in order, else null. Pure and total.
+ */
+export const networkCodeOf = (code: string | null, texts: readonly string[]): NetworkCode | null => {
+  if (code !== null && isNetworkCode(code)) return code;
+  for (const text of texts) {
+    const named = NAMED_NETWORK_CODE.exec(text);
+    if (named !== null && isNetworkCode(named[1]!)) return named[1]!;
+  }
+  return null;
+};
 
 /**
  * The HTTP statuses in a message (400 to 599): after "status", "status code" or "HTTP[/version]", or before a reason
@@ -123,7 +147,7 @@ const statusesIn = (message: string): readonly number[] => [
 ];
 
 const codexPermanent = /usage limit|rate limit|quota|invalid_json_schema|outputSchema/i;
-const codexTransport = /stream disconnected|connection reset|connection closed|timed out|timeout|WebSocket protocol error|Reconnecting|socket hang up|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EPIPE|EAI_AGAIN/i;
+const codexTransport = new RegExp(`stream disconnected|connection reset|connection closed|timed out|timeout|WebSocket protocol error|Reconnecting|socket hang up|${NETWORK_CODES.join("|")}`, "i");
 
 /** The code of a thrown value (`ECONNRESET`, …), or null: both adapters read it here (W1-R1-2). */
 export const errorCode = (e: unknown): string | null => {
@@ -138,7 +162,7 @@ export const errorCode = (e: unknown): string | null => {
 export const classifyCodex = (message: string, code: string | null = null): boolean => {
   const statuses = statusesIn(message);
   if (codexPermanent.test(message) || statuses.some((s) => s >= 400 && s <= 499)) return false;
-  return (code !== null && NETWORK_CODES.includes(code)) || codexTransport.test(message) || statuses.some((s) => s >= 500 && s <= 599);
+  return (code !== null && isNetworkCode(code)) || codexTransport.test(message) || statuses.some((s) => s >= 500 && s <= 599);
 };
 
 /** The assistant errors of the Agent SDK (SDKAssistantMessageError) that no retry fixes. */
@@ -179,7 +203,8 @@ const isOtherPermanentError = (e: string | null): boolean => e !== null && e !==
  * 5. A rate limit with no usable reset (a rejection without one, a 429, the rate_limit error, in the result or an
  *    api_retry): `limited` with no known end (issue #170), where it was permanent before.
  * 6. A process that ended by a signal or a nonzero exit (issue #157), the call's terminal fact: `processEnded`.
- * 7. The transport evidence; anything else is permanent.
+ * 7. The transport evidence (a stream code or an error result's text naming a network code, issue #201; a 5xx; a
+ *    retryable assistant error; an api_retry with no status or a 5xx); anything else is permanent.
  * `terminalReason` alone is never sufficient. A planning or context call classifies its failure with `processEnd` null
  * (src/claude.ts, `callFailure`), so only an execution call is ever `processEnded`.
  */
@@ -202,7 +227,8 @@ export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
   if (rateLimited) return { kind: "limited", reset: UNKNOWN_RESET, limitType };
   if (failure.processEnd !== null) return { kind: "processEnded", end: failure.processEnd };
   const transport =
-    (streamCode !== null && NETWORK_CODES.includes(streamCode)) ||
+    (streamCode !== null && isNetworkCode(streamCode)) ||
+    (resultText !== null && networkCodeOf(null, [resultText]) !== null) ||
     is5xx(apiStatus) ||
     (assistantError !== null && RETRYABLE_ASSISTANT_ERRORS.includes(assistantError)) ||
     (retrySeen !== null && (retrySeen.status === null || is5xx(retrySeen.status)));

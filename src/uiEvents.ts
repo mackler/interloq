@@ -2,7 +2,8 @@
 
 import { type SubjectId, subjectDir } from "./artifacts.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
-import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
+import type { NetworkCode } from "./transport.ts";
+import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { TermsResponse } from "./schema.ts";
 import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion, WorkResponse, EffectReview } from "./schema.ts";
@@ -40,6 +41,11 @@ export type UiEvent =
   | Readonly<{ _tag: "AgentReconnecting"; agent: Agent; by: "sdk"; attempt: number | null; of: number | null; delayMs: number | null; detail: string; callId: string }>
   /** The program retries a call that failed from a transport fault (issue #26): retry `attempt` of `of`, after `delaySeconds`. */
   | Readonly<{ _tag: "TransportRetrying"; agent: Agent; purpose: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
+  /**
+   * Issue #201: a try for an unreachable network once the retries are used up, with no bound: `what` the call in words,
+   * `attempt` the try counted from 1 since the retries were used up, `code` the network code of the last fault.
+   */
+  | Readonly<{ _tag: "NetworkRetrying"; agent: Agent; purpose: string; what: string; attempt: number; code: NetworkCode; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
   /** A call succeeded after a retry. */
   | Readonly<{ _tag: "TransportRecovered"; agent: Agent }>
   /**
@@ -158,6 +164,8 @@ export const describeEvent = (event: UiEvent): string => {
       return agentReconnectingLine(AGENT_LABEL[event.agent], event.attempt, event.of, event.delayMs, event.detail);
     case "TransportRetrying":
       return transportRetryLine(event.agent, event.attempt, event.of, event.delaySeconds, event.fault);
+    case "NetworkRetrying":
+      return networkRetryLine(event.agent, event.what, event.code, event.attempt, event.delaySeconds);
     case "TransportRecovered":
       return transportRecoveredLine(event.agent);
     case "TrackerRetrying":

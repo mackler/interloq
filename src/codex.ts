@@ -3,7 +3,7 @@
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { Effect, Exit, Layer, Ref } from "effect";
 import { CodexCallFailed, TransportFault } from "./errors.ts";
-import { classifyCodex, errorCode } from "./transport.ts";
+import { classifyCodex, errorCode, networkCodeOf } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
 import { codexOpenItems, codexOutputOf, EMPTY_CODEX_OUTPUT, reduceTurn, toolEventOf } from "./codexEvents.ts";
@@ -13,7 +13,7 @@ import { REVIEW_PURPOSE, Reviewer, type ReviewerShape, type ReviewSession, RunCo
 const failedWith = (e: unknown): CodexCallFailed => new CodexCallFailed({ message: e instanceof Error ? e.message : String(e) });
 /** A failure of a turn: TransportFault when src/transport.ts identifies a transport fault, CodexCallFailed otherwise (issue #26). */
 const turnFailure = (message: string, code: string | null = null): CodexCallFailed | TransportFault =>
-  classifyCodex(message, code) ? new TransportFault({ agent: "codex", message, status: null }) : new CodexCallFailed({ message });
+  classifyCodex(message, code) ? new TransportFault({ agent: "codex", message, status: null, networkCode: networkCodeOf(code, [message]) }) : new CodexCallFailed({ message });
 /** A thrown value's text, with its code where the text does not name it (W1-R1-2). */
 const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault => {
   const code = errorCode(e);

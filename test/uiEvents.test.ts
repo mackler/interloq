@@ -33,6 +33,8 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   AgentReconnecting: [{ _tag: "AgentReconnecting", agent: "claude", by: "sdk", attempt: 2, of: 10, delayMs: 1500, detail: "status 503", callId: "claude-1" }, /Claude Code: reconnecting 2 of 10 in 1\.5 s \(status 503\)/],
   TransportRetrying: [{ _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 }, /Codex: connection lost, retry 2 of 3 in 10 s \(stream disconnected\)/],
   TransportRecovered: [{ _tag: "TransportRecovered", agent: "claude" }, /Claude Code: connection restored/],
+  // Issue #201: a try for an unreachable network, with no bound.
+  NetworkRetrying: [{ _tag: "NetworkRetrying", agent: "claude", purpose: "planning", what: "a planning call", attempt: 2, code: "EAI_AGAIN", delaySeconds: 60, fault: "API Error (EAI_AGAIN)", fromMs: 0, untilMs: 60_000 }, new RegExp(`^${escapeRegExp(prompts.networkRetryLine("claude", "a planning call", "EAI_AGAIN", 2, 60))}$`)],
   // Issue #171: the tracker's repeats.
   TrackerRetrying: [{ _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 0, untilMs: 30_000 }, /^GitHub: request failed while reading item 155, retry 2 of 5 in 30 s \(no answer\)$/],
   TrackerRecovered: [{ _tag: "TrackerRecovered", tracker: "GitHub" }, /^GitHub: request succeeded$/],
@@ -118,4 +120,14 @@ test("describeEvent of ModelNamed is modelLine of its model, the text the run sa
     assert.equal(prompts.modelLine(model), said);
     assert.equal(describeEvent({ _tag: "ModelNamed", model }), said);
   }
+});
+
+// Issue #201: the network wait's texts name the agent, what was called, the code, the try and the wait, and no bound.
+test("networkRetryLine and networkRetryActivity name what is waited for, with no bound of tries", () => {
+  const line = prompts.networkRetryLine("codex", "a review", "ENETUNREACH", 3, 40);
+  for (const part of ["Codex", "a review", "ENETUNREACH", "try 3", prompts.durationText(40_000)]) assert.ok(line.includes(part), `${part} in ${line}`);
+  assert.doesNotMatch(line, /\bof \d/);
+  const activity = prompts.networkRetryActivity("ENETUNREACH", 3);
+  for (const part of ["ENETUNREACH", "try 3"]) assert.ok(activity.includes(part), `${part} in ${activity}`);
+  assert.doesNotMatch(activity, /\bof \d/);
 });

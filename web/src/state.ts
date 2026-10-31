@@ -9,7 +9,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -854,6 +854,12 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}`);
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
+      const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } };
+      return { ...withActivity(run, retryLine(event.agent, text)), retry };
+    }
+    // Issue #201: a try for an unreachable network, with the countdown to the next try and no bound.
+    case "NetworkRetrying": {
+      const text = networkRetryActivity(event.code, event.attempt);
       const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } };
       return { ...withActivity(run, retryLine(event.agent, text)), retry };
     }

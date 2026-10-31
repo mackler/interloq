@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { type ClaudeFailure, classifyClaude, NETWORK_CODES, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
+import { type ClaudeFailure, classifyClaude, isNetworkCode, NETWORK_CODES, networkCodeOf, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
 import { timeOfDayIn } from "../src/limitReset.ts";
 
 // Issue #68 (issue #66 applies): the classification of a failed Claude Code call over arbitrary facts.
@@ -25,7 +25,7 @@ const facts: fc.Arbitrary<ClaudeFailure> = fc.record({
   retrySeen: fc.option(fc.record({ status, error: fc.constantFrom(...PERMANENT_ASSISTANT_ERRORS, "server_error", "unknown") }), { nil: null }),
   subtype: fc.option(fc.constantFrom(...STOPPING, "success", "error_during_execution"), { nil: null }),
   rejection,
-  resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error", "Request too large for the model", "You've hit your session limit · resets 11:10pm (UTC)"), { nil: null }),
+  resultText: fc.option(fc.constantFrom("API Error: 503 upstream", "api error", "Request too large for the model", "You've hit your session limit · resets 11:10pm (UTC)", "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)"), { nil: null }),
   processEnd: fc.option(fc.oneof(fc.record({ kind: fc.constant("signal" as const), signal: fc.constantFrom("SIGBUS", "SIGKILL", "SIGTERM") }), fc.record({ kind: fc.constant("exit" as const), code: fc.integer({ min: 1, max: 255 }) })), { nil: null }),
 });
 /** The failures without a process ending (issue #157): the domain of the properties stated before it. */
@@ -57,7 +57,8 @@ const transportBefore = (x: ClaudeFailure): boolean => {
     (x.subtype !== null && STOPPING.includes(x.subtype));
   if (permanent) return false;
   return (
-    (x.streamCode !== null && NETWORK_CODES.includes(x.streamCode)) ||
+    (x.streamCode !== null && isNetworkCode(x.streamCode)) ||
+    (x.resultText !== null && /\bEAI_AGAIN\b/.test(x.resultText)) ||
     is5xx(x.apiStatus) ||
     (x.assistantError !== null && ["server_error", "overloaded"].includes(x.assistantError)) ||
     (x.retrySeen !== null && (x.retrySeen.status === null || is5xx(x.retrySeen.status)))
@@ -214,6 +215,28 @@ test("property: a process ending never overrides the session's length, permanent
 test("property: without its ending, as planning and context calls classify, a failure is never processEnded", () => {
   fc.assert(
     fc.property(facts, (x) => assert.notEqual(classifyClaude({ ...x, processEnd: null }).kind, "processEnded")),
+    RUNS,
+  );
+});
+
+// Issue #201: the network code a failure carried.
+const code = fc.constantFrom(...NETWORK_CODES);
+const codeFreeText = fc.string().filter((t) => NETWORK_CODES.every((c) => !t.includes(c)));
+
+test("property: networkCodeOf gives a network code given as the code, whatever the texts", () => {
+  fc.assert(fc.property(code, fc.array(fc.string()), (c, texts) => assert.equal(networkCodeOf(c, texts), c)), RUNS);
+});
+
+test("property: networkCodeOf gives null for another code and texts that name none", () => {
+  fc.assert(fc.property(fc.option(fc.constantFrom("ERR_OTHER", "EACCES"), { nil: null }), fc.array(codeFreeText), (c, texts) => assert.equal(networkCodeOf(c, texts), null)), RUNS);
+});
+
+test("property: networkCodeOf finds a code named as a whole word, never inside a longer word", () => {
+  fc.assert(
+    fc.property(code, codeFreeText, codeFreeText, fc.constantFrom(["(", ")"], [" ", " "], ["connect ", ": x"]), (c, before, after, [l, r]) => {
+      assert.equal(networkCodeOf(null, [`${before}${l}${c}${r}${after}`]), c);
+      assert.equal(networkCodeOf(null, [`X${c}Y`]), null);
+    }),
     RUNS,
   );
 });

@@ -2,7 +2,7 @@
 // raw. `describe` produces the text that the program prints. Replaces the single Halt class.
 import { Data, Result, Schema } from "effect";
 import { type Change, renderChange } from "./snapshot.ts";
-import type { ProcessEnd } from "./transport.ts";
+import type { NetworkCode, ProcessEnd } from "./transport.ts";
 import type { LimitReset } from "./limitReset.ts";
 import { ItemState } from "./tracker.ts";
 import { type ParkNote, ParkNoteSchema } from "./chain.ts";
@@ -72,7 +72,11 @@ export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly ag
  * TransportFault and passes it through once the retries are used up, and src/claude.ts turns it into the call's outcome.
  */
 export class ProcessEnded extends Data.TaggedError("ProcessEnded")<{ readonly agent: "claude"; readonly message: string; readonly end: ProcessEnd; readonly attempts: number }> {}
-export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null }> {}
+/**
+ * A failed agent call that a retry could fix (issue #26). `networkCode` is the network code the failure carried, the
+ * evidence that no answer was reached (issue #201), or null.
+ */
+export class TransportFault extends Data.TaggedError("TransportFault")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly status: number | null; readonly networkCode: NetworkCode | null }> {}
 // The tracker's failures (issue #120, part 1). None is a RunError: a failed tracker step of a run is TrackerStepFailed. No field
 // ever holds a credential: the adapter builds them from statuses and its own words, never from a request.
 /**

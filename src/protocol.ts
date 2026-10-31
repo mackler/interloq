@@ -10,6 +10,7 @@ import type { Choice, PromptKind } from "./userPrompts.ts";
 import { excerptOf, RunMode } from "./runMode.ts";
 import { itemUrlOf, type TrackerItem } from "./tracker.ts";
 import { ATTACHED_KINDS } from "./question.ts";
+import { NETWORK_CODES } from "./transport.ts";
 import { type ChainSettings, type ChainState, ChainStateSchema, cutoffOf, runLimitOf } from "./chain.ts";
 import type { OutputEvent } from "./liveOutput.ts";
 
@@ -244,6 +245,8 @@ export const UiEventSchema = Schema.Union([
   tagged("ToolUsed", { agent: AgentSchema, tool: Str, target: Str, callId: Str }),
   tagged("AgentCallEnded", { agent: AgentSchema, ok: Schema.Boolean, callId: Str }),
   tagged("TransportRetrying", { agent: AgentSchema, purpose: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  // Issue #201: a code outside NETWORK_CODES does not decode.
+  tagged("NetworkRetrying", { agent: AgentSchema, purpose: Str, what: Str, attempt: Int, code: Schema.Literals(NETWORK_CODES), delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
   tagged("TransportRecovered", { agent: AgentSchema }),
   tagged("TrackerRetrying", { tracker: Str, what: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
   tagged("TrackerRecovered", { tracker: Str }),

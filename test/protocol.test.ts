@@ -1,6 +1,7 @@
 import { PREPARATION_VIEW_OFF } from "../src/preparationSwitch.ts";
 import { NO_STEP_CHECKS } from "../src/schema.ts";
 import assert from "node:assert/strict";
+import { NETWORK_CODES } from "../src/transport.ts";
 import { test } from "node:test";
 import { ATTACHED_KINDS, type Sense, type Senses } from "../src/question.ts";
 import { Option, Result } from "effect";
@@ -121,6 +122,8 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   // Issue #26: the program's retry and its recovery.
   fc.record({ _tag: fc.constant("TransportRetrying" as const), agent, purpose: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TransportRecovered" as const), agent }),
+  // Issue #201: a try for an unreachable network.
+  fc.record({ _tag: fc.constant("NetworkRetrying" as const), agent, purpose: text, what: text, attempt: nat, code: fc.constantFrom(...NETWORK_CODES), delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   // Issue #171.
   fc.record({ _tag: fc.constant("TrackerRetrying" as const), tracker: text, what: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TrackerRecovered" as const), tracker: text }),
@@ -476,6 +479,14 @@ test("a usage limit's wait decodes with each basis, and not with a try numbered 
     assert.deepEqual(decoded(decodeServer(frame({ ...waiting, basis }))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...waiting, basis } } });
   assert.ok(Result.isFailure(decodeServer(frame({ ...waiting, basis: { kind: "noKnownEnd", attempt: 0 } }))));
   assert.ok(Result.isFailure(decodeServer(frame(waiting))));
+});
+
+// Issue #201: a network try round-trips with every network code, and a code outside the list does not decode.
+test("a NetworkRetrying event decodes with a network code and not with another code", () => {
+  const frame = (event: unknown) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
+  const event = { _tag: "NetworkRetrying", agent: "codex", purpose: "review", what: "a review", attempt: 1, code: "ENOTFOUND", delaySeconds: 40, fault: "getaddrinfo ENOTFOUND", fromMs: 0, untilMs: 40_000 };
+  for (const code of NETWORK_CODES) assert.deepEqual(decoded(decodeServer(frame({ ...event, code }))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...event, code } } });
+  assert.ok(Result.isFailure(decodeServer(frame({ ...event, code: "ERR_OTHER" }))));
 });
 
 // Issue #147 (S11): the chain's frames. A setting the constructors refuse does not decode, like any malformed frame.
