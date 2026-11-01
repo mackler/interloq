@@ -14,7 +14,8 @@ import { questionEntry, summaryReply, tempRepo, testLayer } from "./helpers.ts";
 
 const q = (id: string): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { default_answer: "A", skip_if: null });
 
-test("an answer queued before the worker's first request reaches Claude Code before the closing request", { timeout: 20_000 }, async () => {
+// Bounds a gate that never opens, not the run's speed: sized for the suite's parallel load, as the component tests' 120 s testTimeout is.
+test("an answer queued before the worker's first request reaches Claude Code before the closing request", { timeout: 120_000 }, async () => {
   const SUMMARY = "# Requirements\n\nQ1: A.";
   const { layer, probe } = testLayer(tempRepo(), { closings: [{ output: summaryReply(SUMMARY) }] });
   const entry: prompts.ClarificationEntry = { kind: "agreed", id: "Q1", text: "A", option: "A" };

@@ -100,6 +100,8 @@ test("the switch turned on prepares a marked item, not an unmarked one; Refine t
   const h = await harness([unmarked, marked("21")], [PREPARE_ONE, ASKED_ONE]);
   await run(h.manager.setPreparation(true));
   await until("the preparation", async () => (await foundOf(h, "21"))._tag === "Prepared");
+  // The listing shows Preparing while the pass's status still names the item, which outlasts the comment's write.
+  await until("the listed mark", async () => (await markOfItem(h, "21"))?._tag === "Prepared");
   assert.deepEqual(await markOfItem(h, "21"), { _tag: "Prepared", questions: 1 });
   assert.equal(await markOfItem(h, "31"), null);
   assert.equal((await itemIn(h, "31")).comments, undefined);
@@ -119,6 +121,7 @@ test("a pass whose first item pauses sets it aside and prepares the next; the ma
   const h = await harness([marked("21"), marked("22")], [PAUSING, PREPARE_ONE]);
   await run(h.manager.setPreparation(true));
   await until("both done", async () => (await foundOf(h, "22"))._tag === "SetAside" && (await foundOf(h, "21"))._tag === "Prepared");
+  await until("the listed marks", async () => (await markOfItem(h, "21"))?._tag === "Prepared");
   assert.equal((await markOfItem(h, "22"))?._tag, "SetAside");
   assert.deepEqual(await markOfItem(h, "21"), { _tag: "Prepared", questions: 1 });
 });

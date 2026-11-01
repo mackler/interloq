@@ -51,7 +51,8 @@ const late = () => {
   let get: () => ScriptedUi = () => assert.fail("the Ui is not bound yet");
   return { ui: () => get(), bind: (u: () => ScriptedUi) => void (get = u) };
 };
-const timeout = { timeout: 20_000 };
+// Bounds a gate that never opens, not the run's speed: sized for the suite's parallel load, as the component tests' 120 s testTimeout is.
+const timeout = { timeout: 120_000 };
 
 test("1: the next agreed question is presented before Claude Code replies to the answer before it", timeout, async () => {
   const l = late();
