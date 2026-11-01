@@ -501,8 +501,11 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
             yield* publishDocument;
+            // Issue #208: the previous response's unexplained change, which this review examines, follows the prompt.
+            const base = subject.reviewPrompt(store.root, command.round, thread);
+            const prompt = command.unexplained === null ? base : `${base}\n\n${prompts.unexplainedChangeReviewNote(command.unexplained)}`;
             // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
-            const { value: review } = yield* decodeValidating("codex", reviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, thread))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
+            const { value: review } = yield* decodeValidating("codex", reviewText, (yield* reviewCall(prompt)).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
           }
           case "CallPlanner": {

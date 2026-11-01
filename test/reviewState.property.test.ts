@@ -6,6 +6,7 @@ import { advance, initialState, type ReviewCommand, type ReviewEvent, type Revie
 import { validateReview } from "../src/round.ts";
 import type { Action, Review } from "../src/schema.ts";
 import { issue, respond } from "./helpers.ts";
+import { lineChange } from "../src/lineChange.ts";
 
 // Row 3 of the table in recommendation E of docs/functional-design-review.md: bounded generated event traces
 // through `advance`, checked against a small independent model kept in the test.
@@ -181,7 +182,8 @@ test("property: a work review ends at the first correction due or decision, logs
 // Finding 9 of docs/gui-review.md: the first exit of a work review, against an independent model of behaviour 7.
 // The order of the checks after a response is that of src/reviewState.ts: the pauses of the response (none is
 // reachable here, see below), the log and leaveOnAcceptance, then the observation: accepted-without-change (not
-// reachable: an accepted issue leaves first), the unexplained change, the identical content, the idle pause; the round
+// reachable: an accepted issue leaves first), the identical content (an unexplained change is recorded, not asked,
+// issue #208), the idle pause; the round
 // limit when the next round would begin. A non-empty decision at any pause leaves with revise (leaveOnDecision).
 type Exit = Readonly<{ exit: "converged" | "revise" | "RoundLimitStop"; round: number; pauses: readonly string[] }>;
 const model = (scripts: readonly Script[], use: ReviewSetup): Exit => {
@@ -202,10 +204,6 @@ const model = (scripts: readonly Script[], use: ReviewSetup): Exit => {
     const accepted = script.actions.slice(0, script.issueCount).some((a) => a === "accepted" || a === "partially_accepted");
     if (accepted || script.selfCorrection) return { exit: "revise", round, pauses };
     const last = seen[seen.length - 1];
-    if (script.hash !== last) {
-      pauses.push("unexplained");
-      if (script.decide) return { exit: "revise", round, pauses };
-    }
     if (script.hash !== last && seen.includes(script.hash)) {
       pauses.push("identical");
       if (script.decide) return { exit: "revise", round, pauses };
@@ -226,7 +224,7 @@ const pausesOf = (trace: readonly ReviewCommand[]): string[] =>
   trace.flatMap((c) => {
     if (c.kind === "AskLimit") return ["limit"];
     if (c.kind !== "AskDecision") return [];
-    return [c.asks.kind === "pause" && (c.asks.facts.pause === "unexplained" || c.asks.facts.pause === "identical" || c.asks.facts.pause === "idle") ? c.asks.facts.pause : subjectOf("", c.asks)];
+    return [c.asks.kind === "pause" && (c.asks.facts.pause === "identical" || c.asks.facts.pause === "idle") ? c.asks.facts.pause : subjectOf("", c.asks)];
   });
 
 test("property: a work review's first exit, its round and its pauses equal the independent model's", () => {
@@ -270,6 +268,30 @@ test("the generated work reviews reach round 2, every reachable pause and every 
     if (state.round >= 2) count("round 2");
     for (const p of new Set(pausesOf(trace))) count(p);
   }
-  for (const k of ["exit:converged", "exit:revise", "exit:RoundLimitStop", "unexplained", "identical", "idle", "limit"]) assert.ok((reached.get(k) ?? 0) > 0, `never reached: ${k}`);
+  for (const k of ["exit:converged", "exit:revise", "exit:RoundLimitStop", "identical", "idle", "limit"]) assert.ok((reached.get(k) ?? 0) > 0, `never reached: ${k}`);
   assert.ok((reached.get("round 2") ?? 0) >= samples.length / 5, `only ${reached.get("round 2")} of ${samples.length} traces reached round 2`);
+});
+
+// Issue #208: a response that accepts nothing and corrects nothing, with the file changed, asks nothing, and the next
+// review carries the change as lineChange measures it from the round's start.
+test("property: an unexplained change is never asked, and the next review carries its measured change", () => {
+  const line = fc.constantFrom("a", "b", "c", "d", "");
+  const text = fc.array(line, { maxLength: 6 }).map((ls) => ls.join("\n"));
+  fc.assert(
+    fc.property(fc.tuple(text, text).filter(([a, b]) => a !== b), ([before, after]) => {
+      const config = { maxRounds: 5, maxIdleRounds: 5, countMinor: true };
+      const begun = advance(initialState(setup, config), { kind: "Begin", hash: "h0", text: before, log: [] });
+      const review: Review = { issues: [issue("A")] };
+      const reviewed = advance(begun.state, { kind: "ReviewDecoded", review, validated: Result.getOrThrow(validateReview(review)) });
+      const response = respond([["A", "rejected"]]);
+      const responded = advance(reviewed.state, { kind: "ResponseDecoded", response, round: Result.getOrThrow(roundCheckOf(reviewed.state)(response)), resultText: "", costUsd: null });
+      const observed = advance(responded.state, { kind: "FileObserved", hash: "h1", text: after });
+      assert.ok(!observed.commands.some((c) => c.kind === "AskDecision"));
+      const next = observed.commands.at(-1);
+      assert.equal(next?.kind, "CallReviewer");
+      const { added, removed } = lineChange(before, after);
+      if (next?.kind === "CallReviewer") assert.deepEqual(next.unexplained, { fileLabel: "plan.md", heading: "Planning phase 1", round: 1, added, removed });
+    }),
+    RUNS,
+  );
 });

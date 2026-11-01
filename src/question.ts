@@ -201,7 +201,6 @@ export type PauseOrigin =
   | Readonly<{ pause: "disputedSelfCorrection"; id: string }>
   | Readonly<{ pause: "reversal"; id: string; reverses: string }>
   | Readonly<{ pause: "repeatedUnderNewId"; id: string; repeats: string }>
-  | Readonly<{ pause: "unexplained"; fileLabel: string; heading: string; round: number }>
   | Readonly<{ pause: "identical"; fileLabel: string }>
   | Readonly<{ pause: "idle"; idle: number }>;
 
@@ -237,7 +236,6 @@ export type PauseFacts =
       taskDispute: boolean;
       effects: WorkEffects | null;
     }>
-  | Readonly<{ pause: "unexplained"; fileLabel: string; heading: string; round: number; resultText: string }>
   | Readonly<{ pause: "identical"; fileLabel: string; round: number; seen: string }>
   | Readonly<{ pause: "idle"; idle: number; round: number; issues: readonly ShownEntry[] }>;
 /**
@@ -252,7 +250,6 @@ export const taskDisputeOf = (facts: PauseFacts): boolean => {
     case "reversal":
     case "repeatedUnderNewId":
       return facts.taskDispute;
-    case "unexplained":
     case "identical":
     case "idle":
       return false;
@@ -269,8 +266,6 @@ export const pauseOriginOf = (facts: PauseFacts): PauseOrigin => {
       return { pause: "reversal", id: facts.id, reverses: facts.reverses };
     case "repeatedUnderNewId":
       return { pause: "repeatedUnderNewId", id: facts.id, repeats: facts.repeats };
-    case "unexplained":
-      return { pause: "unexplained", fileLabel: facts.fileLabel, heading: facts.heading, round: facts.round };
     case "identical":
       return { pause: "identical", fileLabel: facts.fileLabel };
     case "idle":

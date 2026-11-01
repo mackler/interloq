@@ -289,9 +289,9 @@ test("Codex changing the reviewed file stops with ReviewedFileChanged", async ()
 test("the identical-content message names the round after which the content was seen, also after an idle decision", async () => {
   const reject = (id: string, plan?: string) => ({ output: respond([[id, "rejected"]]), ...(plan === undefined ? {} : { plan }) });
   const { layer, probe } = testLayer(tempRepo(), {
-    // round 1: unexplained change (no decision), idle prompt (a decision that applies changes -> v3)
+    // round 1: unexplained change (recorded, not asked, issue #208), idle prompt (a decision that applies changes -> v3)
     // rounds 2 and 3: unexplained change and idle prompt, no decisions; round 4: the plan is v4 again
-    answers: ["", "apply the missing step", "", "", "", "", "", "", ""],
+    answers: ["apply the missing step", "", "", "", "", ""],
     steps: [
       { output: noQuestions, plan: "v1" },
       reject("A", "v2"),

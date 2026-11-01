@@ -237,8 +237,6 @@ export const pauseProse = (facts: PauseFacts): readonly Block[] => {
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
       case "repeatedUnderNewId":
         return [...issueProse(facts.issue), ...answerProse(facts.disposition), ...historyProse(facts.history)];
-      case "unexplained":
-        return [paragraph(words.claudeResponseText(facts.resultText))];
       case "identical":
         return [paragraph(words.identicalFacts(facts.fileLabel, facts.round, facts.seen))];
       case "idle":

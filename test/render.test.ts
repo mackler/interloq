@@ -134,7 +134,6 @@ test("pauseProse writes every kind of pause as prose, without the record's field
     pauseProse({ pause: "disputedSelfCorrection", id: "P1-R1-1", explanation: "It breaks the build.", history: earlier, taskDispute: false, effects: null }),
     pauseProse({ pause: "reversal", id: "P1-R2-1", reverses: "P1-R1-1", history: earlier, issue: issueNow, disposition, taskDispute: false, effects: null }),
     pauseProse({ pause: "repeatedUnderNewId", id: "P1-R2-1", repeats: "P1-R1-1", history: earlier, issue: issueNow, disposition: null, taskDispute: false, effects: null }),
-    pauseProse({ pause: "unexplained", fileLabel: "plan.json", heading: "Planning phase 1", round: 2, resultText: "I tidied it." }),
     pauseProse({ pause: "identical", fileLabel: "plan.json", round: 3, seen: "cycle 1" }),
     pauseProse({ pause: "idle", idle: 2, round: 2, issues: [earlier[0]] }),
   ];
@@ -148,7 +147,6 @@ test("pauseProse writes every kind of pause as prose, without the record's field
   assert.match(shown[0], /Codex raised it: The plan omits the migration\. — Claude Code rejected it: The migration is in S4\./);
   assert.match(shown[0], /you decided: Add it to S3\./);
   assert.match(shown[1], /accepted it in part: Only the index\./);
-  assert.match(shown[5], /I tidied it\./);
   // S9: the facts are blocks of plain pieces, the history a list, and no piece refers to an explanation.
   assert.ok(all[0].some((b) => b.kind === "list"));
   assert.ok(all.flat().every((b) => b.kind !== "paragraph" || b.pieces.every((p) => p.ref === "" && !p.code)));

@@ -588,7 +588,7 @@ test("the questions the program composes embed no agent-written or SDK-written t
     assert.ok(prompts.limitQuestion(heading, 5).length < 200, heading);
     for (const file of files) assert.ok(prompts.unchangedQuestion(heading, file).length < 200, `${heading} ${file}`);
   }
-  for (const file of files) for (const pause of ["unexplained", "identical"] as const) assert.ok(prompts.pauseQuestion({ pause, fileLabel: file, heading: "Planning phase 1", round: 1 } as never).length < 200, file);
+  for (const file of files) for (const pause of ["identical"] as const) assert.ok(prompts.pauseQuestion({ pause, fileLabel: file, heading: "Planning phase 1", round: 1 } as never).length < 200, file);
 });
 test("the transport pause's details hold the attempts and the whole fault; the fallback context points to them", () => {
   const fault = `read ECONNRESET ${"z".repeat(2500)}`;
@@ -718,7 +718,6 @@ test("S17: every question Interloq composes names the user as the one who decide
     { pause: "reversal", id: "A", reverses: "B" },
     { pause: "repeatedUnderNewId", id: "A", repeats: "B" },
     { pause: "disputedSelfCorrection", id: "A" },
-    { pause: "unexplained", fileLabel: "plan.json", heading: "Planning phase 1", round: 1 },
     { pause: "identical", fileLabel: "plan.json" },
     { pause: "idle", idle: 2 },
   ] as const;

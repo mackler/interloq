@@ -45,7 +45,8 @@ export type ReviewCommand =
    * subject); `options`: the options the decision offers (decision Q1 of decision support); none at the other pauses.
    */
   | Readonly<{ kind: "AskDecision"; asks: Asks; id: IssueId | null; options: readonly Option[] }>
-  | Readonly<{ kind: "CallReviewer"; round: number }>
+  /** Issue #208: `unexplained`, the previous response's unexplained change the review is told of, or null. */
+  | Readonly<{ kind: "CallReviewer"; round: number; unexplained: prompts.UnexplainedChange | null }>
   | Readonly<{ kind: "CallPlanner"; round: number }>
   /** Issue #30: corrective turn `attempt` of the round, in the same session; its reply comes back as CorrectionDecoded. */
   | Readonly<{ kind: "CallCorrective"; round: number; attempt: number }>
@@ -166,9 +167,6 @@ export type Step =
   /** Issue #30: the pause; `hash` is the observation the round continues from on Proceed. */
   | Readonly<{ name: "askingUnchanged"; hash: string }>
   | Readonly<{ name: "observingResponse" }>
-  | Readonly<{ name: "askingUnexplained"; asking: Ask; hash: string }>
-  | Readonly<{ name: "applyingUnexplained" }>
-  | Readonly<{ name: "observingUnexplained" }>
   | Readonly<{ name: "askingIdentical"; asking: Ask; hash: string; stage: Stage }>
   | Readonly<{ name: "applyingIdentical" }>
   | Readonly<{ name: "observingIdentical" }>
@@ -183,7 +181,6 @@ export type RoundInProgress = Readonly<{
   validatedReview: ValidatedReview | null;
   round: ValidatedRound | null;
   response: PlannerResponse | null;
-  resultText: string;
   decided: boolean;
   /** A decision at the pauses after the latest reply that is not yet applied. */
   toApply: boolean;
@@ -215,11 +212,13 @@ export type ReviewState = Readonly<{
   counts: readonly number[];
   costs: readonly (number | null)[];
   current: RoundInProgress;
+  /** Issue #208: an unexplained change detected and not yet sent with a review. */
+  unexplained: prompts.UnexplainedChange | null;
 }>;
 
 export type Transition = Readonly<{ state: ReviewState; commands: readonly ReviewCommand[] }>;
 
-const freshRound: RoundInProgress = { review: null, validatedReview: null, round: null, response: null, resultText: "", decided: false, toApply: false, decisions: [], asked: [], settled: [], corrections: 0, startText: "", startLog: [] };
+const freshRound: RoundInProgress = { review: null, validatedReview: null, round: null, response: null, decided: false, toApply: false, decisions: [], asked: [], settled: [], corrections: 0, startText: "", startLog: [] };
 
 export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds" | "maxIdleRounds" | "countMinor">): ReviewState => ({
   setup: { ...setup, maxRounds: config.maxRounds, maxIdleRounds: config.maxIdleRounds, countMinor: config.countMinor },
@@ -234,6 +233,7 @@ export const initialState = (setup: ReviewSetup, config: Pick<Config, "maxRounds
   counts: [],
   costs: [],
   current: freshRound,
+  unexplained: null,
 });
 
 // ---- rendering ----------------------------------------------------------------------------------
@@ -295,8 +295,8 @@ const startRound = (s: ReviewState): Transition => {
     return { state: { ...s, step: { name: "awaitingLimit" } }, commands: [...lines.map(say), { kind: "AskLimit", limit: s.limit }] };
   }
   return {
-    state: { ...s, round: n, step: { name: "awaitingReview" }, current: { ...freshRound, startText: s.lastText, startLog: s.log } },
-    commands: [notify({ _tag: "RoundBegan", subject: s.setup.subject, round: n, limit: s.limit }), status(prompts.cycleReviewLine(heading, n)), { kind: "CallReviewer", round: n }],
+    state: { ...s, round: n, step: { name: "awaitingReview" }, current: { ...freshRound, startText: s.lastText, startLog: s.log }, unexplained: null },
+    commands: [notify({ _tag: "RoundBegan", subject: s.setup.subject, round: n, limit: s.limit }), status(prompts.cycleReviewLine(heading, n)), { kind: "CallReviewer", round: n, unexplained: s.unexplained }],
   };
 };
 
@@ -378,11 +378,13 @@ export const standsWithPlanner = (asking: Ask, text: string): boolean => {
 /** The agents' statements a pause's facts carry: those of the five disputed pauses, null for every other pause (issue #183). */
 const disputedEffects = (facts: PauseFacts): WorkEffects | null => ("effects" in facts ? facts.effects : null);
 /** The line of a pause a subject's policy settles (issues #112, #156 and #183), as said on the page and written to conversation.md. */
+/** A line said on the page after its heading and written to conversation.md under it in bold, asking nothing. */
+const recordedLine = (heading: string, line: string): readonly ReviewCommand[] => [say(`${heading} ${line}`), { kind: "Converse", markdown: `**${heading}** ${line}\n\n` }];
 const settledLines = (s: ReviewState, a: Ask & { asks: { kind: "pause" } }): readonly ReviewCommand[] => {
   const origin = pauseOriginOf(a.asks.facts);
   if (s.setup.disputesSettledBy === "noWorkEffect") {
     const line = prompts.noWorkEffectDisputeLine(origin, s.setup.heading, a.options?.[0]?.description ?? "", a.options?.[1]?.description ?? "");
-    return [say(`${prompts.NO_WORK_EFFECT_HEADING} ${line}`), { kind: "Converse", markdown: `**${prompts.NO_WORK_EFFECT_HEADING}** ${line}\n\n` }];
+    return recordedLine(prompts.NO_WORK_EFFECT_HEADING, line);
   }
   const line = prompts.unmarkedDisputeLine(origin, s.setup.heading);
   return [say(line), { kind: "Converse", markdown: `**${prompts.WORDING_DISPUTE_HEADING}** ${line}\n\n` }];
@@ -507,7 +509,7 @@ const onResponseDecoded = (s: ReviewState, response: PlannerResponse, round: Val
   const keysOf = (asks: readonly Ask[]): readonly string[] => asks.map((a) => a.key ?? "");
   const state: ReviewState = {
     ...withCost,
-    current: { ...s.current, round, response, resultText, asked: [...s.current.asked, ...keysOf(asked)], settled: [...s.current.settled, ...keysOf(settledAsks)] },
+    current: { ...s.current, round, response, asked: [...s.current.asked, ...keysOf(asked)], settled: [...s.current.settled, ...keysOf(settledAsks)] },
   };
   const before: ReviewCommand[] = [
     ...(corrective ? [] : [{ kind: "SaveResponse", round: n, response } as ReviewCommand]),
@@ -597,7 +599,10 @@ const finishRound = (s: ReviewState, hash: string, stage: Stage, before: readonl
 };
 const withBefore = (t: Transition, before: readonly ReviewCommand[]): Transition => (before.length === 0 ? t : { state: t.state, commands: [...before, ...t.commands] });
 
-/** The checks of behaviour 7 on the observation after the response, in their order. */
+/**
+ * The checks of behaviour 7 on the observation after the response, in their order. An unexplained change is recorded
+ * and carried to the next review, not asked (issue #208).
+ */
 const checkResponse = (s: ReviewState, hash: string, before: readonly ReviewCommand[] = []): Transition => {
   const { fileLabel, heading } = s.setup;
   const { accepted, selfCount } = roundCounts(s);
@@ -613,11 +618,10 @@ const checkResponse = (s: ReviewState, hash: string, before: readonly ReviewComm
     };
   }
   if (accepted === 0 && selfCount === 0 && !s.current.decided && hash !== last) {
-    const asking: Ask = {
-      asks: { kind: "pause", facts: { pause: "unexplained", fileLabel, heading, round: s.round, resultText: s.current.resultText } },
-      id: null,
-    };
-    return ask(s, { name: "askingUnexplained", hash, asking }, asking, before);
+    // Issue #208: not asked, since Codex reviews the changed file in the next round anyway; it is told of the change.
+    const { added, removed } = lineChange(s.current.startText, s.lastText);
+    const change: prompts.UnexplainedChange = { fileLabel, heading, round: s.round, added, removed };
+    return identicalCheck({ ...s, unexplained: change }, hash, "response", [...before, ...recordedLine(prompts.UNEXPLAINED_CHANGE_HEADING, prompts.unexplainedChangeLine(change))]);
   }
   return identicalCheck(s, hash, "response", before);
 };
@@ -654,8 +658,6 @@ const onObservation = (s: ReviewState, hash: string, text: string): Transition =
     }
     case "observingResponse":
       return checkResponse(s, hash);
-    case "observingUnexplained":
-      return identicalCheck(s, hash, "decision");
     case "observingIdentical":
       return finishRound(s, hash, "decision");
     case "observingIdle":
@@ -713,10 +715,6 @@ const onDecisionGiven = (s: ReviewState, text: string): Transition => {
       const state: ReviewState = given ? { ...s, current: { ...s.current, decided: s.current.decided || applies, toApply: s.current.toApply || applies, decisions } } : s;
       return askEach(state, step.queue, (asking, queue) => ({ name: "askingPauses", asking, queue }), afterPauses, given ? record(s, decision) : []);
     }
-    case "askingUnexplained":
-      return given
-        ? { state: { ...s, step: { name: "applyingUnexplained" } }, commands: [...record(s, decisionOf(s, step.asking, text)), { kind: "ApplyDecisions" }] }
-        : identicalCheck(s, step.hash, "response");
     case "askingIdentical":
       return given
         ? { state: { ...s, step: { name: "applyingIdentical" } }, commands: [...record(s, decisionOf(s, step.asking, text)), { kind: "ApplyDecisions" }] }
@@ -734,8 +732,6 @@ const onDecisionsApplied = (s: ReviewState): Transition => {
   switch (s.step.name) {
     case "applyingPauseDecisions":
       return amendStep({ ...s, current: { ...s.current, toApply: false } });
-    case "applyingUnexplained":
-      return { state: { ...s, step: { name: "observingUnexplained" } }, commands: [{ kind: "ObserveFile", stage: "decision" }] };
     case "applyingIdentical":
       return { state: { ...s, step: { name: "observingIdentical" } }, commands: [{ kind: "ObserveFile", stage: "decision" }] };
     case "applyingIdle":

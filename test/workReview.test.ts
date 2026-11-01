@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { Effect, Result } from "effect";
 import { platformLayer } from "../src/platform.ts";
-import { limitNoProceedPrompt, execStopRevisionLine, planApplyDecisionsPrompt, withOffer } from "../src/prompts.ts";
+import { limitNoProceedPrompt, execStopRevisionLine, planApplyDecisionsPrompt, withOffer, UNEXPLAINED_CHANGE_HEADING } from "../src/prompts.ts";
 import { readCheckpoint } from "../src/records.ts";
 import { subjectHeading } from "../src/render.ts";
 import type { ExecOutcome } from "../src/schema.ts";
@@ -112,10 +112,9 @@ test("(b2) an accepted self-correction of an earlier work issue leaves for plann
   assert.equal((await capture.verify())?.stage, "logged");
 });
 
-test("(b3) changes.diff is rewritten for every round: an outside change after an empty answer is in round 2's file", async () => {
+test("(b3) changes.diff is rewritten for every round: an outside change, recorded and not asked (issue #208), is in round 2's file", async () => {
   const repo = tempRepo();
   const { layer, probe } = testLayer(repo, {
-    answers: [""],
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }],
     execs: [finished],
@@ -126,7 +125,10 @@ test("(b3) changes.diff is rewritten for every round: an outside change after an
     }),
   });
   assert.equal(await runTask(layer), 1);
-  assert.match(presentedSubjects(probe.ui)[0], /unexplained change to changes\.diff/);
+  assert.deepEqual(probe.ui.asked, []);
+  const conversation = read(probe.dir, "conversation.md");
+  assert.ok(conversation.includes(`**${UNEXPLAINED_CHANGE_HEADING}**`), conversation);
+  assert.match(conversation, /cycle 1: changes\.diff changed/);
   assert.match(read(probe.dir, "work-review-1/changes.diff"), /\+outside change/);
 });
 
@@ -161,26 +163,20 @@ test("(c1) exit (i): a decision on a second clarification logs the round once wi
   assert.equal((await capture.verify())?.stage, "logged");
 });
 
-for (const [name, config, change, answers] of [
-  ["(c2) exit (ii), unexplained change", {}, (repo: string) => () => fs.appendFileSync(path.join(repo, "a.txt"), "outside\n"), ["decide"]],
-  ["(c4) exit (ii), idle rounds", { maxIdleRounds: 1 }, null, ["decide"]],
-] as const) {
-  test(`${name}: the decision leaves for planning 2; the log holds the round once and the decided checkpoint is valid`, async () => {
-    const repo = tempRepo();
-    const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
-    const { layer, probe } = testLayer(repo, {
-      answers: [...answers],
-      config,
-      steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
-      reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
-      execs: [finished, finished],
-      ...(change !== null ? { store: changeAfterResponse(repo, change(repo)) } : {}),
-    });
-    assert.equal(await runTask(layer), 2);
-    assert.equal(workLog(probe.dir).filter((e) => e.id === "W1-R1-1" && e.source === "review").length, 1);
-    assert.equal((await capture.verify())?.stage, "decided");
+test("(c4) exit (ii), idle rounds: the decision leaves for planning 2; the log holds the round once and the decided checkpoint is valid", async () => {
+  const repo = tempRepo();
+  const capture = checkpointAtCall(() => path.join(repo, "plan-review", TEST_ROOT));
+  const { layer, probe } = testLayer(repo, {
+    answers: ["decide"],
+    config: { maxIdleRounds: 1 },
+    steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
+    reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
   });
-}
+  assert.equal(await runTask(layer), 2);
+  assert.equal(workLog(probe.dir).filter((e) => e.id === "W1-R1-1" && e.source === "review").length, 1);
+  assert.equal((await capture.verify())?.stage, "decided");
+});
 
 test("(c3) exit (ii), identical content: a diff back to an earlier round's text, then a decision, leaves for planning 2", async () => {
   const repo = tempRepo();
@@ -194,7 +190,7 @@ test("(c3) exit (ii), identical content: a diff back to an earlier round's text,
     } else fs.writeFileSync(file, saved);
   };
   const { layer, probe } = testLayer(repo, {
-    answers: ["", "", "keep the first version"],
+    answers: ["keep the first version"],
     config: { maxIdleRounds: 5 },
     steps: [planWrite("v1"), { output: respond([["W1-R1-1", "rejected"]]) }, { output: respond([["W1-R2-1", "rejected"]]) }, { ...planWrite("v2"), onCall: capture.onCall }],
     reviews: [{ issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [issue("W1-R2-1")] }, { issues: [] }, { issues: [] }],
@@ -202,7 +198,7 @@ test("(c3) exit (ii), identical content: a diff back to an earlier round's text,
     store: changeAfterResponse(repo, change),
   });
   assert.equal(await runTask(layer), 2);
-  assert.match(presentedSubjects(probe.ui)[2], /alternating versions of changes\.diff/);
+  assert.match(presentedSubjects(probe.ui)[0], /alternating versions of changes\.diff/);
   assert.equal((await capture.verify())?.stage, "decided");
 });
 

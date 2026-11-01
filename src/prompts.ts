@@ -637,6 +637,21 @@ export const WORDING_DISPUTE_HEADING = "Not put to the user:";
  */
 export const NO_WORK_EFFECT_HEADING = "Changes nothing in the work, not put to the user:";
 /**
+ * Issue #208: the reviewed file changed during a response that accepted no issue, declared no self-correction and applied
+ * no decision. The change is measured from the round's start to the observation after the response (`lineChange`).
+ */
+export type UnexplainedChange = Readonly<{ fileLabel: string; heading: string; round: number; added: number; removed: number }>;
+/** Issue #208: the heading of the line that records an unexplained change in conversation.md, said on the page too. */
+export const UNEXPLAINED_CHANGE_HEADING = "Changed without a stated reason, not put to the user:";
+/** Issue #208: the line said on the page and written to conversation.md after UNEXPLAINED_CHANGE_HEADING. */
+export const unexplainedChangeLine = (change: UnexplainedChange): string =>
+  `${cycleHeading(change.heading, change.round)}: ${change.fileLabel} changed (${changedLines(change)}) although Claude Code accepted no point of the review, corrected nothing of its own and had no decision of yours to apply. It is not put to you: Codex reviews the change in cycle ${change.round + 1}.`;
+/** Issue #208: the sentence appended to the next round's review prompt, so that Codex examines the change. */
+export const unexplainedChangeReviewNote = (change: UnexplainedChange): string =>
+  `In round ${change.round}, Claude Code changed ${change.fileLabel} (${changedLines(change)}) although it accepted no issue, declared no self-correction and had no decision of the user's to apply. Examine that change in this review as well, and raise an issue for any part of it that is not justified.`;
+/** The lines an unexplained change added and removed, in words. */
+const changedLines = (change: UnexplainedChange): string => `${change.added} ${change.added === 1 ? "line" : "lines"} added, ${change.removed} removed`;
+/**
  * A disputed issue of the question list or the terms, recorded instead of a pause (issue #112). It asserts nothing
  * about what the disagreement concerns, which nothing checked; only that Claude Code did not mark it (issue #156).
  */
@@ -1385,7 +1400,7 @@ export function cycleResponseLine(heading: string, n: number): string {
 export function cycleCountsLines(heading: string, counts: readonly number[], costs: readonly (number | null | undefined)[]): readonly string[] {
   return [`\nCounted issues and reported Claude Code usage per cycle of ${heading}:`, ...counts.map((c, i) => `  cycle ${i + 1}: counted issues = ${c}, total_cost_usd = ${costs[i] ?? "not reported"}`)];
 }
-/** Behaviour 7's pauses in the user's words: identical content, idle cycles, an unexplained change. */
+/** Behaviour 7's pauses in the user's words: identical content and idle cycles. */
 export function identicalContentLine(fileLabel: string, cycle: number, seen: string): string {
   return `\n${fileLabel} after cycle ${cycle} is identical to ${fileLabel} after ${seen} (cycle 0 is the state at the start).`;
 }
@@ -1397,9 +1412,6 @@ export function alternatingSubject(fileLabel: string): string {
 }
 export function idleSubject(idle: number): string {
   return `the issues of the last ${idle} cycles that produced no amendment`;
-}
-export function unexplainedChangeSubject(fileLabel: string, heading: string, cycle: number): string {
-  return `the unexplained change to ${fileLabel} in ${cycleHeading(heading, cycle)}`;
 }
 
 /** The halt at the cycle limit, and a cycle whose round failed validation, as the user reads them (issue #14, W1-R1-1). */
@@ -3304,7 +3316,7 @@ const originText = (origin: QuestionOrigin): string => {
     case "permission":
       return "Claude Code, the coding agent, asks for permission while it carries out the plan";
     case "pause":
-      return origin.pause === "unexplained" || origin.pause === "identical" || origin.pause === "idle"
+      return origin.pause === "identical" || origin.pause === "idle"
         ? `Asked because the review in ${origin.heading} is not making progress`
         : `Asked because Claude Code and Codex disagree during ${origin.heading}`;
     case "limit":
@@ -3348,8 +3360,6 @@ const pauseSubject = (p: PauseOrigin): string => {
       return `issue ${p.id} against the accepted correction for ${p.reverses}`;
     case "repeatedUnderNewId":
       return `issue ${p.id}, a repetition of issue ${p.repeats}`;
-    case "unexplained":
-      return unexplainedChangeSubject(p.fileLabel, p.heading, p.round);
     case "identical":
       return alternatingSubject(p.fileLabel);
     case "idle":
@@ -3373,8 +3383,6 @@ export function pauseQuestion(p: PauseOrigin): string {
       return "Codex has raised a point that Claude Code does not accept in full. Which outcome do you want?";
     case "disputedSelfCorrection":
       return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stay or to be withdrawn?";
-    case "unexplained":
-      return `${p.fileLabel} changed, although Claude Code accepted no point of the review and corrected nothing of its own. What do you want done with the change?`;
     case "identical":
       return `${p.fileLabel} has returned to a version it had before, so the review alternates between two versions. Which of the two versions do you want kept?`;
     case "idle":
@@ -3474,7 +3482,7 @@ export function fallbackContext(origin: QuestionOrigin): string {
     case "permission":
       return `${interloq} While Claude Code carries out the plan, it asks before it uses a tool that Interloq's permission settings do not allow on their own: here ${origin.tool}, with the input shown below. If you allow it, the tool runs in this project; if not, Claude Code is told so and continues without it. The question protects the project from an action you did not intend.`;
     case "pause":
-      return origin.pause === "unexplained" || origin.pause === "identical" || origin.pause === "idle"
+      return origin.pause === "identical" || origin.pause === "idle"
         ? `${interloq} During ${origin.heading}, Codex reviews a document in rounds and Claude Code answers each point and amends the document. When the rounds stop making progress, Interloq halts the review and asks you how to continue, so that the agents do not go round in circles at your cost.`
         : `${interloq} During ${origin.heading}, Codex reviews a document in rounds, and Claude Code accepts, rejects or questions each point it raises. When the two keep disagreeing about a point, Interloq stops the review and asks you to settle it, so that the document follows your judgment rather than whichever agent insists longer.`;
     case "limit":
@@ -3557,17 +3565,11 @@ export function pauseLead(p: PauseOrigin): string {
       return `Codex's issue ${p.id} asks to reverse the correction that was made for issue ${p.reverses}.`;
     case "repeatedUnderNewId":
       return `Codex's issue ${p.id} repeats issue ${p.repeats}, which Claude Code did not accept in full.`;
-    case "unexplained":
-      return `${p.fileLabel} changed in cycle ${p.round} although Claude Code accepted no issue, corrected nothing of its own and had no decision of yours to apply.`;
     case "identical":
       return `${p.fileLabel} has returned to an earlier version.`;
     case "idle":
       return `Claude Code accepted no issue ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}.`;
   }
-}
-/** Claude Code's own account of a response that changed the file unexplained. */
-export function claudeResponseText(text: string): string {
-  return text.trim() === "" ? "Claude Code gave no account of its response." : `Claude Code's own account of its response: ${text.trim()}`;
 }
 export function identicalFacts(fileLabel: string, round: number, seen: string): string {
   return identicalContentLine(fileLabel, round, seen).trim();

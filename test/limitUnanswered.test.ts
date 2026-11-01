@@ -45,12 +45,12 @@ test("an unanswered round limit extends the review by maxRounds and writes the l
   assert.equal(extended.state.unanswered, true);
   const first = limitExtendedLine("Planning phase 1", "rounds", 1, true);
   assert.ok(converses(extended).includes(first) && says(extended).includes(first));
-  assert.deepEqual(last(extended), { kind: "CallReviewer", round: 2 });
+  assert.deepEqual(last(extended), { kind: "CallReviewer", round: 2, unexplained: null });
   const again = roundOf(extended, 2);
   assert.ok(!again.commands.some((c) => c.kind === "AskLimit"));
   assert.equal(again.state.limit, 3);
   assert.ok(converses(again).includes(limitExtendedLine("Planning phase 1", "rounds", 1, false)));
-  assert.deepEqual(last(again), { kind: "CallReviewer", round: 3 });
+  assert.deepEqual(last(again), { kind: "CallReviewer", round: 3, unexplained: null });
 });
 
 test("an unanswered idle limit resets the idle count without recording a decision; a later idle limit asks nothing", () => {
@@ -61,11 +61,11 @@ test("an unanswered idle limit resets the idle count without recording a decisio
   assert.equal(extended.state.unanswered, true);
   assert.ok(!extended.commands.some((c) => c.kind === "RecordDecision"));
   assert.ok(converses(extended).includes(limitExtendedLine("Planning phase 1", "idle", 1, true)));
-  assert.deepEqual(last(extended), { kind: "CallReviewer", round: 2 });
+  assert.deepEqual(last(extended), { kind: "CallReviewer", round: 2, unexplained: null });
   const again = roundOf(extended, 2);
   assert.ok(!again.commands.some((c) => c.kind === "AskDecision" || c.kind === "RecordDecision"));
   assert.ok(converses(again).includes(limitExtendedLine("Planning phase 1", "idle", 1, false)));
-  assert.deepEqual(last(again), { kind: "CallReviewer", round: 3 });
+  assert.deepEqual(last(again), { kind: "CallReviewer", round: 3, unexplained: null });
 });
 
 test("an answered limit leaves the loop asking at the next limit", () => {

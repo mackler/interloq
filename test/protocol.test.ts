@@ -75,7 +75,6 @@ const origin = fc.oneof(
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constantFrom("reraised" as const, "secondClarification" as const, "disputedSelfCorrection" as const), id: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("reversal" as const), id: text, reverses: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("repeatedUnderNewId" as const), id: text, repeats: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("unexplained" as const), fileLabel: text, round: nat }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("identical" as const), fileLabel: text }),
   fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("idle" as const), idle: nat }),
   fc.record({ kind: fc.constant("limit" as const), heading: text, limit: nat }),

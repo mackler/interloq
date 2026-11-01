@@ -194,7 +194,6 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literals(["reraised", "secondClarification", "disputedSelfCorrection"]), id: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("reversal"), id: Str, reverses: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("repeatedUnderNewId"), id: Str, repeats: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("unexplained"), fileLabel: Str, round: Int }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("identical"), fileLabel: Str }),
   Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("idle"), idle: Int }),
   Schema.Struct({ kind: Schema.Literal("limit"), ...withHeading, limit: Int }),

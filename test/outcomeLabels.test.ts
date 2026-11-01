@@ -30,8 +30,8 @@ const requestOf = (origin: QuestionOrigin, question: string): prompts.ContextReq
 });
 const disputedOrigin: QuestionOrigin = { kind: "pause", heading: "Planning 1", pause: "reraised", id: "P1-R1-1" };
 const disputed = requestOf(disputedOrigin, prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }));
-const unexplainedOrigin: QuestionOrigin = { kind: "pause", heading: "Planning 1", pause: "unexplained", fileLabel: "plan.json", round: 1 };
-const unexplained = requestOf(unexplainedOrigin, "plan.json changed. What do you want done with the change?");
+const identicalOrigin: QuestionOrigin = { kind: "pause", heading: "Planning 1", pause: "identical", fileLabel: "plan.json" };
+const identical = requestOf(identicalOrigin, prompts.pauseQuestion({ pause: "identical", fileLabel: "plan.json" }));
 const withLabels = (reply: QuestionContext, labels: readonly string[]): QuestionContext => ({
   ...reply,
   options: reply.options.map((o, i) => ({ ...o, label: plainPieces(labels[i]) })),
@@ -41,7 +41,7 @@ test("the context prompt of a disputed pause carries the outcome-label rule, and
   const rule = prompts.outcomeLabelsRule();
   for (const name of prompts.AGENT_NAMES) assert.ok(rule.includes(name), name);
   assert.ok(prompts.contextPrompt("t", disputed).includes(rule));
-  assert.ok(!prompts.contextPrompt("t", unexplained).includes(rule));
+  assert.ok(!prompts.contextPrompt("t", identical).includes(rule));
   const reply = scriptedContextReply(prompts.contextPrompt("t", disputed));
   const validate = contextValidation(disputed);
   const { reviewer, planner } = prompts.positionLabels("reraised");
@@ -54,8 +54,8 @@ test("the context prompt of a disputed pause carries the outcome-label rule, and
   assert.notEqual(determinate, "");
   assert.ok(named.failure.repair.includes(determinate));
   // The check is for the disputed pauses alone.
-  const other = scriptedContextReply(prompts.contextPrompt("t", unexplained));
-  assert.ok(Result.isSuccess(contextValidation(unexplained)({ ...other, options: [plainOption("Ask Codex again", "x"), other.options[1]] })));
+  const other = scriptedContextReply(prompts.contextPrompt("t", identical));
+  assert.ok(Result.isSuccess(contextValidation(identical)({ ...other, options: [plainOption("Ask Codex again", "x"), other.options[1]] })));
 });
 
 // ---- the scenarios (S4) ------------------------------------------------------------------------------------------

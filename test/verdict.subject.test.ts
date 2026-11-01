@@ -66,7 +66,7 @@ test("a response that accepts no objection and leaves the verdict blank is refus
 });
 
 test("a response's revised verdict is written to verdict.json", async () => {
-  // A changed verdict with no accepted issue is an unexplained change (behavior 7), answered by continuing.
-  const { probe } = await loop({ answers: [""], config: { maxIdleRounds: 3 }, reviews: [raised("V1-R1-1"), { issues: [] }], steps: [{ output: verdictResponse([["V1-R1-1", "rejected"]], "Only the retention period.") }] });
+  // A changed verdict with no accepted issue is an unexplained change, recorded and not asked (issue #208).
+  const { probe } = await loop({ config: { maxIdleRounds: 3 }, reviews: [raised("V1-R1-1"), { issues: [] }], steps: [{ output: verdictResponse([["V1-R1-1", "rejected"]], "Only the retention period.") }] });
   assert.equal(JSON.parse(fs.readFileSync(path.join(probe.dir, "verdict-1", "verdict.json"), "utf8")).verdict.missing, "Only the retention period.");
 });
