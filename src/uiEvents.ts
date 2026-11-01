@@ -9,6 +9,7 @@ import type { TermsResponse } from "./schema.ts";
 import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion, WorkResponse, EffectReview } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
 import type { RunMode } from "./runMode.ts";
+import type { ShownDocument } from "./reviewedDocument.ts";
 
 /** A phase of the run as the progress display names it. */
 /** The kinds of a numbered phase; `suite` is the whole suite Interloq runs after the review of the work finds nothing left to correct (issue #162). */
@@ -93,6 +94,8 @@ export type UiEvent =
   | Readonly<{ _tag: "DecisionAnalyzed"; decision: number; question: string; presented: PresentedQuestion; options: readonly Readonly<{ label: string; description: string }>[]; analysis: DecisionAnalysis }>
   /** The last answer was rejected (a blank reply where one is required) and the question is asked again (W3-R1-1); for the page. */
   | Readonly<{ _tag: "AnswerRejected" }>
+  /** The document under review of a review loop as it now stands (issue #86): published when it changes. */
+  | Readonly<{ _tag: "DocumentShown"; subject: SubjectId; document: ShownDocument }>
   /** Every phase known of the run so far, begun or ahead, in order (issue #6): the whole list each time, so folding it twice changes nothing. */
   | Readonly<{ _tag: "PhasesForeseen"; phases: readonly Phase[] }>
   /** The plan with the status of each step (issue #6), after every write and every report of a step; `phase` is the planning and implementation phase it belongs to (Q5). */
@@ -192,6 +195,8 @@ export const describeEvent = (event: UiEvent): string => {
       return `question ${event.question.number} explained: ${plural(event.question.explanations.length, "term")}`;
     case "DecisionAnalyzed":
       return `decision ${event.decision} analyzed: ${event.question} (${plural(event.analysis.columns.length, "column")})`;
+    case "DocumentShown":
+      return `document of ${subjectDir(event.subject)} shown: ${event.document._tag === "Analysis" ? plural(event.document.analysis.columns.length, "column") : plural(event.document.text.length, "character")}`;
     case "AnswerRejected":
       return "answer rejected, asked again";
     case "ModelNamed":

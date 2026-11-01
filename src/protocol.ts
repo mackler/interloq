@@ -229,6 +229,9 @@ const LimitWaitBasisSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("noKnownEnd"), attempt: S.PositiveInt }),
 ]);
 
+/** ShownDocument of src/reviewedDocument.ts (issue #86): a document of any other form does not decode. */
+const ShownDocumentSchema = Schema.Union([tagged("Markdown", { text: Str }), tagged("Diff", { text: Str }), tagged("Analysis", { analysis: S.DecisionAnalysis })]);
+
 /** UiEvent of src/uiEvents.ts, variant by variant. */
 export const UiEventSchema = Schema.Union([
   tagged("PhaseBegan", { phase: PhaseSchema }),
@@ -261,6 +264,8 @@ export const UiEventSchema = Schema.Union([
   tagged("QuestionPresented", { question: PresentedQuestionSchema }),
   tagged("QuestionExplained", { question: PresentedQuestionSchema }),
   tagged("AnswerRejected", {}),
+  // Issue #86: the document under review of a review loop, in the form the page renders it.
+  tagged("DocumentShown", { subject: SubjectIdSchema, document: ShownDocumentSchema }),
   tagged("ModelNamed", { model: Schema.Union([Schema.Struct({ agent: Schema.Literal("claude"), name: Str }), Schema.Struct({ agent: Schema.Literal("codex"), name: Schema.NullOr(Str) })]) }),
   tagged("AnalysisProgress", { decision: Int, question: Schema.NullOr(Int), check: Int }),
   tagged("DecisionAnalyzed", { decision: Int, question: Str, presented: PresentedQuestionSchema, options: Schema.Array(Schema.Struct({ label: Str, description: Str })), analysis: S.DecisionAnalysis }),
@@ -292,7 +297,7 @@ export const RunEventSchema = Schema.Union([
 ]);
 export const StampedSchema = Schema.Struct({ time: Str, event: RunEventSchema });
 const RunRecordSchema = Schema.Struct({ id: Int, events: Schema.Array(StampedSchema) });
-const UiScopeSchema = Schema.Union([tagged("DecisionEntry", { decision: Int, entry: Str }), tagged("RailPhase", { phase: Str }), tagged("RailBranch", { phase: Str, branch: Str }), tagged("DecisionSection", { decision: Int, section: Schema.Literals(DECISION_SECTIONS) }), tagged("DashboardAnswers", {})]);
+const UiScopeSchema = Schema.Union([tagged("DecisionEntry", { decision: Int, entry: Str }), tagged("RailPhase", { phase: Str }), tagged("RailBranch", { phase: Str, branch: Str }), tagged("DecisionSection", { decision: Int, section: Schema.Literals(DECISION_SECTIONS) }), tagged("DashboardAnswers", {}), tagged("DashboardDocument", {})]);
 const UiFlagSchema = Schema.Struct({ scope: UiScopeSchema, open: Schema.Boolean });
 const RunUiStateSchema = Schema.Struct({ version: Int, choices: Schema.Array(UiFlagSchema) });
 const RunUiSchema = Schema.Struct({ run: Int, state: RunUiStateSchema });

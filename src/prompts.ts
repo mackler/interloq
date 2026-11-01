@@ -2,7 +2,7 @@
 
 import type { PreparationCause } from "./preparedComments.ts";
 import type { PreparationStatus } from "./preparationSwitch.ts";
-import { pathOf, RECORDS_DIR, recordPath, type RunRoot } from "./artifacts.ts";
+import { pathOf, RECORDS_DIR, recordPath, type RunRoot, type SubjectId } from "./artifacts.ts";
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
 import type { ParkedEnding } from "./runEnding.ts";
@@ -4178,3 +4178,19 @@ export const preparedMarkText = (questions: number): string => (questions === 0 
 export const setAsideMarkText = (reason: string): string => `Set aside: ${reason}`;
 /** On a prepared item's row (requirements Q5: the page says so): the choice of terms above it does not apply to it. */
 export const PREPARED_TERMS_NOTE = "Its terms were explained and reviewed when it was prepared, so the choice of terms above does not apply to it.";
+
+/** The name of the dashboard's heading of the document under review, by the subject the loop reviews (issue #86). */
+export const documentLabel = (subject: SubjectId): string =>
+  subject === "questions"
+    ? "Question list"
+    : subject === "terms"
+      ? "Terms"
+      : subject === "requirements"
+        ? "Requirements"
+        : "plan" in subject
+          ? "Plan"
+          : "work" in subject
+            ? "Changes under review"
+            : "decision" in subject
+              ? "Draft analysis"
+              : "Verdict";

@@ -16,7 +16,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
@@ -63,7 +63,7 @@ describe("the dashboard (issue #22)", () => {
   test("a fresh run and a run after Started hold the empty dashboard", () => {
     expect(emptyRun(3).dashboard).toEqual(emptyDashboard);
     expect(runOf(fold(live([started])), "implementation")?.dashboard).toEqual(emptyDashboard);
-    expect(emptyDashboard).toEqual({ models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [] });
+    expect(emptyDashboard).toEqual({ models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [], document: null, preparing: null, draft: null });
     expect(statusText(emptyDashboard.status)).toBe("");
     expect(lastAnswer(emptyDashboard)).toBe(null);
   });
@@ -3143,5 +3143,67 @@ describe("preparation", () => {
       }),
       { numRuns: 200 },
     );
+  });
+});
+
+// Issue #86 (requirements Q1, Q2 and G-R1-1): the dashboard keeps the latest document under review, and while a decision's
+// analysis is prepared its latest draft.
+describe("the document under review on the dashboard (issue #86)", () => {
+  const shown = (subject: SubjectId, document: import("../../src/reviewedDocument.ts").ShownDocument): RunEvent => notified({ _tag: "DocumentShown", subject, document });
+  const md = (text: string) => ({ _tag: "Markdown" as const, text });
+  const draftOf = (title: string) => ({ decision: title, columns: [{ kind: "unclear" as const, option: "A", unclear: title }], recommendation: { option: "", reason: "" } });
+  const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
+  const OFFERED = prompts.withOffer(prompts.optionOrTextPrompt);
+  const questionNumbered = (number: number): UiEvent => {
+    const e = presentedEvent(`question ${number}?`, [{ label: "A", description: "a" }, { label: "B", description: "b" }]);
+    return e._tag === "QuestionPresented" ? { ...e, question: { ...e.question, number } } : e;
+  };
+  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question });
+  const answered = (prompt: number, text: string): RunEvent => ({ _tag: "Answered", prompt, text });
+  const progress = (decision: number, question: number): RunEvent => notified({ _tag: "AnalysisProgress", decision, question, check: 0 });
+  /** Question 1 answered Help me decide, decision 1's preparation begun, its frame asked. */
+  const deciding = [notified(questionNumbered(1)), asked(1, OFFERED), answered(1, "/decide"), progress(1, 1), frame(2, 1)];
+
+  test("each subject's document reaches the dashboard, the diff as a Diff, and a newer document replaces it", () => {
+    for (const subject of ["questions", "terms", "requirements", { plan: 1 }] as const) {
+      expect(runAfter([shown(subject, md(`doc of ${JSON.stringify(subject)}`))])?.dashboard.document).toEqual({ subject, document: md(`doc of ${JSON.stringify(subject)}`) });
+    }
+    const diff = { _tag: "Diff" as const, text: "+a\n-b" };
+    expect(runAfter([shown({ work: 1 }, diff)])?.dashboard.document).toEqual({ subject: { work: 1 }, document: diff });
+    expect(runAfter([shown({ plan: 1 }, md("v1")), shown({ plan: 1 }, md("v2"))])?.dashboard.document).toEqual({ subject: { plan: 1 }, document: md("v2") });
+    expect(runAfter([shown({ plan: 1 }, md("v1")), shown({ work: 1 }, diff)])?.dashboard.document?.subject).toEqual({ work: 1 });
+  });
+
+  test("a decision's draft is kept apart from the document, replaced by its amendment, and cleared by DecisionAnalyzed", () => {
+    const base = [shown({ plan: 1 }, md("v1")), ...deciding];
+    const first = runAfter([...base, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") })]);
+    expect(first?.dashboard.document).toEqual({ subject: { plan: 1 }, document: md("v1") });
+    expect(first?.dashboard.draft).toEqual({ decision: 1, question: 1, analysis: draftOf("first") });
+    expect(first === null || first === undefined ? null : shownDraft(first)).toEqual(draftOf("first"));
+    const amended = runAfter([...base, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("second") })]);
+    expect(amended?.dashboard.draft?.analysis).toEqual(draftOf("second"));
+    const analyzed: UiEvent = { _tag: "DecisionAnalyzed", decision: 1, question: "question 1?", presented: presentedOf(questionNumbered(1)), options: [], analysis: draftOf("second") };
+    const done = runAfter([...base, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), notified(analyzed)]);
+    expect(done?.dashboard.draft).toBeNull();
+    expect(done?.dashboard.document).toEqual({ subject: { plan: 1 }, document: md("v1") });
+  });
+
+  test("an answer during the review clears the draft, and another question's decision shows none until its own draft", () => {
+    const abandoned = runAfter([...deciding, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), answered(2, "2")]);
+    expect(abandoned?.dashboard.draft).toBeNull();
+    expect(abandoned === null || abandoned === undefined ? undefined : shownDraft(abandoned)).toBeNull();
+    const second = [...deciding, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), answered(2, "2"), notified(questionNumbered(3)), asked(3, OFFERED), answered(3, "/decide"), progress(2, 3), frame(4, 3)];
+    const before = runAfter(second);
+    expect(before === null || before === undefined ? undefined : shownDraft(before)).toBeNull();
+    const own = runAfter([...second, shown({ decision: 2 }, { _tag: "Analysis", analysis: draftOf("own") })]);
+    expect(own === null || own === undefined ? undefined : shownDraft(own)).toEqual(draftOf("own"));
+  });
+
+  test("a tab joining by replay shows the latest document, the diff included, as a tab that watched live", () => {
+    const events = [started, shown({ plan: 1 }, md("v1")), shown({ plan: 1 }, md("v2")), shown({ work: 1 }, { _tag: "Diff", text: "+x" })];
+    const liveView = runOf(fold(live(events)), "implementation");
+    const replayView = runOf(replayed(events), "implementation");
+    expect(replayView?.dashboard.document).toEqual({ subject: { work: 1 }, document: { _tag: "Diff", text: "+x" } });
+    expect(replayView?.dashboard).toEqual(liveView?.dashboard);
   });
 });

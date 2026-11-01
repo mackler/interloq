@@ -54,6 +54,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
     /question 3 explained: 1 term/,
   ],
   DecisionAnalyzed: [{ _tag: "DecisionAnalyzed", decision: 2, question: "Which?", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Q?"), options: [], attached: null, decision: null }, options: [], analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } } }, /decision 2 analyzed: Which\? \(0 columns\)/],
+  DocumentShown: [{ _tag: "DocumentShown", subject: { plan: 2 }, document: { _tag: "Markdown", text: "# Plan" } }, /^document of planning-2 shown: 6 characters$/],
   AnswerRejected: [{ _tag: "AnswerRejected" }, /answer rejected, asked again/],
   PhasesForeseen: [{ _tag: "PhasesForeseen", phases: [{ kind: "planning", n: 1 }, { kind: "execution", n: 1 }] }, /phases foreseen: Planning 1, Implementation 1/],
   PlanChanged: [{ _tag: "PlanChanged", phase: 2, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "", status: "done" }, { id: "S2", number: 2, label: "l", text: "", status: "started" }] }] }, step: null }, /plan of phase 2 changed: 1 of 2 steps done/],

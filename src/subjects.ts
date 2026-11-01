@@ -8,7 +8,8 @@ import { termsValidation } from "./termsValidation.ts";
 export { requestedTermsValidation, termsValidation, withTermsEntry } from "./termsValidation.ts";
 import type { RunError } from "./errors.ts";
 import * as prompts from "./prompts.ts";
-import { subjectHeading } from "./render.ts";
+import { renderQuestions, renderTerms, subjectHeading } from "./render.ts";
+import type { ShownDocument } from "./reviewedDocument.ts";
 import { bothValidations, questionsValidation, type Subject, userQuestionsValidation, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import type { DecisionAnalysis, DecisionApplied, DecisionResponse, Plan, PlannerResponse, PlanResponse, PlanWrite, PlanWriteResult, QuestionList, QuestionListResponse, QuestionsFile, RecordedPlan, TermsEntry, TermsResponse, TermsWrite } from "./schema.ts";
@@ -74,6 +75,7 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
     prepare: null,
+    document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file) })),
   };
 }
 
@@ -107,6 +109,10 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
     prepare: null,
+    document: Effect.gen(function* () {
+      const entries = yield* (yield* Store).loadTerms();
+      return { _tag: "Markdown", text: yield* Effect.fromResult(renderTerms(entries)) } satisfies ShownDocument;
+    }),
   };
 }
 
@@ -135,6 +141,7 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
     disputesSettledBy: "user",
     reviewSchema: S.Review,
     prepare: null,
+    document: Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ requirements }): ShownDocument | null => (requirements === null ? null : { _tag: "Markdown", text: requirements })),
   };
 }
 
@@ -163,6 +170,7 @@ export function planSubject(root: RunRoot, phase: number, withRequirements: bool
     disputesSettledBy: "noWorkEffect",
     reviewSchema: S.EffectReview,
     prepare: null,
+    document: Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ plan }): ShownDocument | null => (plan === null ? null : { _tag: "Markdown", text: plan })),
   };
 }
 
@@ -223,6 +231,7 @@ export function decisionSubject(k: number, phase: number, format: string, valida
     disputesSettledBy: "user",
     reviewSchema: S.Review,
     prepare: null,
+    document: Effect.map(Effect.flatMap(Store, (store) => store.loadAnalysis(k)), (analysis): ShownDocument => ({ _tag: "Analysis", analysis })),
   };
 }
 
@@ -253,6 +262,7 @@ export function workSubject(task: string, phase: number, withRequirements: boole
       const store = yield* Store;
       yield* store.changeRecord(phase);
     }),
+    document: Effect.map(Effect.flatMap(Store, (store) => store.readChangeRecord(phase)), (text): ShownDocument => ({ _tag: "Diff", text })),
   };
 }
 
@@ -290,6 +300,7 @@ export function verdictSubject(n: number, phase: number, phaseRecord: VerdictRec
     disputesSettledBy: "user",
     reviewSchema: S.Review,
     prepare: null,
+    document: Effect.map(Effect.flatMap(Store, (store) => store.loadVerdict(n)), (record): ShownDocument => ({ _tag: "Markdown", text: record.missing })),
   };
 }
 

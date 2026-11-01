@@ -29,8 +29,16 @@ const heap = (): number => {
   return process.memoryUsage().heapUsed;
 };
 const review = { issues: [issue("P1-R1-1", "The plan does not say which file holds the parser, so the step cannot be implemented without guessing."), issue("P1-R1-2", "Step 3 and step 5 contradict each other on the error format."), issue("P1-R1-3", "The test of step 4 names no failing input.")] };
+// Issue #86: the documents under review a run publishes: a plan of sixty steps (about 30 kB of Markdown) every 1,000th
+// event, and the whole diff of 4,000 lines of 60 characters (about 240 kB) at four of them.
+const PLAN_TEXT = Array.from({ length: 60 }, (_, i) => `${i + 1}. [ ] Step S${i + 1}: ${"a step of the plan, its text in Markdown. ".repeat(11)}`).join("\n");
+const DIFF_TEXT = Array.from({ length: 4000 }, (_, i) => `+${String(i).padStart(6, "0")} ${"x".repeat(52)}`).join("\n");
 const eventOf = (i: number): UiEvent =>
-  i % 10 === 0
+  i % 2500 === 1
+    ? { _tag: "DocumentShown", subject: { work: 1 }, document: { _tag: "Diff", text: `${DIFF_TEXT}\n${i}` } }
+    : i % 1000 === 1
+    ? { _tag: "DocumentShown", subject: { plan: 1 }, document: { _tag: "Markdown", text: `${PLAN_TEXT}\n${i}` } }
+    : i % 10 === 0
     ? { _tag: "ReviewReceived", subject: { plan: 1 }, round: 1 + Math.floor(i / 10), review, counted: 3 }
     : { _tag: "ToolUsed", agent: i % 3 === 0 ? "codex" : "claude", tool: i % 2 === 0 ? "Read" : "command", target: `src/module-${i % 97}/file-${i}.ts`, callId: "claude-1" };
 

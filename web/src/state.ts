@@ -18,7 +18,8 @@ import { SUITE_OUTCOMES, type SuiteOutcome } from "../../src/suite.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { LimitWaitBasis } from "../../src/limitReset.ts";
 import type { Choice } from "../../src/userPrompts.ts";
-import type { RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
+import type { DecisionAnalysis, RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
+import type { ShownDocument } from "../../src/reviewedDocument.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
 import { abandonedItems, type ChainSettings, type ChainState } from "../../src/chain.ts";
 import { acknowledged, type ChainField, differingFields, effective, type InFlight, NO_IN_FLIGHT, sameFrame, sameSettings, sent, withdrawn } from "./chainPending.ts";
@@ -176,12 +177,32 @@ export type Dashboard = Readonly<{
   /** The interview's opening and its help while the interview lasts. */
   interviewHelp: string | null;
   answers: readonly AnsweredEntry[];
+  /**
+   * Issue #86 (requirements Q1): the latest document under review of every subject but a decision, replaced in place by
+   * each DocumentShown; it stays after its loop and the run end.
+   */
+  document: Readonly<{ subject: SubjectId; document: ShownDocument }> | null;
+  /** The decision whose analysis is being prepared, from its latest AnalysisProgress (issue #86): the question it is for. */
+  preparing: Readonly<{ decision: number; question: number | null }> | null;
+  /**
+   * Issue #86 (G-R1-1): the latest draft analysis of the decision being prepared, kept apart from `document`, since the
+   * compact strip under the question shows it while the review that asked the question keeps its own document.
+   */
+  draft: Readonly<{ decision: number; question: number | null; analysis: DecisionAnalysis }> | null;
 }>;
-export const emptyDashboard: Dashboard = { models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [] };
+export const emptyDashboard: Dashboard = { models: { claude: null, codex: null }, status: { _tag: "Idle" }, claude: null, interviewHelp: null, answers: [], document: null, preparing: null, draft: null };
 /** The status line's text: empty while nothing happens. */
 export const statusText = (status: Status): string => (status._tag === "Idle" ? "" : status.text);
 /** The last answer the developer gave, or null before the first. */
 export const lastAnswer = (d: Dashboard): AnsweredEntry | null => d.answers.at(-1) ?? null;
+/** The draft analysis to show (issue #86, G-R1-1): only while its question is still being decided. */
+export const shownDraft = (run: RunView): DecisionAnalysis | null => {
+  const draft = run.dashboard.draft;
+  return draft !== null && run.deciding.some((d) => d.question === draft.question) ? draft.analysis : null;
+};
+/** The dashboard without a draft whose question is no longer being decided (issue #86): an answer abandoned its decision. */
+const withoutStaleDraft = (dashboard: Dashboard, deciding: readonly Deciding[]): Dashboard =>
+  dashboard.draft !== null && !deciding.some((d) => d.question === dashboard.draft?.question) ? { ...dashboard, draft: null } : dashboard;
 
 export type RunView = Readonly<{
   id: number;
@@ -923,13 +944,27 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // S21 (Q4): one plain status while the analysis is prepared, updated in place; the line said for it that
       // follows is absorbed.
       const text = analysisProgressLine(event.decision, event.question, event.check);
-      return { ...withInterloqLine(run, text), absorb: [text] };
+      const next = withInterloqLine(run, text);
+      // Issue #86: a progress naming another decision begins it, so an earlier decision's draft goes.
+      const draft = next.dashboard.draft !== null && next.dashboard.draft.decision !== event.decision ? null : next.dashboard.draft;
+      return { ...next, dashboard: { ...next.dashboard, preparing: { decision: event.decision, question: event.question }, draft }, absorb: [text] };
     }
     case "DecisionAnalyzed": {
       // Issue #153: the question beside its preparation goes; the decision page takes its place.
       const number = event.presented.number;
       const pending = run.pending !== null && run.pending.decision !== "none" && run.pending.question?.number === number ? null : run.pending;
-      return { ...run, pending, deciding: run.deciding.filter((d) => d.question !== number), analysis: { event, prompt: null } };
+      return { ...run, pending, deciding: run.deciding.filter((d) => d.question !== number), analysis: { event, prompt: null }, dashboard: { ...run.dashboard, draft: null } };
+    }
+    case "DocumentShown": {
+      // Issue #86: a decision's draft is the decision's, every other document the dashboard's heading of the document.
+      const subject = event.subject;
+      if (typeof subject === "object" && "decision" in subject) {
+        if (event.document._tag !== "Analysis") return run;
+        const preparing = run.dashboard.preparing;
+        const question = preparing !== null && preparing.decision === subject.decision ? preparing.question : null;
+        return { ...run, dashboard: { ...run.dashboard, draft: { decision: subject.decision, question, analysis: event.document.analysis } } };
+      }
+      return { ...run, dashboard: { ...run.dashboard, document: { subject, document: event.document } } };
     }
     case "AnswerRejected":
       // The question is asked again: the analysis its rejected answer dismissed goes to the next prompt.
@@ -1061,12 +1096,14 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
             followed: [...r.followed, { prompt: event.prompt, question }],
           };
         }
-        return { ...r, deciding: r.deciding.filter((d) => d.prompt !== event.prompt), dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] }, pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
+        const stillDeciding = r.deciding.filter((d) => d.prompt !== event.prompt);
+        return { ...r, deciding: stillDeciding, dashboard: withoutStaleDraft({ ...r.dashboard, answers: [...r.dashboard.answers, entry] }, stillDeciding), pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
       }
       case "Notified":
         return notifiedEvent(r, event.event, time);
       case "Ended": {
-        const ended: RunView = { ...withoutHelp(withActivity(r, "")), explaining: null, deciding: [], ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const quiet = withoutHelp(withActivity(r, ""));
+        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }

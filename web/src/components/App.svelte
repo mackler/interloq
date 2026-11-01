@@ -169,6 +169,9 @@
   /** Issue #22 (F1): the dashboard's heading of every answer, one per run, opened and closed as the run's shared state. */
   const DASHBOARD_ANSWERS: UiScope = { _tag: "DashboardAnswers" };
   const toggleAnswers = (open: boolean) => toggleRail(DASHBOARD_ANSWERS, open);
+  // Issue #86 (requirements Q1): the heading of the document under review, closed until opened and shared across tabs.
+  const DASHBOARD_DOCUMENT: UiScope = { _tag: "DashboardDocument" };
+  const toggleDocument = (open: boolean) => toggleRail(DASHBOARD_DOCUMENT, open);
   // S27: the pending prompt whose conversation the user chose to see instead of its question (by its full key).
   let conversationForPrompt = $state<string | null>(null);
   const promptKey = $derived(JSON.stringify(pendingKey(shownTab)));
@@ -462,7 +465,7 @@
       <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={runOutput} />
+          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">
@@ -484,7 +487,7 @@
              below the question, so that it and its first answer keep their place at the top. Issue #200 (requirements
              Q1): not below the decision page, which keeps the window's room; they return on leaving it. -->
         {#if asking && !deciding}
-          <div class="dashboard-compact" class:running={hasRunning(runOutput)}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} output={runOutput} /></div>
+          <div class="dashboard-compact" class:running={hasRunning(runOutput)}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} /></div>
         {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}

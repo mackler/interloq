@@ -10,10 +10,16 @@
   // without content is absent. `compact` renders the compact status line and the heading of every answer alone, for
   // the column under a question, under a name of its own, since it is not the whole panel. The live panel (issue #49)
   // stands at the bottom of the full form always, and in the compact form only while a process runs, taking no room
-  // otherwise (issue #200, requirements Q2).
+  // otherwise (issue #200, requirements Q2). Issue #86 (requirements Q1 and G-R1-1): in the full form, the closed heading
+  // of the document under review, named by its document, after the last answer and before the heading of every answer,
+  // showing only its latest version; in the compact form, the same heading with a decision's draft analysis, only while
+  // that decision is being prepared. Its open state is the run's shared state, as the answers' heading is.
   import { render } from "../markdown.ts";
-  import { allAnswersHeading, DASHBOARD_CLAUDE_LABEL, DASHBOARD_COMPACT_NAME, itemHeadline, LAST_ANSWER_LABEL, YOU_LABEL } from "../../../src/prompts.ts";
-  import { type AnsweredEntry, lastAnswer, type RunView } from "../state.ts";
+  import { allAnswersHeading, documentLabel, DASHBOARD_CLAUDE_LABEL, DASHBOARD_COMPACT_NAME, itemHeadline, LAST_ANSWER_LABEL, YOU_LABEL } from "../../../src/prompts.ts";
+  import { type AnsweredEntry, lastAnswer, type RunView, shownDraft } from "../state.ts";
+  import ReviewedDocument from "./ReviewedDocument.svelte";
+  import type { SubjectId } from "../../../src/artifacts.ts";
+  import type { ShownDocument } from "../../../src/reviewedDocument.ts";
   import AnsweredQuestion from "./AnsweredQuestion.svelte";
   import Disclosure from "./Disclosure.svelte";
   import StatusLine from "./StatusLine.svelte";
@@ -23,11 +29,18 @@
   const NAME = "You and Interloq";
   // Issue #49: `output`, the run's live panel as this tab received it; shown in the full form always and in the compact
   // form only while `hasRunning` (issue #200, requirements Q2).
-  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; compact?: boolean; output?: LivePanel };
-  let { run, answersOpen, onAnswers, compact = false, output = EMPTY_PANEL }: Props = $props();
+  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; documentOpen?: boolean; onDocument?: (open: boolean) => void; compact?: boolean; output?: LivePanel };
+  let { run, answersOpen, onAnswers, documentOpen = false, onDocument = () => {}, compact = false, output = EMPTY_PANEL }: Props = $props();
   const d = $derived(run.dashboard);
   const last = $derived(lastAnswer(d));
   const listId = $derived(`dashboard-answers-${run.id}-${compact ? "compact" : "full"}`);
+  const documentId = $derived(`dashboard-document-${run.id}-${compact ? "compact" : "full"}`);
+  /** What the heading shows: the latest document in the full form, a decision's draft in the compact one, or nothing. */
+  const shown = $derived.by((): Readonly<{ subject: SubjectId; document: ShownDocument }> | null => {
+    if (!compact) return d.document;
+    const draft = shownDraft(run);
+    return draft === null || d.draft === null ? null : { subject: { decision: d.draft.decision }, document: { _tag: "Analysis", analysis: draft } };
+  });
 </script>
 
 {#snippet answered(entry: AnsweredEntry)}
@@ -59,6 +72,14 @@
           {@render answered(last)}
         </article>
       {/if}
+    {/if}
+    {#if shown !== null}
+      <div class="document-heading" data-document-heading>
+        <Disclosure expanded={documentOpen} controls={documentId} onToggle={onDocument}>
+          {#snippet title()}<span class="m3-font-label-large">{documentLabel(shown.subject)}</span>{/snippet}
+          <ReviewedDocument document={shown.document} id={documentId} />
+        </Disclosure>
+      </div>
     {/if}
     {#if d.answers.length > 0}
       <div class="all" data-answers-heading>

@@ -24,6 +24,7 @@ import { type Decider, Planner, type PlanningCapability, type PlanningPurpose, t
 import { compareJournaled, compareSnapshots } from "./snapshot.ts";
 import { ASK, type Exhaustion, FAIL, withTransportRetry } from "./retry.ts";
 import { guardsPlanningProject, guardsReviewProject } from "./runMode.ts";
+import { sameDocument, type ShownDocument } from "./reviewedDocument.ts";
 
 /** Codex's reply text, decoded as JSON and then as a review; text that is not JSON is a decode failure. */
 
@@ -84,7 +85,16 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   question?: number | null;
   /** Run before every round's Codex turn, before its guard's snapshot (the work review rewrites changes.diff); null otherwise. */
   prepare: Effect.Effect<void, RunError, Services> | null;
+  /** The document under review as it now stands, which the page shows (issue #86); null where its file is absent. */
+  document: Effect.Effect<ShownDocument | null, RunError, Services>;
 }>;
+
+/** Notifies the page of a subject's document as it now stands (issue #86), for a document written outside a review loop. */
+export const showDocument = <R extends PlannerResponse, D>(subject: Subject<R, D>): Effect.Effect<void, RunError, Services> =>
+  Effect.gen(function* () {
+    const document = yield* subject.document;
+    if (document !== null) yield* (yield* Ui).notify({ _tag: "DocumentShown", subject: subject.id, document });
+  });
 
 /**
  * The question a decision of a review loop asks (S7): a pause of behaviour 7 with its fixed question and the
@@ -330,6 +340,19 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
     const session = yield* Ref.make(yield* reviewer.startPhase);
     /** The input tokens of the current round's Codex turns, its review and any repair turn of it (issue #165). */
     const roundInputs = yield* Ref.make<readonly (number | null)[]>([]);
+    /**
+     * The document this loop last showed (issue #86). It is shown before every review, so a loop's first proposal is on
+     * the page before Codex's first review and the diff shown is the one Codex reviews, and after every step that may
+     * amend it; only a changed document is published, so an unchanged diff is not repeated in the run's events.
+     */
+    const lastShown = yield* Ref.make<ShownDocument | null>(null);
+    const publishDocument = Effect.gen(function* () {
+      const document = yield* subject.document;
+      const last = yield* Ref.get(lastShown);
+      if (document === null || (last !== null && sameDocument(last, document))) return;
+      yield* Ref.set(lastShown, document);
+      yield* ui.notify({ _tag: "DocumentShown", subject: id, document });
+    });
 
     // Codex runs without a sandbox, so the project and the reviewed file are compared after every turn,
     // including a repair turn. A refinement run compares the reviewed file alone (the developer's instruction of
@@ -429,6 +452,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           case "SaveResponse":
             yield* store.saveResponse(id, command.round, command.response);
             if (subject.respond.after !== null) yield* subject.respond.after(command.response as R);
+            yield* publishDocument;
             return null;
           case "SaveLog":
             yield* store.saveLog(id, command.log);
@@ -476,6 +500,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             const thread = yield* roundThread(command.round);
             // Before the turn's guard takes its snapshot, so that it is not counted as a change during the turn.
             if (subject.prepare !== null) yield* subject.prepare;
+            yield* publishDocument;
             // Issue #151: the review's validation with its repair turn in the review's thread, every reply in review-<n>.json first.
             const { value: review } = yield* decodeValidating("codex", reviewText, (yield* reviewCall(subject.reviewPrompt(store.root, command.round, thread))).text, (r) => reviewCall(r.prompt).pipe(Effect.map((reply) => reply.text)), reviewValidation, rawSave(command.round, "review"));
             return { kind: "ReviewDecoded", review, validated: yield* Effect.fromResult(validateReview(review)) };
@@ -504,13 +529,16 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             const call = yield* repairTurn(repair, subject.respond.schema, subject.respond.capability, validate, rawSave(command.round, { corrective: command.attempt }));
             yield* store.saveCorrection(id, command.round, command.attempt, call.reply);
             if (subject.respond.after !== null) yield* subject.respond.after(call.output);
+            yield* publishDocument;
             return { kind: "CorrectionDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
           }
           case "ApplyDecisions":
             yield* applyDecisions(subject as Subject<PlannerResponse, D>);
+            yield* publishDocument;
             return { kind: "DecisionsApplied" };
           case "Amend":
             if (subject.amend !== null) yield* subject.amend(state.current.review!, state.current.response as R, command.round);
+            yield* publishDocument;
             return { kind: "Amended" };
           case "ObserveFile":
             return { kind: "FileObserved", ...(yield* store.observeFile(id)) };

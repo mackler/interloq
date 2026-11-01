@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
 import { clarification, type TermsOffer } from "./conversation.ts";
 import * as prompts from "./prompts.ts";
-import { planningCall, reviewLoop } from "./review.ts";
+import { planningCall, reviewLoop, showDocument } from "./review.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
 import * as S from "./schema.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
@@ -27,7 +27,8 @@ const explainTerms = (task: string, agreed: QuestionsFile["questions"], reviewed
       const written = yield* planningCall(prompts.termsPrompt(store.root, task), S.TermsWrite, "planning", "records", termsValidation<S.TermsWrite>(agreed));
       yield* saveTerms(written.output.entries);
       yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${yield* Effect.fromResult(renderTerms(written.output.entries))}\n`);
-      if (reviewed) yield* reviewLoop(termsSubject(agreed));
+      // Issue #86: reviewed terms are shown by their loop before its first review; unchecked ones when written.
+      yield* reviewed ? reviewLoop(termsSubject(agreed)) : showDocument(termsSubject(agreed));
     }).pipe(Effect.provideService(Planner, planner));
   });
 
@@ -77,6 +78,8 @@ export const askAgreed = (task: string, agreed: QuestionsFile["questions"], term
     // Issue #83 (the developer's instruction of 4 Oct 2026): an empty agreed list is no reason to pause; planning starts.
     if (agreed.length === 0) {
       yield* store.writeRequirements(`# Requirements\n\n## Task\n\n${task}\n\nNo question was needed.\n`);
+      // Issue #86: requirements.md is shown when written; no review loop shows it, since none follows.
+      yield* showDocument(requirementsSubject());
       yield* store.converse("Planning starts without a conversation: no question was needed.\n\n");
       yield* ui.notify({ _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
       return;

@@ -157,6 +157,16 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
     options: fc.array(fc.record({ label: text, description: text }), { maxLength: 3 }),
     analysis: fc.record({ decision: text, columns: fc.array(fc.oneof(fc.record({ kind: fc.constant("argued" as const), option: text, advantages: fc.constant([]), disadvantages: fc.constant([]) }), fc.record({ kind: fc.constant("unclear" as const), option: text, unclear: text })), { maxLength: 2 }), recommendation: fc.record({ option: text, reason: text }) }),
   }),
+  // Issue #86: the document under review of a review loop, in each of its forms.
+  fc.record({
+    _tag: fc.constant("DocumentShown" as const),
+    subject,
+    document: fc.oneof(
+      fc.record({ _tag: fc.constant("Markdown" as const), text }),
+      fc.record({ _tag: fc.constant("Diff" as const), text }),
+      fc.record({ _tag: fc.constant("Analysis" as const), analysis: fc.record({ decision: text, columns: fc.array(fc.record({ kind: fc.constant("unclear" as const), option: text, unclear: text }), { maxLength: 2 }), recommendation: fc.record({ option: text, reason: text }) }) }),
+    ),
+  }),
 );
 // Issue #120: the mode of a run, from the one source of the modes.
 const mode = fc.constantFrom(...RUN_MODES);
@@ -190,6 +200,8 @@ const uiScope: fc.Arbitrary<UiScope> = fc.oneof(
   fc.record({ _tag: fc.constant("DecisionSection" as const), decision: nat, section: fc.constantFrom(...DECISION_SECTIONS) }),
   // Issue #22: the dashboard's heading of every answer.
   fc.constant({ _tag: "DashboardAnswers" as const }),
+  // Issue #86: the dashboard's heading of the document under review.
+  fc.constant({ _tag: "DashboardDocument" as const }),
 );
 const uiState: fc.Arbitrary<RunUiState> = fc.record({ version: nat, choices: fc.array(fc.record({ scope: uiScope, open: fc.boolean() }), { maxLength: 3 }) });
 const client: fc.Arbitrary<ClientMessage> = fc.oneof(
@@ -565,4 +577,13 @@ test("a listed item without its preparation mark does not decode", () => {
   const item = { id: "7", title: "t", excerpt: "", url: null, sentBack: 0 };
   assert.ok(Result.isFailure(decodeServer(frame(item))));
   assert.ok(Result.isSuccess(decodeServer(frame({ ...item, preparation: { _tag: "Prepared", questions: 3 } }))));
+});
+
+// Issue #86: a document of another form does not decode.
+test("a DocumentShown whose document has an unknown tag does not decode", () => {
+  const good: ServerMessage = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "DocumentShown", subject: { work: 1 }, document: { _tag: "Diff", text: "+a" } } } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(good))), plain(good));
+  const bad = JSON.parse(JSON.stringify(good));
+  bad.event.event.document._tag = "Html";
+  assert.equal(Result.isFailure(decodeServer(JSON.stringify(bad))), true);
 });

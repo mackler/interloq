@@ -170,6 +170,24 @@ test("the Decider of a phase runs a decision loop recorded in that phase", async
   assert.equal(json(probe.dir, "checkpoint.json").phase, 2);
 });
 
+// Issue #86 (G-R1-1): the draft analysis is shown during the decision's review, before its first review and again when
+// amended, and both before the finished analysis is shown.
+test("a decision shows its first analysis before its review and the amended analysis after a response, both before DecisionAnalyzed", async () => {
+  const { layer, probe } = await setUp({
+    answers: ["/decide", "2"],
+    steps: [{ output: analysis() }, { output: decisionResponse([["D1-R1-1", "accepted"]], analysis("second")) }],
+    reviews: [{ issues: [issue("D1-R1-1")] }, { issues: [] }],
+  });
+  assert.equal(await offering(layer, { question: question.question, options: offered }), "2");
+  const events = probe.ui.notified;
+  const drafts = events.flatMap((e, i) => (e._tag === "DocumentShown" && typeof e.subject === "object" && "decision" in e.subject ? [{ i, document: e.document }] : []));
+  assert.deepEqual(drafts.map((d) => d.document), [{ _tag: "Analysis", analysis: analysis() }, { _tag: "Analysis", analysis: analysis("second") }]);
+  const firstReview = events.findIndex((e) => e._tag === "ReviewReceived");
+  const analyzedAt = events.findIndex((e) => e._tag === "DecisionAnalyzed");
+  assert.ok(drafts[0].i < firstReview, "the first analysis was shown after the review");
+  assert.ok(drafts[1].i < analyzedAt, "the amended analysis was shown after DecisionAnalyzed");
+});
+
 // Decision support, plan step 3.4 (D2, P1-R1-3, P1-R1-4): the ask that carries the offer.
 const offered = numberedOptions(question.options);
 /** A question as askOffering takes it (S7): a relayed question with the given text and options. */

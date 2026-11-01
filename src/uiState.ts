@@ -21,7 +21,9 @@ export type UiScope =
   | Readonly<{ _tag: "RailBranch"; phase: string; branch: string }>
   | Readonly<{ _tag: "DecisionSection"; decision: number; section: DecisionSection }>
   /** The dashboard's heading of every answer of the run (issue #22, F1): one per run, closed while untouched. */
-  | Readonly<{ _tag: "DashboardAnswers" }>;
+  | Readonly<{ _tag: "DashboardAnswers" }>
+  /** The dashboard's heading of the document under review (issue #86, requirements Q1): one per run, closed while untouched. */
+  | Readonly<{ _tag: "DashboardDocument" }>;
 /** A change the page asks for: open or close one scope. */
 export type UiFlag = Readonly<{ scope: UiScope; open: boolean }>;
 /**
@@ -46,6 +48,7 @@ export const scopeKey = (scope: UiScope): string => {
     case "DecisionSection":
       return `${scope._tag}:${scope.decision}:${JSON.stringify(scope.section)}`;
     case "DashboardAnswers":
+    case "DashboardDocument":
       return scope._tag;
   }
 };

@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -707,6 +707,25 @@ test.describe("the tests of the planSteps server, in order", () => {
     await expect(phase(other)).toHaveAttribute("aria-expanded", "false");
     await phase(other).click();
     await expect(stage(other)).toHaveAttribute("aria-expanded", "true");
+    await page.locator("button[name=stop]").click();
+    await confirmEnd(page);
+    await expect(page.locator("button[name=new]")).toBeVisible();
+  });
+  // Issue #86 (requirements Q1): the dashboard's closed heading of the document under review shows the latest version,
+  // here the plan of planning phase 2, while the second execution waits; its open state is the run's shared state.
+  test("(36) the plan under review under its dashboard heading, closed until opened, kept open by a reload", async ({ page }) => {
+    await startTask(page, "planSteps");
+    const step = rail(page).locator("[data-plan-step]", { has: page.locator("[data-plan-step-label]", { hasText: planStepLabel(2, "The store") }) }).last();
+    await expect(step).toHaveAttribute("data-plan-step", "current");
+    const heading = dashboard(page).locator("[data-document-heading] button");
+    await expect(heading).toHaveText(new RegExp(documentLabel({ plan: 2 })));
+    await expect(heading).toHaveAttribute("aria-expanded", "false");
+    await heading.click();
+    await expect(heading).toHaveAttribute("aria-expanded", "true");
+    await expect(dashboard(page).locator("[data-document]")).toContainText("The long step");
+    await page.reload();
+    await expect(dashboard(page).locator("[data-document-heading] button")).toHaveAttribute("aria-expanded", "true");
+    await expect(dashboard(page).locator("[data-document]")).toContainText("The long step");
     await page.locator("button[name=stop]").click();
     await confirmEnd(page);
     await expect(page.locator("button[name=new]")).toBeVisible();
