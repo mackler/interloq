@@ -614,9 +614,13 @@ test.describe("the tests of the decideBlank server, in order", () => {
     await reason.click();
     await expect(page.locator(`#${await reason.getAttribute("aria-controls")}`)).toContainText("r");
     await page.locator("textarea[name=answer]").press("Enter");
-    // The Help me decide answer and the empty one.
-    await expect(page.locator("[data-answers-heading]:visible")).toContainText(allAnswersHeading(2));
+    // The Help me decide answer and the empty one: the empty reply is recorded as an answer. The full dashboard,
+    // hidden while the decision page is shown, is read, so the wait does not depend on what the decision page shows.
+    await expect(dashboard(page).locator("[data-answers-heading]")).toContainText(allAnswersHeading(2));
     await expect(analysis).toBeVisible();
+    await expect(option(page, /1\. PostgreSQL/)).toBeVisible();
+    // Issue #200 (requirements Q1, the developer's decision of 30 Oct 2026): nothing stands below the decision page.
+    await expect(page.locator("[data-answers-heading]:visible")).toHaveCount(0);
     // Issue #133: the question asked again beside its own analysis carries no offer.
     await expect(page.getByRole("button", { name: HELP_ME_DECIDE })).toHaveCount(0);
     await expect(analysis.locator(".column h3")).toHaveText(["PostgreSQL", "SQLite"]);
@@ -624,6 +628,9 @@ test.describe("the tests of the decideBlank server, in order", () => {
     await expect(analysis).toBeHidden();
     // Issue #120: a refinement run ends after the requirements review.
     await toHaveEnded(page, 0);
+    // Once the run has ended the full dashboard is shown, and its count includes the refused empty reply
+    // (Help me decide, the empty reply, PostgreSQL).
+    await expect(page.locator("[data-answers-heading]:visible")).toContainText(allAnswersHeading(3));
   });
 });
 
