@@ -1483,6 +1483,8 @@ export const TAB_TEXTS = {
 export const TABS_LABEL = "Modes";
 /** A tab whose run waits for the user's answer: its name with the title's waiting mark in front (issue #16's mark). */
 export const waitingTabName = (name: string): string => `${TITLE_WAITING_MARK} ${name}`;
+/** Issue #209: a run tab whose end has not been seen: its end's mark in front of the name, as `waitingTabName` puts ●. */
+export const endedTabName = (name: string, code: number): string => `${endMarkOf(code)} ${name}`;
 export const ITEMS_REFRESH = "Refresh";
 /** Issue #142: the name of the Refinement tab's control of the choice of terms, and the words of its three values. */
 export const TERMS_CHOICE_LABEL = "Explanations of terms";
@@ -2162,8 +2164,13 @@ export const CONNECTION_FAILED_NOTICE =
 // Issue #16: the alerts that a run waits for the user, or that a run he watched has ended.
 /** The title marker of a pending prompt, put in front of the tab's title. */
 export const TITLE_WAITING_MARK = "●";
-/** The title marker of a run that ended while the tab was hidden. */
+/** Issue #209: the mark of a run that finished its work (exit 0) and whose end has not been seen since. */
 export const TITLE_ENDED_MARK = "✓";
+/** Issue #209: the mark of a run that ended without doing its work (halted 1, abandoned 2, stopped 130, any code but 0)
+ * and whose end has not been seen since. It asserts that, and nothing more. */
+export const TITLE_UNFINISHED_MARK = "✕";
+/** Issue #209: the one choice of an end's mark by its exit code, shared by a run's tab, the browser title and the icon. */
+export const endMarkOf = (code: number): string => (code === 0 ? TITLE_ENDED_MARK : TITLE_UNFINISHED_MARK);
 /** How a run ended, by its exit code: the words of "This task has ended (…)" and of the end's notification. */
 /** Issue #185: the exit code of a run that got no answer within the wait, neither a stop (130) nor a halt (1). */
 export const ABANDONED_EXIT_CODE = 2;

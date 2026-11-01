@@ -1126,3 +1126,14 @@ test("parkedMergeRefusedText names the branch and its own case, says nothing was
     assert.ok(!/give up/i.test(text), text);
   }
 });
+
+// Issue #209: the two end marks and the one choice between them.
+test("endMarkOf: a finished run is marked ✓ and every other end ✕", async () => {
+  const fc = (await import("fast-check")).default;
+  assert.equal(prompts.endMarkOf(0), prompts.TITLE_ENDED_MARK);
+  for (const code of [1, 2, 130]) assert.equal(prompts.endMarkOf(code), prompts.TITLE_UNFINISHED_MARK);
+  fc.assert(fc.property(fc.integer().filter((c) => c !== 0), (c) => prompts.endMarkOf(c) === prompts.TITLE_UNFINISHED_MARK));
+  const marks = new Set([prompts.TITLE_ENDED_MARK, prompts.TITLE_UNFINISHED_MARK, prompts.TITLE_WAITING_MARK]);
+  assert.equal(marks.size, 3);
+  for (const code of [0, 1, 2, 130]) assert.equal(prompts.endedTabName("x", code), `${prompts.endMarkOf(code)} x`);
+});
