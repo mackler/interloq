@@ -188,11 +188,16 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
           Effect.gen(function* () {
             const [id] = yield* transition((p): readonly [number, Prompts] => [p.nextFrame, { ...p, nextFrame: p.nextFrame + 1, frames: [...p.frames, { id: p.nextFrame, question, state: { _tag: "asking" } }] }]);
             // Issue #217: a frame removed answered was answered and its answer accepted (a rejected one reopens the frame),
-            // so the page is told its prompt is closed before the prompt shown is published again.
+            // so the page is told its prompt is closed before the prompt shown is published again, and the question's
+            // carried hold is cleared here, the one place an accepted answer is known (W2-R1-1).
             yield* Effect.addFinalizer(() =>
               transition((p): readonly [number | null, Prompts] => {
                 const f = p.frames.find((g) => g.id === id);
-                return [f !== undefined && f.state._tag === "answered" ? f.state.asked.prompt : null, { ...p, frames: p.frames.filter((g) => g.id !== id) }];
+                const accepted = f !== undefined && f.state._tag === "answered";
+                const frames = p.frames.filter((g) => g.id !== id);
+                return accepted
+                  ? [f.state.asked.prompt, { ...p, frames, carryHold: withoutNumber(p.carryHold, question) }]
+                  : [null, { ...p, frames }];
               }).pipe(Effect.flatMap(([closed, shown]) => (closed === null ? Effect.void : sink({ _tag: "PromptClosed", prompt: closed })).pipe(Effect.andThen(republish(shown))))),
             );
             return id;
@@ -264,11 +269,12 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
                 return [{ _tag: "take", w }, { ...p, waiting: null, carryHold }];
               }
               // Issue #153: the frame shown, open beside its decision, is taken and stays, blocking, until its Scope closes.
-              // Issue #217: a "/decide" or "/terms" there is rejected by the asking, so it keeps the question's carried hold.
+              // Issue #217: the frame keeps the question's carried hold for any answer, since only the asking knows whether it
+              // accepts it; the frame's finalizer clears the carry when it removes the frame answered (W2-R1-1).
               const top = p.frames[p.frames.length - 1];
               if (w === null && top !== undefined && top.state._tag === "preparing" && top.state.asked.prompt === prompt) {
                 const state = { ...top.state, _tag: "answered" as const };
-                return [{ _tag: "frame", answer: top.state.answer }, { ...withFrame(p, top.id, (f) => ({ ...f, state })), carryHold: isDecide(text) || isTermsRequest(text) ? p.carryHold : withoutNumber(p.carryHold, top.question) }];
+                return [{ _tag: "frame", answer: top.state.answer }, withFrame(p, top.id, (f) => ({ ...f, state }))];
               }
               const then = p.expired.get(prompt);
               return then === undefined ? [{ _tag: "none" }, p] : [{ _tag: "was", then }, p];

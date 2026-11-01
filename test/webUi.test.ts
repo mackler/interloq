@@ -278,6 +278,49 @@ for (const rejected of ["/decide", "/terms"]) {
     await run(Fiber.interrupt(again));
   });
 }
+// Work review 2 of issue #217 (W2-R1-1): the Ui cannot know whether the asking accepts an answer, so any answer at the
+// frame keeps the carry; an ordinary answer the asking rejects reopens the frame, and the question returns held.
+test("an ordinary answer rejected at the frame keeps the carried hold", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(5_000));
+  await run(ui.notify(question(1, "Question 1?")));
+  const first = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  await run(ui.answer(await pendingPrompt(ui), "/terms"));
+  await run(Fiber.join(first));
+  const work = await run(Deferred.make<string>());
+  const framed = Effect.runFork(Effect.scoped(Effect.gen(function* () {
+    const h = yield* ui.enterQuestion(1);
+    yield* h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work));
+    return yield* h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work));
+  })));
+  assert.equal(await run(ui.answer(await framePrompt(events, 1), "x")), "taken");
+  await framePrompt(events, 1, 2);
+  await run(Deferred.succeed(work, "terms"));
+  await run(Fiber.join(framed));
+  await run(ui.notify(question(1, "Question 1?")));
+  const again = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  await pendingPrompt(ui);
+  const asked = askedOf(events);
+  assert.equal(asked[asked.length - 1].countdown, null, "the question presented again starts held");
+  await run(Fiber.interrupt(again));
+});
+// W2-R1-1: an accepted answer at the frame clears the carry when the frame is removed answered.
+test("an answer accepted at the frame clears the carried hold", async () => {
+  const { ui, events } = await withTiming(Effect.succeed(5_000));
+  await run(ui.notify(question(1, "Question 1?")));
+  const first = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  await run(ui.answer(await pendingPrompt(ui), "/terms"));
+  await run(Fiber.join(first));
+  const work = await run(Deferred.make<string>());
+  const framed = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work)))));
+  assert.equal(await run(ui.answer(await framePrompt(events, 1), "1")), "taken");
+  await run(Fiber.join(framed));
+  await run(ui.notify(question(1, "Question 1?")));
+  const again = Effect.runFork(ui.ask(prompts.decisionPrompt));
+  await pendingPrompt(ui);
+  const asked = askedOf(events);
+  assert.notEqual(asked[asked.length - 1].countdown, null, "the carry is gone");
+  await run(Fiber.interrupt(again));
+});
 test("an answer /decide with no question presented carries nothing", async () => {
   const { ui, events } = await withTiming(Effect.succeed(5_000));
   for (const answer of ["/decide", "x"]) {
