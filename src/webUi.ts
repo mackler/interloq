@@ -187,8 +187,13 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
         const id = yield* Effect.uninterruptible(
           Effect.gen(function* () {
             const [id] = yield* transition((p): readonly [number, Prompts] => [p.nextFrame, { ...p, nextFrame: p.nextFrame + 1, frames: [...p.frames, { id: p.nextFrame, question, state: { _tag: "asking" } }] }]);
+            // Issue #217: a frame removed answered was answered and its answer accepted (a rejected one reopens the frame),
+            // so the page is told its prompt is closed before the prompt shown is published again.
             yield* Effect.addFinalizer(() =>
-              transition((p): readonly [null, Prompts] => [null, { ...p, frames: p.frames.filter((f) => f.id !== id) }]).pipe(Effect.flatMap(([, shown]) => republish(shown))),
+              transition((p): readonly [number | null, Prompts] => {
+                const f = p.frames.find((g) => g.id === id);
+                return [f !== undefined && f.state._tag === "answered" ? f.state.asked.prompt : null, { ...p, frames: p.frames.filter((g) => g.id !== id) }];
+              }).pipe(Effect.flatMap(([closed, shown]) => (closed === null ? Effect.void : sink({ _tag: "PromptClosed", prompt: closed })).pipe(Effect.andThen(republish(shown))))),
             );
             return id;
           }),

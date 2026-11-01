@@ -182,6 +182,7 @@ const runEvent: fc.Arbitrary<RunEvent> = fc.oneof(
   // Issue #153: a prompt open beside a decision being prepared names its question; a withdrawn one its prompt.
   fc.tuple(nat, fc.constantFrom(...promptTexts), nat).map(([prompt, t, deciding]): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(t), countdown: null, deciding })),
   fc.record({ _tag: fc.constant("PromptWithdrawn" as const), prompt: nat }),
+  fc.record({ _tag: fc.constant("PromptClosed" as const), prompt: nat }),
   fc.record({ _tag: fc.constant("CountdownStopped" as const), prompt: nat, reason: fc.constantFrom("held" as const, "chainOff" as const) }),
   fc.record({ _tag: fc.constant("AnswerExpired" as const), prompt: nat, seconds: nat, then: fc.constantFrom(...ON_EXPIRIES) }),
   fc.record({ _tag: fc.constant("Answered" as const), prompt: nat, text }),
@@ -556,6 +557,9 @@ test("an Asked without deciding decodes with null; deciding and PromptWithdrawn 
   assert.deepEqual(decoded(decodeServer(JSON.stringify(deciding))), deciding);
   const withdrawn = { ...frame, event: { _tag: "PromptWithdrawn", prompt: 4 } };
   assert.deepEqual(decoded(decodeServer(JSON.stringify(withdrawn))), withdrawn);
+  // Issue #217: a frame's answer accepted closes its prompt.
+  const closed = { ...frame, event: { _tag: "PromptClosed", prompt: 4 } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(closed))), closed);
 });
 
 test("issue #49: an output frame round-trips, and one with an unknown status does not decode", () => {

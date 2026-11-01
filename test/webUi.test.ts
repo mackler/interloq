@@ -337,6 +337,37 @@ test("a frame's Asked carries the question it decides and no countdown; an answe
   assert.equal(await run(ui.pending), null);
 });
 
+// Issue #217: the page keeps a question answered at its frame until the server says the answer was accepted, which the
+// frame's close says: a frame answered when its asking ends publishes PromptClosed; one reopened, or withdrawn, does not.
+test("a frame answered when its Scope closes publishes PromptClosed after Answered", async () => {
+  const { ui, events } = await withUi();
+  const work = await run(Deferred.make<string>());
+  const fiber = Effect.runFork(Effect.scoped(Effect.flatMap(ui.enterQuestion(1), (h) => h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work)))));
+  const prompt = await framePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "2")), "taken");
+  await run(Fiber.join(fiber));
+  const tags = events.map((e) => e._tag);
+  assert.deepEqual(events[events.length - 1], { _tag: "PromptClosed", prompt });
+  assert.equal(tags.lastIndexOf("Answered"), tags.length - 2);
+});
+test("a frame answered and reopened, then withdrawn, publishes no PromptClosed", async () => {
+  const { ui, events } = await withUi();
+  const work = await run(Deferred.make<string>());
+  const fiber = Effect.runFork(Effect.scoped(Effect.gen(function* () {
+    const h = yield* ui.enterQuestion(1);
+    yield* h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work));
+    return yield* h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work));
+  })));
+  const prompt = await framePrompt(events, 1);
+  assert.equal(await run(ui.answer(prompt, "/decide")), "taken");
+  await framePrompt(events, 1, 2);
+  assert.ok(!events.some((e) => e._tag === "PromptClosed"));
+  await run(Deferred.succeed(work, "done"));
+  await run(Fiber.join(fiber));
+  assert.ok(events.some((e) => e._tag === "PromptWithdrawn"));
+  assert.ok(!events.some((e) => e._tag === "PromptClosed"));
+});
+
 test("work finishing first gives Done, withdraws the prompt, and a later answer to it is refused", async () => {
   const { ui, events } = await withUi();
   const work = await run(Deferred.make<string>());

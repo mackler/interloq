@@ -1085,6 +1085,9 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
           pending: r.pending?.asked.prompt === event.prompt ? null : r.pending,
         };
       }
+      // Issue #217: a frame's answer was accepted (S4 handles it).
+      case "PromptClosed":
+        return r;
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);

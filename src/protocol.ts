@@ -70,6 +70,12 @@ export type RunEvent =
   | Readonly<{ _tag: "AnswerExpired"; prompt: number; seconds: number; then: OnExpiry }>
   /** Issue #153: the prompt open beside a decision is withdrawn unanswered, because the analysis is ready. */
   | Readonly<{ _tag: "PromptWithdrawn"; prompt: number }>
+  /**
+   * Issue #217: the prompt open beside work (a decision's analysis or a question's terms) was answered and the answer
+   * accepted: the question is no longer open. An answer the asking rejects is followed by a new prompt instead, so the page
+   * keeps the question until this event.
+   */
+  | Readonly<{ _tag: "PromptClosed"; prompt: number }>
   | Readonly<{ _tag: "Notified"; event: UiEvent }>
   | Readonly<{ _tag: "Ended"; code: number }>;
 /**
@@ -295,6 +301,7 @@ export const RunEventSchema = Schema.Union([
   tagged("CountdownStopped", { prompt: Int, reason: Schema.Literals(["held", "chainOff"]) }),
   tagged("AnswerExpired", { prompt: Int, seconds: Int, then: OnExpirySchema }),
   tagged("PromptWithdrawn", { prompt: Int }),
+  tagged("PromptClosed", { prompt: Int }),
   tagged("Notified", { event: UiEventSchema }),
   tagged("Ended", { code: Int }),
 ]);
