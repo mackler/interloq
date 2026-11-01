@@ -324,7 +324,7 @@
       ended: watched?.ended ?? null,
       visible,
       promptShown: onScreen && (asking || deciding),
-      formShown: selected && showList,
+      onScreen,
       preferences,
       permission,
     };

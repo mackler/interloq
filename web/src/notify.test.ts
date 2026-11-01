@@ -5,7 +5,7 @@ import * as prompts from "../../src/prompts.ts";
 import type { RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import { type DraftKey, pendingKey, sameKey } from "./draft.ts";
-import { combinedMark, type Decision, decide, type Mark, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey } from "./notify.ts";
+import { unseenEnds, combinedMark, type Decision, decide, type Mark, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey } from "./notify.ts";
 import { initialState, reduce, shownRun, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 
@@ -20,7 +20,7 @@ const observation = (o: Partial<Observation>): Observation => ({
   ended: null,
   visible: false,
   promptShown: true,
-  formShown: false,
+  onScreen: true,
   preferences: ON,
   permission: "granted",
   ...o,
@@ -44,7 +44,7 @@ const step = fc.record({
   ended: fc.option(fc.constantFrom(0, 1, 130), { nil: null }),
   visible: fc.boolean(),
   promptShown: fc.boolean(),
-  formShown: fc.boolean(),
+  onScreen: fc.boolean(),
   preferences: fc.record({ desktop: fc.constantFrom("on" as const, "off" as const), sound: fc.constantFrom("on" as const, "off" as const) }),
   permission: fc.constantFrom<Permission>("default", "granted", "denied", "unsupported"),
 });
@@ -125,7 +125,7 @@ describe("decide: properties", () => {
         foldDecisions(os).forEach((d, i) => {
           const o = os[i]!;
           if (o.visible && o.promptShown && d._tag === "Waiting" && d.raise !== null) expect(d.raise).toBe("none");
-          if (o.visible) expect(d._tag).not.toBe("Ended");
+          if (o.visible && o.onScreen) expect(d._tag).not.toBe("Ended");
         });
       }),
       { numRuns: NUM_RUNS },
@@ -181,14 +181,14 @@ describe("decide: examples", () => {
     expect(decide(initialNotifyState, observation({ pending: KEY, preferences: defaultPreferences }))).toMatchObject({ _tag: "Waiting", raise: "none" });
   });
 
-  test("a watched run's end at a hidden tab is Ended until seen, the form shown, or another run", () => {
+  test("a watched run's end at a hidden tab is Ended until seen on screen, or another run", () => {
     const ended = foldDecisions([observation({}), observation({ ended: 0 })]);
     expect(last(ended)).toMatchObject({ _tag: "Ended", key: RUN, code: 0, raise: "desktopAndSound" });
     expect(markOf(last(ended))).toEqual({ _tag: "Ended", code: 0 });
     const state = last(ended).state;
     expect(decide(state, observation({ ended: 0 }))).toMatchObject({ _tag: "Ended", raise: null });
     expect(decide(state, observation({ ended: 0, visible: true }))._tag).toBe("Idle");
-    expect(decide(state, observation({ ended: 0, formShown: true }))._tag).toBe("Idle");
+    expect(decide(state, observation({ ended: 0, onScreen: false }))).toMatchObject({ _tag: "Ended", raise: null });
     expect(decide(state, observation({ run: { incarnation: "a", run: 2 } }))._tag).toBe("Idle");
   });
 
@@ -196,10 +196,64 @@ describe("decide: examples", () => {
     expect(decide(initialNotifyState, observation({ ended: 0 }))).toEqual({ _tag: "Idle", state: expect.anything() });
   });
 
-  test("a run that ends at a visible tab is seen at once: Idle, and still Idle when the tab is hidden later", () => {
-    const ds = foldDecisions([observation({ visible: true }), observation({ ended: 0, visible: true }), observation({ ended: 0, visible: false })]);
-    expect(ds[1]!._tag).toBe("Idle");
-    expect(ds[2]!._tag).toBe("Idle");
+  test("a run that ends on screen in a visible page is seen at once: Idle, and still Idle when hidden or left later", () => {
+    const ds = foldDecisions([observation({ visible: true }), observation({ ended: 0, visible: true }), observation({ ended: 0, visible: false }), observation({ ended: 0, visible: true, onScreen: false })]);
+    expect(ds.slice(1).map((d) => d._tag)).toEqual(["Idle", "Idle", "Idle"]);
+    expect(ds.map(raiseOf)).toEqual([null, null, null, null]);
+  });
+
+  // Issue #209: an end is seen only when its run is on screen in a visible page.
+  test("a run that ends off screen in a visible page raises once and is Ended until shown", () => {
+    const ds = foldDecisions([
+      observation({ visible: true, onScreen: false }),
+      observation({ ended: 130, visible: true, onScreen: false }),
+      observation({ ended: 130, visible: true, onScreen: false }),
+      observation({ ended: 130, visible: false, onScreen: true }),
+      observation({ ended: 130, visible: true, onScreen: true }),
+      observation({ ended: 130, visible: true, onScreen: false }),
+    ]);
+    expect(ds[1]).toMatchObject({ _tag: "Ended", key: RUN, code: 130, raise: "desktopAndSound" });
+    expect(markOf(ds[1]!)).toEqual({ _tag: "Ended", code: 130 });
+    expect(ds[2]).toMatchObject({ _tag: "Ended", raise: null });
+    expect(ds[3]).toMatchObject({ _tag: "Ended", raise: null });
+    expect(ds[4]!._tag).toBe("Idle");
+    expect(ds[5]!._tag).toBe("Idle");
+  });
+
+  test("an end's code is carried, halted and abandoned alike", () => {
+    for (const code of [1, 2]) {
+      const ds = foldDecisions([observation({ onScreen: false, visible: true }), observation({ ended: code, onScreen: false, visible: true })]);
+      expect(last(ds)).toMatchObject({ _tag: "Ended", code });
+    }
+  });
+
+  test("property: an end raises once exactly when its first ended observation is not on screen in a visible page, and is Ended until it is", () => {
+    const seenArb = fc.array(fc.record({ visible: fc.boolean(), onScreen: fc.boolean() }), { minLength: 1, maxLength: 8 });
+    fc.assert(
+      fc.property(fc.constantFrom(0, 1, 2, 130), seenArb, (code, views) => {
+        const ds = foldDecisions([observation({}), ...views.map((v) => observation({ ...v, ended: code }))]).slice(1);
+        const seen = (v: { visible: boolean; onScreen: boolean }) => v.visible && v.onScreen;
+        const raised = ds.filter((d) => raiseOf(d) !== null);
+        expect(raised.length).toBe(seen(views[0]!) ? 0 : 1);
+        if (!seen(views[0]!)) expect(raiseOf(ds[0]!)).not.toBe(null);
+        const firstSeen = views.findIndex(seen);
+        ds.forEach((d, i) => expect(d._tag).toBe(firstSeen === -1 || i < firstSeen ? "Ended" : "Idle"));
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+});
+
+describe("unseenEnds", () => {
+  test("the end-marked runs of the given incarnation alone", () => {
+    const states: NotifyState[] = [
+      { ...initialNotifyState, endMark: { incarnation: "a", run: 1 } },
+      { ...initialNotifyState, endMark: { incarnation: "b", run: 2 } },
+      { ...initialNotifyState, endMark: { incarnation: "a", run: 3 } },
+      initialNotifyState,
+    ];
+    expect([...unseenEnds(states, "a")].sort()).toEqual([1, 3]);
+    expect(unseenEnds(states, null).size).toBe(0);
   });
 });
 

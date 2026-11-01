@@ -17,8 +17,8 @@ export type Permission = "default" | "granted" | "denied" | "unsupported";
 
 /**
  * What the page observes: the pending prompt's key, the shown run and its exit code (null while it runs), whether the
- * document is visible, whether the prompt is on screen (not the conversation chosen instead), and whether the form for
- * a new task is shown.
+ * document is visible, whether the prompt is on screen (not the conversation chosen instead), and (issue #209) whether
+ * the run is the one the selected primary tab's second row shows, whatever the document's visibility.
  */
 export type Observation = Readonly<{
   pending: DraftKey | null;
@@ -26,14 +26,14 @@ export type Observation = Readonly<{
   ended: number | null;
   visible: boolean;
   promptShown: boolean;
-  formShown: boolean;
+  onScreen: boolean;
   preferences: Preferences;
   permission: Permission;
 }>;
 
 /**
  * The prompt last alerted, the run whose end was last alerted or seen, the run last observed in progress, and the run
- * whose end mark is still shown.
+ * whose end has not been seen since it ended (issue #209: not yet on screen in a visible page), whose mark is shown.
  */
 export type NotifyState = Readonly<{ prompt: DraftKey | null; ended: RunKey | null; running: RunKey | null; endMark: RunKey | null }>;
 export const initialNotifyState: NotifyState = { prompt: null, ended: null, running: null, endMark: null };
@@ -70,16 +70,17 @@ const interruptOf = (seen: boolean, observed: Observation): Interrupt => {
 /**
  * The decision for one observation. A pending prompt is a state: `Waiting` while it is pending, raised once per key,
  * whatever the visibility (only the interrupt is suppressed at a tab showing it). The end of a run this page watched
- * in progress is raised once: seen at once at a visible tab (`Idle`), otherwise `Ended` until the tab is visible, the
- * form for a new task is shown, or another run is shown. A pending prompt takes precedence over an end.
+ * in progress is raised once (issue #209): seen at once when the run is on screen in a visible page (`Idle`), otherwise
+ * `Ended` until it is, or until another run takes its place. A pending prompt takes precedence over an end.
  */
 export const decide = (state: NotifyState, observed: Observation): Decision => {
   const run = observed.run;
   const running = run !== null && observed.ended === null ? run : state.running;
   const endsNow = run !== null && observed.ended !== null && sameRun(state.running, run) && !sameRun(state.ended, run);
-  const raisedEnd = endsNow && !observed.visible;
+  const seen = observed.visible && observed.onScreen;
+  const raisedEnd = endsNow && !seen;
   const marked = raisedEnd ? run : state.endMark;
-  const endMark = marked !== null && !observed.visible && !observed.formShown && sameRun(marked, run) ? marked : null;
+  const endMark = marked !== null && !seen && sameRun(marked, run) ? marked : null;
   const next: NotifyState = { prompt: state.prompt, ended: endsNow ? run : state.ended, running, endMark };
   if (observed.pending !== null) {
     const fresh = state.prompt === null || !sameKey(state.prompt, observed.pending);
@@ -89,3 +90,7 @@ export const decide = (state: NotifyState, observed: Observation): Decision => {
   if (endMark !== null && observed.ended !== null) return { _tag: "Ended", state: next, key: endMark, code: observed.ended, raise: raisedEnd ? interruptOf(false, observed) : null };
   return { _tag: "Idle", state: next };
 };
+
+/** Issue #209: the ids of the runs of one incarnation whose end has not been seen, which their second-row tabs mark. */
+export const unseenEnds = (states: readonly NotifyState[], incarnation: string | null): ReadonlySet<number> =>
+  new Set(incarnation === null ? [] : states.flatMap((s) => (s.endMark !== null && s.endMark.incarnation === incarnation ? [s.endMark.run] : [])));
