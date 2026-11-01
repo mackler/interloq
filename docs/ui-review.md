@@ -297,9 +297,10 @@ Clearing. The marker of a pending prompt is a state, not an acknowledgment: it s
 every tab, and goes when the prompt is answered (in any tab), the run is stopped or another run is shown. It does not
 go when the tab becomes visible: the title and the icon then always say whether the run waits, and a user who glances
 at the tab and leaves without answering still sees in the tab strip that it waits, which is the delay this issue
-removes [visibility of system status]. The end of a run asks nothing of the user beyond being seen, so its marker goes
-when the tab becomes visible, the form for a new task is shown, or another run is; an end that happens at a visible tab
-is seen at once and marks nothing.
+removes [visibility of system status]. The end of a run asks nothing of the user beyond being seen. Since issue #209 an
+end is seen only when its run is on screen in a visible page: the run shown in the selected primary tab's second row,
+with the page visible. An end that happens there marks nothing; any other end raises its notification and sound once,
+whatever the page's visibility, and its marker stays until the run is shown, or until a newer run takes its place.
 
 ## Two tabs, a run in each (issue #120, 9 Oct 2026)
 
@@ -359,6 +360,13 @@ Refinement tab holds a second row of tabs: the items first, then one tab per run
   dashboard shows the whole headline) and carries the waiting mark (●) while that run waits for an answer. It asserts
   that that run waits, and nothing more. The primary Refinement tab carries the mark while any of its runs waits, so
   every run's mark is visible from anywhere in the tab [visibility of system status].
+- **The end marks on a run's tab (issue #209).** An ended run's tab in the second row of either primary tab carries ✓
+  (`TITLE_ENDED_MARK`) if the run finished (exit 0), or ✕ (`TITLE_UNFINISHED_MARK`) if it ended without doing its
+  work (halted, abandoned or stopped), until the developer shows that run; Close this run removes the tab. ✓ asserts
+  that the run finished and its end has not been seen since; ✕ asserts that it ended without doing its work and its
+  end has not been seen since; neither asserts anything more. The same mark (`endMarkOf`) stands in front of the
+  browser title and in the icon's badge while no run waits. The primary tabs carry no end mark, which is left to
+  issue #139 [visibility of system status].
 - **No switch away.** Moving between two runs, or between a run and the items, takes one click, and a prompt arriving in
   another run never changes the run shown [user control and freedom]. Before the user has chosen, the page shows a
   waiting run.
