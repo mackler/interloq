@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -916,6 +916,65 @@ test.describe("the tests of the twoModes server, in order", () => {
     await expect(listOf(page)).toBeVisible();
     await expect(runTabOf(page, second)).toHaveCount(0);
     await expect(runTabOf(page, first)).toHaveCount(1);
+  });
+
+  // Issue #209: a refinement that ends while another is shown in a visible page notifies once, and its tab carries the
+  // end's mark until it is shown. A second page of the same server stops the first run, since a run is stopped from the
+  // page that shows it.
+  test("(37) a refinement ends while another is shown in a visible page: one notification, and its tab marked until shown", async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as unknown as { shown: string[] };
+      w.shown = [];
+      class RecordingNotification {
+        static permission = "granted";
+        static requestPermission = () => Promise.resolve("granted");
+        onclick: unknown = null;
+        constructor(title: string) {
+          w.shown.push(title);
+        }
+        close() {}
+      }
+      Object.defineProperty(window, "Notification", { configurable: true, writable: true, value: RecordingNotification });
+      localStorage.setItem("interloq.alerts", JSON.stringify({ desktop: "on", sound: "off" }));
+    });
+    await page.goto(url("twoModes"));
+    await expect(page.getByText("connected", { exact: true })).toBeVisible();
+    await toTheList(page, "refinement");
+    const startNext = async (): Promise<string> => {
+      const start = listOf(page).locator("button[name=start]:not([disabled])").first();
+      await expect(start).toBeVisible();
+      const id = (await start.getAttribute("data-item")) ?? "";
+      await start.click();
+      return id;
+    };
+    const first = await startNext();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await listTabOf(page).click();
+    const second = await startNext();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    const repo = (await page.locator("header .location").textContent())!.trim();
+    const ended = endNotificationTitle(ownName(repo), 130);
+    const other = await page.context().newPage();
+    await other.goto(url("twoModes"));
+    await expect(other.getByText("connected", { exact: true })).toBeVisible();
+    await tabOf(other, "refinement").click();
+    await runTabOf(other, first).click();
+    await expect(asking(other, DATABASE)).toBeVisible();
+    await other.locator("button[name=stop]").click();
+    await confirmEnd(other);
+    await toHaveEnded(other, 130);
+    await other.close();
+    const shown = () => page.evaluate(() => (window as unknown as { shown: string[] }).shown);
+    await expect.poll(async () => (await shown()).filter((t) => t === ended)).toHaveLength(1);
+    await expect(runTabOf(page, first)).toHaveText(new RegExp(`^\\s*${endedTabName("", 130)}`));
+    await expect(page).toHaveTitle(tabTitle(repo, { _tag: "Waiting" }));
+    await runTabOf(page, first).click();
+    await expect(runTabOf(page, first)).not.toHaveText(new RegExp(`^\\s*${endedTabName("", 130)}`));
+    expect((await shown()).filter((t) => t === ended)).toHaveLength(1);
+    await runTabOf(page, second).click();
+    await page.locator("button[name=stop]").click();
+    await confirmEnd(page);
+    await toHaveEnded(page, 130);
   });
 
   // Issue #144: the Implementation tab's list is reachable while its run is in progress, and the run's tab returns to it.
