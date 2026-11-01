@@ -47,7 +47,7 @@ ensure_running() {
   local output
   if config_is_stale; then
     note "$1" "the container was created with an older configuration than compose.cc.yaml gives in this shell (its file, or the credential variables this shell sets, differ); it is used as it is."
-    note "$1" "bin/ilcli down, then bin/ilcli run, web or shell, applies the new configuration; bin/ilcli down stops Claude Code and the web server running in the container."
+    note "$1" "bin/ilcli down, then bin/ilcli run, web, shell or codex, applies the new configuration; bin/ilcli down stops Claude Code, Codex and the web server running in the container."
   fi
   if ! output=$(ilcli_compose up -d --no-recreate 2>&1); then
     printf '%s\n' "$output" >&2
@@ -254,6 +254,12 @@ installed_copy_users() {
   printf '%s' "$report"
 }
 
+# container_line <command>...: the first line the command prints when run in the container with no terminal, its
+# carriage returns removed and its stderr discarded; fails when the command or docker does.
+container_line() {
+  ilcli_compose exec -T cc "$@" 2>/dev/null | tr -d '\r' | head -n 1
+}
+
 # The most recent conversation of the container's working directory (the developer's decision of 28 Oct 2026):
 # the newest session file that holds a user message. Claude Code keeps one JSON Lines file per session under
 # ~/.claude/projects/<working directory with every slash as a dash>/, and its own -c chose a file of four records
@@ -263,14 +269,17 @@ installed_copy_users() {
 SESSION_LOOKUP_SCRIPT='d="$HOME/.claude/projects/$(pwd | sed "s#/#-#g")"; [ -d "$d" ] || exit 0; for f in $(ls -t "$d"/*.jsonl 2>/dev/null); do if grep -m1 -q "\"type\":\"user\"" "$f"; then basename "$f" .jsonl; exit 0; fi; done'
 
 # last_session: the id of that conversation on stdout, nothing when the directory holds none, the lookup fails, or
-# the layout it reads has changed. An id is accepted only in Claude Code's own form, so that a message or a path
-# printed by a failing lookup is never passed to claude as a session.
+# the layout it reads has changed. An id is accepted only in Claude Code's own form (is_session_id).
 last_session() {
   local id
-  id=$(ilcli_compose exec -T cc sh -c "$SESSION_LOOKUP_SCRIPT" 2>/dev/null | tr -d '\r' | head -n 1) || return 0
-  if [[ $id =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
-    printf '%s\n' "$id"
-  fi
+  id=$(container_line sh -c "$SESSION_LOOKUP_SCRIPT") || return 0
+  if is_session_id "$id"; then printf '%s\n' "$id"; fi
+}
+
+# is_session_id <text>: succeeds when the text is a session id in the form Claude Code and Codex both give one, a
+# UUID, so that a message or a path printed by a failing lookup is never passed on as a session.
+is_session_id() {
+  [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
 }
 
 # has_arg <argument> <given>...: succeeds when one of the given arguments is exactly <argument>.
@@ -283,16 +292,23 @@ has_arg() {
   return 1
 }
 
+# any_arg_of <list> <given>...: succeeds when one of the given arguments is exactly a word of <list>, a string of
+# words separated by spaces.
+any_arg_of() {
+  local list=$1 word
+  shift
+  for word in $list; do
+    if has_arg "$word" "$@"; then return 0; fi
+  done
+  return 1
+}
+
 # names_session <given>...: succeeds when the arguments already decide which session claude opens (-c,
 # --continue, --resume, -r) or that it opens none (-p, --print, --version, -v, a literal --). The start is then
 # left exactly as it was typed.
 SESSION_ARGS='-c --continue --resume -r -p --print --version -v --'
 names_session() {
-  local arg
-  for arg in $SESSION_ARGS; do
-    has_arg "$arg" "$@" && return 0
-  done
-  return 1
+  any_arg_of "$SESSION_ARGS" "$@"
 }
 
 # resume_args: sets forwarded so that a start resumes the most recent conversation. --new, the developer's way to
@@ -316,4 +332,97 @@ resume_args() {
     return 0
   fi
   forwarded=(--resume "$id" "${forwarded[@]}")
+}
+
+# The Codex CLI of the development clone (issue #210, decision Q1): the binary @openai/codex-sdk brings into
+# node_modules, so its version is the pinned SDK's, the one Interloq's reviews run, and changes with an upgrade of it.
+# The one statement of its place: on the host it is "$(ilcli_root)/$CODEX_RELATIVE_PATH", in the container, which
+# mounts the clone at /workspace, "/workspace/$CODEX_RELATIVE_PATH". test/ilcliCodex.test.ts compares it with the
+# binary the program finds (findCodexExecutable of src/codexExec.ts).
+CODEX_RELATIVE_PATH='node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex'
+
+# Whether an implementation run is in progress (issue #210, decision Q4): a Node script, run in the container as
+# 'node -e "$RUN_CHECK_SCRIPT" <port>', that reads the hello frame Interloq's web server sends on its WebSocket
+# (/ws) and prints "implementation" when its current.implementation is a run's id. Node's own WebSocket client is
+# used, since the image has no other; without it, with no server, on an error or after 2 seconds it prints nothing.
+# test/ilcliCodex.test.ts runs it against the real server.
+RUN_CHECK_SCRIPT='if (typeof WebSocket !== "function") process.exit(0); const timer = setTimeout(() => process.exit(0), 2000); const socket = new WebSocket("ws://127.0.0.1:" + (process.argv[1] || "8090") + "/ws"); socket.onerror = () => process.exit(0); socket.onmessage = (e) => { let m = null; try { m = JSON.parse(String(e.data)); } catch { process.exit(0); } if (m === null || m.type !== "hello") return; if (m.current && m.current.implementation !== null && m.current.implementation !== undefined) console.log("implementation"); clearTimeout(timer); process.exit(0); };'
+
+# implementation_in_progress: succeeds only when the server on the default port, 8090, answers that an
+# implementation run is in progress; any failure or other answer means none is known.
+implementation_in_progress() {
+  local answer
+  answer=$(container_line node -e "$RUN_CHECK_SCRIPT" 8090) || return 1
+  [[ $answer == implementation ]]
+}
+
+# The newest Codex conversation of /workspace started interactively (issue #210, decision Q2). Codex keeps one JSON
+# Lines file per session under ~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl, the id the UUID ending its
+# name, and its first line, the session's meta record, names its "cwd" and its "source": "cli" for Codex's own
+# interactive TUI, "exec" for the sessions Interloq's runs start through the SDK (read from Codex 0.155.1's saved
+# sessions on 1 Nov 2026). The script selects on the interactive value, so a session of unknown origin is never
+# reopened; it runs in the container, where the files are, and is one line, so that the test reads it from the
+# generated script.
+CODEX_SESSION_LOOKUP_SCRIPT='d="$HOME/.codex/sessions"; [ -d "$d" ] || exit 0; set -- $(find "$d" -type f -name "rollout-*.jsonl" 2>/dev/null); [ $# -gt 0 ] || exit 0; for f in $(ls -t "$@"); do if head -n 1 "$f" | grep -q "\"cwd\":\"/workspace\"" && head -n 1 "$f" | grep -q "\"source\":\"cli\""; then basename "$f" .jsonl | grep -o "[0-9a-fA-F-]\{36\}\$"; exit 0; fi; done'
+
+# codex_last_session: the id of that conversation on stdout, nothing when none is found or the lookup fails.
+codex_last_session() {
+  local id
+  id=$(container_line sh -c "$CODEX_SESSION_LOOKUP_SCRIPT") || return 0
+  if is_session_id "$id"; then printf '%s\n' "$id"; fi
+}
+
+# Codex's subcommands and their aliases, its options that take the next word as their value, and the arguments
+# after which it opens no session of the TUI, as 'codex --help' of Codex 0.155.1 lists them (1 Nov 2026).
+CODEX_SUBCOMMANDS='agents exec e review login logout mcp plugin app-server remote-control completion update doctor sandbox debug apply a resume queue archive delete migrate-rollouts unarchive fork cloud exec-server features help'
+CODEX_VALUE_OPTIONS='-c --config --enable --disable --remote --remote-auth-token-env -i --image -m --model --local-provider -p --profile -s --sandbox -C --cd --add-dir -a --ask-for-approval'
+CODEX_OPENS_NONE='--version -V --help -h --'
+
+# codex_names_session <given>...: succeeds when the arguments are left to Codex untouched: they open no session of
+# the TUI (CODEX_OPENS_NONE, a literal -- included), or their first word that is neither an option nor an option's
+# value is a subcommand, which may follow Codex's own options ('codex --model o3 exec ...'). Its own rule rather than
+# names_session's, since Codex's -c is a configuration override and -p a profile. A --opt=value word is one word;
+# an option missing from CODEX_VALUE_OPTIONS is read as a flag, so its value is taken for the first word, and the
+# arguments are then left untouched only where that value is itself a subcommand's name.
+codex_names_session() {
+  local word
+  if any_arg_of "$CODEX_OPENS_NONE" "$@"; then return 0; fi
+  while (( $# > 0 )); do
+    word=$1
+    shift
+    if [[ $word == --*=* ]]; then continue; fi
+    if any_arg_of "$CODEX_VALUE_OPTIONS" "$word"; then
+      if (( $# > 0 )); then shift; fi
+      continue
+    fi
+    if [[ $word == -* ]]; then continue; fi
+    any_arg_of "$CODEX_SUBCOMMANDS" "$word"
+    return
+  done
+  return 1
+}
+
+# codex_resume_args: sets forwarded so that a start reopens the newest interactive conversation. Every --new before
+# the first literal -- is removed, and then nothing is looked up; one after it is Codex's argument and is kept. The
+# lookup is skipped too where codex_names_session holds. Otherwise 'resume <id>' goes before the arguments, and
+# where no conversation is found the start is a new one, said on stderr.
+codex_resume_args() {
+  local arg id removed="" after_dashes=""
+  local -a kept=()
+  for arg in "${forwarded[@]}"; do
+    if [[ -z $after_dashes && $arg == --new ]]; then
+      removed=1
+      continue
+    fi
+    if [[ $arg == -- ]]; then after_dashes=1; fi
+    kept+=("$arg")
+  done
+  forwarded=("${kept[@]}")
+  if [[ -n $removed ]] || codex_names_session "${forwarded[@]}"; then return 0; fi
+  id=$(codex_last_session)
+  if [[ -z $id ]]; then
+    note codex "no earlier conversation of /workspace started interactively in Codex was found in the container; starting a new one (bin/ilcli codex --new always does)."
+    return 0
+  fi
+  forwarded=(resume "$id" "${forwarded[@]}")
 }

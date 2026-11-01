@@ -13,7 +13,7 @@ common_setup() {
   export HOME="$T/home"
   mkdir -p "$HOME"
   export GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
-  unset STUB_SESSION_ID STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH STUB_DOCKER_PS STUB_DOCKER_EXEC STUB_DOCKER_MOUNTS STUB_MKTEMP_FAIL_AFTER
+  unset STUB_SESSION_ID STUB_RUN_CHECK STUB_DOCKER_FAIL STUB_NPM_FAIL STUB_CONTAINER_ID STUB_RUNNING_HASH STUB_CONFIG_HASH STUB_DOCKER_PS STUB_DOCKER_EXEC STUB_DOCKER_MOUNTS STUB_MKTEMP_FAIL_AFTER
 }
 
 # The expected log line of a stub call: the command, then each argument in brackets.
@@ -109,4 +109,27 @@ path_without_docker() {
     done
   done
   export PATH="$T/nodocker"
+}
+
+# codex_clone: a copy of bin/ilcli in a clone of its own, "$T/clone", so that the tests of bin/ilcli codex depend
+# neither on npm ci having run in the repository nor on its absence (issue #210). CLONE_ILCLI is the copy and
+# CLONE_COMPOSE the compose file its docker calls name; the stub needs neither the file nor the binary to exist.
+codex_clone() {
+  mkdir -p "$T/clone/bin"
+  cp "$ILCLI" "$T/clone/bin/ilcli"
+  CLONE_ILCLI="$T/clone/bin/ilcli"
+  CLONE_COMPOSE="$T/clone/compose.cc.yaml"
+}
+
+# codex_relative_path: the Codex binary's place in a clone, read from the generated script, the one source.
+codex_relative_path() { sed -n "s/^CODEX_RELATIVE_PATH='\\(.*\\)'\$/\\1/p" "$ILCLI"; }
+
+# codex_binary: an empty executable where the clone's Codex binary belongs.
+codex_binary() {
+  local relative
+  relative=$(codex_relative_path)
+  [[ -n $relative ]] || { echo "bin/ilcli holds no CODEX_RELATIVE_PATH"; return 1; }
+  mkdir -p "$T/clone/$(dirname "$relative")"
+  : > "$T/clone/$relative"
+  chmod +x "$T/clone/$relative"
 }

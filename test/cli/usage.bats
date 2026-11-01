@@ -9,7 +9,7 @@ setup() { common_setup; }
   for form in help -h --help; do
     run "$ILCLI" $form
     [ "$status" -eq 0 ]
-    for command in run shell web build down release upgrade help; do
+    for command in run shell web codex build down release upgrade help; do
       [[ "$output" == *"  $command "* ]] || { echo "'$form' does not list $command"; echo "$output"; return 1; }
     done
   done
@@ -56,7 +56,7 @@ setup() { common_setup; }
 # The developer's decision of 7 Oct 2026 (issue #10), replacing the narrower one of 27 Sep 2026: --help and -h after
 # every subcommand show its usage, and -- passes the rest on to the program that run starts.
 @test "every subcommand's usage offers --help, and run says that -- passes the rest on" {
-  for command in run shell web build down; do
+  for command in run shell web codex build down; do
     run "$ILCLI" help "$command"
     [[ "$output" == *"ilcli $command --help | -h"* ]] || { echo "help $command"; echo "$output"; return 1; }
     [[ "$output" != *"are passed to claude"* && "$output" != *"are passed to main.ts"* ]] || { echo "help $command"; echo "$output"; return 1; }
@@ -64,6 +64,8 @@ setup() { common_setup; }
   run "$ILCLI" help run
   [[ "$output" == *"-- passes the rest on to claude"* ]] || { echo "$output"; return 1; }
   [[ "$output" == *"-c, --continue"*"most recent session"* ]] || { echo "$output"; return 1; }
+  run "$ILCLI" help codex
+  [[ "$output" == *"-- passes the rest on to codex"* ]] || { echo "$output"; return 1; }
   run "$ILCLI" --help
   # bashly wraps the text at 80 columns, so it is compared with its line breaks and indentation collapsed.
   local text
@@ -80,5 +82,17 @@ setup() { common_setup; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"--force"* ]]
   [[ "$output" == *"outside a container"* ]]
+  [ ! -s "$STUB_LOG" ]
+}
+
+# Issue #210.
+@test "help codex documents Codex, its binary, --new, npm ci, run codex and that it adds no sandbox setting" {
+  run "$ILCLI" help codex
+  [ "$status" -eq 0 ]
+  local text
+  text="$(printf '%s' "$output" | tr -s ' \n' '  ')"
+  for word in "ilcli codex" Codex node_modules --new "npm ci" "bin/ilcli run codex" "no sandbox or approval setting"; do
+    [[ "$text" == *"$word"* ]] || { echo "help codex lacks $word"; echo "$output"; return 1; }
+  done
   [ ! -s "$STUB_LOG" ]
 }

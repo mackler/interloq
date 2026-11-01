@@ -2,11 +2,11 @@ name: ilcli
 help: |-
   Interloq's development container, and the route of a change to the installed copy.
 
-  The docker commands (run, shell, web, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
+  The docker commands (run, shell, web, codex, build, down) and release run on the host in the development clone; upgrade runs on the host in the installed copy (~/work/interloq). The script uses compose.cc.yaml in the root of the clone that contains it, and that file mounts the same clone at /workspace.
 
-  run, shell and web create the container only when none exists and never recreate a running one, so none of them stops a program another started. The container keeps the configuration it was created with, the credential variables of the shell that created it included; when compose.cc.yaml, or the variables of the shell in use, resolve differently, these commands say so on stderr and start in the container as it is. bin/ilcli down, then a start, applies the new configuration, and down stops Claude Code and the web server running in the container.
+  run, shell, web and codex create the container only when none exists and never recreate a running one, so none of them stops a program another started. The container keeps the configuration it was created with, the credential variables of the shell that created it included; when compose.cc.yaml, or the variables of the shell in use, resolve differently, these commands say so on stderr and start in the container as it is. bin/ilcli down, then a start, applies the new configuration, and down stops Claude Code, Codex and the web server running in the container.
 
-  A start resumes the most recent conversation of the container's working directory; bin/ilcli --new starts a fresh one. Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
+  A start resumes the most recent conversation of the container's working directory; bin/ilcli --new starts a fresh one. Any first argument that is not a command, --version and -v included, is passed to claude, so run can be left out; codex is a command, so bin/ilcli run codex gives Claude Code the word codex. After any command, --help and -h show that command's usage; -- passes the rest on to the program the command starts (bin/ilcli run -- --help).
 
   The route of a change: commit on main, bin/ilcli release (pushes main), CI runs npm test and the end-to-end tests on GitHub and advances the release branch only if both pass, then bin/ilcli upgrade in the installed copy. The installed copy follows release, so it can only ever install a commit whose tests passed.
 version: "1"
@@ -57,6 +57,33 @@ commands:
   - bin/ilcli web           port 8090
   - bin/ilcli web 8091      port 8091, reachable from the host only after compose.cc.yaml is changed and the container recreated
 
+- name: codex
+  help: |-
+    Start the container if needed, then start Codex in it, in /workspace, in the foreground
+
+    An existing container is never recreated; if its configuration is older than compose.cc.yaml gives in this shell, a note on stderr says so and that bin/ilcli down, then a start, applies it.
+
+    --help and -h show this usage; -- passes the rest on to codex unchanged, so bin/ilcli codex -- --help is Codex's own help.
+
+    The Codex program is the one in the clone's node_modules, which @openai/codex-sdk brings, so its version is the pinned SDK's, the one Interloq's reviews use. Without it the command refuses and runs nothing; npm ci in the clone installs it.
+
+    A start reopens the newest Codex conversation of /workspace that was started interactively, skipping the ones Interloq's runs start for their reviews. --new before any -- starts a fresh conversation instead and is not passed on. Arguments that name a session or open none are left to codex untouched, with nothing looked up: a Codex subcommand (exec, resume, login, ...), also after Codex's own options, --version, -V, or a literal --. Where no earlier conversation is found, the start is a new one and a line on stderr says so.
+
+    It adds no sandbox or approval setting: Codex uses its own. Codex's default sandbox cannot start in this container (bwrap, observed 1 Nov 2026), so the commands Codex runs fail unless you pass a setting yourself, for example --sandbox danger-full-access, which gives them network access, write access to /workspace and the container's environment, its credentials included.
+
+    While an implementation run is in progress, as the web server on port 8090 reports it, a line on stderr says so before Codex starts: a change to /workspace stops that run if it is made while Codex reviews for the run or while Claude Code writes or revises its plan. A server on another port, or a run started later, is not seen.
+
+    bin/ilcli run codex still gives Claude Code the word codex.
+  catch_all:
+    label: codex arguments
+    help: Passed to codex unchanged, -- included; --new before -- starts a fresh conversation
+  examples:
+  - bin/ilcli codex                                   newest interactive conversation
+  - bin/ilcli codex --new                             new conversation
+  - bin/ilcli codex --sandbox danger-full-access      Codex's commands run with no sandbox
+  - bin/ilcli codex -- --help                         Codex's own help
+  - bin/ilcli codex --help                            this usage
+
 - name: build
   help: Build the image from ../claude-code-image
   catch_all:
@@ -99,4 +126,4 @@ commands:
   args:
   - name: command
     help: The command whose usage to show
-    allowed: [run, shell, web, build, down, release, upgrade, help]
+    allowed: [run, shell, web, codex, build, down, release, upgrade, help]

@@ -304,3 +304,219 @@ expect_no_note() {
   expect_log "$(ps_line)" "$(inspect_line abc)" "$(up)" "$(web_line)"
   expect_no_note
 }
+
+# Issue #210: bin/ilcli codex opens an interactive Codex session in /workspace. Its calls are made over a copy of the
+# script in a clone of its own (codex_clone), whose Codex binary a test creates or leaves out. Every script and path
+# the expected lines carry is read from the generated script, so the test and the command take them from one source.
+
+script_of() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$ILCLI"; }
+clone_start() { argv docker compose -f "$CLONE_COMPOSE" ps -a -q cc; argv docker compose -f "$CLONE_COMPOSE" up -d --no-recreate; }
+clone_start_existing() {
+  argv docker compose -f "$CLONE_COMPOSE" ps -a -q cc; inspect_line abc
+  argv docker compose -f "$CLONE_COMPOSE" config --hash cc; argv docker compose -f "$CLONE_COMPOSE" up -d --no-recreate
+}
+run_check() { argv docker compose -f "$CLONE_COMPOSE" exec -T cc node -e "$(script_of RUN_CHECK_SCRIPT)" 8090; }
+codex_lookup() { argv docker compose -f "$CLONE_COMPOSE" exec -T cc sh -c "$(script_of CODEX_SESSION_LOOKUP_SCRIPT)"; }
+codex_line() { argv docker compose -f "$CLONE_COMPOSE" exec -it cc "/workspace/$(codex_relative_path)" "$@"; }
+CODEX_ID=01a0b89b-aac1-7130-a5b6-a35d12274425
+
+codex_setup() { codex_clone; codex_binary; }
+
+# Decision Q2: a start with no arguments reopens the newest interactive Codex conversation of /workspace.
+@test "codex with no arguments resumes the conversation the lookup finds" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  run "$CLONE_ILCLI" codex
+  [ "$status" -eq 0 ]
+  expect_log "$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line resume $CODEX_ID)"
+}
+
+@test "codex with no earlier conversation, or an answer that is not a session id, starts a new one and says so" {
+  codex_setup
+  for answer in "" "sh: 1: cannot open /home/node/.codex/sessions"; do
+    if [[ -n $answer ]]; then export STUB_SESSION_ID=$answer; else unset STUB_SESSION_ID; fi
+    : > "$STUB_LOG"
+    run --separate-stderr "$CLONE_ILCLI" codex
+    [ "$status" -eq 0 ]
+    expect_log "$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line)"
+    [[ $stderr == *"ilcli codex:"*"no earlier conversation"* ]] || { echo "stderr: $stderr"; return 1; }
+  done
+}
+
+@test "codex --new starts a new conversation, makes no lookup and is not passed on; other arguments kept in order" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  run "$CLONE_ILCLI" codex --new
+  run "$CLONE_ILCLI" codex --new --model o3
+  run "$CLONE_ILCLI" codex --model o3 --new
+  expect_log "$(clone_start)" "$(run_check)" "$(codex_line)" \
+    "$(clone_start)" "$(run_check)" "$(codex_line --model o3)" \
+    "$(clone_start)" "$(run_check)" "$(codex_line --model o3)"
+}
+
+# Plan review P1-R1-1: a --new after a literal -- is Codex's argument.
+@test "codex: --new after a literal -- is passed on, and one before it is removed" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  run "$CLONE_ILCLI" codex -- --new
+  run "$CLONE_ILCLI" codex --new -- x
+  expect_log "$(clone_start)" "$(run_check)" "$(codex_line -- --new)" \
+    "$(clone_start)" "$(run_check)" "$(codex_line -- x)"
+}
+
+@test "codex: arguments that do not name a session still resume, a prompt staying one argument" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  run "$CLONE_ILCLI" codex --model o3
+  run "$CLONE_ILCLI" codex "two words"
+  expect_log "$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line resume $CODEX_ID --model o3)" \
+    "$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line resume $CODEX_ID "two words")"
+}
+
+@test "codex: a subcommand, a version flag or a literal -- is left to Codex untouched, with no lookup" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  local expected=()
+  for call in "exec|x y" "resume" "login" "--version" "-V" "--|--help" "a|--|b"; do
+    IFS='|' read -r -a words <<< "$call"
+    run "$CLONE_ILCLI" codex "${words[@]}"
+    [ "$status" -eq 0 ]
+    expected+=("$(clone_start)" "$(run_check)" "$(codex_line "${words[@]}")")
+  done
+  expect_log "${expected[@]}"
+}
+
+# Plan review P1-R1-1 of this run: Codex takes its options before a subcommand, and an option's value spelled like
+# a subcommand is not one.
+@test "codex: a subcommand after Codex's own options is left untouched, an option's value is not a subcommand" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  local expected=()
+  for call in "--model|o3|exec|x" "-c|k=v|resume" "--model=o3|exec|x"; do
+    IFS='|' read -r -a words <<< "$call"
+    run "$CLONE_ILCLI" codex "${words[@]}"
+    [ "$status" -eq 0 ]
+    expected+=("$(clone_start)" "$(run_check)" "$(codex_line "${words[@]}")")
+  done
+  run "$CLONE_ILCLI" codex --model exec
+  expected+=("$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line resume $CODEX_ID --model exec)")
+  run "$CLONE_ILCLI" codex --model exec "two words"
+  expected+=("$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line resume $CODEX_ID --model exec "two words")")
+  expect_log "${expected[@]}"
+}
+
+# Decision Q3: the command adds no sandbox or approval setting.
+@test "codex passes no sandbox or approval setting" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  run "$CLONE_ILCLI" codex
+  run "$CLONE_ILCLI" codex --model o3
+  [ "$(grep -cF "[/workspace/$(codex_relative_path)]" "$STUB_LOG")" -eq 2 ]
+  for setting in --sandbox -s --ask-for-approval -a --full-auto --dangerously-bypass-approvals-and-sandbox; do
+    if grep -F "[/workspace/$(codex_relative_path)]" "$STUB_LOG" | grep -F "[$setting]"; then echo "codex passed $setting"; return 1; fi
+  done
+}
+
+# Decision Q4: a reminder on stderr only while the web server reports an implementation run in progress.
+@test "codex reminds of an implementation run in progress on stderr, and still starts" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID STUB_RUN_CHECK=implementation
+  run --separate-stderr "$CLONE_ILCLI" codex
+  [ "$status" -eq 0 ]
+  expect_log "$(clone_start)" "$(run_check)" "$(codex_lookup)" "$(codex_line resume $CODEX_ID)"
+  [[ $stderr == *"ilcli codex:"*"implementation run is in progress"*"/workspace"* ]] || { echo "stderr: $stderr"; return 1; }
+  [[ $output != *"implementation run"* ]] || { echo "the reminder reached stdout"; return 1; }
+}
+
+@test "codex gives no reminder when the check finds no run or answers anything else" {
+  codex_setup
+  export STUB_SESSION_ID=$CODEX_ID
+  for answer in "" garbage; do
+    if [[ -n $answer ]]; then export STUB_RUN_CHECK=$answer; else unset STUB_RUN_CHECK; fi
+    run --separate-stderr "$CLONE_ILCLI" codex
+    [ "$status" -eq 0 ]
+    [[ $stderr != *"implementation run"* && $output != *"implementation run"* ]] || { echo "$stderr $output"; return 1; }
+  done
+}
+
+# Decision Q1: the binary is the clone's; without it nothing runs.
+@test "codex without the clone's Codex binary refuses, naming it and npm ci, and runs no docker" {
+  codex_clone
+  run --separate-stderr "$CLONE_ILCLI" codex
+  [ "$status" -eq 1 ]
+  [[ $stderr == *"ilcli codex:"*"$(codex_relative_path)"*"npm ci"* ]] || { echo "stderr: $stderr"; return 1; }
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "codex --help and codex -h show its usage and make no docker call" {
+  codex_setup
+  for flag in --help -h; do
+    run "$CLONE_ILCLI" codex $flag
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ilcli codex"* ]] || { echo "codex $flag: no usage"; echo "$output"; return 1; }
+    [[ "$output" == *"Usage"* ]]
+  done
+  [ ! -s "$STUB_LOG" ]
+}
+
+@test "run codex still gives Claude Code the word" {
+  run "$ILCLI" run codex
+  expect_log "$(start)" "$(lookup)" "$(claude codex)"
+}
+
+@test "a failing 'up -d' before codex runs no exec" {
+  codex_setup
+  export STUB_DOCKER_FAIL=up
+  run "$CLONE_ILCLI" codex
+  [ "$status" -eq 1 ]
+  expect_log "$(clone_start)"
+}
+
+@test "codex with a container of an older configuration: the note on stderr, then Codex" {
+  codex_setup
+  export STUB_CONTAINER_ID=abc STUB_RUNNING_HASH=h1 STUB_CONFIG_HASH=h2
+  run --separate-stderr "$CLONE_ILCLI" codex
+  [ "$status" -eq 0 ]
+  expect_log "$(clone_start_existing)" "$(run_check)" "$(codex_lookup)" "$(codex_line)"
+  expect_note codex
+  no_recreation
+}
+
+# The lookup itself, run without docker over session files whose first lines copy those of Codex 0.155.1 (read
+# from the container's ~/.codex/sessions on 1 Nov 2026): an interactive session has "source":"cli", one an Interloq
+# run started through the SDK "source":"exec" and the SDK's originator.
+meta_line() { printf '{"timestamp":"2026-11-01T10:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"%s","id":"%s","cwd":"%s","originator":"%s","cli_version":"0.155.1","source":"%s"}}\n' "$1" "$1" "$2" "$3" "$4"; }
+session_file() {
+  local dir="$T/home/.codex/sessions/2026/11/01" f
+  mkdir -p "$dir"
+  f="$dir/rollout-2026-11-01T10-00-00-$1.jsonl"
+  meta_line "$1" "$2" "$3" "$4" > "$f"
+  printf '{"type":"event_msg"}\n' >> "$f"
+  touch -d "$5" "$f"
+}
+
+@test "the codex lookup picks the newest interactive session of /workspace, skipping the runs' and other directories'" {
+  local older=01a0b89b-aac1-7130-a5b6-a35d12274425
+  session_file "$older" /workspace codex-tui cli "2026-11-01 10:00"
+  session_file 01a13539-ea59-7de2-910b-00ef13fa9b45 /workspace codex_sdk_ts exec "2026-11-01 11:00"
+  session_file 01a19884-e7ab-7862-b855-f560443e3f7e /workspace/scratch codex-tui cli "2026-11-01 12:00"
+  local script
+  script=$(script_of CODEX_SESSION_LOOKUP_SCRIPT)
+  [[ -n $script ]] || { echo "bin/ilcli holds no CODEX_SESSION_LOOKUP_SCRIPT"; return 1; }
+  run env HOME="$T/home" sh -c "$script"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$older" ] || { echo "got: $output"; return 1; }
+}
+
+@test "the codex lookup prints nothing and succeeds with no sessions or no matching one" {
+  local script
+  script=$(script_of CODEX_SESSION_LOOKUP_SCRIPT)
+  [[ -n $script ]] || { echo "bin/ilcli holds no CODEX_SESSION_LOOKUP_SCRIPT"; return 1; }
+  run env HOME="$T/home" sh -c "$script"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  session_file 01a13539-ea59-7de2-910b-00ef13fa9b45 /workspace codex_sdk_ts exec "2026-11-01 11:00"
+  run env HOME="$T/home" sh -c "$script"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
