@@ -259,10 +259,11 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
                 return [{ _tag: "take", w }, { ...p, waiting: null, carryHold }];
               }
               // Issue #153: the frame shown, open beside its decision, is taken and stays, blocking, until its Scope closes.
+              // Issue #217: a "/decide" or "/terms" there is rejected by the asking, so it keeps the question's carried hold.
               const top = p.frames[p.frames.length - 1];
               if (w === null && top !== undefined && top.state._tag === "preparing" && top.state.asked.prompt === prompt) {
                 const state = { ...top.state, _tag: "answered" as const };
-                return [{ _tag: "frame", answer: top.state.answer }, { ...withFrame(p, top.id, (f) => ({ ...f, state })), carryHold: withoutNumber(p.carryHold, top.question) }];
+                return [{ _tag: "frame", answer: top.state.answer }, { ...withFrame(p, top.id, (f) => ({ ...f, state })), carryHold: isDecide(text) || isTermsRequest(text) ? p.carryHold : withoutNumber(p.carryHold, top.question) }];
               }
               const then = p.expired.get(prompt);
               return then === undefined ? [{ _tag: "none" }, p] : [{ _tag: "was", then }, p];

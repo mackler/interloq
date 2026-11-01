@@ -249,6 +249,35 @@ test("nested /decide answers: each question presented again starts held", async 
   }
   assert.deepEqual(askedOf(events).map((a) => a.countdown !== null), [true, true, false, false, true]);
 });
+// Issue #217: a "/decide" or "/terms" answered at the question's frame is rejected by askOffering, so it keeps the hold
+// the "/terms" before it carried, and the question presented again with its explanations starts held.
+for (const rejected of ["/decide", "/terms"]) {
+  test(`a ${rejected} answered at the frame keeps the carried hold`, async () => {
+    const { ui, events } = await withTiming(Effect.succeed(5_000));
+    await run(ui.notify(question(1, "Question 1?")));
+    const first = Effect.runFork(ui.ask(prompts.decisionPrompt));
+    await run(ui.answer(await pendingPrompt(ui), "/terms"));
+    await run(Fiber.join(first));
+    const work = await run(Deferred.make<string>());
+    const framed = Effect.runFork(Effect.scoped(Effect.gen(function* () {
+      const h = yield* ui.enterQuestion(1);
+      const during = yield* h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work));
+      const after = yield* h.askDuring(prompts.decisionPrompt, "line", Deferred.await(work));
+      return [during, after];
+    })));
+    const prompt = await framePrompt(events, 1);
+    assert.equal(await run(ui.answer(prompt, rejected)), "taken");
+    await framePrompt(events, 1, 2);
+    await run(Deferred.succeed(work, "terms"));
+    await run(Fiber.join(framed));
+    await run(ui.notify(question(1, "Question 1?")));
+    const again = Effect.runFork(ui.ask(prompts.decisionPrompt));
+    await pendingPrompt(ui);
+    const asked = askedOf(events);
+    assert.equal(asked[asked.length - 1].countdown, null, "the question presented again starts held");
+    await run(Fiber.interrupt(again));
+  });
+}
 test("an answer /decide with no question presented carries nothing", async () => {
   const { ui, events } = await withTiming(Effect.succeed(5_000));
   for (const answer of ["/decide", "x"]) {
