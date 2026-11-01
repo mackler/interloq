@@ -16,8 +16,8 @@
 </script>
 
 {#snippet entryOf(entry: EntryView)}
-  <li class="entry" class:opposes={entry.opposes}>
-    <p class="title"><strong>{entry.label}</strong> {entry.title}{#if entry.symbol !== null} <span data-symbol>{entry.symbol}</span>{/if}</p>
+  <li class="entry">
+    <p class="title" class:opposes={entry.opposes}><strong>{entry.label}</strong> {entry.title}{#if entry.symbol !== null} <span data-symbol>{entry.symbol}</span>{/if}</p>
     {#each entry.elements as element, i (i)}
       <p class:opposes={element.opposes}>{element.text}</p>
       {#each element.arguments as argument (argument.id)}

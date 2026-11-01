@@ -95,6 +95,29 @@ describe("the document under review on the dashboard", () => {
   });
 });
 
+describe("the opposing texts of a draft analysis (W1-R1-1)", () => {
+  test("each paragraph takes the error color from its own opposes alone: a disadvantage's counterargument is not colored, its reply is", () => {
+    const counter = [{ id: "C2", text: "It is not true that a server is needed.", equivalent_to: "", replies: [{ id: "R2", text: "It is true.", equivalent_to: "", replies: [] }] }];
+    const disputed: DecisionAnalysis = {
+      decision: "Which database?",
+      columns: [
+        { kind: "argued", option: "SQLite", advantages: [], disadvantages: [entry("E1", "a server", counter)] },
+        { kind: "argued", option: "PostgreSQL", advantages: [entry("E2", "a file")], disadvantages: [] },
+      ],
+      recommendation: { option: "SQLite", reason: "Smaller." },
+    };
+    const { target } = mountDashboard(withDocument({ _tag: "Analysis", analysis: disputed }, { decision: 1 }), { documentOpen: true });
+    const paragraphs = [...(body(target)?.querySelectorAll("p") ?? [])];
+    expect(paragraphs.length).toBeGreaterThan(0);
+    for (const p of paragraphs) expect(p.closest(".opposes")).toBe(p.classList.contains("opposes") ? p : null);
+    const level1 = [...(body(target)?.querySelectorAll("[data-argument-level='1']") ?? [])].find((e) => e.textContent?.includes("a server is needed"));
+    expect(level1).toBeDefined();
+    expect(level1?.classList.contains("opposes")).toBe(false);
+    const level2 = [...(body(target)?.querySelectorAll("[data-argument-level='2']") ?? [])].find((e) => e.textContent?.includes("It is true."));
+    expect(level2?.classList.contains("opposes")).toBe(true);
+  });
+});
+
 describe("the draft analysis in the compact strip", () => {
   const draftRun = (more: Partial<RunView>) => runWith({ document: { subject: { plan: 1 }, document: { _tag: "Markdown", text: "# The plan" } }, draft: { decision: 2, question: 3, analysis } }, more);
 

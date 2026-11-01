@@ -26,15 +26,34 @@ const same = (a: SubjectId, b: SubjectId): boolean => subjectDir(a) === subjectD
 const shownOf = (ui: ScriptedUi, subject: SubjectId): readonly ShownDocument[] => ui.notified.flatMap((e) => (e._tag === "DocumentShown" && same(e.subject, subject) ? [e.document] : []));
 const textOf = (d: ShownDocument | undefined): string => (d === undefined || d._tag === "Analysis" ? assert.fail(`not a text document: ${JSON.stringify(d)}`) : d.text);
 const indexOf = (ui: ScriptedUi, found: (e: UiEvent) => boolean): number => ui.notified.findIndex(found);
-/** The first DocumentShown of a subject comes before the first review of its loop. */
-const shownBeforeReview = (ui: ScriptedUi, subject: SubjectId): void => {
+/** The number of events notified when Codex's first turn of each subject began, keyed by its directory. */
+type Marks = Map<string, number>;
+/** A review step's onCall that records, once, how many events the turn found notified. */
+const markAt = (marks: Marks, subject: SubjectId, ui: () => ScriptedUi) => (): void => {
+  if (!marks.has(subjectDir(subject))) marks.set(subjectDir(subject), ui().notified.length);
+};
+/** The first DocumentShown of a subject comes before Codex's first turn of its loop, which must have happened. */
+const shownBeforeReview = (ui: ScriptedUi, subject: SubjectId, marks: Marks): void => {
   const shown = indexOf(ui, (e) => e._tag === "DocumentShown" && same(e.subject, subject));
-  const reviewed = indexOf(ui, (e) => e._tag === "ReviewReceived" && same(e.subject, subject));
+  const turn = marks.get(subjectDir(subject));
   assert.ok(shown !== -1, `no document of ${subjectDir(subject)} was shown`);
-  assert.ok(reviewed === -1 || shown < reviewed, `the document of ${subjectDir(subject)} was shown after its first review`);
+  assert.ok(turn !== undefined, `Codex never reviewed ${subjectDir(subject)}`);
+  assert.ok(shown < turn, `the document of ${subjectDir(subject)} was shown after Codex's turn began`);
 };
 
-test("a refinement shows the question list before its review, the amended list after it, the terms, and the requirements before and after the second interview", async () => {
+/** Q2's terms entry with one explanation of the word "question", its words unchanged (an amendment may change a sense alone). */
+const explained = (sense: string): S.TermsEntry => {
+  const [first, ...rest] = q("Q2").question;
+  assert.ok(first !== undefined && rest.length === 0 && first.text.startsWith("question"));
+  return { ...termsOf(q("Q2")), explanations: [{ id: "t", term: "question", senses: [sense] }], question: [{ text: "question", ref: "t", code: false }, { text: first.text.slice("question".length), ref: "", code: false }] };
+};
+const initialTerms: readonly S.TermsEntry[] = [termsOf(q("Q1")), explained("first sense")];
+const amendedTerms: readonly S.TermsEntry[] = [termsOf(q("Q1")), explained("amended sense")];
+
+test("a refinement shows the question list before its review, the amended list after it, the terms and their amendment, and the requirements before and after the second interview", async () => {
+  const marks: Marks = new Map();
+  let ui: ScriptedUi | undefined;
+  const scripted = (): ScriptedUi => ui ?? assert.fail("the probe is not yet assigned");
   const { layer, probe } = testLayer(tempRepo(), {
     answers: ["1", "B", "retries: 3"],
     steps: [
@@ -45,23 +64,28 @@ test("a refinement shows the question list before its review, the amended list a
       { output: { message_to_user: "Complete.", current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: ["G-R1-1"], answered_ids: ["G-R1-1"], complete: true, summary: "Q1: A\nRetries: 3" } },
     ],
     closings: closing("Q1: A"),
-    terms: [{ output: { entries: [termsOf(q("Q1")), termsOf(q("Q2"))] } }],
-    termsReviews: [{ issues: [] }],
-    reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")] }, { issues: [] }, { issues: [issue("G-R1-1", "retry count absent")] }, { issues: [] }],
+    terms: [{ output: { entries: initialTerms } }, { output: { ...respond([["T-R1-1", "accepted"]]), entries: amendedTerms } }],
+    termsReviews: [{ issues: [issue("T-R1-1", "the sense of question is too thin")], onCall: markAt(marks, "terms", scripted) }, { issues: [] }],
+    reviews: [{ issues: [issue("Q-R1-1", "Q2 is missing")], onCall: markAt(marks, "questions", scripted) }, { issues: [] }, { issues: [issue("G-R1-1", "retry count absent")], onCall: markAt(marks, "requirements", scripted) }, { issues: [] }],
   });
+  ui = probe.ui;
   await runRefinement(layer);
 
-  shownBeforeReview(probe.ui, "questions");
+  shownBeforeReview(probe.ui, "questions", marks);
   const lists = shownOf(probe.ui, "questions");
   assert.deepEqual(lists.map((d) => d._tag), ["Markdown", "Markdown"]);
   assert.equal(textOf(lists[0]), renderQuestions({ questions: [q("Q1")] }));
   assert.equal(textOf(lists[1]), renderQuestions({ questions: [q("Q1"), q("Q2")] }));
 
-  shownBeforeReview(probe.ui, "terms");
-  assert.equal(shownOf(probe.ui, "terms").length, 1);
-  assert.equal(textOf(shownOf(probe.ui, "terms")[0]), Result.getOrThrow(renderTerms([termsOf(q("Q1")), termsOf(q("Q2"))])));
+  shownBeforeReview(probe.ui, "terms", marks);
+  const terms = shownOf(probe.ui, "terms").map(textOf);
+  assert.equal(terms.length, 2);
+  assert.equal(terms[0], Result.getOrThrow(renderTerms(initialTerms)));
+  assert.equal(terms[1], Result.getOrThrow(renderTerms(amendedTerms)));
+  assert.notEqual(terms[0], terms[1]);
+  assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, amendedTerms);
 
-  shownBeforeReview(probe.ui, "requirements");
+  shownBeforeReview(probe.ui, "requirements", marks);
   const requirements = shownOf(probe.ui, "requirements").map(textOf);
   assert.equal(requirements[0], "Q1: A\n");
   assert.equal(requirements.at(-1), read(probe.dir, "requirements.md"));
@@ -90,24 +114,28 @@ test("an empty agreed list shows the requirements it writes", async () => {
 });
 
 test("an implementation run shows plan.md before its review and the amended plan after the response, and the whole diff once across two rounds of an unchanged diff", async () => {
+  const marks: Marks = new Map();
+  let ui: ScriptedUi | undefined;
+  const scripted = (): ScriptedUi => ui ?? assert.fail("the probe is not yet assigned");
   const { layer, probe } = testLayer(tempRepo(), {
     steps: [
       { output: noQuestions, plan: "v1" },
       { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" },
       { output: respond([["W1-R1-1", "rejected"]]) },
     ],
-    reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [issue("W1-R1-1")] }, { issues: [] }],
+    reviews: [{ issues: [issue("P1-R1-1")], onCall: markAt(marks, { plan: 1 }, scripted) }, { issues: [] }, { issues: [issue("W1-R1-1")], onCall: markAt(marks, { work: 1 }, scripted) }, { issues: [] }],
     execs: [finished],
   });
+  ui = probe.ui;
   await runTask(layer);
-  shownBeforeReview(probe.ui, { plan: 1 });
+  shownBeforeReview(probe.ui, { plan: 1 }, marks);
   const plans = shownOf(probe.ui, { plan: 1 }).map(textOf);
   assert.equal(plans.length, 2);
   assert.match(plans[0], /v1/);
   assert.match(plans[1], /v2/);
   assert.equal(plans[1], read(probe.dir, "plan.md"));
 
-  shownBeforeReview(probe.ui, { work: 1 });
+  shownBeforeReview(probe.ui, { work: 1 }, marks);
   const diffs = shownOf(probe.ui, { work: 1 });
   assert.equal(diffs.length, 1, "an unchanged diff was shown again");
   assert.equal(diffs[0]._tag, "Diff");
