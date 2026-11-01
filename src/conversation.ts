@@ -114,9 +114,14 @@ const requestTerms = (task: string, agreed: QuestionsFile["questions"][number], 
     const planner = yield* (yield* Planner).fresh;
     const written = yield* planningCall(prompts.termsOnRequestPrompt(store.root, task, agreed.id), S.TermsWrite, "planning", "records", requestedTermsValidation<S.TermsWrite>(agreed)).pipe(Effect.provideService(Planner, planner));
     const entries = written.output.entries.filter((e) => e.id === agreed.id);
-    const terms = entries.reduce((all, e) => withTermsEntry(all, e, questions), yield* store.loadTerms());
-    yield* store.saveTerms(terms);
-    yield* store.converse(`## ${prompts.termsRequestedHeading(number)}\n\n${yield* Effect.fromResult(renderTerms(entries))}\n`);
+    // Issue #217: an answer given while the terms are written interrupts this request; terms.json and their record are
+    // written together or not at all, so saved terms never lack their record.
+    const terms = yield* Effect.uninterruptible(Effect.gen(function* () {
+      const all = entries.reduce((all, e) => withTermsEntry(all, e, questions), yield* store.loadTerms());
+      yield* store.saveTerms(all);
+      yield* store.converse(`## ${prompts.termsRequestedHeading(number)}\n\n${yield* Effect.fromResult(renderTerms(entries))}\n`);
+      return all;
+    }));
     return agreedDraft(agreed, { questions, terms });
   });
 

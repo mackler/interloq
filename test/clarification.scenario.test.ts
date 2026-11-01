@@ -257,3 +257,47 @@ test("S7-3: Retry again at that question runs a full set of attempts, and on suc
   assert.ok(s.probe.ui.notified.some((e) => e._tag === "TransportRetrying" && e.attempt === 1));
   assert.ok(fs.existsSync(path.join(s.probe.dir, "requirements.md")));
 });
+
+// Issue #217: an answer given while a question's terms are written ends the request; terms the request saved are kept
+// with their record, their save and record one uninterruptible step.
+test("issue #217: an answer during a hanging terms request is the answer, and nothing about terms is written", timeout, async () => {
+  let termsCalled = false;
+  const s = scenario(
+    [q("Q1")],
+    {
+      answers: [TERMS_REQUEST, { during: "A", when: until(() => termsCalled) }],
+      replies: [{ output: ack() }],
+      terms: [{ output: { entries: [] }, gate: () => new Promise(() => {}), onCall: () => void (termsCalled = true) }],
+      closings: [{ output: summaryReply(SUMMARY) }],
+    },
+    "onRequest",
+  );
+  succeeded(await s.run());
+  assert.ok(!s.conversation().includes(prompts.termsRequestedHeading(1)));
+  const termsFile = path.join(s.probe.dir, "terms.json");
+  const entries = fs.existsSync(termsFile) ? JSON.parse(fs.readFileSync(termsFile, "utf8")).entries : [];
+  assert.equal(entries.length, 0);
+  assert.ok(s.probe.ui.said.includes(prompts.termsAbandonedLine(1)));
+});
+
+test("issue #217: an answer while the requested terms are being saved: terms.json and its record are both written", timeout, async () => {
+  let saving = false;
+  let release = () => {};
+  const released = new Promise<void>((r) => (release = r));
+  const { id, context, history, question, reason, proposed_answers } = q("Q1");
+  const s = scenario(
+    [q("Q1")],
+    {
+      answers: [TERMS_REQUEST, { during: "A", when: async () => { await until(() => saving)(); setTimeout(release, 100); } }],
+      replies: [{ output: ack() }],
+      terms: [{ output: { entries: [{ id, context, history, question, reason, proposed_answers, explanations: [] }] } }],
+      closings: [{ output: summaryReply(SUMMARY) }],
+      store: (st) => ({ ...st, saveTerms: (t) => Effect.promise(async () => { saving = true; await released; }).pipe(Effect.andThen(st.saveTerms(t))) }),
+    },
+    "onRequest",
+  );
+  succeeded(await s.run());
+  const entries = JSON.parse(fs.readFileSync(path.join(s.probe.dir, "terms.json"), "utf8")).entries;
+  assert.equal(entries.filter((e: { id: string }) => e.id === "Q1").length, 1);
+  assert.ok(s.conversation().includes(prompts.termsRequestedHeading(1)), "the record follows the save");
+});
