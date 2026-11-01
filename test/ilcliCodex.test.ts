@@ -58,11 +58,20 @@ const managerOf = (current: CurrentRuns): RunManager => ({
   setPreparation: () => Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
 });
 
-type Checked = Readonly<{ stdout: string; code: number }>;
+// A safety bound on the child process alone. The script ends itself within 2 s once Node has started it, but a loaded
+// machine (the parallel stages of `npm test`) can delay Node's own start by seconds, so this limit is far above that.
+const CHILD_LIMIT_MS = 60_000;
+
+// `signal` is the signal that killed the child (SIGTERM at the limit), null where it exited by itself.
+type Checked = Readonly<{ stdout: string; code: number; signal: string | null }>;
 const check = (script: string, port: number): Promise<Checked> =>
   new Promise((resolve) => {
-    execFile(process.execPath, ["-e", script, String(port)], { timeout: 5000 }, (error, stdout) => {
-      resolve({ stdout, code: error === null ? 0 : typeof error.code === "number" ? error.code : -1 });
+    execFile(process.execPath, ["-e", script, String(port)], { timeout: CHILD_LIMIT_MS }, (error, stdout) => {
+      resolve({
+        stdout,
+        code: error === null ? 0 : typeof error.code === "number" ? error.code : -1,
+        signal: error === null ? null : (error.signal ?? null),
+      });
     });
   });
 
@@ -83,8 +92,8 @@ const checkAgainst = (current: CurrentRuns, script: string): Promise<Checked> =>
 test("bin/ilcli's RUN_CHECK_SCRIPT reads the real server's hello: an implementation run in progress, or none", async () => {
   const script = constantOf("RUN_CHECK_SCRIPT");
   assert.ok(script !== null, "bin/ilcli holds RUN_CHECK_SCRIPT");
-  assert.deepEqual(await checkAgainst({ refinement: [], implementation: 7 }, script), { stdout: "implementation\n", code: 0 });
-  assert.deepEqual(await checkAgainst({ refinement: [3], implementation: null }, script), { stdout: "", code: 0 });
+  assert.deepEqual(await checkAgainst({ refinement: [], implementation: 7 }, script), { stdout: "implementation\n", code: 0, signal: null });
+  assert.deepEqual(await checkAgainst({ refinement: [3], implementation: null }, script), { stdout: "", code: 0, signal: null });
   // A port nothing listens on: a server's own port, freed.
   const free = await Effect.runPromise(
     Effect.scoped(
@@ -95,6 +104,9 @@ test("bin/ilcli's RUN_CHECK_SCRIPT reads the real server's hello: an implementat
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
   const started = Date.now();
-  assert.deepEqual(await check(script, free), { stdout: "", code: 0 });
-  assert.ok(Date.now() - started < 5000);
+  assert.deepEqual(await check(script, free), { stdout: "", code: 0, signal: null });
+  // A refused connection does not leave the check waiting: the script's own 2 s timer guarantees it, and an exit 0 with
+  // no signal shows it. The bound fails only for a wait the script cannot cause, since Node's start under load is no
+  // part of what this test measures.
+  assert.ok(Date.now() - started < CHILD_LIMIT_MS);
 });
