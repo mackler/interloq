@@ -4,6 +4,7 @@ import fc from "fast-check";
 import type { SubjectId } from "../../src/artifacts.ts";
 import { shownOf } from "./test-setup.ts";
 import { describe, expect, test } from "vitest";
+import { TERMS_REQUEST } from "../../src/input.ts";
 import * as prompts from "../../src/prompts.ts";
 import { chainSettingsOf, decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
 import { foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
@@ -2745,7 +2746,8 @@ describe("a question kept while its analysis is prepared", () => {
     const back = runAfter([...decided, frame(2, 1), notified(q2), asked(3, prompts.optionOrTextPrompt), answered(3, "1"), frame(2, 1)]);
     expect(back?.pending?.question?.number).toBe(1);
     expect(back?.pending?.decision).toBe("preparing");
-    const done = runAfter([...decided, frame(2, 1), answered(2, "2")]);
+    // Issue #217: an answer at the frame keeps the question until the server confirms it accepted it (PromptClosed).
+    const done = runAfter([...decided, frame(2, 1), answered(2, "2"), { _tag: "PromptClosed", prompt: 2 } as RunEvent]);
     expect(done?.pending).toBeNull();
     expect(done?.deciding).toEqual([]);
     const last = done?.dashboard.answers.at(-1);
@@ -2815,6 +2817,68 @@ describe("a question kept while its analysis is prepared", () => {
       }),
       { numRuns: 100 },
     );
+  });
+});
+
+// Issue #217: the question stays on the page while its terms are written, and through every answer given at its frame
+// until the server says the answer was accepted.
+describe("issue #217: a question kept while its terms are written", () => {
+  const OFFERED = prompts.withTermsOffer(prompts.withOffer(prompts.optionOrTextPrompt));
+  const numbered = (number: number, explained: boolean): UiEvent => {
+    const e = presentedEvent("Which database?", [{ label: "SQLite", description: "a file" }, { label: "PostgreSQL", description: "a server" }]);
+    if (e._tag !== "QuestionPresented") return e;
+    const explanations = explained ? [{ id: "t1", term: "database", senses: ["where data is kept"] }] : [];
+    return { ...e, question: { ...e.question, number, explanations: explanations as unknown as typeof e.question.explanations } };
+  };
+  const q1 = numbered(1, false);
+  const q1Explained = numbered(1, true);
+  const frame = (prompt: number, question: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: question });
+  const answered = (prompt: number, text: string): RunEvent => ({ _tag: "Answered", prompt, text });
+  const explainedOf = (e: UiEvent): UiEvent => (e._tag === "QuestionPresented" ? { _tag: "QuestionExplained", question: e.question } : e);
+  const runAfter = (events: readonly RunEvent[]) => runOf(fold(live([started, ...events])), "implementation");
+  /** The run after each prefix of `events`, from the first Asked on. */
+  const eachStep = (events: readonly RunEvent[]) => events.map((_, i) => runAfter(events.slice(0, i + 1))).slice(events.findIndex((e) => e._tag === "Asked"));
+  const start = [notified(q1), asked(1, OFFERED)];
+
+  test("(a) the terms wait: the question pending after every event, inert, preparing, inert, then explained", () => {
+    const events = [...start, answered(1, TERMS_REQUEST), frame(2, 1), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, notified(explainedOf(q1Explained)), notified(q1Explained), asked(3, prompts.withOffer(prompts.optionOrTextPrompt))];
+    for (const r of eachStep(events)) {
+      expect(r?.pending).not.toBeNull();
+      expect(r?.pending?.question?.number).toBe(1);
+    }
+    expect(runAfter(events.slice(0, 3))?.pending?.decision).toBe("starting");
+    expect(runAfter(events.slice(0, 4))?.pending?.decision).toBe("preparing");
+    expect(runAfter(events.slice(0, 5))?.pending?.decision).toBe("starting");
+    const end = runAfter(events);
+    expect(end?.pending?.decision).toBe("none");
+    expect(end?.pending?.question?.explanations.length).toBe(1);
+    expect(end?.termsRequested).toEqual([]);
+  });
+
+  test("(b) rejected answers at the frame keep the question, and the reopened frame prepares it again", () => {
+    for (const text of ["/decide", TERMS_REQUEST, "", "x"]) {
+      const events = [...start, answered(1, TERMS_REQUEST), frame(2, 1), answered(2, text), notified({ _tag: "AnswerRejected" }), notified(q1), frame(3, 1)];
+      for (const r of eachStep(events)) {
+        expect(r?.pending).not.toBeNull();
+        expect(r?.pending?.question?.number).toBe(1);
+      }
+      const end = runAfter(events);
+      expect(end?.pending?.decision).toBe("preparing");
+      expect(end?.pending?.asked.prompt).toBe(3);
+      expect(end?.deciding.filter((d) => d.question === 1).length).toBe(1);
+    }
+  });
+
+  test("(c) an accepted answer at the frame: the question stays until PromptClosed", () => {
+    const events = [...start, answered(1, TERMS_REQUEST), frame(2, 1), answered(2, "2"), said(prompts.termsAbandonedLine(1)), { _tag: "PromptClosed", prompt: 2 } as RunEvent];
+    expect(runAfter(events.slice(0, -1))?.pending?.question?.number).toBe(1);
+    const end = runAfter(events);
+    expect(end?.pending).toBeNull();
+    expect(end?.deciding).toEqual([]);
+  });
+
+  test("(d) /terms where the terms are not offered is an ordinary answer", () => {
+    expect(runAfter([notified(q1), asked(1, prompts.optionOrTextPrompt), answered(1, TERMS_REQUEST)])?.pending).toBeNull();
   });
 });
 
@@ -3218,10 +3282,10 @@ describe("the document under review on the dashboard (issue #86)", () => {
   });
 
   test("an answer during the review clears the draft, and another question's decision shows none until its own draft", () => {
-    const abandoned = runAfter([...deciding, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), answered(2, "2")]);
+    const abandoned = runAfter([...deciding, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), answered(2, "2"), { _tag: "PromptClosed", prompt: 2 } as RunEvent]);
     expect(abandoned?.dashboard.draft).toBeNull();
     expect(abandoned === null || abandoned === undefined ? undefined : shownDraft(abandoned)).toBeNull();
-    const second = [...deciding, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), answered(2, "2"), notified(questionNumbered(3)), asked(3, OFFERED), answered(3, "/decide"), progress(2, 3), frame(4, 3)];
+    const second = [...deciding, shown({ decision: 1 }, { _tag: "Analysis", analysis: draftOf("first") }), answered(2, "2"), { _tag: "PromptClosed", prompt: 2 } as RunEvent, notified(questionNumbered(3)), asked(3, OFFERED), answered(3, "/decide"), progress(2, 3), frame(4, 3)];
     const before = runAfter(second);
     expect(before === null || before === undefined ? undefined : shownDraft(before)).toBeNull();
     const own = runAfter([...second, shown({ decision: 2 }, { _tag: "Analysis", analysis: draftOf("own") })]);

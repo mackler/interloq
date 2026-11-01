@@ -183,8 +183,18 @@ describe("a draft through Help me decide", () => {
     expect(draftFor(again.draft, pendingKey(live([...base, frame(2), { _tag: "PromptWithdrawn", prompt: 2 }, question(1), plain(3)])))).toBe("edited");
   });
 
-  test("an answer from another tab to the frame's prompt withdraws the draft with the notice", () => {
-    expect(reconcile(typed(2), live([...base, frame(2), { _tag: "Answered", prompt: 2, text: "1" }]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my text") });
+  // Issue #217: the text carried by Explain the terms follows the question through its frame to the explained question.
+  test("a carried draft through the terms wait ends held for the explained question's prompt, with no notice", () => {
+    const termsOffered: RunEvent = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.optionOrTextPrompt))), countdown: null, deciding: null };
+    const start = [started, question(1), termsOffered, { _tag: "Answered", prompt: 1, text: "/terms" } as RunEvent];
+    const views = [start, [...start, frame(2)], [...start, frame(2), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent], [...start, frame(2), { _tag: "PromptWithdrawn", prompt: 2 } as RunEvent, question(1), offered(3)]].map(live);
+    const r = through(carried(typed(1, "my note"), 1), views);
+    expect(r).toEqual({ draft: typed(3, "my note"), notice: null });
+  });
+
+  // Issue #217: the frame's question stays until the server confirms the answer (PromptClosed); the draft goes then.
+  test("an answer from another tab to the frame's prompt, once accepted, withdraws the draft with the notice", () => {
+    expect(reconcile(typed(2), live([...base, frame(2), { _tag: "Answered", prompt: 2, text: "1" }, { _tag: "PromptClosed", prompt: 2 }]))).toEqual({ draft: null, notice: prompts.draftWithdrawnNotice("my text") });
   });
 
   test("a foreground question over the frame withdraws the frame's draft, with the notice when non-empty, quietly when blank", () => {

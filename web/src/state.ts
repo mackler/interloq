@@ -132,7 +132,9 @@ export type Widget = Readonly<{
   /**
    * Issue #153: `none` an ordinary prompt; `starting` the prompt was answered Help me decide and the server has not yet
    * opened the question beside its analysis (the pane stays, its submission inert); `preparing` the question open while
-   * its analysis is prepared (its controls live).
+   * its analysis is prepared (its controls live). Issue #217: `starting` also while the question answered Explain the terms
+   * waits for its frame or for its explanations, and while an answer given at its frame awaits the server's outcome;
+   * `preparing` also while its terms are written.
    */
   decision: "none" | "starting" | "preparing";
 }>;
@@ -142,6 +144,8 @@ export type Widget = Readonly<{
  * choices, so this agrees with the server by construction.
  */
 export const offersDecision = (w: Widget): boolean => w.choices.some((c) => isDecide(c.sends));
+/** Issue #217: whether the widget offers Explain the terms; the terms line is what puts that choice in the prompt's choices. */
+export const offersTerms = (w: Widget): boolean => w.choices.some((c) => isTermsRequest(c.sends));
 /** Issue #153: a question answered Help me decide whose analysis is being prepared, with its frame's prompt once asked. */
 export type Deciding = Readonly<{ question: number; widget: Widget; prompt: number | null }>;
 /** Issue #153: a prompt after which the same question is asked again under another prompt. */
@@ -271,6 +275,8 @@ export type RunView = Readonly<{
   deciding: readonly Deciding[];
   /** Issue #153: the prompts after which the same question is asked again (a draft follows its question through them). */
   followed: readonly Followed[];
+  /** Issue #217: the questions answered Explain the terms whose explanations have not yet been presented. */
+  termsRequested: readonly number[];
 }>;
 
 /** A tab's items (issue #120): not asked yet, being asked for, listed, or the notice of why the tracker could not list them. */
@@ -540,6 +546,7 @@ export const emptyRun = (id: number): RunView => ({
   dashboard: emptyDashboard,
   deciding: [],
   followed: [],
+  termsRequested: [],
 });
 
 /**
@@ -795,12 +802,15 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       if (run.expired?.then === "extend") return notifiedEvent({ ...run, expired: null }, event, time);
       // Issue #22: the round of a review after the interview ends it, and its help with it.
       return { ...withoutHelp(run), timeline: roundBegan(event.subject === "terms" ? inQuestionPhase(run.timeline, termsStep) : run.timeline, event.subject, event.round) };
-    case "QuestionExplained":
+    case "QuestionExplained": {
       // Issue #142 (S15, W2-R1-1): "/terms" answered the prompt the analysis belongs to, and the same question is asked
       // again with its explanations: the analysis it set aside goes to the next prompt, beside the explained question.
+      // Issue #217: the question's terms are no longer awaited.
+      const explained = { ...run, termsRequested: run.termsRequested.filter((n) => n !== event.question.number) };
       return run.explaining !== null && run.explaining.event.presented.number === event.question.number
-        ? { ...run, analysis: { ...run.explaining, event: { ...run.explaining.event, presented: event.question }, prompt: null }, explaining: null }
-        : run;
+        ? { ...explained, analysis: { ...run.explaining, event: { ...run.explaining.event, presented: event.question }, prompt: null }, explaining: null }
+        : explained;
+    }
     case "TermsBegan":
       // Issue #142: terms written before the first question open their step, whether or not a review follows.
       return { ...run, timeline: inQuestionPhase(run.timeline, termsStep) };
@@ -1036,11 +1046,17 @@ const withInterloqLine = (run: RunView, text: string): RunView => ({ ...run, das
  * its answer dismissed is not restored by a rejection of this one.
  */
 const framed = (r: RunView, event: Extract<RunEvent, { _tag: "Asked" }>, question: number, time: string): RunView => {
-  const entry = r.deciding.find((d) => d.prompt === event.prompt) ?? r.deciding.find((d) => d.question === question && d.prompt === null);
+  // Issue #217: a frame reopened after a rejected answer finds the entry its answered prompt kept.
+  const entry =
+    r.deciding.find((d) => d.prompt === event.prompt) ??
+    r.deciding.find((d) => d.question === question && d.prompt === null) ??
+    r.deciding.find((d) => d.question === question && d.prompt !== null && r.answered.includes(d.prompt));
   const own = { asked: event, choices: event.choices, hint: pagePromptText(event.kind, event.text), countdown: null, held: true, decision: "preparing" as const };
   if (entry !== undefined) {
     const pending: Widget = { ...entry.widget, ...own };
-    return { ...r, pending, dismissed: null, deciding: r.deciding.map((d) => (d === entry ? { ...d, prompt: event.prompt } : d)) };
+    // The question presented again after a rejection is this one: it belongs to this frame, not to a later prompt.
+    const again = r.presented?.question.number === question;
+    return { ...r, pending, dismissed: null, deciding: r.deciding.map((d) => (d === entry ? { ...d, prompt: event.prompt } : d)), ...(again ? { presented: null, questionOptions: [] } : {}) };
   }
   const pending: Widget = { ...own, options: r.questionOptions, question: r.presented?.question ?? null, presentedAt: r.presented?.time ?? time };
   return { ...r, pending, dismissed: null, questionOptions: [], presented: null, deciding: [...r.deciding, { question, widget: pending, prompt: event.prompt }] };
@@ -1082,12 +1098,22 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
           ...r,
           deciding: r.deciding.filter((d) => d.prompt !== event.prompt),
           followed: entry === undefined ? r.followed : [...r.followed, { prompt: event.prompt, question: entry.question }],
+          // Issue #217: the terms are ready: the question stays, inert, until it is asked again with its explanations.
+          pending: r.pending?.asked.prompt !== event.prompt ? r.pending : entry !== undefined && r.termsRequested.includes(entry.question) ? { ...r.pending, decision: "starting" } : null,
+        };
+      }
+      // Issue #217: an answer given at a frame was accepted: the question is no longer open.
+      case "PromptClosed": {
+        const entry = r.deciding.find((d) => d.prompt === event.prompt);
+        const deciding = r.deciding.filter((d) => d.prompt !== event.prompt);
+        return {
+          ...r,
+          deciding,
+          termsRequested: entry === undefined ? r.termsRequested : r.termsRequested.filter((n) => n !== entry.question),
+          dashboard: withoutStaleDraft(r.dashboard, deciding),
           pending: r.pending?.asked.prompt === event.prompt ? null : r.pending,
         };
       }
-      // Issue #217: a frame's answer was accepted (S4 handles it).
-      case "PromptClosed":
-        return r;
       case "Answered": {
         const chosen = r.pending !== null && r.pending.asked.prompt === event.prompt ? [...r.pending.options, ...r.pending.choices].find((c) => c.sends === event.text) : undefined;
         const { analysis, dismissed, explaining } = answeredAnalysis(r, event.prompt, event.text);
@@ -1096,10 +1122,13 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         const shownAsked: AskedShown = own === null ? { _tag: "NotShown" } : own.question !== null ? { _tag: "Question", question: own.question } : { _tag: "Hint", hint: own.hint };
         const entry: AnsweredEntry = { key: `${r.id}-${r.nextSeq}`, asked: shownAsked, answer: chosen?.label ?? event.text };
         // Issue #153: Help me decide keeps the question on the page, starting, until the server opens it beside its analysis.
-        if (own !== null && own.decision === "none" && own.question !== null && isDecide(event.text) && offersDecision(own)) {
+        // Issue #217: Explain the terms keeps it the same way, until its frame opens or its explanations arrive.
+        const terms = own !== null && isTermsRequest(event.text) && offersTerms(own);
+        if (own !== null && own.decision === "none" && own.question !== null && ((isDecide(event.text) && offersDecision(own)) || terms)) {
           const question = own.question.number;
           return {
             ...r,
+            termsRequested: terms ? [...r.termsRequested, question] : r.termsRequested,
             dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] },
             pending: { ...own, decision: "starting" },
             answered: [...r.answered, event.prompt],
@@ -1110,6 +1139,11 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
             followed: [...r.followed, { prompt: event.prompt, question }],
           };
         }
+        // Issue #217: an answer at the frame may be rejected, which the page cannot know: the question stays, inert, until
+        // the server reopens the frame or confirms the answer (PromptClosed).
+        if (own !== null && own.decision === "preparing") {
+          return { ...r, dashboard: { ...r.dashboard, answers: [...r.dashboard.answers, entry] }, pending: { ...own, decision: "starting" }, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
+        }
         const stillDeciding = r.deciding.filter((d) => d.prompt !== event.prompt);
         return { ...r, deciding: stillDeciding, dashboard: withoutStaleDraft({ ...r.dashboard, answers: [...r.dashboard.answers, entry] }, stillDeciding), pending: r.pending?.asked.prompt === event.prompt ? null : r.pending, answered: [...r.answered, event.prompt], analysis, dismissed, explaining };
       }
@@ -1117,7 +1151,7 @@ export const foldEvent = (run: RunView, { time, event }: Stamped): RunView => {
         return notifiedEvent(r, event.event, time);
       case "Ended": {
         const quiet = withoutHelp(withActivity(r, ""));
-        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
+        const ended: RunView = { ...quiet, dashboard: { ...quiet.dashboard, draft: null, preparing: null }, explaining: null, deciding: [], termsRequested: [], ended: event.code, pending: null, busy: false, calls: [], retry: null, limitWait: null, timeline: r.timeline.map((e) => (e.state === "active" ? recorded(endEntry(e, event.code, time), r.plan) : endEntry(e, event.code, time))) };
         return reshow(ended);
       }
     }
