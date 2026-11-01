@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -1049,5 +1049,35 @@ test.describe("the tests of the prepare server, in order", () => {
     // Gather Requirements lists its steps, but no review cycle ran in this run before the question.
     await expect(rail(page)).toContainText(stepLabel("formulate"));
     await expect(rail(page)).not.toContainText(/cycle/i);
+  });
+});
+
+// Issue #217: the question stays on the page while its terms are written on request, and an answer given then is the answer.
+test.describe("the tests of the termsWait server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(38) Explain the terms keeps the question pane on screen, the typed text kept, and an answer then ends the wait", async ({ page }) => {
+    await page.goto(url("termsWait"));
+    await expect(page.getByText("connected", { exact: true })).toBeVisible();
+    await toTheList(page, "refinement");
+    await page.getByRole("radiogroup", { name: TERMS_CHOICE_LABEL }).getByText(TERMS_CHOICE_TEXTS.onRequest, { exact: true }).click();
+    const start = listOf(page).locator("li").first().locator("button[name=start]:not([disabled])");
+    await start.click();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    const field = pane(page).locator("textarea[name=answer]");
+    await field.fill("my note");
+    await pane(page).getByRole("button", { name: EXPLAIN_TERMS, exact: true }).click();
+    // The request waits; the question, its cards and the field stay, without Explain the terms or Help me decide.
+    await expect(pane(page).getByRole("button", { name: EXPLAIN_TERMS, exact: true })).toHaveCount(0);
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await expect(option(page, /PostgreSQL/)).toBeEnabled();
+    await expect(option(page, /SQLite/)).toBeEnabled();
+    await expect(pane(page).getByRole("button", { name: HELP_ME_DECIDE, exact: true })).toHaveCount(0);
+    await expect(field).toHaveValue("my note");
+    await expect(page.getByRole("region", { name: new RegExp(`^${YOUR_CHOICE}`) })).toHaveCount(0);
+    await field.fill("");
+    await option(page, /PostgreSQL/).click();
+    await expect(dashboard(page).locator("[data-last-answer]")).toContainText("PostgreSQL");
+    await toHaveEnded(page, 0);
   });
 });

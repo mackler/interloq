@@ -10,7 +10,8 @@
 // Claude accepts with an amended analysis (W2-R1-1); "decideBlank", an interview turn with numbered answers on which the
 // user takes "Help me decide" and then sends an empty message, which the run rejects (W3-R1-1); "planSteps" (issue #6),
 // a plan of two stages whose execution reports its steps and stops, a revision with a new step whose text is long, and
-// a second execution that reports a step and then waits until it is stopped.
+// a second execution that reports a step and then waits until it is stopped; "termsWait" (issue #217), a refinement
+// whose request for a question's terms, asked on request, waits until an answer given beside it interrupts it.
 // PORT is the port.
 
 import { Effect, Result } from "effect";
@@ -100,6 +101,16 @@ export const SCENARIOS: Record<string, TestOptions> = {
     closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
     // The question review, the analysis's review, the requirements review.
     reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
+  },
+  // Issue #217: the terms on request of the one agreed question wait until the answer given beside them interrupts them.
+  termsWait: {
+    steps: [
+      { output: { questions: [entryOf({ id: "Q1", context: "c", question: "Which database should the service use?", reason: "r", proposed_answers: [{ label: "PostgreSQL", description: "p" }, { label: "SQLite", description: "s" }], default_answer: "PostgreSQL" })] } },
+    ],
+    terms: [{ output: { entries: [] }, gate: () => new Promise<void>(() => {}) }],
+    closings: [{ output: summaryReply("# Requirements\n\nThe service uses PostgreSQL.", "That is all I need.") }],
+    // The question review, the requirements review.
+    reviews: [{ issues: [] }, { issues: [] }],
   },
   // Issue #83: an empty agreed question list, which the review accepts; issue #120: the refinement then ends at once.
   emptyQuestions: {
