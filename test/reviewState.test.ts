@@ -198,10 +198,40 @@ test("at the round limit the limit is asked first, and the review after it still
   assert.deepEqual(last(more), { kind: "CallReviewer", round: 2, unexplained: change1 });
 });
 
-test("an accepted issue or a self-correction with a changed file records no unexplained change", () => {
+const mentionsUnexplained = (t: Transition): boolean =>
+  t.commands.some((c) => (c.kind === "Say" && c.text.includes(prompts.UNEXPLAINED_CHANGE_HEADING)) || (c.kind === "Converse" && c.markdown.includes(prompts.UNEXPLAINED_CHANGE_HEADING)));
+
+test("an accepted issue with a changed file records no unexplained change", () => {
   const accepted = run(startText("a\nb\n"), { kind: "ReviewDecoded", review: { issues: [issue("A")] } }, response([["A", "accepted"]]), { kind: "FileObserved", hash: "h1", text: "a\nc\n" });
   assert.ok(!says(accepted).includes(prompts.UNEXPLAINED_CHANGE_HEADING));
   assert.deepEqual(last(accepted), { kind: "CallReviewer", round: 2, unexplained: null });
+});
+
+test("a self-correction with a changed file records no unexplained change", () => {
+  const reviewed = run(startText("a\nb\n"), { kind: "ReviewDecoded", review: { issues: [issue("A")] } });
+  const responded = advance(reviewed.state, response([["A", "rejected"]], { self_corrections: [{ id: "", new_action: "plan_error" as const, explanation: "a step was wrong" }] }));
+  assert.deepEqual(last(responded), { kind: "ObserveFile", stage: "response" });
+  const observed = advance(responded.state, { kind: "FileObserved", hash: "h1", text: "a\nc\n" });
+  assert.ok(![responded, observed].some(mentionsUnexplained), says(observed));
+  assert.deepEqual(last(observed), { kind: "CallReviewer", round: 2, unexplained: null });
+});
+
+test("an applied decision with a changed file records no unexplained change", () => {
+  const reviewed = run(startText("a\nb\n"), { kind: "ReviewDecoded", review: { issues: [issue("A")] } });
+  const resp = { ...respond([["A", "rejected"]]), questions_for_user: [questionOf({ context: "c", question: "Which?", terms: [], options: [] })] };
+  const asked = advance(reviewed.state, { kind: "ResponseDecoded", response: resp, resultText: "", costUsd: null });
+  assert.equal(last(asked).kind, "AskDecision");
+  const decided = advance(asked.state, { kind: "DecisionGiven", text: "apply this" });
+  assert.deepEqual(last(decided), { kind: "ApplyDecisions" });
+  const applied = advance(decided.state, { kind: "DecisionsApplied" });
+  const steps = [asked, decided, applied];
+  let step = applied;
+  while (last(step).kind === "ObserveFile") {
+    step = advance(step.state, { kind: "FileObserved", hash: "h1", text: "a\nc\n" });
+    steps.push(step);
+  }
+  assert.ok(!steps.some(mentionsUnexplained), steps.map(says).join("\n"));
+  assert.deepEqual(last(step), { kind: "CallReviewer", round: 2, unexplained: null });
 });
 
 test("a silent change back to an earlier round's content is said, then asks the identical-content pause", () => {
