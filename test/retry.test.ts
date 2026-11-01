@@ -79,7 +79,7 @@ test("a fault, then success: one retry, notified and said, then recovered", asyn
   // The wait's start and end are read from the Clock; the seam test below checks them on a stepping clock.
   const withoutWait = ui.notified.map((e) => (e._tag === "TransportRetrying" ? (({ fromMs: _f, untilMs: _u, ...rest }) => rest)(e) : e));
   assert.deepEqual(withoutWait.filter((e) => e._tag === "TransportRetrying" || e._tag === "TransportRecovered"), [
-    { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 2, delaySeconds: 0.01, fault: "stream disconnected before completion" },
+    { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 2, delaySeconds: 0.01, fault: "stream disconnected before completion", wait: 1 },
     { _tag: "TransportRecovered", agent: "codex" },
   ]);
   const line = prompts.transportRetryLine("codex", 1, 2, 0.01, "stream disconnected before completion");
@@ -248,7 +248,7 @@ test("a usage limit with a reset: one wait until the reset plus the margin, noti
   assert.equal(guards, 1);
   const until = reset + MARGIN_MS;
   assert.deepEqual(ui.notified.filter((e) => e._tag === "UsageLimitWaiting" || e._tag === "UsageLimitLifted" || e._tag === "TransportRecovered"), [
-    { _tag: "UsageLimitWaiting", agent: "claude", purpose: "review", limitType: "five_hour", basis: { kind: "reset" }, fromMs: START, untilMs: until },
+    { _tag: "UsageLimitWaiting", agent: "claude", purpose: "review", limitType: "five_hour", basis: { kind: "reset" }, fromMs: START, untilMs: until, wait: 1 },
     { _tag: "UsageLimitLifted", agent: "claude", waitedMs: until - START },
   ]);
   const waitLine = prompts.usageLimitWaitLine("claude", "five_hour", { kind: "reset" }, until);

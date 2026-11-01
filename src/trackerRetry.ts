@@ -2,7 +2,7 @@
 // error, is repeated with backoff; when the repeats run out the developer is asked. This part is pure: the run's
 // writes as data, the waits, which failures are repeated, and whether the item already holds a write's outcome.
 
-import { Clock, Data, Duration, Effect, Option, Ref, Result } from "effect";
+import { Clock, Data, Effect, Option, Ref, Result } from "effect";
 import type { HeldState, RunError, TrackerUnreachable, WriteCheck } from "./errors.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { askOffering, byLine, askUnoffered, programContext, type QuestionDraft, trackerOptions } from "./offer.ts";
@@ -131,9 +131,18 @@ const retrying = <A>(env: TrackerRetryEnv, what: string, attempt: Effect.Effect<
       if (delay !== undefined) {
         const fromMs = yield* Clock.currentTimeMillis;
         const untilMs = fromMs + delay * 1000;
-        yield* env.ui.notify({ _tag: "TrackerRetrying", tracker: error.tracker, what, attempt: n, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
-        yield* say(prompts.trackerRetryLine(error.tracker, what, n, delays.length, delay, error.message));
-        yield* Effect.sleep(Duration.millis(Math.max(untilMs - (yield* Clock.currentTimeMillis), 0)));
+        // Issue #215: the developer may end the wait early; the repeat then follows at once, as after a wait that ran out.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* env.ui.openWait;
+            yield* env.ui.notify({ _tag: "TrackerRetrying", tracker: error.tracker, what, attempt: n, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs, wait: handle.id });
+            yield* say(prompts.trackerRetryLine(error.tracker, what, n, delays.length, delay, error.message));
+            if ((yield* handle.sleepUntil(untilMs)) === "endedEarly") {
+              yield* env.ui.notify({ _tag: "WaitEndedEarly", wait: handle.id });
+              yield* say(prompts.waitEndedLine({ kind: "tracker", tracker: error.tracker, what }));
+            }
+          }),
+        );
         return yield* step(n + 1, total + 1, error.tracker);
       }
       const attempts = total + 1;

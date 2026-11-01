@@ -36,6 +36,7 @@ import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsM
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
 import type { OnExpiry, StartRequest } from "../src/protocol.ts";
 import type { SuiteResult } from "../src/suite.ts";
+import { type EndWaitResult, makeWaits, waitCounter, type WaitHandle, type WaitId, type Waits } from "../src/waits.ts";
 import { type Decider, type DeciderShape, Planner, type PlannerShape, type PlanningCapability, type PlanningPurpose, type QuestionFrame, type AskKind, type DuringAnswer, Reviewer, type ReviewerShape, type ReviewReply, type ReviewSession, RunConfig, RunKind, type Services, type StepReply, type StepReporter, Store, type StoreShape, SuiteRunner, type SuiteRunnerShape, Tracker, Ui, type UiShape } from "../src/services.ts";
 import { type Platform, platformLayer } from "../src/platform.ts";
 import { makeStore, storeLayer } from "../src/store.ts";
@@ -139,9 +140,17 @@ export class ScriptedUi implements UiShape {
   private readonly asks = readiness();
   /** `confirmEnds`: an answer that ends the run is confirmed first, as the page's dialog confirms it (S24, S25): the next scripted answer replies to the confirmation. */
   private readonly confirmEnds: boolean;
+  /** Issue #215: the waits the developer may end early; a test presses the control by `endWait` with the id an announcing event carries. */
+  private readonly waits: Waits = Effect.runSync(Effect.flatMap(waitCounter, makeWaits));
   constructor(answers: readonly ScriptedAnswer[], confirmEnds = false) {
     this.answers = [...answers];
     this.confirmEnds = confirmEnds;
+  }
+  get openWait(): Effect.Effect<WaitHandle, never, Scope.Scope> {
+    return this.waits.open;
+  }
+  endWait(id: WaitId): Effect.Effect<EndWaitResult> {
+    return this.waits.end(id);
   }
   /** Resolves when the next prompt is asked. */
   nextAsk(): Promise<void> {

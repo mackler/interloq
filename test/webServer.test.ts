@@ -19,9 +19,9 @@ import { type Broadcast, makeRunManager, type RunManager } from "../src/runManag
 import { makeWebServer, requestTarget } from "../src/webServer.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { chainFrame, holdFrame, itemsFrame, preparationFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
 import { listedState } from "../src/runMode.ts";
-import { runInProgressText, termsChoiceLine } from "../src/prompts.ts";
+import { runInProgressText, termsChoiceLine, WAIT_ALREADY_ENDED_TEXT } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
 import { choiceOf, isOpen } from "../src/uiState.ts";
 import { codexReviewerLayer } from "../src/codex.ts";
@@ -504,6 +504,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
     hold: () => Effect.succeed(null),
+    endWait: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
@@ -846,6 +847,7 @@ test("output frames reach the tab outside its event queue: a burst never closes 
     stop: () => Effect.succeed(null),
     answer: () => Effect.succeed(null),
     hold: () => Effect.succeed(null),
+    endWait: () => Effect.succeed(null),
     setUi: () => Effect.succeed(null),
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
@@ -933,6 +935,36 @@ test("the Refinement items frame carries each item's mark as the comments give i
     assert.deepEqual(listed.preparation, markOf(preparationOf(comments, target, 0)));
     assert.equal(listed.preparation?._tag, "SetAside");
     assert.ok(items.result.items.filter((i) => i.id !== target.id).every((i) => i.preparation === null));
+    a.close();
+  });
+});
+
+// Issue #215: the seam of the endWait frame: the page's frame, built from the hello's incarnation, the run and the wait its
+// event announced, reaches the waiting run, which makes its call again; every tab sees the early end; a second press is refused.
+test("the page's endWait frame ends the run's usage-limit wait; the same frame again is refused as already ended", async () => {
+  const limited = { limit: { reset: { kind: "instant" as const, atMs: Date.now() + 3_600_000 }, limitType: "five_hour" } };
+  let attempted = false;
+  const manager = await managerOf(tempRepo(), [{ steps: [limited, { hang: true, onCall: () => void (attempted = true) }] }]);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    await until("the hello", () => a.messages.some((m) => m.type === "hello"));
+    const hello = a.messages.find((m) => m.type === "hello");
+    assert.ok(hello !== undefined && hello.type === "hello");
+    a.send({ type: "start", mode: "implementation", item: "2" });
+    const notified = () => a.messages.flatMap((m) => (m.type === "event" && m.event._tag === "Notified" ? [{ run: m.run, event: m.event.event }] : []));
+    await until("the wait", () => notified().some((n) => n.event._tag === "UsageLimitWaiting"));
+    const waiting = notified().find((n) => n.event._tag === "UsageLimitWaiting")!;
+    assert.ok(waiting.event._tag === "UsageLimitWaiting");
+    const wait = waiting.event.wait;
+    const frame = endWaitFrame(hello.incarnation, waiting.run, wait);
+    a.send(frame);
+    await until("the early end", () => notified().some((n) => n.event._tag === "WaitEndedEarly" && n.event.wait === wait));
+    await until("the next attempt", () => attempted);
+    a.send(frame);
+    await until("the refusal", () => a.messages.some((m) => m.type === "refused"));
+    assert.deepEqual(a.messages.find((m) => m.type === "refused"), { type: "refused", reason: WAIT_ALREADY_ENDED_TEXT, mode: "implementation" });
+    a.send({ type: "stop", incarnation: hello.incarnation, run: waiting.run });
+    await until("the run's end", () => a.messages.some((m) => m.type === "event" && m.event._tag === "Ended"));
     a.close();
   });
 });

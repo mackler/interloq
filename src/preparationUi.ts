@@ -4,6 +4,7 @@ import { Effect, Ref } from "effect";
 import { type AskedQuestion, NoAnswer } from "./errors.ts";
 import { piecesText } from "./pieces.ts";
 import type { UiShape } from "./services.ts";
+import { unendableWait } from "./waits.ts";
 
 export type UnattendedUi = Readonly<{ ui: UiShape; lastQuestion: Effect.Effect<AskedQuestion | null> }>;
 
@@ -28,6 +29,7 @@ export const unattendedUi: Effect.Effect<UnattendedUi> = Effect.gen(function* ()
     notify: (event) => (event._tag === "QuestionPresented" ? Ref.set(last, { number: event.question.number, text: piecesText(event.question.question) }) : Effect.void),
     nextQuestion: Ref.updateAndGet(numbers, (n) => n + 1),
     enterQuestion: () => Effect.succeed({ askDuring: (_prompt, _kind, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }),
+    openWait: unendableWait,
   };
   return { ui, lastQuestion: Ref.get(last) };
 });

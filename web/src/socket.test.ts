@@ -187,6 +187,29 @@ describe("socket across a server restart", () => {
   });
 });
 
+// Issue #215: a queued request to end a wait follows a queued hold's rules.
+describe("socket and a queued endWait", () => {
+  test("is sent when its run is current, and discarded with a notice for another incarnation or an ended run", () => {
+    for (const [incarnation, current, sent, notice] of [
+      ["a", 1, true, null],
+      ["b", 1, false, prompts.notSentNotice("endWait", "restarted")],
+      ["a", null, false, prompts.notSentNotice("endWait", "ended")],
+    ] as const) {
+      sockets.length = 0;
+      const h = handlers();
+      const c = connect("ws://x/ws", wire(h), env());
+      sockets[0].receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: 1 }, incarnation: "a" });
+      sockets[0].drop();
+      c.send({ type: "endWait", incarnation: "a", run: 1, wait: 4 });
+      vi.advanceTimersByTime(1000);
+      sockets[1].receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/w", current: { refinement: [], implementation: current }, incarnation });
+      expect(sockets[1].sent.length > 0).toBe(sent);
+      expect(h.notices).toEqual(notice === null ? [] : [notice]);
+      c.close();
+    }
+  });
+});
+
 // Defect B of docs/page-question-phase-defects.md: a frame that does not decode is never dropped in silence. It is
 // logged, reported with its reason, and the page reconnects with backoff (Q1); after three in a row the page stops
 // reconnecting (Q5), and no action is queued or sent any more: each is handed back to the page (G-R1-1).

@@ -10,7 +10,7 @@ import * as prompts from "./prompts.ts";
 import { plainPieces } from "./pieces.ts";
 import type { Config } from "./schema.ts";
 import { exhaustedStep, networkRetryDelaySeconds } from "./retryPolicy.ts";
-import type { LimitWaitBegan } from "./usage.ts";
+import type { LimitWait, LimitWaitBegan } from "./usage.ts";
 import { type Decider, RunConfig, Store, Ui } from "./services.ts";
 
 /** The waits before repeat 1, 2, …, count in seconds: the first wait, doubled on each further repeat (issues #26, #171). */
@@ -83,8 +83,22 @@ export const withTransportRetry = <A, E, R>(
     let tries = 0;
     /** The tries for an unreachable network since the retries were last used up (issue #201). */
     let networkTries = 0;
-    /** Sleeps on the Clock until `untilMs` (interruptible, so Stop task ends the wait). */
-    const sleepUntil = (untilMs: number) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Effect.sleep(Duration.millis(Math.max(untilMs - now, 0)))));
+    /**
+     * Issue #215: a wait the developer may end early. Opens it, announces it with its id (`announce`), sleeps until
+     * `untilMs` (interruptible, so Stop task ends it), and where the developer ended it, notifies the early end and says
+     * and writes it. The code after the wait is the same either way, so the next attempt is the one a wait that ran out
+     * would make.
+     */
+    const endableWait = <AE>(untilMs: number, subject: prompts.WaitSubject, announce: (wait: number) => Effect.Effect<void, AE>) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* ui.openWait;
+          yield* announce(handle.id);
+          const end = yield* handle.sleepUntil(untilMs);
+          if (end === "endedEarly") yield* reportEarlyEnd(handle.id, subject);
+        }),
+      );
+    const reportEarlyEnd = (wait: number, subject: prompts.WaitSubject) => ui.notify({ _tag: "WaitEndedEarly", wait }).pipe(Effect.andThen(say(prompts.waitEndedLine(subject))));
     for (let n = 1; ; n++) {
       const result = yield* Effect.result(attempt(n));
       if (Result.isSuccess(result)) {
@@ -102,21 +116,31 @@ export const withTransportRetry = <A, E, R>(
         const fromMs = yield* Clock.currentTimeMillis;
         const { basis, untilMs, next } = planLimitWait(error.reset, fromMs, limitState);
         limitState = next;
-        yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, purpose, limitType: error.limitType, basis, fromMs, untilMs });
-        yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
         const ranOut = basis.kind === "reset" ? "lifted" : "elapsed";
         const began: LimitWaitBegan = { agent: error.agent, limitType: error.limitType, basis: basis.kind, fromMs, untilMs };
-        const record = (outcome: "lifted" | "elapsed" | "interrupted") => Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ ...began, endedMs, outcome })));
-        // One uninterruptible step from the begin record to the finalizer's attachment, so that an interruption between
-        // them takes effect only in the sleep, and the finalizer always clears the checkpoint's note.
-        yield* Effect.uninterruptibleMask((restore) =>
-          store.recordLimitWaitBegan(began).pipe(Effect.andThen(restore(Effect.sleep(Duration.millis(untilMs - fromMs))).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? ranOut : "interrupted"))))),
+        const record = (outcome: LimitWait["outcome"]) => Clock.currentTimeMillis.pipe(Effect.flatMap((endedMs) => store.recordLimitWait({ ...began, endedMs, outcome })));
+        // Issue #215: the developer may end the wait early; it is recorded as `ended`, and nothing says the limit lifted.
+        const end = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* ui.openWait;
+            yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, purpose, limitType: error.limitType, basis, fromMs, untilMs, wait: handle.id });
+            yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
+            // One uninterruptible step from the begin record to the finalizer's attachment, so that an interruption between
+            // them takes effect only in the sleep, and the finalizer always clears the checkpoint's note.
+            const end = yield* Effect.uninterruptibleMask((restore) =>
+              store.recordLimitWaitBegan(began).pipe(Effect.andThen(restore(handle.sleepUntil(untilMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? (exit.value === "endedEarly" ? "ended" : ranOut) : "interrupted"))))),
+            );
+            if (end === "endedEarly") yield* reportEarlyEnd(handle.id, { kind: "usageLimit", agent: error.agent });
+            return end;
+          }),
         );
-        if (basis.kind === "reset") {
+        // A wait the developer ended was said above, and never said to lift the limit; a refusal after it is planned
+        // from `limitState`, as any refusal is.
+        if (end === "ranOut" && basis.kind === "reset") {
           const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
           yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
           yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
-        } else yield* say(prompts.usageLimitTryingAgainLine(error.agent));
+        } else if (end === "ranOut") yield* say(prompts.usageLimitTryingAgainLine(error.agent));
         yield* beforeRetry;
         continue;
       }
@@ -132,9 +156,9 @@ export const withTransportRetry = <A, E, R>(
         // down and its countdown ends when the wait does.
         const fromMs = yield* Clock.currentTimeMillis;
         const untilMs = fromMs + delay * 1000;
-        yield* ui.notify({ _tag: "TransportRetrying", agent, purpose, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs });
-        yield* say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message));
-        yield* sleepUntil(untilMs);
+        yield* endableWait(untilMs, { kind: "retry", agent }, (wait) =>
+          ui.notify({ _tag: "TransportRetrying", agent, purpose, attempt: retried, of: delays.length, delaySeconds: delay, fault: error.message, fromMs, untilMs, wait }).pipe(Effect.andThen(say(prompts.transportRetryLine(agent, retried, delays.length, delay, error.message)))),
+        );
         yield* beforeRetry;
         continue;
       }
@@ -151,9 +175,9 @@ export const withTransportRetry = <A, E, R>(
           const delaySeconds = networkRetryDelaySeconds(config, networkTries);
           const fromMs = yield* Clock.currentTimeMillis;
           const untilMs = fromMs + delaySeconds * 1000;
-          yield* ui.notify({ _tag: "NetworkRetrying", agent, purpose, what, attempt: networkTries, code: step.code, delaySeconds, fault: fault.message, fromMs, untilMs });
-          yield* say(prompts.networkRetryLine(agent, what, step.code, networkTries, delaySeconds));
-          yield* sleepUntil(untilMs);
+          yield* endableWait(untilMs, { kind: "network", agent }, (wait) =>
+            ui.notify({ _tag: "NetworkRetrying", agent, purpose, what, attempt: networkTries, code: step.code, delaySeconds, fault: fault.message, fromMs, untilMs, wait }).pipe(Effect.andThen(say(prompts.networkRetryLine(agent, what, step.code, networkTries, delaySeconds)))),
+          );
           break;
         }
         case "background": {

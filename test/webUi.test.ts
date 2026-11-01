@@ -431,3 +431,21 @@ test("issue #49: output goes to the live channel alone, never to the run's event
   assert.deepEqual(live, [event]);
   assert.deepEqual(events, []);
 });
+
+test("issue #215: a wait opened through openWait is ended through endWait, and ends early", async () => {
+  const { ui } = await withUi();
+  const [first, end, again] = await run(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* ui.openWait;
+        const fiber = yield* Effect.forkChild(handle.sleepUntil(Date.now() + 3_600_000));
+        yield* Effect.yieldNow;
+        const first = yield* ui.endWait(handle.id);
+        return [first, yield* Fiber.join(fiber), yield* ui.endWait(handle.id)] as const;
+      }),
+    ),
+  );
+  assert.equal(first, "ended");
+  assert.equal(end, "endedEarly");
+  assert.equal(again, "alreadyEnded");
+});

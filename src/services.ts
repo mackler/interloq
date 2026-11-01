@@ -24,6 +24,7 @@ import type { CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./t
 import type { Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 import type { OutputEvent } from "./liveOutput.ts";
+import type { WaitHandle } from "./waits.ts";
 
 /** Which reply of a round a raw save holds: the review, the response, or corrective turn k (issue #151). */
 export type RawReplyKind = "review" | "response" | Readonly<{ corrective: number }>;
@@ -88,6 +89,12 @@ export interface UiShape {
    * in conversation.md, and dropped where no tab listens.
    */
   readonly output: (event: OutputEvent) => Effect.Effect<void>;
+  /**
+   * Issue #215: a wait with a countdown that the developer may end early (a usage-limit wait, a retry's backoff, the wait
+   * for the network, a tracker repeat's wait). Its id goes on the event that announces the wait; the wait leaves the
+   * registry when the Scope closes.
+   */
+  readonly openWait: Effect.Effect<WaitHandle, never, Scope.Scope>;
 }
 export class Ui extends Context.Service<Ui, UiShape>()("plan-review/Ui") {}
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
+import { LIMIT_WAIT_OUTCOMES } from "../src/schema.ts";
 import { callCosts, type LimitWait, summarizeUsage, type UsageLine } from "../src/usage.ts";
 
 // Row 7 of the table in recommendation E of docs/functional-design-review.md.
@@ -64,7 +65,7 @@ test("property: earlier totals of a session do not change the result, and interl
 
 // Issue #68: the time waited is the sum of the waits' actual spans, whatever their scheduled ends.
 const arbWait: fc.Arbitrary<LimitWait> = fc
-  .tuple(fc.nat(1e12), fc.nat(1e9), fc.nat(1e9), fc.constantFrom("lifted" as const, "elapsed" as const, "interrupted" as const), fc.constantFrom("reset" as const, "pastReset" as const, "noKnownEnd" as const))
+  .tuple(fc.nat(1e12), fc.nat(1e9), fc.nat(1e9), fc.constantFrom(...LIMIT_WAIT_OUTCOMES), fc.constantFrom("reset" as const, "pastReset" as const, "noKnownEnd" as const))
   .map(([fromMs, scheduled, actual, outcome, basis]) => ({ agent: "claude", limitType: null, basis, fromMs, untilMs: fromMs + scheduled, endedMs: fromMs + actual, outcome }));
 
 test("property: waitedMs is the sum of endedMs - fromMs over the waits, and limitWaits their count", () => {

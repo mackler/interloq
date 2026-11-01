@@ -330,3 +330,20 @@ test("a deletion whose repeats are used up in the unattended environment asks no
   assert.ok(failureOf(exit) instanceof TrackerWriteFailed);
   assert.equal(d.t.ui.asked.length, 0);
 });
+
+// Issue #215: the developer ends a repeat's wait; the request is made again at once, and in the first read the line goes
+// into the held records like the read's other lines.
+test("a repeat's wait ended early: the read is made again at once, and the line is in the held records", async () => {
+  const t = await setup([], 2, 3600);
+  await t.failNext("read", unreached(), 1);
+  const fiber = Effect.runFork(readWithRetry(t.fake.tracker, ID, t.env));
+  while (!t.ui.notified.some((e) => e._tag === "TrackerRetrying")) await new Promise((r) => setTimeout(r, 5));
+  const waiting = t.ui.notified.find((e) => e._tag === "TrackerRetrying");
+  assert.ok(waiting !== undefined && waiting._tag === "TrackerRetrying");
+  assert.equal(await Effect.runPromise(t.ui.endWait(waiting.wait)), "ended");
+  const item = await Effect.runPromise(Fiber.join(fiber));
+  assert.equal(item.id, ID);
+  const line = prompts.waitEndedLine({ kind: "tracker", tracker: "GitHub", what: prompts.trackerOperationText({ kind: "read", item: ID }) });
+  assert.ok(t.held().join("").includes(line), t.held().join(""));
+  assert.deepEqual(tagged(t.ui.notified, "WaitEndedEarly"), [{ _tag: "WaitEndedEarly", wait: waiting.wait }]);
+});

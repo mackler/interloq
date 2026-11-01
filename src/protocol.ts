@@ -99,6 +99,8 @@ export type ClientMessage =
   | Readonly<{ type: "stop"; incarnation: string; run: number }>
   /** Issue #185: the developer is working on the prompt: its countdown stops for good. */
   | Readonly<{ type: "hold"; incarnation: string; run: number; prompt: number }>
+  /** Issue #215: the developer ends the wait whose countdown the page shows; the run makes its request again at once. */
+  | Readonly<{ type: "endWait"; incarnation: string; run: number; wait: number }>
   /** Open or close one scope of the run's shared state (issue #87). */
   | Readonly<{ type: "ui"; incarnation: string; run: number; flag: UiFlag }>
   /** The chain's settings (issue #147): the mode on or off, a number of runs and the resolved cutoff instant, each optional. */
@@ -246,13 +248,15 @@ export const UiEventSchema = Schema.Union([
   tagged("AgentCallStarted", { agent: AgentSchema, purpose: Str, callId: Str }),
   tagged("ToolUsed", { agent: AgentSchema, tool: Str, target: Str, callId: Str }),
   tagged("AgentCallEnded", { agent: AgentSchema, ok: Schema.Boolean, callId: Str }),
-  tagged("TransportRetrying", { agent: AgentSchema, purpose: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  tagged("TransportRetrying", { agent: AgentSchema, purpose: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   // Issue #201: a code outside NETWORK_CODES does not decode.
-  tagged("NetworkRetrying", { agent: AgentSchema, purpose: Str, what: Str, attempt: Int, code: Schema.Literals(NETWORK_CODES), delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  tagged("NetworkRetrying", { agent: AgentSchema, purpose: Str, what: Str, attempt: Int, code: Schema.Literals(NETWORK_CODES), delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   tagged("TransportRecovered", { agent: AgentSchema }),
-  tagged("TrackerRetrying", { tracker: Str, what: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  tagged("TrackerRetrying", { tracker: Str, what: Str, attempt: Int, of: Int, delaySeconds: Schema.Finite, fault: Str, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
   tagged("TrackerRecovered", { tracker: Str }),
-  tagged("UsageLimitWaiting", { agent: AgentSchema, purpose: Str, limitType: Schema.NullOr(Str), basis: LimitWaitBasisSchema, fromMs: Schema.Finite, untilMs: Schema.Finite }),
+  tagged("UsageLimitWaiting", { agent: AgentSchema, purpose: Str, limitType: Schema.NullOr(Str), basis: LimitWaitBasisSchema, fromMs: Schema.Finite, untilMs: Schema.Finite, wait: Int }),
+  // Issue #215: the developer ended a wait early.
+  tagged("WaitEndedEarly", { wait: Int }),
   tagged("UsageLimitLifted", { agent: AgentSchema, waitedMs: Schema.Finite }),
   tagged("AgentReconnecting", { agent: AgentSchema, by: Schema.Literal("sdk"), attempt: Schema.NullOr(Int), of: Schema.NullOr(Int), delayMs: Schema.NullOr(Int), detail: Str, callId: Str }),
   tagged("InterviewTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),
@@ -313,6 +317,7 @@ export const ClientMessageSchema = Schema.Union([
   typed("answer", { incarnation: Str, run: Int, prompt: Int, text: Str }),
   typed("stop", { incarnation: Str, run: Int }),
   typed("hold", { incarnation: Str, run: Int, prompt: Int }),
+  typed("endWait", { incarnation: Str, run: Int, wait: Int }),
   typed("ui", { incarnation: Str, run: Int, flag: UiFlagSchema }),
   typed("chain", {
     settings: Schema.Struct({

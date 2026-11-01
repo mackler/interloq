@@ -12,7 +12,7 @@ import { platformLayer } from "../src/platform.ts";
 import { NoTracker, TrackerUnreachable } from "../src/errors.ts";
 import { program } from "../src/program.ts";
 import { listedState, type RunMode } from "../src/runMode.ts";
-import { answerExpiredText, limitAnswerExpiredText, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
+import { answerExpiredText, limitAnswerExpiredText, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, refinementInProgressText, runInProgressText, serverEndingText, serverFaultRecord } from "../src/prompts.ts";
 import { Reviewer, Tracker, type UiShape } from "../src/services.ts";
 import type { OutputEvent } from "../src/liveOutput.ts";
 import { itemIdOf } from "../src/tracker.ts";
@@ -883,4 +883,57 @@ test("issue #49: a run's output is broadcast to a subscriber, kept out of its ev
   for (let i = 0; i < 200 && (await run(manager.current)).implementation !== null; i++) await sleep(10);
   await run(uis[0]!.output(event));
   assert.equal(outputs.length, 1);
+});
+
+// ---- Issue #215: the developer ends a wait of one run ----
+
+const LATER = Date.now() + 3_600_000;
+const limited = { limit: { reset: { kind: "instant" as const, atMs: LATER }, limitType: "five_hour" } };
+/** The id of the run's last announced usage-limit wait, once there is one. */
+const waitOf = async (h: Harness, id: number): Promise<number> => {
+  let wait = -1;
+  await until(`a wait of run ${id}`, () => {
+    const found = eventsOf(h, id).flatMap((e) => (e._tag === "Notified" && e.event._tag === "UsageLimitWaiting" ? [e.event.wait] : []));
+    wait = found.at(-1) ?? -1;
+    return found.length > 0;
+  });
+  return wait;
+};
+
+test("endWait: another incarnation is refused, a wait already ended is refused, and a wait ended lets the run go on", async () => {
+  const h = await harness(tempRepo(), [{ ...converging, steps: [limited, ...(converging.steps ?? [])] }]);
+  const id = await started(h);
+  const wait = await waitOf(h, id);
+  assert.deepEqual(await run(h.manager.endWait("another", id, wait)), { refused: "that run belongs to an earlier start of the server", mode: "implementation" });
+  assert.equal(await run(h.manager.endWait(h.manager.incarnation, id, wait)), null);
+  assert.deepEqual(await run(h.manager.endWait(h.manager.incarnation, id, wait)), { refused: WAIT_ALREADY_ENDED_TEXT, mode: "implementation" });
+  await ended(h, id);
+  assert.equal(endCode(h, id), 0);
+  assert.ok(eventsOf(h, id).some((e) => e._tag === "Notified" && e.event._tag === "WaitEndedEarly" && e.event.wait === wait));
+});
+
+test("endWait: a current run that is not waiting is refused as not waiting", async () => {
+  let called = false;
+  const h = await harness(tempRepo(), [{ steps: [{ hang: true, onCall: () => void (called = true) }] }]);
+  const id = await started(h);
+  await until("the planning call", () => called);
+  assert.deepEqual(await run(h.manager.endWait(h.manager.incarnation, id, 1)), { refused: WAIT_NOT_WAITING_TEXT, mode: "implementation" });
+  await run(h.manager.stop(h.manager.incarnation, id));
+});
+
+test("endWait: with two refinements waiting, run B's id with run A's wait is refused, and both still wait", async () => {
+  const attempts = [0, 0];
+  const refining = (k: number) => ({ mode: "refinement" as const, steps: [limited, { output: { questions: [] }, onCall: () => void attempts[k]++ }], reviews: [{ issues: [] }] });
+  const h = await harness(tempRepo(), [refining(0), refining(1)]);
+  const a = await started(h, "refinement");
+  const b = await started(h, "refinement");
+  const waitA = await waitOf(h, a);
+  const waitB = await waitOf(h, b);
+  assert.notEqual(waitA, waitB);
+  assert.deepEqual(await run(h.manager.endWait(h.manager.incarnation, b, waitA)), { refused: WAIT_NOT_WAITING_TEXT, mode: "refinement" });
+  await sleep(100);
+  assert.deepEqual(attempts, [0, 0], "a run's next attempt started");
+  assert.ok(!eventsOf(h, a).concat(eventsOf(h, b)).some((e) => e._tag === "Notified" && e.event._tag === "WaitEndedEarly"));
+  await run(h.manager.stop(h.manager.incarnation, a));
+  await run(h.manager.stop(h.manager.incarnation, b));
 });

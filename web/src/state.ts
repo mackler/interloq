@@ -878,13 +878,13 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       return withActivity(run, `${callOf(run.calls, event.callId)?.label ?? AGENT[event.agent]} — ${reconnectingActivity(event.attempt, event.of, event.detail)}`);
     case "TransportRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
-      const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } };
+      const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait } };
       return { ...withActivity(run, retryLine(event.agent, text)), retry };
     }
     // Issue #201: a try for an unreachable network, with the countdown to the next try and no bound.
     case "NetworkRetrying": {
       const text = networkRetryActivity(event.code, event.attempt);
-      const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } };
+      const retry = { agent: event.agent, purpose: event.purpose, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait } };
       return { ...withActivity(run, retryLine(event.agent, text)), retry };
     }
     case "TransportRecovered":
@@ -892,18 +892,26 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     // Issue #171: a tracker request's repeat, counted down like an agent's retry and named by its tracker.
     case "TrackerRetrying": {
       const text = retryActivity(event.attempt, event.of, event.fault);
-      return { ...withActivity(run, `${event.tracker} — ${text}`), retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs } } };
+      return { ...withActivity(run, `${event.tracker} — ${text}`), retry: { agent: "tracker", purpose: null, text, wait: { fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait } } };
     }
     case "TrackerRecovered":
       return { ...withActivity(run, run.calls.at(-1)?.label ?? ""), retry: null };
     // Issue #68: a wait for a usage limit, whose end is known; the activity line shows it until it lifts.
     case "UsageLimitWaiting":
     {
-      const limitWait: LimitWait = { agent: event.agent, purpose: event.purpose, limitType: event.limitType, basis: event.basis, fromMs: event.fromMs, untilMs: event.untilMs };
+      const limitWait: LimitWait = { agent: event.agent, purpose: event.purpose, limitType: event.limitType, basis: event.basis, fromMs: event.fromMs, untilMs: event.untilMs, waitId: event.wait };
       return { ...withActivity(run, limitWaitLine(limitWait)), limitWait };
     }
     case "UsageLimitLifted":
       return { ...withActivity(run, run.calls.at(-1)?.label ?? ""), limitWait: null };
+    // Issue #215: the developer ended a wait; its countdown goes in every tab, while the activity text stays until the
+    // waited call's start or end clears it, as when the wait runs out. An id no wait shown carries changes nothing.
+    case "WaitEndedEarly":
+      return {
+        ...run,
+        limitWait: run.limitWait?.waitId === event.wait ? null : run.limitWait,
+        retry: run.retry !== null && run.retry.wait?.waitId === event.wait ? { ...run.retry, wait: null } : run.retry,
+      };
     case "AgentCallEnded": {
       // P1-R2-1: a nested call ends and the one it ran in is shown again. Issue #184: calls may overlap and end in any
       // order (the interview's request beside a terms request or a decision), so the call removed is the one whose id
@@ -1343,13 +1351,15 @@ export const progressOf = (run: RunView): string => {
 /** A wait whose start and end the program knows (issues #26 and #68): what a determinate indicator counts down. */
 export type Countdown = Readonly<{ fromMs: number; untilMs: number }>;
 /** A wait for a usage limit as the page holds it (issue #68). */
-export type LimitWait = Countdown & Readonly<{ agent: "claude" | "codex"; purpose: string; limitType: string | null; basis: LimitWaitBasis }>;
+/** Issue #215: a wait the developer may end early, with the id its announcing event carried. */
+export type EndableWait = Countdown & Readonly<{ waitId: number }>;
+export type LimitWait = EndableWait & Readonly<{ agent: "claude" | "codex"; purpose: string; limitType: string | null; basis: LimitWaitBasis }>;
 
 /**
  * A retry while it lasts: an agent's call (issue #26) with the purpose the call announces (W4-R2-1 of issue #184), or a
  * request to the tracker (issue #171), which no agent call is and whose purpose is null.
  */
-export type Retry = Readonly<{ agent: "claude" | "codex" | "tracker"; purpose: string | null; text: string; wait: Countdown | null }>;
+export type Retry = Readonly<{ agent: "claude" | "codex" | "tracker"; purpose: string | null; text: string; wait: EndableWait | null }>;
 
 /** Whether a call is the one a wait waits for (W4-R2-1 of issue #184): the same agent and the same purpose. */
 export const waitedBy = (wait: Readonly<{ agent: string; purpose: string | null }>, call: Readonly<{ agent: string; purpose: string }>): boolean => wait.agent === call.agent && wait.purpose === call.purpose;

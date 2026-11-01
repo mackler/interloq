@@ -415,3 +415,17 @@ default) for an answer, after which the run stops waiting for it.
   in the notice. The run's end reads "abandoned".
 - **Recognition rather than recall.** The Implementation tab marks an item whose run in the current chain stopped
   waiting for an answer, so an item back in the refined list does not look untouched; the mark asserts that alone.
+
+## The control that ends a wait (issue #215, 1 Nov 2026)
+
+- **User control and freedom.** A wait whose end the program knows (a usage limit, the backoff before a retry, the wait
+  for the network, a tracker repeat's wait) can be ended by the developer with the text button "Try again now" beside
+  its countdown, so credits added during a usage-limit wait no longer leave the run sleeping until the stated reset. No
+  confirmation is asked (behavior 1): a request refused again only waits again.
+- **Visibility of system status.** The button asserts only that the wait ends and the request is made again; it says
+  nothing about whether the limit has lifted or the connection is back. It is shown only while the countdown runs, in
+  the full and the compact status line, and is disabled once pressed for that wait. Every tab of the run sees the
+  countdown go when the wait ends, and the line naming the developer is said on the page and written to
+  `conversation.md`.
+- **Material Design 3.** The button is m3-svelte's text button, as the answer countdown's "I'm working on this question"
+  is; in the compact line it does not shrink, and the status beside it stays one ellipsized line.

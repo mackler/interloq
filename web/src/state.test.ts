@@ -102,9 +102,9 @@ describe("the status line (issue #22)", () => {
   });
 
   test("a retry's and a usage limit's wait give the status the activity line's text", () => {
-    const retrying = notified({ _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 });
+    const retrying = notified({ _tag: "TransportRetrying", wait: 1, agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 });
     for (const s of both([started, call, retrying])) expect(statusOf(s)).toBe("Codex — connection lost, retry 1 of 3 (stream disconnected)");
-    const waiting = notified({ _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 60_000 });
+    const waiting = notified({ _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 60_000 });
     for (const s of both([started, waiting])) expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, 60_000)}`);
   });
 
@@ -1330,7 +1330,7 @@ test("the elapsed time's start: the nested call's while it runs, the outer call'
 describe("transport retries on the activity line", () => {
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 };
+  const retrying: UiEvent = { _tag: "TransportRetrying", wait: 1, agent: "codex", purpose: "review", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("a retry shows the agent, the attempt of the retries and the fault, and the retried call keeps it", () => {
@@ -1384,7 +1384,7 @@ describe("transport retries on the activity line", () => {
 describe("the retry state after the retries are exhausted", () => {
   const codexCall: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
   const codexFailed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 1, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 };
+  const retrying: UiEvent = { _tag: "TransportRetrying", wait: 1, agent: "codex", purpose: "review", attempt: 1, of: 1, delaySeconds: 5, fault: "stream disconnected", fromMs: 0, untilMs: 5000 };
   const claudeCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
@@ -1718,13 +1718,13 @@ describe("a wait for a usage limit", () => {
   const UNTIL = FROM + 9_060_000;
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-1" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: false, callId: "claude-1" };
-  const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
+  const waitingFor: UiEvent = { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
   const lifted: UiEvent = { _tag: "UsageLimitLifted", agent: "claude", waitedMs: 9_060_000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("the wait sets limitWait, and the activity line names the limit and the instant it lifts", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor)])) {
-      expect(runOf(s, "implementation")?.limitWait).toEqual({ agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL });
+      expect(runOf(s, "implementation")?.limitWait).toEqual({ agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL, waitId: 1 });
       expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`);
       expect(statusOf(s)).toContain("five-hour session limit");
       expect(statusOf(s)).toContain("08:03 UTC");
@@ -1734,7 +1734,7 @@ describe("a wait for a usage limit", () => {
   // Issue #170: the activity line of each basis is the prompts' text for that basis (one event gives both sides).
   test("the activity line of each basis is usageLimitActivity for it", () => {
     for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: FROM - 60_000 }, { kind: "noKnownEnd", attempt: 2 }] as const) {
-      const event: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: null, basis, fromMs: FROM, untilMs: UNTIL };
+      const event: UiEvent = { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "planning", limitType: null, basis, fromMs: FROM, untilMs: UNTIL };
       for (const s of both([started, notified(call), notified(failed), notified(event)])) expect(statusOf(s)).toBe(`Claude — ${prompts.usageLimitActivity(event.limitType, event.basis, event.untilMs)}`);
     }
   });
@@ -2012,10 +2012,10 @@ describe("the rail as a tree that collapses", () => {
 describe("the countdown of a retry's wait", () => {
   const call: UiEvent = { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" };
   const failed: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 1000, untilMs: 6000 };
+  const retrying: UiEvent = { _tag: "TransportRetrying", wait: 1, agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "stream disconnected", fromMs: 1000, untilMs: 6000 };
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
   test("a TransportRetrying sets the wait; the retried call's start and the recovery clear it", () => {
-    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: 1000, untilMs: 6000 });
+    for (const s of both([started, notified(call), notified(failed), notified(retrying)])) expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: 1000, untilMs: 6000, waitId: 1 });
     for (const s of both([started, notified(call), notified(failed), notified(retrying), notified(call)])) {
       expect(runOf(s, "implementation")?.retry?.wait).toBe(null);
       expect(statusOf(s)).toBe("Codex — review — connection lost, retry 1 of 3 (stream disconnected)");
@@ -2024,9 +2024,9 @@ describe("the countdown of a retry's wait", () => {
   });
   // Issue #171: a tracker request's repeat is counted down the same way, named by its tracker.
   test("a TrackerRetrying sets the wait and an activity naming the tracker; TrackerRecovered clears it", () => {
-    const trackerRetrying: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 1000, untilMs: 31_000 };
+    const trackerRetrying: UiEvent = { _tag: "TrackerRetrying", wait: 1, tracker: "GitHub", what: "reading item 155", attempt: 2, of: 5, delaySeconds: 30, fault: "no answer", fromMs: 1000, untilMs: 31_000 };
     for (const s of both([started, notified(trackerRetrying)])) {
-      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "tracker", purpose: null, text: "connection lost, retry 2 of 5 (no answer)", wait: { fromMs: 1000, untilMs: 31_000 } });
+      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "tracker", purpose: null, text: "connection lost, retry 2 of 5 (no answer)", wait: { fromMs: 1000, untilMs: 31_000, waitId: 1 } });
       expect(statusOf(s)).toBe("GitHub — connection lost, retry 2 of 5 (no answer)");
     }
     for (const s of both([started, notified(call), notified(trackerRetrying), notified({ _tag: "TrackerRecovered", tracker: "GitHub" })])) {
@@ -2306,8 +2306,8 @@ describe("a wait outlives calls other than the one it waits for", () => {
   const reviewEnded: UiEvent = { _tag: "AgentCallEnded", agent: "codex", ok: true, callId: "codex-1" };
   const termsCall: UiEvent = { _tag: "AgentCallStarted", agent: "claude", purpose: "planning", callId: "claude-2" };
   const termsEnded: UiEvent = { _tag: "AgentCallEnded", agent: "claude", ok: true, callId: "claude-2" };
-  const limited: UiEvent = { _tag: "UsageLimitWaiting", agent: "claude", purpose: "interview", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
-  const retrying: UiEvent = { _tag: "TransportRetrying", agent: "claude", purpose: "interview", attempt: 1, of: 3, delaySeconds: 5, fault: "socket hang up", fromMs: FROM, untilMs: FROM + 5000 };
+  const limited: UiEvent = { _tag: "UsageLimitWaiting", wait: 1, agent: "claude", purpose: "interview", limitType: "five_hour", basis: { kind: "reset" }, fromMs: FROM, untilMs: UNTIL };
+  const retrying: UiEvent = { _tag: "TransportRetrying", wait: 1, agent: "claude", purpose: "interview", attempt: 1, of: 3, delaySeconds: 5, fault: "socket hang up", fromMs: FROM, untilMs: FROM + 5000 };
   const limitText = `Claude — ${prompts.usageLimitActivity("five_hour", { kind: "reset" }, UNTIL)}`;
   const retryText = "Claude — connection lost, retry 1 of 3 (socket hang up)";
   const before = [started, notified(interviewCall), notified(interviewFailed)];
@@ -2323,7 +2323,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
 
   test("a Codex review's start and end leave a retry's wait, and the activity line shows the retry again", () => {
     for (const s of both([...before, notified(retrying), notified(reviewCall), notified(reviewEnded)])) {
-      expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
+      expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000, waitId: 1 });
       expect(statusOf(s)).toBe(retryText);
     }
     for (const s of both([...before, notified(retrying), notified(reviewCall)])) expect(statusOf(s)).toBe("Codex — review");
@@ -2335,7 +2335,7 @@ describe("a wait outlives calls other than the one it waits for", () => {
       expect(statusOf(s)).toBe(limitText);
     }
     for (const s of both([...before, notified(retrying), notified(termsCall), notified(termsEnded)])) {
-      expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000 });
+      expect(runOf(s, "implementation")?.retry?.wait).toEqual({ fromMs: FROM, untilMs: FROM + 5000, waitId: 1 });
       expect(statusOf(s)).toBe(retryText);
     }
   });
@@ -2356,12 +2356,12 @@ describe("a wait outlives calls other than the one it waits for", () => {
 
   // Issue #201: a try for an unreachable network shows what is waited for and counts down to the next try; it is no
   // pending prompt, so the tab carries no waiting mark.
-  const networkWait: UiEvent = { _tag: "NetworkRetrying", agent: "claude", purpose: "interview", what: "an interview turn", attempt: 2, code: "EAI_AGAIN", delaySeconds: 60, fault: "API Error (EAI_AGAIN)", fromMs: FROM, untilMs: FROM + 60_000 };
+  const networkWait: UiEvent = { _tag: "NetworkRetrying", wait: 1, agent: "claude", purpose: "interview", what: "an interview turn", attempt: 2, code: "EAI_AGAIN", delaySeconds: 60, fault: "API Error (EAI_AGAIN)", fromMs: FROM, untilMs: FROM + 60_000 };
   const networkText = `Claude — ${prompts.networkRetryActivity("EAI_AGAIN", 2)}`;
 
   test("a network try sets the retry with its wait and the status, and is no pending prompt", () => {
     for (const s of both([...before, notified(networkWait)])) {
-      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "claude", purpose: "interview", text: prompts.networkRetryActivity("EAI_AGAIN", 2), wait: { fromMs: FROM, untilMs: FROM + 60_000 } });
+      expect(runOf(s, "implementation")?.retry).toEqual({ agent: "claude", purpose: "interview", text: prompts.networkRetryActivity("EAI_AGAIN", 2), wait: { fromMs: FROM, untilMs: FROM + 60_000, waitId: 1 } });
       expect(statusOf(s)).toBe(networkText);
       expect(modeWaiting(s, "implementation")).toBe(false);
     }
@@ -3234,5 +3234,28 @@ describe("the document under review on the dashboard (issue #86)", () => {
     const replayView = runOf(replayed(events), "implementation");
     expect(replayView?.dashboard.document).toEqual({ subject: { work: 1 }, document: { _tag: "Diff", text: "+x" } });
     expect(replayView?.dashboard).toEqual(liveView?.dashboard);
+  });
+});
+
+// Issue #215: each wait the developer may end carries its id into the view, and its early end clears the countdown shown.
+describe("waits ended early", () => {
+  const transport: UiEvent = { _tag: "TransportRetrying", wait: 7, agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "x", fromMs: 0, untilMs: 5000 };
+  const network: UiEvent = { _tag: "NetworkRetrying", wait: 8, agent: "claude", purpose: "planning", what: "a plan", attempt: 1, code: "EAI_AGAIN", delaySeconds: 40, fault: "x", fromMs: 0, untilMs: 40_000 };
+  const tracker: UiEvent = { _tag: "TrackerRetrying", wait: 9, tracker: "GitHub", what: "reading item 1", attempt: 1, of: 5, delaySeconds: 15, fault: "x", fromMs: 0, untilMs: 15_000 };
+  const limit: UiEvent = { _tag: "UsageLimitWaiting", wait: 10, agent: "claude", purpose: "planning", limitType: "five_hour", basis: { kind: "reset" }, fromMs: 0, untilMs: 60_000 };
+  const runAfter = (events: readonly UiEvent[]) => runOf(fold(live([started, ...events.map(notified)])), "implementation")!;
+
+  test("each of the four events sets its wait's id", () => {
+    expect(runAfter([transport]).retry?.wait?.waitId).toBe(7);
+    expect(runAfter([network]).retry?.wait?.waitId).toBe(8);
+    expect(runAfter([tracker]).retry?.wait?.waitId).toBe(9);
+    expect(runAfter([limit]).limitWait?.waitId).toBe(10);
+  });
+
+  test("WaitEndedEarly clears the wait it names and leaves another", () => {
+    expect(runAfter([transport, { _tag: "WaitEndedEarly", wait: 7 }]).retry).toMatchObject({ wait: null });
+    expect(runAfter([transport, { _tag: "WaitEndedEarly", wait: 6 }]).retry?.wait?.waitId).toBe(7);
+    expect(runAfter([limit, { _tag: "WaitEndedEarly", wait: 10 }]).limitWait).toBe(null);
+    expect(runAfter([limit, { _tag: "WaitEndedEarly", wait: 6 }]).limitWait?.waitId).toBe(10);
   });
 });

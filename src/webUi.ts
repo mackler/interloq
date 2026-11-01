@@ -18,6 +18,7 @@ import { isDecide, isTermsRequest, parseAskLine, parseMessage } from "./input.ts
 import { piecesText } from "./pieces.ts";
 import type { Asked, OnExpiry, RunEvent } from "./protocol.ts";
 import type { AskKind, DuringAnswer, QuestionFrame, UiShape } from "./services.ts";
+import { type EndWaitResult, makeWaits, waitCounter, type WaitId } from "./waits.ts";
 import { promptOf } from "./userPrompts.ts";
 import type { OutputEvent } from "./liveOutput.ts";
 
@@ -40,6 +41,8 @@ export type WebUi = UiShape &
     hold: (prompt: number) => Effect.Effect<boolean>;
     /** The prompt that waits, if any. */
     pending: Effect.Effect<Asked | null>;
+    /** Issue #215: ends the run's wait `id` early, or says it is not this run's or has already ended. */
+    endWait: (id: WaitId) => Effect.Effect<EndWaitResult>;
   }>;
 
 type Waiting = Readonly<{ asked: Asked; answer: Deferred.Deferred<string, NoAnswer>; held: boolean; where: string; question: AskedQuestion | null }>;
@@ -93,8 +96,10 @@ const secondsOf = (countdown: NonNullable<Asked["countdown"]>): number => Math.r
 
 /** `sink` must not block: it records and offers the event (src/runManager.ts, makePublisher), so the answer's protected step stays short. */
 /** Issue #49: `live` receives the Ui's output events, which never reach `sink`, so nothing of them is recorded. */
-export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing: AnswerTiming = NO_TIMING, live: (event: OutputEvent) => Effect.Effect<void> = () => Effect.void): Effect.Effect<WebUi> =>
+export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing: AnswerTiming = NO_TIMING, live: (event: OutputEvent) => Effect.Effect<void> = () => Effect.void, allocateWait?: Effect.Effect<WaitId>): Effect.Effect<WebUi> =>
   Effect.gen(function* () {
+    // Issue #215: the run's waits the developer may end early, their ids from the run manager's one counter.
+    const waits = yield* makeWaits(allocateWait ?? (yield* waitCounter));
     // The dialogue is serialized: a second concurrent prompt waits for the first answer, and is timed only when shown.
     const dialogue = yield* Semaphore.make(1);
     const prompts = yield* Ref.make<Prompts>({ next: 1, waiting: null, frames: [], nextFrame: 1, expired: new Map(), carryHold: new Set<number>(), lastPresented: null });
@@ -297,5 +302,7 @@ export const makeWebUi = (sink: (event: RunEvent) => Effect.Effect<void>, timing
           }),
         ),
       pending: Ref.get(prompts).pipe(Effect.map(shownOf)),
+      openWait: waits.open,
+      endWait: waits.end,
     };
   });

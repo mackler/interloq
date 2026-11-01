@@ -66,9 +66,9 @@ describe("the dashboard", () => {
     expect(mountDashboard(runWith({ status: { _tag: "Interloq", text: "Planning began." } })).target.querySelector("[data-status]")?.textContent).toBe("Planning began.");
     expect(mountDashboard(runWith({})).target.querySelector("[data-status]")?.textContent).toBe(prompts.NO_AGENT_WORKING);
     const now = Date.now();
-    const retry = mountDashboard(runWith({ status: { _tag: "Activity", text: "Codex — retry" } }, { retry: { agent: "codex", purpose: "review", text: "retry", wait: { fromMs: now - 1000, untilMs: now + 60_000 } } }));
+    const retry = mountDashboard(runWith({ status: { _tag: "Activity", text: "Codex — retry" } }, { retry: { agent: "codex", purpose: "review", text: "retry", wait: { fromMs: now - 1000, untilMs: now + 60_000, waitId: 1 } } }));
     expect(retry.target.querySelector("[data-retry-wait]")).not.toBe(null);
-    const limit = mountDashboard(runWith({}, { limitWait: { agent: "claude", purpose: "planning", limitType: null, basis: { kind: "reset" }, fromMs: now - 1000, untilMs: now + 60_000 } }));
+    const limit = mountDashboard(runWith({}, { limitWait: { agent: "claude", purpose: "planning", limitType: null, basis: { kind: "reset" }, fromMs: now - 1000, untilMs: now + 60_000, waitId: 2 } }));
     expect(limit.target.querySelector("[data-limit-wait]")).not.toBe(null);
   });
 

@@ -622,7 +622,8 @@ export const LIMIT_WAIT_BASES = ["reset", "pastReset", "noKnownEnd"] as const;
  * How a usage limit's wait ended: `lifted`, a stated reset's wait ran to its end; `elapsed` (issue #170), a wait whose
  * end was not stated ran to its end, which says nothing about the limit; `interrupted`.
  */
-export const LIMIT_WAIT_OUTCOMES = ["lifted", "elapsed", "interrupted"] as const;
+/** Issue #215: `ended`, a wait the developer ended early. */
+export const LIMIT_WAIT_OUTCOMES = ["lifted", "elapsed", "interrupted", "ended"] as const;
 /** One wait for a Claude Code usage limit (issue #68): the scheduled end apart from the actual one, and how it ended. */
 export const LimitWaitUsage = Schema.Struct({
   version: Schema.Literal(2),

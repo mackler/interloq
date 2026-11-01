@@ -41,23 +41,25 @@ export type UiEvent =
    */
   | Readonly<{ _tag: "AgentReconnecting"; agent: Agent; by: "sdk"; attempt: number | null; of: number | null; delayMs: number | null; detail: string; callId: string }>
   /** The program retries a call that failed from a transport fault (issue #26): retry `attempt` of `of`, after `delaySeconds`. */
-  | Readonly<{ _tag: "TransportRetrying"; agent: Agent; purpose: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
+  | Readonly<{ _tag: "TransportRetrying"; agent: Agent; purpose: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number; wait: number }>
   /**
    * Issue #201: a try for an unreachable network once the retries are used up, with no bound: `what` the call in words,
    * `attempt` the try counted from 1 since the retries were used up, `code` the network code of the last fault.
    */
-  | Readonly<{ _tag: "NetworkRetrying"; agent: Agent; purpose: string; what: string; attempt: number; code: NetworkCode; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
+  | Readonly<{ _tag: "NetworkRetrying"; agent: Agent; purpose: string; what: string; attempt: number; code: NetworkCode; delaySeconds: number; fault: string; fromMs: number; untilMs: number; wait: number }>
   /** A call succeeded after a retry. */
   | Readonly<{ _tag: "TransportRecovered"; agent: Agent }>
   /**
    * Issue #171: the program repeats a tracker request that reached no answer or a server error: repeat `attempt` of
    * `of` of `what` (the request in words), after `delaySeconds`, from `fromMs` to `untilMs`.
    */
-  | Readonly<{ _tag: "TrackerRetrying"; tracker: string; what: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number }>
+  | Readonly<{ _tag: "TrackerRetrying"; tracker: string; what: string; attempt: number; of: number; delaySeconds: number; fault: string; fromMs: number; untilMs: number; wait: number }>
   /** A tracker request succeeded after a repeat, or the item read back showed a write applied. */
   | Readonly<{ _tag: "TrackerRecovered"; tracker: string }>
   // Issue #68: a wait for a usage limit with a stated reset, from its start to its scheduled end, and its end.
-  | Readonly<{ _tag: "UsageLimitWaiting"; agent: Agent; purpose: string; limitType: string | null; basis: LimitWaitBasis; fromMs: number; untilMs: number }>
+  | Readonly<{ _tag: "UsageLimitWaiting"; agent: Agent; purpose: string; limitType: string | null; basis: LimitWaitBasis; fromMs: number; untilMs: number; wait: number }>
+  /** Issue #215: the developer ended the wait `wait` (the id its announcing event carried); its request is made again now. */
+  | Readonly<{ _tag: "WaitEndedEarly"; wait: number }>
   | Readonly<{ _tag: "UsageLimitLifted"; agent: Agent; waitedMs: number }>
   /** `answered` of `total` questions so far (issue #21): the agreed ones and the follow-ups Claude reports asking. */
   | Readonly<{ _tag: "InterviewTurn"; heading: string; message: string; summary: string | null; answered: number; total: number }>
@@ -179,6 +181,8 @@ export const describeEvent = (event: UiEvent): string => {
       return usageLimitWaitLine(event.agent, event.limitType, event.basis, event.untilMs);
     case "UsageLimitLifted":
       return usageLimitLiftedLine(event.agent, event.waitedMs);
+    case "WaitEndedEarly":
+      return `you ended wait ${event.wait} early`;
     case "InterviewTurn":
       return `${event.heading} (${event.answered} of ${event.total} answered): ${event.message}`;
     case "InterviewCounted":

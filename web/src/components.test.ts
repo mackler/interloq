@@ -2355,7 +2355,7 @@ test("the activity line shows retry 2 of 3", () => {
   const events: UiEvent[] = [
     { _tag: "AgentCallStarted", agent: "codex", purpose: "review", callId: "codex-1" },
     { _tag: "AgentCallEnded", agent: "codex", ok: false, callId: "codex-1" },
-    { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 },
+    { _tag: "TransportRetrying", wait: 1, agent: "codex", purpose: "review", attempt: 2, of: 3, delaySeconds: 10, fault: "stream disconnected", fromMs: 0, untilMs: 10_000 },
   ];
   const time = "2026-09-29T00:00:00Z";
   const messages: ServerMessage[] = [
@@ -2379,7 +2379,7 @@ test("the activity line counts down the wait before a retry with a determinate p
   try {
     const now = Date.UTC(2026, 9, 7, 12, 0, 0);
     vi.setSystemTime(now);
-    const retrying = show(StatusLine, { status: activityStatus("Codex — connection lost, retry 1 of 3 (x)"), retry: { fromMs: now - 1000, untilMs: now + 4000 } });
+    const retrying = show(StatusLine, { status: activityStatus("Codex — connection lost, retry 1 of 3 (x)"), retry: { fromMs: now - 1000, untilMs: now + 4000, waitId: 1 } });
     const bar = one(retrying, "[role=progressbar]");
     expect(bar.getAttribute("aria-label")).toBe(prompts.RETRY_WAITING_LABEL);
     expect(Number(bar.getAttribute("aria-valuenow"))).toBe(20);
@@ -2399,7 +2399,7 @@ test("the activity line counts down the wait before a tracker request's repeat, 
     const now = Date.UTC(2026, 9, 15, 12, 0, 0);
     vi.setSystemTime(now);
     const time = "2026-10-15T12:00:00Z";
-    const event: UiEvent = { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 155", attempt: 1, of: 5, delaySeconds: 15, fault: "no answer", fromMs: now - 3000, untilMs: now + 12_000 };
+    const event: UiEvent = { _tag: "TrackerRetrying", wait: 1, tracker: "GitHub", what: "reading item 155", attempt: 1, of: 5, delaySeconds: 15, fault: "no answer", fromMs: now - 3000, untilMs: now + 12_000 };
     const messages: ServerMessage[] = [
       { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "replay", ui: [], runs: [] },
@@ -2424,7 +2424,7 @@ test("a countdown received 250 ms before its end is gone at its end, before the 
   try {
     const now = Date.UTC(2026, 9, 7, 12, 0, 0);
     vi.setSystemTime(now);
-    const wait = { fromMs: now - 4750, untilMs: now + 250 };
+    const wait = { fromMs: now - 4750, untilMs: now + 250, waitId: 1 };
     for (const props of [{ status: activityStatus("Codex — retry"), retry: wait }, { status: activityStatus("Claude — waiting"), wait: { ...wait, agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const } }]) {
       vi.setSystemTime(now);
       const root = show(StatusLine, props);
@@ -3001,7 +3001,7 @@ test("each option card shows its label in bold as its own element and its descri
 // the wait elapsed and the time remaining, in place of the indeterminate one.
 test("the activity line shows a determinate progressbar and the time remaining during a usage-limit wait", () => {
   const now = Date.now();
-  const wait = { agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const, fromMs: now - 3_600_000, untilMs: now + 3_600_000 };
+  const wait = { agent: "claude" as const, purpose: "planning", limitType: "five_hour", basis: { kind: "reset" } as const, fromMs: now - 3_600_000, untilMs: now + 3_600_000, waitId: 1 };
   const root = show(StatusLine, { status: activityStatus("Claude — waiting"), wait });
   const bar = one(root, "[role=progressbar]");
   expect(bar.getAttribute("aria-label")).toBe(prompts.USAGE_LIMIT_WAITING_LABEL);

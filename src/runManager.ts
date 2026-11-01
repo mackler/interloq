@@ -13,7 +13,7 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
+import { WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
 import { type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
@@ -39,6 +39,7 @@ import type { RunRoot } from "./artifacts.ts";
 import { emptyUiState, type RunUiState, type UiFlag, withFlag } from "./uiState.ts";
 import { type AnswerTiming, makeWebUi, type WebUi } from "./webUi.ts";
 import type { OutputEvent } from "./liveOutput.ts";
+import { unendableWait, waitCounter } from "./waits.ts";
 
 /** One event of a run as it is broadcast: the run's id, the event's sequence number in that run (from 0) and the time of its publication. */
 export type EventBroadcast = Readonly<{ _tag: "event"; run: number; seq: number; time: string; event: RunEvent }>;
@@ -86,6 +87,12 @@ export type RunManager = Readonly<{
    * for good. A prompt that no longer waits is not refused (the frame may cross its answer); it does nothing.
    */
   hold: (incarnation: string, run: number, prompt: number) => Effect.Effect<Refusal | null>;
+  /**
+   * Issue #215: the developer ends the wait `wait` of the run with that id of that incarnation. Refused for another
+   * incarnation, for a run not in progress, for a wait that is not that run's (wait ids are unique across the server, so
+   * another run's wait is one this run never had), and for a wait that has already ended, each in the run's tab.
+   */
+  endWait: (incarnation: string, run: number, wait: number) => Effect.Effect<Refusal | null>;
   /** Opens or closes one scope of the shared state of the run with that id of that incarnation, the current or the last one (issue #87). */
   setUi: (incarnation: string, run: number, flag: UiFlag) => Effect.Effect<Refusal | null>;
   /**
@@ -242,6 +249,8 @@ export const makeRunManager = (
     // Issue #131 (requirements F4): the preparation's switch, failures and releases as the last server left them.
     const state = yield* Ref.make<State>({ nextId: 1, runs: { refinement: EMPTY, implementation: EMPTY }, closing: false, chain: restoredChain, preparation: loaded.preparation });
     const listeners = yield* Ref.make<ReadonlySet<Listener<Broadcast>>>(new Set());
+    /** Issue #215: one counter of wait ids for the server, so a wait id names exactly one wait of one run. */
+    const allocateWait = yield* waitCounter;
     const step = yield* makeStepper(state, listeners);
     // Issue #49: a run's live output goes to every listener, outside the publisher's step, changing no State.
     const emitOutput = (id: number, event: OutputEvent): Effect.Effect<void> =>
@@ -459,7 +468,7 @@ export const makeRunManager = (
         );
         if (Result.isFailure(kept)) return yield* record(store, { _tag: "NotReturned", cause: describe(kept.failure) });
         if (kept.success) return;
-        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), output: () => Effect.void, enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }) };
+        const silent: UiShape = { say: () => Effect.void, notify: () => Effect.void, ask: () => Effect.succeed(""), askMessage: () => Effect.succeed(""), nextQuestion: Effect.succeed(0), output: () => Effect.void, enterQuestion: () => Effect.succeed({ askDuring: (_p, _k, work) => Effect.map(work, (value) => ({ _tag: "Done" as const, value })) }), openWait: unendableWait };
         const env: TrackerRetryEnv = { ui: silent, settings: config.success, record: (markdown) => store.converse(markdown).pipe(Effect.ignore), ask: () => Effect.succeed(TRANSPORT_ANSWERS.stop), exhausted: "ask" };
         const written = yield* withTracker((t) =>
           t.read(item).pipe(
@@ -593,7 +602,7 @@ export const makeRunManager = (
         // W2-R1-1 of issue #192: the code the program computed, which a Stop task during its uninterruptible ending
         // cannot overrule; a run ended before its records or by a defect leaves it empty, and exitCodeOf decides.
         const concluded = yield* Ref.make(Option.none<Conclusion>());
-        const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))), answerTimingOf(mode, seconds, idRef), (event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => emitOutput(rid, event))));
+        const ui = yield* makeWebUi((event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => append(rid, event))), answerTimingOf(mode, seconds, idRef), (event) => Ref.get(idRef).pipe(Effect.flatMap((rid) => emitOutput(rid, event))), allocateWait);
         // Issue #192: a halted run asks the chain to park its leftovers in one serialized step, so the program's choice
         // to keep its item implementing rests on the chain's own decision; while closing nothing is granted.
         const claim = Ref.get(idRef).pipe(
@@ -806,6 +815,16 @@ export const makeRunManager = (
             if (of !== incarnation) return Effect.succeed(earlier(found?.mode ?? null));
             if (found === null) return Effect.succeed(ended);
             return found.run.ui.hold(prompt).pipe(Effect.as(null));
+          }),
+        ),
+      endWait: (of, id, wait) =>
+        currentRun(id).pipe(
+          Effect.flatMap((found) => {
+            if (of !== incarnation) return Effect.succeed(earlier(found?.mode ?? null));
+            if (found === null) return Effect.succeed(ended);
+            return found.run.ui.endWait(wait).pipe(
+              Effect.map((result): Refusal | null => (result === "ended" ? null : { refused: result === "notWaiting" ? WAIT_NOT_WAITING_TEXT : WAIT_ALREADY_ENDED_TEXT, mode: found.mode })),
+            );
           }),
         ),
       // Issue #87: the change and its broadcast are one serialized, uninterruptible step of the publisher, so every tab

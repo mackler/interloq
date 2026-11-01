@@ -126,6 +126,8 @@ test("recordLimitWait keeps each basis and outcome, and usageLines reads them ba
     { agent: "claude" as const, limitType: null, basis: "pastReset" as const, fromMs: from, untilMs: from + 60_000, endedMs: from + 60_000, outcome: "elapsed" as const },
     { agent: "claude" as const, limitType: "five_hour", basis: "noKnownEnd" as const, fromMs: from, untilMs: from + 300_000, endedMs: from + 300_000, outcome: "elapsed" as const },
     { agent: "claude" as const, limitType: null, basis: "reset" as const, fromMs: from, untilMs: from + 600_000, endedMs: from + 600_000, outcome: "lifted" as const },
+    // Issue #215: a wait the developer ended early.
+    { agent: "claude" as const, limitType: "five_hour", basis: "reset" as const, fromMs: from, untilMs: from + 9_000_000, endedMs: from + 120_000, outcome: "ended" as const },
   ];
   for (const w of waits) await Effect.runPromise(s.recordLimitWait(w));
   assert.deepEqual((await Effect.runPromise(s.usageLines())).waits, waits);

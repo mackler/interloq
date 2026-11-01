@@ -2,6 +2,7 @@
 // review; decision Q8). The store reads the lines; program.ts renders the summary.
 
 import type { LimitWaitBasis } from "./limitReset.ts";
+import type { LIMIT_WAIT_OUTCOMES } from "./schema.ts";
 import { durationText } from "./prompts.ts";
 import type { ClaudeFailure } from "./transport.ts";
 
@@ -27,7 +28,7 @@ export type LimitWaitBegan = Readonly<{
  * One wait for a Claude Code usage limit (issue #68): its start, when it actually ended and how. Only the actual span
  * counts as waited.
  */
-export type LimitWait = LimitWaitBegan & Readonly<{ endedMs: number; outcome: "lifted" | "elapsed" | "interrupted" }>;
+export type LimitWait = LimitWaitBegan & Readonly<{ endedMs: number; outcome: (typeof LIMIT_WAIT_OUTCOMES)[number] }>;
 
 /**
  * One rate-limit notice of a Claude Code request (issue #170, requirement Q3): the session it arrived in, and the SDK's

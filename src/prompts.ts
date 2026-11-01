@@ -2137,7 +2137,7 @@ export function draftWithdrawnNotice(text: string): string {
 export const SERVER_CLOSED_NOTICE = "The server has ended. The page reconnects when it is started again.";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
-const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation", string> = {
+const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait", string> = {
   answer: "Your answer was not sent",
   // Issue #185.
   hold: "That you are working on the question was not sent, so its countdown may still run",
@@ -2148,6 +2148,8 @@ const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "c
   chain: "The change of the setting that starts the next refined item was not sent",
   // Issue #131.
   preparation: "Turning the preparation of marked items' questions on or off was not sent",
+  // Issue #215.
+  endWait: "The request to end the wait was not sent",
 };
 const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = {
   ended: "the run has ended",
@@ -2158,7 +2160,7 @@ const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = 
  * An action that was not sent: queued while disconnected and overtaken by the reconnection, or refused because the page
  * has stopped reconnecting. A disconnected answer says where its text is: in the answer field, or quoted and kept.
  */
-export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
+export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
   const base = `${NOT_SENT_SUBJECT[kind]}: ${NOT_SENT_REASON[reason]}.`;
   if (kind !== "answer" || reason !== "disconnected") return base;
   return quoted === undefined ? `${base} Its text is still in the answer field.` : `${base} Its text is kept under “${UNSENT_HEADING}”: «${quoted}»`;
@@ -3057,6 +3059,33 @@ export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string 
 export function usageLimitTryingAgainLine(agent: "claude" | "codex"): string {
   return `${agentName(agent)}: trying again after the wait for the usage limit`;
 }
+/**
+ * Issue #215: the text of the control beside a wait's countdown. It asserts only that the wait ends and the request is
+ * made again, never that a limit has lifted or that a connection is back.
+ */
+export const END_WAIT_LABEL = "Try again now";
+/** Issue #215: the wait the developer ended early, by what it waited for. */
+export type WaitSubject =
+  | Readonly<{ kind: "usageLimit"; agent: "claude" | "codex" }>
+  | Readonly<{ kind: "retry"; agent: "claude" | "codex" }>
+  | Readonly<{ kind: "network"; agent: "claude" | "codex" }>
+  | Readonly<{ kind: "tracker"; tracker: string; what: string }>;
+/** Issue #215: the line said and written when the developer ends a wait: who ended it, and that the request is made again now; no claim that a limit lifted. */
+export function waitEndedLine(subject: WaitSubject): string {
+  switch (subject.kind) {
+    case "usageLimit":
+      return `You ended the wait for ${agentName(subject.agent)}'s usage limit; Interloq is trying the request again now`;
+    case "retry":
+      return `You ended the wait before the next try to reach ${agentName(subject.agent)}; Interloq is trying the request again now`;
+    case "network":
+      return `You ended the wait for the network to reach ${agentName(subject.agent)}; Interloq is trying the request again now`;
+    case "tracker":
+      return `You ended the wait before the next try of ${subject.tracker} while ${subject.what}; Interloq is trying the request again now`;
+  }
+}
+/** Issue #215: the refusals of a request to end a wait, shown in the run's tab. */
+export const WAIT_NOT_WAITING_TEXT = "That run is not waiting.";
+export const WAIT_ALREADY_ENDED_TEXT = "That wait has already ended.";
 /** Issue #184: a background try of a request whose retries are used up, while the developer answers the agreed questions. */
 export function backgroundRetryLine(agent: "claude" | "codex", what: string, count: number, seconds: number): string {
   return `${agentName(agent)} could not be reached for ${what}; trying again in the background every ${durationText(seconds * 1000)} while you answer, try ${count}`;

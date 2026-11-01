@@ -27,7 +27,7 @@
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
-  import { chainFrame, holdFrame, itemsFrame, preparationFrame, startFrame } from "../tabs.ts";
+  import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, startFrame } from "../tabs.ts";
   import { fullTime } from "../time.ts";
   import { awaitedKey, carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { isTermsRequest } from "../../../src/input.ts";
@@ -62,6 +62,16 @@
    */
   // Issue #185: the developer is working on the prompt; its countdown stops.
   const hold = (target: RunView, prompt: number) => send(holdFrame(view.incarnation ?? "", target.id, prompt));
+  // Issue #215: the waits this page asked to end, by incarnation, run and wait, so the full and the compact dashboards,
+  // separate instances, send one frame per wait between them. A new wait has a new id, unique across the server.
+  let endWaitsSent = $state<ReadonlySet<string>>(new Set());
+  const endWaitKey = (target: RunView, wait: number) => `${view.incarnation ?? ""}/${target.id}/${wait}`;
+  const endWait = (target: RunView, wait: number) => {
+    const key = endWaitKey(target, wait);
+    if (endWaitsSent.has(key)) return;
+    endWaitsSent = new Set([...endWaitsSent, key]);
+    send(endWaitFrame(view.incarnation ?? "", target.id, wait));
+  };
   const answer = (target: RunView, prompt: number, text: string) => {
     const key = draftKeyOf(target.id);
     const own = drafts[key] ?? null;
@@ -467,7 +477,7 @@
       <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} />
+          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} onEndWait={(w) => { if (run !== null) endWait(run, w); }} endWaitSent={(w) => run !== null && endWaitsSent.has(endWaitKey(run, w))} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">
@@ -489,7 +499,7 @@
              below the question, so that it and its first answer keep their place at the top. Issue #200 (requirements
              Q1): not below the decision page, which keeps the window's room; they return on leaving it. -->
         {#if asking && !deciding}
-          <div class="dashboard-compact" class:running={hasRunning(runOutput)}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} /></div>
+          <div class="dashboard-compact" class:running={hasRunning(runOutput)}><Dashboard {run} compact answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} onEndWait={(w) => { if (run !== null) endWait(run, w); }} endWaitSent={(w) => run !== null && endWaitsSent.has(endWaitKey(run, w))} /></div>
         {/if}
         {#if !compact && latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
         {#if run.ended !== null}

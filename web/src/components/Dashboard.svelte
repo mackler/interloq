@@ -29,8 +29,8 @@
   const NAME = "You and Interloq";
   // Issue #49: `output`, the run's live panel as this tab received it; shown in the full form always and in the compact
   // form only while `hasRunning` (issue #200, requirements Q2).
-  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; documentOpen?: boolean; onDocument?: (open: boolean) => void; compact?: boolean; output?: LivePanel };
-  let { run, answersOpen, onAnswers, documentOpen = false, onDocument = () => {}, compact = false, output = EMPTY_PANEL }: Props = $props();
+  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; documentOpen?: boolean; onDocument?: (open: boolean) => void; compact?: boolean; output?: LivePanel; onEndWait?: (wait: number) => void; endWaitSent?: (wait: number) => boolean };
+  let { run, answersOpen, onAnswers, documentOpen = false, onDocument = () => {}, compact = false, output = EMPTY_PANEL, onEndWait = () => {}, endWaitSent = () => false }: Props = $props();
   const d = $derived(run.dashboard);
   const last = $derived(lastAnswer(d));
   const listId = $derived(`dashboard-answers-${run.id}-${compact ? "compact" : "full"}`);
@@ -55,7 +55,7 @@
       <p class="models" data-models>{#if d.models.claude !== null}<span>{d.models.claude}</span>{/if}{#if d.models.codex !== null}<span>{d.models.codex}</span>{/if}</p>
     {/if}
   {/if}
-  <StatusLine status={d.status} retry={run.retry?.wait ?? null} wait={run.limitWait} {compact} />
+  <StatusLine status={d.status} retry={run.retry?.wait ?? null} wait={run.limitWait} {compact} {onEndWait} {endWaitSent} />
   {#if compact && hasRunning(output)}<LiveOutput panel={output} lines={COMPACT_PANEL_LINES} />{/if}
   <div class="regions">
     {#if !compact}

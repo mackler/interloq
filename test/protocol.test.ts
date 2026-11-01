@@ -119,16 +119,18 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   ),
   fc.constant({ _tag: "AnswerRejected" as const }),
   // Issue #26: the program's retry and its recovery.
-  fc.record({ _tag: fc.constant("TransportRetrying" as const), agent, purpose: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
+  fc.record({ _tag: fc.constant("TransportRetrying" as const), wait: nat, agent, purpose: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TransportRecovered" as const), agent }),
   // Issue #201: a try for an unreachable network.
-  fc.record({ _tag: fc.constant("NetworkRetrying" as const), agent, purpose: text, what: text, attempt: nat, code: fc.constantFrom(...NETWORK_CODES), delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
+  fc.record({ _tag: fc.constant("NetworkRetrying" as const), wait: nat, agent, purpose: text, what: text, attempt: nat, code: fc.constantFrom(...NETWORK_CODES), delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   // Issue #171.
-  fc.record({ _tag: fc.constant("TrackerRetrying" as const), tracker: text, what: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
+  fc.record({ _tag: fc.constant("TrackerRetrying" as const), wait: nat, tracker: text, what: text, attempt: nat, of: nat, delaySeconds: fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true }), fault: text, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("TrackerRecovered" as const), tracker: text }),
   // Issue #170: a usage limit's wait with its basis.
-  fc.record({ _tag: fc.constant("UsageLimitWaiting" as const), agent, purpose: text, limitType: fc.option(text, { nil: null }), basis: limitBasis, fromMs: nat, untilMs: nat }),
+  fc.record({ _tag: fc.constant("UsageLimitWaiting" as const), wait: nat, agent, purpose: text, limitType: fc.option(text, { nil: null }), basis: limitBasis, fromMs: nat, untilMs: nat }),
   fc.record({ _tag: fc.constant("UsageLimitLifted" as const), agent, waitedMs: nat }),
+  // Issue #215: a wait the developer ended early.
+  fc.record({ _tag: fc.constant("WaitEndedEarly" as const), wait: nat }),
   // Issue #26: the SDK's own reconnection.
   fc.record({ _tag: fc.constant("AgentReconnecting" as const), agent, by: fc.constant("sdk" as const), attempt: fc.option(nat, { nil: null }), of: fc.option(nat, { nil: null }), delayMs: fc.option(nat, { nil: null }), detail: text, callId: text }),
   // Issue #6: the phases known of the run.
@@ -485,7 +487,7 @@ test("a PhaseBegan and a PhaseEnded of a Full test suite decode", () => {
 // Issue #170: a usage limit's wait carries its basis; a try with no known end counts from 1.
 test("a usage limit's wait decodes with each basis, and not with a try numbered 0 or without its basis", () => {
   const frame = (event: unknown) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
-  const waiting = { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: null, fromMs: 0, untilMs: 300_000 };
+  const waiting = { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: null, fromMs: 0, untilMs: 300_000, wait: 1 };
   for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: 5 }, { kind: "noKnownEnd", attempt: 1 }])
     assert.deepEqual(decoded(decodeServer(frame({ ...waiting, basis }))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...waiting, basis } } });
   assert.ok(Result.isFailure(decodeServer(frame({ ...waiting, basis: { kind: "noKnownEnd", attempt: 0 } }))));
@@ -495,7 +497,7 @@ test("a usage limit's wait decodes with each basis, and not with a try numbered 
 // Issue #201: a network try round-trips with every network code, and a code outside the list does not decode.
 test("a NetworkRetrying event decodes with a network code and not with another code", () => {
   const frame = (event: unknown) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
-  const event = { _tag: "NetworkRetrying", agent: "codex", purpose: "review", what: "a review", attempt: 1, code: "ENOTFOUND", delaySeconds: 40, fault: "getaddrinfo ENOTFOUND", fromMs: 0, untilMs: 40_000 };
+  const event = { _tag: "NetworkRetrying", agent: "codex", purpose: "review", what: "a review", attempt: 1, code: "ENOTFOUND", delaySeconds: 40, fault: "getaddrinfo ENOTFOUND", fromMs: 0, untilMs: 40_000, wait: 2 };
   for (const code of NETWORK_CODES) assert.deepEqual(decoded(decodeServer(frame({ ...event, code }))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { ...event, code } } });
   assert.ok(Result.isFailure(decodeServer(frame({ ...event, code: "ERR_OTHER" }))));
 });
@@ -585,4 +587,21 @@ test("a DocumentShown whose document has an unknown tag does not decode", () => 
   const bad = JSON.parse(JSON.stringify(good));
   bad.event.event.document._tag = "Html";
   assert.equal(Result.isFailure(decodeServer(JSON.stringify(bad))), true);
+});
+
+// Issue #215: each wait the developer may end carries its id, required, and the early end names it.
+test("the four endable waits carry their id, required, and WaitEndedEarly decodes", () => {
+  const frame = (event: unknown) => JSON.stringify({ type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
+  const events = [
+    { _tag: "TransportRetrying", agent: "codex", purpose: "review", attempt: 1, of: 3, delaySeconds: 5, fault: "reset", fromMs: 0, untilMs: 5000, wait: 3 },
+    { _tag: "NetworkRetrying", agent: "claude", purpose: "planning", what: "a plan", attempt: 1, code: "EAI_AGAIN", delaySeconds: 40, fault: "x", fromMs: 0, untilMs: 40_000, wait: 4 },
+    { _tag: "TrackerRetrying", tracker: "GitHub", what: "reading item 1", attempt: 1, of: 5, delaySeconds: 15, fault: "x", fromMs: 0, untilMs: 15_000, wait: 5 },
+    { _tag: "UsageLimitWaiting", agent: "claude", purpose: "planning", limitType: null, basis: { kind: "reset" }, fromMs: 0, untilMs: 300_000, wait: 6 },
+    { _tag: "WaitEndedEarly", wait: 6 },
+  ];
+  for (const event of events) {
+    assert.deepEqual(decoded(decodeServer(frame(event))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
+    const { wait: _, ...without } = event;
+    assert.ok(Result.isFailure(decodeServer(frame(without))), event._tag);
+  }
 });
