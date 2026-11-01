@@ -388,7 +388,12 @@ test("a listing the tracker never answers does not hold back an answer to the ot
     const asked = pending(a, 1)!;
     a.send({ type: "items", mode: "refinement" });
     a.send({ type: "answer", incarnation: "test", run: 1, prompt: asked.prompt, text: "PostgreSQL" });
-    await until("the end", () => hasEnded(a, 1), 10_000);
+    // The answer reaching the run promptly is what a stalled listing must not hold back: the manager publishes the
+    // run's Answered event when it takes the answer, so a held-back answer would never produce it.
+    await until("the answer taken", () => (perRun(a).get(1) ?? []).some((e) => e.event._tag === "Answered" && e.event.prompt === asked.prompt), 10_000);
+    // The rest of the run (plan review, execution, work review) runs over the scripted agents; its bound is sized for a
+    // loaded machine, as the component tests' 120 s testTimeout is.
+    await until("the end", () => hasEnded(a, 1), 120_000);
     assert.match(fs.readFileSync(path.join(runDirOf(repo), "user-decisions.md"), "utf8"), /Decision: PostgreSQL/);
     assert.ok(!itemsArrived(a), "the stalled listing answered");
     a.close();
