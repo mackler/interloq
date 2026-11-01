@@ -1180,7 +1180,8 @@ describe("App and the draft", () => {
       expect(document.title).toBe(tabTitle("/p"));
     });
 
-    test("a watched run's end at a tab kept hidden: New task clears the end marker", async () => {
+    // Issue #209: showing the list no longer counts as seeing the end; only the run on screen in a visible page does.
+    test("a watched run's end at a tab kept hidden: New task keeps the end marker, which the visible page clears", async () => {
       begin("hidden");
       const { root, ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
@@ -1188,7 +1189,7 @@ describe("App and the draft", () => {
       expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
       one(root, "button[name=new]").click();
       flushSync();
-      expect(document.title).toBe(tabTitle("/p"));
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
     });
 
     test("a run that ends at a visible tab: no notification and no marker", async () => {
@@ -1826,6 +1827,61 @@ describe("App: several refinement runs", () => {
       ws.receive({ type: "event", run: 1, seq: 3, time: TIME, event: { _tag: "Answered", prompt: 1, text: "x" } });
       ws.receive({ type: "event", run: 1, seq: 4, time: TIME, event: askedOf(2) });
       expect(NotificationStub.calls).toHaveLength(1);
+    });
+
+    // Issue #209: a run's end raises whenever the run is not on screen, and its tab carries the end's mark until shown.
+    for (const code of [0, 130]) {
+      test(`issue #209: a run that ends while another is shown in a visible page notifies once and marks its tab (code ${code})`, async () => {
+        begin("visible");
+        const { root, ws } = await open([1, 2]);
+        ws.receive(twoRuns);
+        expect(headline(root)).toBe(prompts.itemHeadline("12", "title 12"));
+        ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code } });
+        expect(NotificationStub.calls.filter((c) => c.title === prompts.endNotificationTitle("p", code))).toHaveLength(1);
+        const first = prompts.runTabName({ id: "11", title: "title 11" });
+        expect(runTabNames(root)[1]).toBe(prompts.endedTabName(first, code));
+        expect(document.title).toBe(tabTitle("/p", { _tag: "Waiting" }));
+        clickRunTab(root, "run-1");
+        expect(runTabNames(root)[1]).toBe(first);
+        expect(NotificationStub.calls.filter((c) => c.title === prompts.endNotificationTitle("p", code))).toHaveLength(1);
+      });
+    }
+
+    test("issue #209: with no run waiting, the title carries the unseen end's mark until the run is shown", async () => {
+      begin("visible");
+      const { root, ws } = await open([1, 2]);
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }, { id: 2, events: stamp([startedOf("12")]) }] });
+      clickRunTab(root, "run-2");
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
+      clickRunTab(root, "run-1");
+      expect(document.title).toBe(tabTitle("/p"));
+    });
+
+    test("issue #209: a run that ends while shown in a visible page: no notification and no mark", async () => {
+      begin("visible");
+      const { root, ws } = await open([1]);
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
+      clickRunTab(root, "run-1");
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
+      expect(NotificationStub.calls).toHaveLength(0);
+      expect(runTabNames(root)[1]).toBe(prompts.runTabName({ id: "11", title: "title 11" }));
+      expect(document.title).toBe(tabTitle("/p"));
+    });
+
+    test("issue #209: a run that ends while the list is shown is marked; Close this run removes its tab", async () => {
+      begin("visible");
+      const { root, ws } = await open([1]);
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedOf("11")]) }] });
+      clickRunTab(root, "list");
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 1 } });
+      expect(NotificationStub.calls).toHaveLength(1);
+      expect(runTabNames(root)[1]).toBe(prompts.endedTabName(prompts.runTabName({ id: "11", title: "title 11" }), 1));
+      clickRunTab(root, "run-1");
+      one(root, "button[name=close]").click();
+      flushSync();
+      expect(secondRow(root)).toBe(null);
+      expect(document.title).toBe(tabTitle("/p"));
     });
 
     test("W2-R1-1: a run not on screen that ends at a hidden tab raises its end notification", async () => {
@@ -3369,6 +3425,21 @@ describe("App: the Implementation tab's list during a run (issue #144)", () => {
     expect(runTabNames(root)).toEqual([prompts.LIST_TAB, prompts.waitingTabName(runName)]);
     clickRunTab(root, "run-1");
     expect(root.textContent).toContain("Which database?");
+  });
+
+  // Issue #209: the Implementation tab's run tab carries an unseen end's mark too.
+  test("issue #209: a run that ends while the list is shown marks its tab; showing the run clears it", async () => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+    try {
+      const { root, ws } = await open([startedOf("21")]);
+      clickRunTab(root, "list");
+      ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 1 } });
+      expect(runTabNames(root)).toEqual([prompts.LIST_TAB, prompts.endedTabName(runName, 1)]);
+      clickRunTab(root, "run-1");
+      expect(runTabNames(root)).toEqual([prompts.LIST_TAB, runName]);
+    } finally {
+      delete (document as { visibilityState?: unknown }).visibilityState;
+    }
   });
 
   test("text typed in the answer field survives showing the list and coming back", async () => {

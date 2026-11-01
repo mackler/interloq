@@ -18,6 +18,7 @@ import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import { shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
+import { tabTitle } from "./title.ts";
 import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
 
@@ -2553,7 +2554,7 @@ describe("several refinement runs", () => {
     const replaced = fold(eventsOf(2, a), viewing);
     expect(replaced.modes.refinement.focus).toEqual({ _tag: "Run", run: 2 });
     expect(runOf(replaced, "refinement")?.id).toBe(2);
-    const values = runTabs(replaced, "refinement").map((t) => t.value);
+    const values = runTabs(replaced, "refinement", new Set()).map((t) => t.value);
     expect(values).toContain("run-2");
     expect(values).not.toContain("run-1");
   });
@@ -2620,11 +2621,32 @@ describe("the presented runs", () => {
   });
 
   test("runTabs: the items first, then each run named by its item, a waiting run's name marked", () => {
-    expect(runTabs(two, "refinement")).toEqual([
+    expect(runTabs(two, "refinement", new Set())).toEqual([
       { value: "list", name: prompts.LIST_TAB },
       { value: "run-1", name: prompts.runTabName({ id: "11", title: "item 11" }) },
       { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
     ]);
+  });
+
+  // Issue #209: an ended run's tab carries its end's mark while its end is unseen.
+  test("runTabs: an ended run whose end is unseen is marked ✓ or ✕ by its code; seen, it is plain", () => {
+    for (const code of [0, 130]) {
+      const ended = fold(eventsOf(1, [{ _tag: "Ended", code }], 2), two);
+      const name = prompts.runTabName({ id: "11", title: "item 11" });
+      expect(runTabs(ended, "refinement", new Set([1]))[1]).toEqual({ value: "run-1", name: prompts.endedTabName(name, code) });
+      expect(runTabs(ended, "refinement", new Set())[1]).toEqual({ value: "run-1", name });
+    }
+    expect(runTabs(two, "refinement", new Set([2]))[2]!.name).toBe(prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })));
+  });
+
+  test("seam: the mark in front of an ended run's tab is the one in front of the browser title", () => {
+    for (const code of [0, 1, 2, 130]) {
+      const ended = fold(eventsOf(1, [{ _tag: "Ended", code }], 2), two);
+      const name = prompts.runTabName({ id: "11", title: "item 11" });
+      const tab = runTabs(ended, "refinement", new Set([1]))[1]!.name;
+      const title = tabTitle("/p", { _tag: "Ended", code });
+      expect(tab.slice(0, tab.length - name.length)).toBe(title.slice(0, title.length - tabTitle("/p").length));
+    }
   });
 
   test("startableOf: implementation none while a run is in progress; refinement every item but those being refined", () => {
@@ -2827,13 +2849,20 @@ describe("issue #144: the Implementation tab's list during a run", () => {
   });
 
   test("runTabs: the items alone with no run; with two held runs, the items and the newest run, marked while it waits", () => {
-    expect(runTabs(empty, "implementation")).toEqual([{ value: "list", name: prompts.LIST_TAB }]);
+    expect(runTabs(empty, "implementation", new Set())).toEqual([{ value: "list", name: prompts.LIST_TAB }]);
     const two = fold([...eventsOf(1, [...a, ended]), ...eventsOf(2, [...b, question])], empty);
     expect(two.modes.implementation.runs.map((r) => r.id)).toEqual([1, 2]);
-    expect(runTabs(two, "implementation")).toEqual([
+    expect(runTabs(two, "implementation", new Set())).toEqual([
       { value: "list", name: prompts.LIST_TAB },
       { value: "run-2", name: prompts.waitingTabName(prompts.runTabName({ id: "12", title: "item 12" })) },
     ]);
+  });
+
+  test("issue #209: the Implementation run's tab carries its unseen end's mark", () => {
+    const halted = fold(eventsOf(1, [...a, { _tag: "Ended", code: 1 }]), empty);
+    const name = prompts.runTabName({ id: "11", title: "item 11" });
+    expect(runTabs(halted, "implementation", new Set([1]))[1]).toEqual({ value: "run-1", name: prompts.endedTabName(name, 1) });
+    expect(runTabs(halted, "implementation", new Set())[1]).toEqual({ value: "run-1", name });
   });
 
   test("a Started is shown where asked, where the previous run was shown, or where the list holds no run; else the list stays", () => {
@@ -2865,7 +2894,7 @@ describe("issue #144: the Implementation tab's list during a run", () => {
     const viewingA = focusRun(fold(eventsOf(1, a), empty), "implementation", 1);
     const s = fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])], viewingA);
     expect(runOf(s, "implementation")?.id).toBe(2);
-    expect(runTabs(s, "implementation").filter((t) => t.value !== "list").map((t) => t.value)).toEqual(["run-2"]);
+    expect(runTabs(s, "implementation", new Set()).filter((t) => t.value !== "list").map((t) => t.value)).toEqual(["run-2"]);
     expect(presentedImpl(s)).toBe(2);
     const listing = focusList(fold(eventsOf(1, a), empty), "implementation");
     expect(implFocus(fold([helloOf(2), replayOf([{ id: 1, events: [...a, ended] }, { id: 2, events: b }])], listing))).toEqual({ _tag: "List" });

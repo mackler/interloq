@@ -9,7 +9,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -484,13 +484,16 @@ const tabRuns = (state: ViewState, mode: RunMode): readonly RunView[] => {
 export const modeWaiting = (state: ViewState, mode: RunMode): boolean => tabRuns(state, mode).some(waits);
 /**
  * A tab's second row: the items first, then one tab per run in start order (the Implementation tab its newest held run
- * alone, issue #144), a waiting run's name marked.
+ * alone, issue #144), a waiting run's name marked. Issue #209: an ended run whose id is in `unseen` (its end not seen
+ * since it ended, `unseenEnds` of web/src/notify.ts) carries its end's mark, ✓ or ✕; a waiting run has not ended, so a
+ * tab never carries both.
  */
-export const runTabs = (state: ViewState, mode: RunMode): readonly Readonly<{ value: string; name: string }>[] => [
+export const runTabs = (state: ViewState, mode: RunMode, unseen: ReadonlySet<number>): readonly Readonly<{ value: string; name: string }>[] => [
   { value: "list", name: LIST_TAB },
   ...tabRuns(state, mode).map((r) => {
     const name = runTabName(r.item ?? { id: `${r.id}`, title: "" });
-    return { value: `run-${r.id}`, name: waits(r) ? waitingTabName(name) : name };
+    const shown = waits(r) ? waitingTabName(name) : r.ended !== null && unseen.has(r.id) ? endedTabName(name, r.ended) : name;
+    return { value: `run-${r.id}`, name: shown };
   }),
 ];
 /** Which listed items can be started (issue #191): none, or every item except those named. */

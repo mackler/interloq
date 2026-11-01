@@ -35,7 +35,7 @@
   import { tabTitle } from "../title.ts";
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
-  import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences } from "../notify.ts";
+  import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences, unseenEnds } from "../notify.ts";
   import { readPreferences, writePreferences } from "../storage.ts";
   import { ownName } from "../../../src/hostDir.ts";
   import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
@@ -222,8 +222,16 @@
   });
   /** The tabs, each name with the waiting mark while its run waits for the user [visibility of system status]. */
   const tabItems = $derived(RUN_MODES.map((m) => ({ name: modeWaiting(view, m) ? waitingTabName(TAB_TEXTS[m].tab) : TAB_TEXTS[m].tab, value: m })));
+  // Issue #16: a pending prompt, or a watched run's end not yet seen, puts its marker in front of the title and a
+  // badge on the icon, and is raised once as the user chose: a desktop notification, a chime [visibility of system
+  // status, for a user who is not looking at the page]. decide (web/src/notify.ts) decides; this effect only fires.
+  // Issue #120 (S17): one decision per tab's run, so that each prompt and each end is raised once whichever tab is shown.
+  // Issue #209: an end is seen only when its run is on screen in a visible page; until then its mark stays on the run's
+  // second-row tab (`unseen`), the title and the icon. Close this run removes the tab, its key and its state with it.
+  let notifyStates = $state<Record<string, NotifyState>>({});
+  const unseen = $derived(unseenEnds(Object.values(notifyStates), view.incarnation));
   // Issue #191 and issue #144: each tab's second row, shown while it holds a run; its value names what the tab shows.
-  const secondRow = $derived(view.modes[mode].runs.length > 0 ? [...runTabs(view, mode)] : null);
+  const secondRow = $derived(view.modes[mode].runs.length > 0 ? [...runTabs(view, mode, unseen)] : null);
   const focusValue = $derived.by(() => {
     const focus = view.modes[mode].focus;
     return focus._tag === "Run" ? `run-${focus.run}` : "list";
@@ -272,11 +280,6 @@
   });
   const NARROW_WIDTH = 390;
   // Issue #29: the tab's title names the server's project, so that a narrow tab strip tells two servers apart.
-  // Issue #16: a pending prompt, or a watched run's end at a hidden tab, puts its marker in front of the title and a
-  // badge on the icon, and is raised once as the user chose: a desktop notification, a chime [visibility of system
-  // status, for a user who is not looking at the page]. decide (web/src/notify.ts) decides; this effect only fires.
-  // Issue #120 (S17): one decision per tab's run, so that each prompt and each end is raised once whichever tab is shown.
-  let notifyStates = $state<Record<string, NotifyState>>({});
   let visible = $state(typeof document === "undefined" || document.visibilityState === "visible");
   let preferences = $state<Preferences>(((r) => (r.ok ? r.value : defaultPreferences))(readPreferences()));
   let permission = $state<Permission>(currentPermission());
@@ -309,9 +312,8 @@
   /**
    * What the page shows of one presented run, as decide observes it (issue #120, S17; issue #191: each refinement run on
    * its own): its pending prompt, the run and its end; the prompt counts as shown only for the run on screen in the
-   * selected tab, and only the selected tab's item list as the form for a new task (work review 2 of issue #191,
-   * W2-R1-1: another refinement run on screen is not the form, so a run not on screen that ends at a hidden tab still
-   * raises its notification and end mark, which clears when the tab becomes visible).
+   * selected tab. Issue #209: whether the run is on screen, the run the selected primary tab's second row shows, so
+   * that its end is seen only there in a visible page and raises its notification and mark otherwise.
    */
   const observation = (p: Presented): Observation => {
     const watched = p.shown.run;
