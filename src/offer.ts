@@ -267,6 +267,10 @@ export const byMessage = <E>(ask: (prompt: string) => Effect.Effect<string, E>):
  * yields the same draft with them. While it has not run, the hint carries its line outermost; "/terms" runs it, presents the same question again
  * under the same number with its explanations (QuestionExplained, then QuestionPresented), and asks again without the
  * line. "/terms" is never returned or recorded as a choice; without a request it is an answer like any other.
+ * Issue #217: the request is forked beside the open question as a decision is (below), the question asked without the
+ * offer or the terms line; an answer the question accepts given then interrupts it, is said to have stopped it
+ * (`termsAbandonedLine`, on the page alone) and is the answer, recorded as any answer is; a "/decide", a "/terms" or an
+ * answer `acceptable` rejects is rejected and the question stays open.
  * Issue #153 (requirements Q1, G-R1-1): the asking enters its question's frame (`UiShape.enterQuestion`) before it
  * presents the question, and "/decide" forks the decision and keeps the question open beside it, with neither the offer
  * nor the terms line. An answer the question accepts given then abandons the decision: the loop is interrupted, and
@@ -276,6 +280,9 @@ export const byMessage = <E>(ask: (prompt: string) => Effect.Effect<string, E>):
  * question beneath it for its whole asking (S2), so each nested decision has recorded its choice before the outer
  * question can be answered.
  */
+/** Issue #217: what an answer did about the question's terms: nothing, the terms written, or an answer given while they were. */
+type TermsAsked = Readonly<{ _tag: "NotAsked" }> | Readonly<{ _tag: "Explained" }> | Readonly<{ _tag: "Answered"; text: string }>;
+
 export const askOffering = <E, R = never>(
   asking: Asking<E>,
   hint: string,
@@ -300,22 +307,50 @@ export const askOffering = <E, R = never>(
     // The page keeps a decision's analysis for the question asked again (W3-R1-1).
     const rejected = ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present));
     const askOffered = (prompt: string) => asking.ask(request === null ? prompt : prompts.withTermsOffer(prompt));
-    /** Whether the answer asked for the terms, which then are written and presented: the question is asked again. */
+    /**
+     * Issue #153: asks the question beside `fiber`'s work, its prompt the bare hint (no offer, no terms line); a
+     * "/decide", a "/terms" or an answer `acceptable` rejects is rejected and asked again, so what it returns is the
+     * work's end or an answer the question accepts.
+     */
+    const besideWork = <A, E2>(fiber: Fiber.Fiber<A, E2>) =>
+      Effect.gen(function* () {
+        let during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
+        while (during._tag === "Answered" && (isDecide(during.text) || isTermsRequest(during.text) || !acceptable(during.text))) {
+          yield* rejected;
+          during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
+        }
+        return during;
+      });
+    /**
+     * Whether the answer asked for the terms. Issue #217: the request runs beside the question, which stays open; when
+     * it ends the question is presented again with its explanations and asked again (`Explained`), and an answer the
+     * question accepts given before then interrupts it and is the answer (`Answered`).
+     */
     const requested = (answer: string) =>
       Effect.gen(function* () {
-        if (request === null || !isTermsRequest(answer)) return false;
+        if (request === null || !isTermsRequest(answer)) return { _tag: "NotAsked" } as TermsAsked;
         const run = request;
         request = null;
-        explained = yield* run(question.number);
+        const fiber = yield* Effect.forkScoped(run(question.number));
+        const during = yield* besideWork(fiber);
+        if (during._tag === "Answered") {
+          // The request is interrupted first, so it writes nothing after the answer.
+          yield* Fiber.interrupt(fiber);
+          yield* ui.say(prompts.termsAbandonedLine(question.number));
+          return { _tag: "Answered", text: during.text } as TermsAsked;
+        }
+        explained = during.value;
         question = yield* Effect.fromResult(presentedQuestion(explained, question.number));
         yield* ui.notify({ _tag: "QuestionExplained", question });
         yield* present;
-        return true;
+        return { _tag: "Explained" } as TermsAsked;
       });
     if (draft.options.length < 2) {
       for (;;) {
-        const answer = yield* askOffered(hint);
-        if (yield* requested(answer)) continue;
+        const asked = yield* askOffered(hint);
+        const terms = yield* requested(asked);
+        if (terms._tag === "Explained") continue;
+        const answer = terms._tag === "Answered" ? terms.text : asked;
         if (acceptable(answer)) return answer;
         yield* rejected;
       }
@@ -328,9 +363,11 @@ export const askOffering = <E, R = never>(
       // Issue #133 (S6): the offer stands until a decision is made; the question asked beside its own analysis carries
       // none, and "/decide" there is an answer like any other.
       const offered = decisions.length === 0;
-      const answer = yield* askOffered(offered ? prompts.withOffer(hint) : hint);
-      if (yield* requested(answer)) continue;
-      if (offered && isDecide(answer)) {
+      const asked = yield* askOffered(offered ? prompts.withOffer(hint) : hint);
+      const terms = yield* requested(asked);
+      if (terms._tag === "Explained") continue;
+      const answer = terms._tag === "Answered" ? terms.text : asked;
+      if (terms._tag === "NotAsked" && offered && isDecide(answer)) {
         const options = optionsShown();
         const asked = decisionQuestionOf(explained);
         // S37, S10: the analysis is given the question as the user was shown it, after the context call.
@@ -338,11 +375,7 @@ export const askOffering = <E, R = never>(
         // Issue #153 (Q1): the decision runs beside the question, which stays open, without the offer or the terms line.
         const opened = yield* Ref.make<number | null>(null);
         const fiber = yield* Effect.forkScoped(decider.decide({ question: asked, options, number: question.number, shown, opened: (k) => Ref.set(opened, k) }));
-        let during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
-        while (during._tag === "Answered" && (isDecide(during.text) || isTermsRequest(during.text) || !acceptable(during.text))) {
-          yield* rejected;
-          during = yield* frame.askDuring(hint, asking.kind, Fiber.join(fiber));
-        }
+        const during = yield* besideWork(fiber);
         if (during._tag === "Answered") {
           const answer = during.text;
           // The loop is interrupted first, so it writes nothing after the record.

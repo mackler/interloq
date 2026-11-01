@@ -40,8 +40,8 @@ export type Asked = Readonly<{
   free: "none" | "line" | "message";
   countdown: Countdown | null;
   /**
-   * Issue #153: the number of the presented question this prompt asks while its decision's analysis is prepared, null for
-   * every other prompt (and in a record written before it).
+   * Issue #153: the number of the presented question this prompt asks while its decision's analysis is prepared (or,
+   * issue #217, while its terms are written), null for every other prompt (and in a record written before it).
    */
   deciding: number | null;
 }>;

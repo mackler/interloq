@@ -59,7 +59,8 @@ export type DuringAnswer<A> = Readonly<{ _tag: "Done"; value: A }> | Readonly<{ 
  * the user's text when an answer reaches the server first. An answer that ends the run ("q" for `line`, "/quit" for
  * `message`) fails with UserStopped. It never counts down (issue #185): before this change nothing counted down while an
  * analysis was prepared. Once answered, or once work finished, the frame stays, unanswerable, until the handle's Scope
- * closes; a later `askDuring` on the same handle reuses it in place.
+ * closes; a later `askDuring` on the same handle reuses it in place. The work is a decision's analysis (issue #153) or the
+ * request for the question's terms (issue #217).
  */
 export type QuestionFrame = Readonly<{
   askDuring: <A, E, R>(prompt: string, kind: AskKind, work: Effect.Effect<A, E, R>) => Effect.Effect<DuringAnswer<A>, E | UserStopped, R>;

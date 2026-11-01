@@ -1385,6 +1385,8 @@ export const termsChoiceLine = (terms: TermsMode): string => {
 };
 /** Issue #142: the start of a question's explanations written on the user's request, as the run says it. */
 export const termsRequestedLine = (question: number): string => `Claude Code explains the terms of Question ${question} ...`;
+/** Issue #217: said on the page alone when an answer given while a question's terms were written stopped the request. */
+export const termsAbandonedLine = (question: number): string => `Your answer to Question ${question} stopped the explanation of its terms.`;
 /** Issue #142: the heading in conversation.md of a question's explanations written on the user's request. */
 export const termsRequestedHeading = (question: number): string => `Explanations of terms requested for Question ${question}`;
 /** The "p" choice at the cycle limit of a decision loop (D10 of the decision-support plan). */
