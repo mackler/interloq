@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { faviconHref } from "./favicon.ts";
 import type { Mark } from "./notify.ts";
+import { endMarkOf } from "../../src/prompts.ts";
 
 // Issue #16: the page's icon carries a badge while a prompt waits, or after a watched run ended unseen.
 const COLORS = { base: "rgb(1, 2, 3)", badge: "rgb(200, 0, 0)", ended: "rgb(0, 100, 0)" };
@@ -33,5 +34,11 @@ describe("faviconHref", () => {
       }),
       { numRuns: 50 },
     );
+  });
+  // Issue #209: an end's badge carries ✓ or ✕; the waiting badge stays a plain dot.
+  it("puts the end's mark in its badge, and none in a waiting or clear icon", () => {
+    for (const code of [0, 130]) expect(svgOf(faviconHref({ _tag: "Ended", code }, COLORS))).toMatch(new RegExp(`<text class="badge-mark"[^>]*>${endMarkOf(code)}</text>`));
+    expect(svgOf(faviconHref({ _tag: "Waiting" }, COLORS))).not.toContain("badge-mark");
+    expect(svgOf(faviconHref({ _tag: "Clear" }, COLORS))).not.toContain("badge");
   });
 });

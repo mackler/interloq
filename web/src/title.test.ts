@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { ownName } from "../../src/hostDir.ts";
-import { TITLE_ENDED_MARK, TITLE_WAITING_MARK } from "../../src/prompts.ts";
+import { endMarkOf, TITLE_ENDED_MARK, TITLE_UNFINISHED_MARK, TITLE_WAITING_MARK } from "../../src/prompts.ts";
 import type { Mark } from "./notify.ts";
 import { tabTitle } from "./title.ts";
 
@@ -27,7 +27,7 @@ describe("tabTitle", () => {
 
 // Issue #16: a pause or an unseen end puts its marker in front of the title, which keeps the project.
 const WAITING: Mark = { _tag: "Waiting" };
-const glyphOf = (mark: Mark): string | null => (mark._tag === "Clear" ? null : mark._tag === "Waiting" ? TITLE_WAITING_MARK : TITLE_ENDED_MARK);
+const glyphOf = (mark: Mark): string | null => (mark._tag === "Clear" ? null : mark._tag === "Waiting" ? TITLE_WAITING_MARK : endMarkOf(mark.code));
 const mark = fc.oneof(fc.constant<Mark>({ _tag: "Clear" }), fc.constant<Mark>(WAITING), fc.constantFrom(0, 1, 130).map((code): Mark => ({ _tag: "Ended", code })));
 describe("tabTitle's marker", () => {
   it("puts the marker before the title it would have without one", () => {
@@ -36,6 +36,13 @@ describe("tabTitle's marker", () => {
     expect(tabTitle(path, { _tag: "Ended", code: 0 })).toBe(`${TITLE_ENDED_MARK} ${tabTitle(path)}`);
     expect(tabTitle(null, WAITING)).toBe(`${TITLE_WAITING_MARK} ${tabTitle(null)}`);
     expect(TITLE_WAITING_MARK).not.toBe(TITLE_ENDED_MARK);
+  });
+  // Issue #209: ✓ for a finished run, ✕ for any other end.
+  it("marks a finished end ✓ and a halted, abandoned or stopped one ✕", () => {
+    const path = "/p";
+    expect(tabTitle(path, { _tag: "Ended", code: 0 }).startsWith(`${TITLE_ENDED_MARK} `)).toBe(true);
+    for (const code of [1, 2, 130]) expect(tabTitle(path, { _tag: "Ended", code })).toBe(`${TITLE_UNFINISHED_MARK} ${tabTitle(path)}`);
+    fc.assert(fc.property(fc.integer(), (code) => tabTitle(path, { _tag: "Ended", code }) === `${endMarkOf(code)} ${tabTitle(path)}`), { numRuns: 100 });
   });
   it("property: keeps the project's title, begins with the mark's glyph, and is unchanged without a mark", () => {
     fc.assert(
