@@ -1,5 +1,7 @@
-// Issue #215: the page sends one endWait frame per wait, whichever dashboard the control was pressed in. The page is
-// mounted whole over a fake WebSocket and fed the events the server sends, as in questionWait.svelte.test.ts.
+// Issue #215: the page sends one endWait frame per wait, whichever dashboard the control was pressed in. The compact
+// dashboard's control under a question sends the frame, the full dashboard's control for the same wait is disabled and
+// sends no second, and a second run's control sends a frame naming that run and its wait (W1-R1-2). The page is mounted
+// whole over a fake WebSocket and fed the events the server sends, as in questionWait.svelte.test.ts.
 import { PREPARATION_VIEW_OFF } from "../../src/preparationSwitch.ts";
 import { flushSync, mount, unmount } from "svelte";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -39,7 +41,7 @@ afterEach(() => {
 });
 
 const TIME = "2026-11-01T20:00:00.000Z";
-const started = { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } };
+const startedOf = (id: string) => ({ _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id, title: "t" } });
 const question = {
   number: 1,
   origin: { kind: "relayed" },
@@ -59,7 +61,7 @@ const endWaits = (ws: FakeWebSocket) => ws.sent.map((s) => JSON.parse(s)).filter
 const buttons = (root: ParentNode) => [...root.querySelectorAll<HTMLButtonElement>('button[name="end-wait"]')];
 
 describe("the control that ends a wait, through the page", () => {
-  test("one frame per wait: the compact dashboard's press sends it, the full dashboard's sends no second, a new wait sends its own", async () => {
+  test("one frame per wait: the compact dashboard's press sends it, the full dashboard's sends no second, a second run's sends its own", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     const { default: App } = await import("./components/App.svelte");
     const root = document.createElement("div");
@@ -67,36 +69,51 @@ describe("the control that ends a wait, through the page", () => {
     mounted.push(mount(App, { target: root, props: {} }));
     flushSync();
     const ws = FakeWebSocket.last!;
-    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
+    ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1, 2], implementation: null }, incarnation: "a" });
     const asked = { _tag: "Asked", prompt: 1, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null };
-    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: [started, { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, asked, waiting(5)].map((event) => ({ time: TIME, event })) }] });
-    let seq = 4;
-    const event = (e: unknown) => ws.receive({ type: "event", run: 1, seq: seq++, time: TIME, event: e });
+    const run1 = [startedOf("11"), { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, asked, waiting(5)];
+    const run2 = [startedOf("12")];
+    const stamp = (events: readonly unknown[]) => events.map((event) => ({ time: TIME, event }));
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp(run1) }, { id: 2, events: stamp(run2) }] });
+    const seqs = new Map([[1, run1.length], [2, run2.length]]);
+    const event = (run: number, e: unknown) => {
+      const seq = seqs.get(run)!;
+      seqs.set(run, seq + 1);
+      ws.receive({ type: "event", run, seq, time: TIME, event: e });
+    };
+    const secondRow = () => root.querySelector<HTMLElement>(`nav[aria-label="${prompts.RUN_TABS_LABEL}"]`)!;
+    const showRun = (id: number) => {
+      secondRow().querySelector<HTMLInputElement>(`input[type=radio][value="run-${id}"]`)!.click();
+      flushSync();
+    };
+    showRun(1);
+    // Run 1's question is pending: the compact dashboard under it carries the control of wait 5.
     expect(root.querySelector("section.pane")).not.toBe(null);
-    const compact = buttons(root);
-    expect(compact.length).toBeGreaterThan(0);
+    const compact = buttons(root.querySelector(".dashboard-compact")!);
+    expect(compact).toHaveLength(1);
     compact[0]!.click();
     flushSync();
     expect(endWaits(ws)).toEqual([{ type: "endWait", incarnation: "a", run: 1, wait: 5 }]);
     // The question answered, the full dashboard shows the same wait: its control is disabled and sends nothing.
-    event({ _tag: "Answered", prompt: 1, text: "1" });
+    event(1, { _tag: "Answered", prompt: 1, text: "1" });
     expect(root.querySelector("section.pane")).toBe(null);
-    expect(buttons(root).length).toBeGreaterThan(0);
-    for (const b of buttons(root)) {
-      expect(b.disabled).toBe(true);
-      b.click();
-    }
+    expect(root.querySelector(".dashboard-compact")).toBe(null);
+    const full = buttons(root.querySelector(".left .chat")!);
+    expect(full).toHaveLength(1);
+    expect(full[0]!.disabled).toBe(true);
+    full[0]!.click();
     flushSync();
     expect(endWaits(ws)).toHaveLength(1);
-    // A new wait has a new id, and its control sends its own frame.
-    event(waiting(6));
-    const fresh = buttons(root).find((b) => !b.disabled);
-    expect(fresh).toBeDefined();
-    fresh!.click();
+    // A second run's wait has its own id, and its control sends a frame naming that run and that wait.
+    showRun(2);
+    event(2, waiting(7));
+    const second = buttons(root).filter((b) => !b.disabled);
+    expect(second).toHaveLength(1);
+    second[0]!.click();
     flushSync();
     expect(endWaits(ws)).toEqual([
       { type: "endWait", incarnation: "a", run: 1, wait: 5 },
-      { type: "endWait", incarnation: "a", run: 1, wait: 6 },
+      { type: "endWait", incarnation: "a", run: 2, wait: 7 },
     ]);
   });
 });
