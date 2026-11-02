@@ -4192,6 +4192,8 @@ export const preparationCauseText = (cause: PreparationCause): string => {
       return `the preparation failed: ${cause.reason}`;
     case "TooLong":
       return `question ${cause.question} with its explanations is longer than a comment may be`;
+    case "Obsolete":
+      return `bringing it up to date found the whole issue already built or replaced (${cause.reason}); Refine checks it again and labels it obsolete where a label is configured`;
   }
 };
 /** The preparation's own comment when the item was set aside (requirements G-R1-1), with the three ways it is released. */

@@ -87,3 +87,13 @@ test("a set-aside reads back SetAside at its generation and Released at any othe
     assert.equal(preparationOf(comments, i, other)._tag, other === generation ? "SetAside" : "Released");
   }), RUNS);
 });
+
+// Issue #216 (S10): the cause Obsolete crosses the comment's data line.
+test("a set-aside for an issue found already built reads back with its cause and reason", () => {
+  fc.assert(fc.property(item, text, (i, reason) => {
+    const r: PreparationRecord = { _tag: "SetAside", key: KEY, digest: digestOf(i), generation: 1, date: "2026-11-02", cause: { _tag: "Obsolete", reason } };
+    const found = preparationOf(asComments(Result.getOrThrow(preparedComments(KEY, [], r)).map((c) => c.text)), i, 1);
+    assert.ok(found._tag === "SetAside");
+    assert.deepEqual(found.cause, { _tag: "Obsolete", reason });
+  }), RUNS);
+});

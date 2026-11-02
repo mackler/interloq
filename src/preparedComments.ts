@@ -34,6 +34,8 @@ export const PreparationCauseSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Paused"), question: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Failed"), reason: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TooLong"), question: Schema.String }),
+  // Issue #216 (Q3): Bring Up to Date found the whole issue already built or replaced; never labeled obsolete unattended.
+  Schema.Struct({ _tag: Schema.Literal("Obsolete"), reason: Schema.String }),
 ]);
 export type PreparationCause = typeof PreparationCauseSchema.Type;
 

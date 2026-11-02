@@ -1,9 +1,11 @@
 // The unattended preparation of one item's questions (issue #131): an edge like `program`, over its Wiring, so the
 // tests run it with scripted agents. It runs the part of the question phase that needs no one (prepareQuestionList) in
 // a records directory of its own, with a refinement run's guards, and writes what Codex reviewed to the item as
-// comments (src/preparedComments.ts). It never changes the item's state, body or labels, and asks no one anything.
+// comments (src/preparedComments.ts). Since issue #216 (requirements Q3) it first runs Bring Up to Date, and where that
+// loop ends in agreement on a correction it writes the item's title and text; it never changes the item's state or
+// labels, and asks no one anything.
 import * as path from "node:path";
-import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Result, type Scope } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import { runRootOf } from "./artifacts.ts";
 import { loadConfig } from "./config.ts";
 import { deciderLayer } from "./decision.ts";
@@ -13,9 +15,12 @@ import { commentDateOf, keyOf, parseComment, runCommentKey } from "./itemComment
 import { rootName } from "./park.ts";
 import { type PreparationCause, type PreparationRecord, digestOf, preparationOf, type PreparedQuestion, preparedComments } from "./preparedComments.ts";
 import { unattendedUi } from "./preparationUi.ts";
-import { DECISION_FORMAT, defectMessage, taskTextOf, type Wiring } from "./program.ts";
+import { DECISION_FORMAT, defectMessage, refinementTextOf, taskTextOf, type Wiring } from "./program.ts";
+import { bringUpToDate } from "./bringUpToDate.ts";
+import { refinementTaskText } from "./itemComments.ts";
+import { withDeveloperText } from "./refinement.ts";
 import { PREPARATION_STOPPED, preparationNotWrittenLine, preparationPreparedLine, preparationSetAsideLine, preparationStartedLine, TRANSPORT_ANSWERS } from "./prompts.ts";
-import { RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
+import { Decider, RunConfig, RunKind, Sdk, Store, type StoreShape, SuiteRunner, Tracker, type TrackerShape, Ui } from "./services.ts";
 import { allocateRunRoot, makeStore } from "./store.ts";
 import type { CommentId, ItemComment, TrackerItem } from "./tracker.ts";
 import { readCommentsWithRetry, type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
@@ -63,6 +68,8 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
     if (Result.isFailure(trackerLayer)) return notWritten(trackerFailureText(trackerLayer.failure));
     const task = taskTextOf("refinement", item, input.comments);
     if (Result.isFailure(task)) return notWritten(task.failure._tag === "BlankTask" ? "the item's title and text are blank" : task.failure.reason);
+    const before = refinementTextOf(item);
+    if (Result.isFailure(before)) return notWritten(before.failure._tag === "BlankTask" ? "the item's title and text are blank" : before.failure.reason);
 
     const now = yield* Clock.currentTimeMillis;
     const root = yield* Effect.result(allocateRunRoot(project, runRootOf("preparation", item.id, new Date(now).toISOString())).pipe(Effect.provide(wiring.platform)));
@@ -107,18 +114,37 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
       yield* record(preparationStartedLine(item.id, item.title));
       const base = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Ui, ui), Layer.succeed(RunConfig, settings), Layer.succeed(RunKind, { mode: "refinement" }), Layer.succeed(Sdk, wiring.sdk), Layer.succeed(SuiteRunner, wiring.suite));
       const context = yield* Layer.build(Layer.provideMerge(deciderLayer(task.success, format.success), Layer.provideMerge(wiring.agents, base)));
+      /** The item as the preparation leaves it: as read, or with the title and text Bring Up to Date wrote (issue #216). */
+      const written = yield* Ref.make<TrackerItem>(item);
       const phase = yield* Effect.exit(
         Effect.gen(function* () {
-          yield* prepareQuestionList(task.success, "checked");
+          const updated = yield* bringUpToDate(item.id, before.success, env).pipe(Effect.provide(trackerLayer.success));
+          // Q3: an issue found already built or replaced is set aside; the obsolete label is never applied unattended.
+          if (updated._tag === "Obsolete") return { _tag: "Obsolete", reason: updated.reason } as const;
+          const preparedTask = updated._tag === "Amended" ? refinementTaskText(updated.text, input.comments) : task.success;
+          if (updated._tag === "Amended") {
+            const write = yield* Effect.result(withTracker((t) => writeWithRetry(t, { kind: "writeText", item: item.id, text: updated.text }, env)));
+            if (Result.isFailure(write)) return { _tag: "NotWritten", reason: write.failure._tag === "TrackerWriteFailed" ? trackerFailureText(write.failure.error) : describe(write.failure) } as const;
+            yield* Ref.set(written, { ...item, title: updated.text.title, body: Result.getOrElse(withDeveloperText(item.body, updated.text), () => updated.text.text) });
+          }
+          const decider = yield* Decider;
+          yield* prepareQuestionList(preparedTask, "checked").pipe(Effect.provideService(Decider, decider.withTask(preparedTask)));
           const agreed = (yield* store.loadQuestions()).questions;
           const terms = agreed.length === 0 ? [] : yield* store.loadTerms();
-          return agreed.map((entry): PreparedQuestion => ({ entry, terms: terms.find((t) => t.id === entry.id) ?? null }));
+          return { _tag: "Questions", questions: agreed.map((entry): PreparedQuestion => ({ entry, terms: terms.find((t) => t.id === entry.id) ?? null })) } as const;
         }).pipe(Effect.provide(context)),
       );
+      if (Exit.isSuccess(phase) && phase.value._tag === "NotWritten") {
+        yield* record(preparationNotWrittenLine(item.id, phase.value.reason));
+        return notWritten(phase.value.reason);
+      }
       const date = commentDateOf(yield* Clock.currentTimeMillis);
-      const setAside = (cause: PreparationCause): PreparationRecord => ({ _tag: "SetAside", key, digest: digestOf(item), generation: input.generation, date, cause });
+      const current = yield* Ref.get(written);
+      const setAside = (cause: PreparationCause): PreparationRecord => ({ _tag: "SetAside", key, digest: digestOf(current), generation: input.generation, date, cause });
       const planned: Readonly<{ record: PreparationRecord; questions: readonly PreparedQuestion[] }> = Exit.isSuccess(phase)
-        ? { record: { _tag: "Prepared", key, digest: digestOf(item), count: phase.value.length, generation: input.generation, date }, questions: phase.value }
+        ? phase.value._tag === "Questions"
+          ? { record: { _tag: "Prepared", key, digest: digestOf(current), count: phase.value.questions.length, generation: input.generation, date }, questions: phase.value.questions }
+          : { record: setAside(phase.value._tag === "Obsolete" ? { _tag: "Obsolete", reason: phase.value.reason } : { _tag: "Failed", reason: phase.value.reason }), questions: [] }
         : {
             record: setAside(
               Option.match(Cause.findErrorOption(phase.cause), {

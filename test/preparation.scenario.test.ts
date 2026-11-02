@@ -132,3 +132,38 @@ test("a tracker whose comment writes fail every time gives NotWritten, and no on
   assert.equal(s.probe.ui.asked.length, 0);
   assert.deepEqual((await s.held()).comments ?? [], []);
 });
+
+// Issue #216 (S10, requirements Q3): the preparation runs Bring Up to Date first and writes its update unattended.
+import type * as S216 from "../src/schema.ts";
+import { withoutRefinement } from "../src/refinement.ts";
+const updateReply = (text: string, outcome: S216.UpdateOutcomeReply = { kind: "current" }): S216.UpdateResponse =>
+  ({ ...respond([["U-R1-1", "accepted"]]), issue: { title: ITEM.title, text }, outcome, developer_passages: [] }) as S216.UpdateResponse;
+
+test("(a) a stale statement amended unattended: one writeText, then the questions, asked of the amended text, and a digest of the item as written", async () => {
+  const s = setup({ steps: [{ output: updateReply("The corrected text.") }, ...twoQuestions.steps!], updateChecks: [{ issues: [issue("U-R1-1", "stale")] }, { issues: [] }], reviews: twoQuestions.reviews });
+  const outcome = await Effect.runPromise(s.prepare());
+  assert.deepEqual(outcome, { _tag: "Prepared", count: 2 });
+  const after = await s.held();
+  assert.equal(Result.getOrThrow(withoutRefinement(after.body)), "The corrected text.");
+  assert.equal(after.state, ITEM.state);
+  assert.ok(s.probe.planner.prompts.find((p) => p.includes("Do not write a plan yet"))?.includes("The corrected text."));
+  assert.equal(preparationOf(after.comments ?? [], after, 1)._tag, "Prepared");
+});
+
+test("(b) a marked dispute raised again sets the item aside as Paused and writes no text", async () => {
+  const marked = { ...respond([["U-R1-1", "rejected", true]]), issue: { title: ITEM.title, text: ITEM.body }, outcome: { kind: "current" }, developer_passages: [] };
+  const s = setup({ steps: [{ output: marked }, { output: marked }], updateChecks: [{ issues: [issue("U-R1-1")] }, { issues: [issue("U-R1-1")] }], config: { maxIdleRounds: 5 } });
+  const outcome = await Effect.runPromise(s.prepare());
+  assert.equal(outcome._tag, "SetAside");
+  assert.ok(outcome._tag === "SetAside" && outcome.cause._tag === "Paused");
+  assert.equal((await s.held()).body, ITEM.body);
+});
+
+test("(c) the issue found already built: set aside with Obsolete, its state unchanged", async () => {
+  const s = setup({ steps: [{ output: updateReply(ITEM.body, { kind: "obsolete", reason: "built by #210" }) }], updateChecks: [{ issues: [issue("U-R1-1", "built")] }, { issues: [] }] });
+  const outcome = await Effect.runPromise(s.prepare());
+  assert.deepEqual(outcome, { _tag: "SetAside", cause: { _tag: "Obsolete", reason: "built by #210" } });
+  const after = await s.held();
+  assert.equal(after.state, ITEM.state);
+  assert.equal(after.body, ITEM.body);
+});
