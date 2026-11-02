@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel } from "../src/prompts.ts";
+import { EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, NO_UNANSWERED_QUESTIONS } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -279,7 +279,7 @@ test.describe("the tests of the interview server, in order", () => {
     await expect(dashboard(page).getByText('"""')).toHaveCount(0);
     // Issue #21: Gather Requirements shows its steps; the clarification counts the agreed question, answered or not.
     const step = (label: string) => rail(page).locator("[data-step]", { has: page.locator("[data-step-label]", { hasText: label }) });
-    await expect(step(stepLabel("formulate"))).toHaveAttribute("data-step", "done");
+    await expect(step(NO_UNANSWERED_QUESTIONS)).toHaveAttribute("data-step", "done");
     await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "active");
     await expect(step(stepLabel("clarification")).locator("[data-count]")).toHaveText("0 of 1 answered");
     await option(page, /PostgreSQL/).click();
@@ -336,6 +336,11 @@ test.describe("the tests of the emptyQuestions server, in order", () => {
     await expect(rail(page).locator("li.entry").nth(1).locator("[data-label]")).toHaveText("Gather Requirements");
     for (const n of [0, 1]) await expect(rail(page).locator("li.entry").nth(n)).toHaveAttribute("data-state", "done");
     await expect(rail(page).locator("li.entry[data-state=notReached]")).toHaveCount(0);
+    // Issue #205: the search says it found no question, and You Decide never appears.
+    const step = (label: string) => rail(page).locator("[data-step]", { has: page.locator("[data-step-label]", { hasText: label }) });
+    await expect(step(NO_UNANSWERED_QUESTIONS)).toHaveAttribute("data-step", "done");
+    await expect(rail(page)).not.toContainText(stepLabel("clarification"));
+    await expect(rail(page)).not.toContainText(stepLabel("formulate"));
     // The item is refined: it has left the Refinement tab's list and is in the Implementation tab's.
     await page.locator("button[name=new]").click();
     await expect(listOf(page)).toBeVisible();
