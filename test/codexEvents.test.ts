@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ThreadEvent } from "@openai/codex-sdk";
 import fc from "fast-check";
 import { codexOpenItems, codexOutputOf, type CodexOutputState, EMPTY_CODEX_OUTPUT, toolEventOf } from "../src/codexEvents.ts";
-import { type OutputEvent, plainOutput } from "../src/liveOutput.ts";
+import { type OutputEvent, sanitizedOutput } from "../src/liveOutput.ts";
 import { CODEX_REASONING_NAME } from "../src/prompts.ts";
 import { command, fileChange, webSearch } from "./fakeSdk.ts";
 
@@ -79,11 +79,11 @@ const K = "codex:codex-1:c1";
 test("a command updated three times passes on each new suffix and ends with its exit code", () => {
   const { events } = out([cmd("item.started", "c1", ""), cmd("item.updated", "c1", "a\n"), cmd("item.updated", "c1", "a\nb"), cmd("item.updated", "c1", "a\nb\n\u001b[31mc\u001b[0m"), cmd("item.completed", "c1", "a\nb\n\u001b[31mc\u001b[0m", { exit_code: 2 })]);
   assert.deepEqual(events, [
-    { _tag: "Started", key: K, name: "npm test" },
-    { _tag: "Printed", key: K, name: "npm test", text: "a\n" },
-    { _tag: "Printed", key: K, name: "npm test", text: "b" },
-    { _tag: "Printed", key: K, name: "npm test", text: "\nc" },
-    { _tag: "Finished", key: K, name: "npm test", status: { _tag: "Exited", code: 2 } },
+    { _tag: "Started", key: K, name: "npm test --all" },
+    { _tag: "Printed", key: K, name: "npm test --all", text: "a\n" },
+    { _tag: "Printed", key: K, name: "npm test --all", text: "b" },
+    { _tag: "Printed", key: K, name: "npm test --all", text: "\n\u001b[31mc\u001b[0m" },
+    { _tag: "Finished", key: K, name: "npm test --all", status: { _tag: "Exited", code: 2 } },
   ]);
 });
 
@@ -118,15 +118,15 @@ test("one item id in two turns gives two keys; an item left open is ended Unknow
   const first = out([cmd("item.started", "c1", "x")], "codex-1");
   const second = out([cmd("item.started", "c1", "y")], "codex-2");
   assert.notEqual((first.events[0] as { key: string }).key, (second.events[0] as { key: string }).key);
-  assert.deepEqual(codexOpenItems(first.state), [{ _tag: "Finished", key: K, name: "npm test", status: { _tag: "Unknown" } }]);
+  assert.deepEqual(codexOpenItems(first.state), [{ _tag: "Finished", key: K, name: "npm test --all", status: { _tag: "Unknown" } }]);
 });
 
-test("for any growing aggregated text, the printed texts together are plainOutput of the last", () => {
+test("for any growing aggregated text, the printed texts together are sanitizedOutput of the last", () => {
   fc.assert(
     fc.property(fc.array(fc.array(fc.constantFrom("a", "\n", "\u001b", "[", "3", "m", "]", "\u0007", " "), { maxLength: 10 }).map((cs) => cs.join("")), { maxLength: 8 }), (parts) => {
       const texts = parts.map((_, i) => parts.slice(0, i + 1).join(""));
       const { events } = out(texts.map((t) => cmd("item.updated", "c1", t)));
-      assert.equal(events.flatMap((e) => (e._tag === "Printed" ? [e.text] : [])).join(""), plainOutput(texts.at(-1) ?? ""));
+      assert.equal(events.flatMap((e) => (e._tag === "Printed" ? [e.text] : [])).join(""), sanitizedOutput(texts.at(-1) ?? ""));
     }),
     { numRuns: 200, seed: 49 },
   );

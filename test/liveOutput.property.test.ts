@@ -3,8 +3,8 @@ import { test } from "node:test";
 import fc from "fast-check";
 import { Result } from "effect";
 import {
-  backlogAdmit, backlogTake, EMPTY_BACKLOG, NEW_SANITIZER, type OutputBacklog, type OutputEnvelope, type OutputEvent, plainOutput,
-  PROCESS_NAME_LENGTH, type ProcessKey, processKeyOf, processNameOf, sanitizeChunk,
+  backlogAdmit, backlogTake, EMPTY_BACKLOG, NEW_SANITIZER, type OutputBacklog, type OutputEnvelope, type OutputEvent, 
+  type ProcessKey, processKeyOf, processNameOf, sanitizeChunk, sanitizedOutput, SGR_PARAMS_LIMIT,
 } from "../src/liveOutput.ts";
 
 // Issue #49: the live output's pure core.
@@ -31,44 +31,81 @@ const sanitizeAll = (chunks: readonly string[]): string => {
   return out;
 };
 
-test("plainOutput leaves no ESC and no control character but tab, CR and LF, and is idempotent", () => {
+const SGR = /\u001b\[[0-9;:]{0,64}m/gu;
+const withoutSgr = (t: string): string => t.replace(SGR, "");
+
+test("sanitizedOutput leaves no control character but tab, CR, LF and the ESC of an SGR sequence, and is idempotent", () => {
   fc.assert(
     fc.property(arbText, (t) => {
-      const p = plainOutput(t);
-      assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(p));
-      assert.equal(plainOutput(p), p);
+      const p = sanitizedOutput(t);
+      assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f]/u.test(p));
+      assert.ok(!withoutSgr(p).includes(ESC));
+      assert.equal(sanitizedOutput(p), p);
     }),
     RUNS,
   );
 });
 
-test("plainOutput leaves text without escapes unchanged", () => {
-  fc.assert(fc.property(fc.string().filter((t) => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(t)), (t) => assert.equal(plainOutput(t), t)), RUNS);
+test("sanitizedOutput leaves text without escapes unchanged", () => {
+  fc.assert(fc.property(fc.string().filter((t) => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(t)), (t) => assert.equal(sanitizedOutput(t), t)), RUNS);
 });
 
-test("any split of a text into chunks sanitizes to plainOutput of the whole", () => {
-  fc.assert(fc.property(arbText, fc.array(fc.nat(), { maxLength: 6 }), (t, cuts) => assert.equal(sanitizeAll(chunked(t, cuts)), plainOutput(t))), RUNS);
+const arbSgr = fc.array(fc.constantFrom("0", "1", "31", "38", "5", "196", "2", "", ":"), { maxLength: 8 }).map((ps) => `${ESC}[${ps.join(";")}m`);
+const arbPlain = fc.string({ maxLength: 12 }).filter((t) => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(t));
+const arbColored = fc.array(fc.oneof(arbPlain, arbSgr), { maxLength: 10 }).map((ps) => ps.join(""));
+
+test("a text of plain fragments and valid SGR sequences comes out unchanged", () => {
+  fc.assert(fc.property(arbColored, (t) => assert.equal(sanitizedOutput(t), t)), RUNS);
 });
 
-test("a CSI and an OSC split across chunks are removed whole, a long OSC included", () => {
-  assert.equal(sanitizeAll([`ok ${ESC}[3`, "2mgreen", `${ESC}[0m done`]), "ok green done");
+test("any split of a text into chunks sanitizes to sanitizedOutput of the whole, each chunk with complete SGR sequences only", () => {
+  fc.assert(
+    fc.property(fc.oneof(arbText, arbColored), fc.array(fc.nat(), { maxLength: 6 }), (t, cuts) => {
+      let s = NEW_SANITIZER;
+      let out = "";
+      for (const c of chunked(t, cuts)) {
+        const [next, text] = sanitizeChunk(s, c);
+        assert.ok(!withoutSgr(text).includes(ESC));
+        s = next;
+        out += text;
+      }
+      assert.equal(out, sanitizedOutput(t));
+    }),
+    RUNS,
+  );
+});
+
+test("other CSI sequences, an OSC split across chunks and an SGR sequence past the limit are removed whole", () => {
+  assert.equal(sanitizeAll([`ok ${ESC}[3`, "2mgreen", `${ESC}[0m done`]), `ok ${ESC}[32mgreen${ESC}[0m done`);
+  assert.equal(sanitizeAll([`a${ESC}[2Kb${ESC}[?25lc${ESC}[1;2Hd`]), "abcd");
   assert.equal(sanitizeAll([`a${ESC}]0;ti`, `tle\u0007b`]), "ab");
   assert.equal(sanitizeAll([`a${ESC}]8;;x`, `${ESC}`, "\\b"]), "ab");
   const osc = `${ESC}]${"x".repeat(1000)}\u0007`;
   assert.equal(sanitizeAll(["<", osc.slice(0, 255), osc.slice(255, 257), osc.slice(257), ">"]), "<>");
+  assert.equal(sanitizedOutput(`a${ESC}[${"1;".repeat(SGR_PARAMS_LIMIT)}mb`), "ab");
+  assert.equal(sanitizedOutput(`a${ESC}[${"1".repeat(SGR_PARAMS_LIMIT)}mb`), `a${ESC}[${"1".repeat(SGR_PARAMS_LIMIT)}mb`);
 });
 
-test("processNameOf is one line of at most 40 characters and an ellipsis", () => {
+test("processNameOf keeps the whole name on one line", () => {
   fc.assert(
-    fc.property(fc.string({ maxLength: 120 }), (t) => {
+    fc.property(fc.string({ maxLength: 400 }), (t) => {
       const n = processNameOf(t);
       assert.ok(!/[\r\n]/u.test(n));
-      assert.ok(Array.from(n).length <= PROCESS_NAME_LENGTH + 1);
+      assert.ok(!n.includes(ESC));
     }),
     RUNS,
   );
-  assert.equal(processNameOf("  npm   test\nsecond line"), "npm test");
-  assert.equal(processNameOf("x".repeat(50)), `${"x".repeat(40)}…`);
+  fc.assert(
+    fc.property(fc.string({ maxLength: 400 }).filter((t) => !/[\u0000-\u001f\u007f]/u.test(t)), (t) => {
+      const want = Array.from(t).filter((c) => !/\s/u.test(c));
+      const got = Array.from(processNameOf(t)).filter((c) => !/\s/u.test(c));
+      assert.deepEqual(got, want);
+    }),
+    RUNS,
+  );
+  assert.equal(processNameOf("  npm   test\nsecond line"), "npm test second line");
+  assert.equal(processNameOf("x".repeat(300)), "x".repeat(300));
+  assert.equal(processNameOf(`${ESC}[31mred${ESC}[0m cmd`), "red cmd");
 });
 
 test("processKeyOf refuses a blank part and keeps one Codex item apart under two call ids", () => {

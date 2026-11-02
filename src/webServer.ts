@@ -6,7 +6,7 @@ import { HttpPlatform, HttpServerRequest, HttpServerResponse } from "effect/http
 import { Socket } from "effect/socket";
 import { chainSettingsOf, type ClientMessage, decodeClient, inSnapshot, type ServerMessage } from "./protocol.ts";
 import type { Broadcast, Refusal, RunManager } from "./runManager.ts";
-import { backlogAdmit, backlogTake, EMPTY_BACKLOG, type OutputBacklog } from "./liveOutput.ts";
+import { backlogAdmit, backlogTake, EMPTY_BACKLOG, type OutputBacklog, SCROLLBACK_LINES } from "./liveOutput.ts";
 
 /** What the server's handler needs besides the request. */
 export type WebServerServices = HttpServerRequest.HttpServerRequest | Scope.Scope | HttpPlatform.HttpPlatform | FileSystem.FileSystem | Path.Path;
@@ -45,8 +45,11 @@ export const makeWebServer = (manager: RunManager, distDir: string, queueBound: 
 /** The bound of a tab's forwarding queue (finding 13 of docs/gui-review.md; requirements, open point 1). */
 export const QUEUE_BOUND = 1000;
 
-/** Issue #49: the bound of a tab's backlog of live output, past which `backlogAdmit` compacts it. */
-export const OUTPUT_BACKLOG_BOUND = 500;
+/**
+ * Issue #49: the bound of a tab's backlog of live output, past which `backlogAdmit` compacts it. Issue #221: the
+ * panel's scrollback, so a tab that falls behind loses no line its scrollback could still show.
+ */
+export const OUTPUT_BACKLOG_BOUND = SCROLLBACK_LINES;
 
 /** A tab's live output not yet sent (issue #49), and the signal that wakes its forwarder after each admit. */
 export type OutputChannel = Readonly<{ backlog: Ref.Ref<OutputBacklog>; wake: Queue.Queue<void> }>;

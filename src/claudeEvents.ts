@@ -9,7 +9,7 @@ import type { ExecContinuation, ExecOutcome, ExecReport } from "./schema.ts";
 import { normalizeReport } from "./schemaNormalize.ts";
 import { type ClaudeFailure, type ProcessEnd, rejectionOf } from "./transport.ts";
 import { backgroundKilledText } from "./prompts.ts";
-import { type OutputEvent, plainOutput, type ProcessKey, processKeyOf, processNameOf, type ProcessStatus } from "./liveOutput.ts";
+import { type OutputEvent, sanitizedOutput, type ProcessKey, processKeyOf, processNameOf, type ProcessStatus } from "./liveOutput.ts";
 
 export type Question = Readonly<{ question: string; options: readonly Readonly<{ label: string; description: string }>[] }>;
 /** A recorded AskUserQuestion stop of an execution call. */
@@ -288,7 +288,7 @@ export const claudeOutputOf = (state: ClaudeOutputState, message: SDKMessage): r
       const name = s.commands.get(block.tool_use_id);
       if (name === undefined) continue;
       s = { ...s, commands: withoutEntry(s.commands, block.tool_use_id) };
-      const text = plainOutput(resultText(block.content));
+      const text = sanitizedOutput(resultText(block.content));
       const status: ProcessStatus = block.is_error === true ? { _tag: "Failed" } : { _tag: "Succeeded" };
       out.push(...keyed({ kind: "claude", id: block.tool_use_id }, (key) => [...(text === "" ? [] : [emit({ _tag: "Printed", key, name, text })]), emit({ _tag: "Finished", key, name, status })]));
     }

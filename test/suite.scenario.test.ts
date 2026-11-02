@@ -188,13 +188,13 @@ const suiteOutputs = (outputs: readonly OutputEvent[]): OutputEvent[] => outputs
 
 test("(m) the suite's chunks reach the panel sanitized between its Started and its Finished, and none reaches conversation.md", async () => {
   const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { suiteCommand: SUITE } });
-  probe.suite.printed.push(["ok 1 the first\n", `ok 2 ${ESC}[3`, "2mgreen", `${ESC}[0m\nunique-marker-49\n`]);
+  probe.suite.printed.push(["ok 1 the first\n", `ok 2 ${ESC}[3`, "2mgreen", `${ESC}[0m${ESC}[2K\nunique-marker-49\n`]);
   assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
   const events = suiteOutputs(probe.ui.outputs);
   assert.deepEqual(events[0], { _tag: "Started", key: "suite:1", name: SUITE_OUTPUT_NAME });
   assert.deepEqual(events.at(-1), { _tag: "Finished", key: "suite:1", name: SUITE_OUTPUT_NAME, status: { _tag: "Exited", code: 0 } });
   const printed = events.flatMap((e) => (e._tag === "Printed" ? [e.text] : []));
-  assert.equal(printed.join(""), "ok 1 the first\nok 2 green\nunique-marker-49\n");
+  assert.equal(printed.join(""), `ok 1 the first\nok 2 ${ESC}[32mgreen${ESC}[0m\nunique-marker-49\n`);
   assert.ok(!fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes("unique-marker-49"));
 });
 

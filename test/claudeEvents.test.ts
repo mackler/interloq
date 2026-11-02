@@ -238,7 +238,7 @@ const brief = (c: OutputCommand): string =>
 
 test("a foreground Bash starts, reports its time, and ends with its error result's output", () => {
   const { out, state } = commandsOf([toolUse("t1", "Bash", { command: "npm test" }), progress("t1", 4), toolResult("t1", [{ type: "text", text: "\u001b[31mnot ok 1\u001b[0m" }], true)]);
-  assert.deepEqual(out.map(brief), ["Started claude:t1 npm test", "Progress claude:t1 4", 'Printed claude:t1 "not ok 1"', "Finished claude:t1 Failed"]);
+  assert.deepEqual(out.map(brief), ["Started claude:t1 npm test", "Progress claude:t1 4", `Printed claude:t1 ${JSON.stringify("\u001b[31mnot ok 1\u001b[0m")}`, "Finished claude:t1 Failed"]);
   assert.deepEqual(claudeOpenProcesses(state), []);
 });
 

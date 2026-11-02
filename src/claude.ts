@@ -7,7 +7,7 @@ import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
 import { type BackgroundState, type CallOutcome, checkBackground, claudeOpenProcesses, claudeOutputOf, EMPTY_CLAUDE_OUTPUT, type OutputCommand, toolTarget, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
-import { plainOutput } from "./liveOutput.ts";
+import { sanitizedOutput } from "./liveOutput.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode, networkCodeOf, type ProcessEnd, processEndOf } from "./transport.ts";
 import { withTransportRetry } from "./retry.ts";
@@ -388,7 +388,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           : Effect.tryPromise({ try: () => sdk.readOutputTail(command.path), catch: () => null }).pipe(
               Effect.catch(() => Effect.succeed(null)),
               Effect.flatMap((tail) => {
-                const text = tail === null ? "" : plainOutput(tail);
+                const text = tail === null ? "" : sanitizedOutput(tail);
                 return text === "" ? Effect.void : ui.output({ _tag: "Printed", key: command.key, name: command.name, text });
               }),
               // W1-R1-1: the task's end is delivered however the read ends, an interruption by Stop task included;

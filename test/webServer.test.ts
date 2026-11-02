@@ -16,7 +16,8 @@ import { platformLayer } from "../src/platform.ts";
 import { decodeClient as decodeClientMessage, listedItemOf, ServerMessageSchema } from "../src/protocol.ts";
 import type { ClientMessage, ListedItem, RunEvent, ServerMessage, Stamped } from "../src/protocol.ts";
 import { type Broadcast, makeRunManager, type RunManager } from "../src/runManager.ts";
-import { makeWebServer, requestTarget } from "../src/webServer.ts";
+import { makeWebServer, OUTPUT_BACKLOG_BOUND, requestTarget } from "../src/webServer.ts";
+import { SCROLLBACK_LINES } from "../src/liveOutput.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
 import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
@@ -832,6 +833,11 @@ test("the page's hold frame reaches the manager's hold with its incarnation, run
 });
 
 // Issue #49: the live output reaches a tab outside its bounded event queue and outside the replay.
+// Issue #221: a tab that falls behind loses no output its 1,000-line scrollback could show.
+test("the per-tab output backlog holds at least the panel's scrollback", () => {
+  assert.ok(OUTPUT_BACKLOG_BOUND >= SCROLLBACK_LINES, `${OUTPUT_BACKLOG_BOUND} < ${SCROLLBACK_LINES}`);
+});
+
 test("output frames reach the tab outside its event queue: a burst never closes it, its ends arrive, each with its run", async () => {
   const listeners: ((b: Broadcast) => Effect.Effect<void>)[] = [];
   const time = "2026-10-30T07:00:00.000Z";

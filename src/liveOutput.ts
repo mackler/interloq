@@ -66,23 +66,36 @@ export type OutputEvent =
   | Readonly<{ _tag: "Finished"; key: ProcessKey; name: string; status: ProcessStatus }>
   | Readonly<{ _tag: "Touched"; name: string }>;
 
-/** The longest short name of a process, before its ellipsis. */
-export const PROCESS_NAME_LENGTH = 40;
+/** The lines a tab's live panel keeps (issue #221), which the server's per-tab backlog bound follows. */
+export const SCROLLBACK_LINES = 1000;
 
-/** A process's short name: the first non-blank line of its command, whitespace collapsed, at most 40 characters and an ellipsis. */
-export const processNameOf = (text: string): string => {
-  const line = (text.split(/\r\n|\r|\n/u).find((l) => l.trim() !== "") ?? "").replace(/\s+/gu, " ").trim();
-  const chars = Array.from(line);
-  return chars.length <= PROCESS_NAME_LENGTH ? line : `${chars.slice(0, PROCESS_NAME_LENGTH).join("")}…`;
-};
+/** The longest parameter list of an SGR sequence the sanitizer keeps; a longer one is removed whole. */
+export const SGR_PARAMS_LIMIT = 64;
+
+const SGR_SEQUENCE = /\u001b\[[0-9;:]*m/gu;
+
+/** A process's name: its whole text on one line, control characters and colors removed, whitespace collapsed (issue #221). */
+export const processNameOf = (text: string): string => sanitizedOutput(text).replace(SGR_SEQUENCE, "").replace(/\s+/gu, " ").trim();
 
 /**
  * The state of the sanitizer between chunks: in plain text, after ESC, inside a control sequence (`ESC [` until a final
- * character `@`–`~`), inside an operating-system command (`ESC ]` until BEL or `ESC \`), or after an ESC inside one.
- * It buffers nothing, so its state is bounded whatever the length of a sequence.
+ * character `@`–`~`) whose parameters are buffered while it may still be an SGR sequence (`Csi`) or dropped once it
+ * cannot be (`CsiDropped`), inside an operating-system command (`ESC ]` until BEL or `ESC \`), or after an ESC inside
+ * one. Its buffer holds at most `SGR_PARAMS_LIMIT` characters, so its state is bounded whatever the length of a sequence.
  */
-export type Sanitizer = "Text" | "Escape" | "Csi" | "Osc" | "OscEscape";
-export const NEW_SANITIZER: Sanitizer = "Text";
+export type Sanitizer =
+  | Readonly<{ _tag: "Text" }>
+  | Readonly<{ _tag: "Escape" }>
+  | Readonly<{ _tag: "Csi"; params: string }>
+  | Readonly<{ _tag: "CsiDropped" }>
+  | Readonly<{ _tag: "Osc" }>
+  | Readonly<{ _tag: "OscEscape" }>;
+export const NEW_SANITIZER: Sanitizer = { _tag: "Text" };
+
+const ESCAPE: Sanitizer = { _tag: "Escape" };
+const CSI_DROPPED: Sanitizer = { _tag: "CsiDropped" };
+const OSC: Sanitizer = { _tag: "Osc" };
+const OSC_ESCAPE: Sanitizer = { _tag: "OscEscape" };
 
 const ESC = "\u001b";
 const BEL = "\u0007";
@@ -90,26 +103,36 @@ const kept = (c: string): boolean => {
   const code = c.charCodeAt(0);
   return c === "\t" || c === "\r" || c === "\n" || (code >= 0x20 && code !== 0x7f);
 };
+const isFinal = (c: string): boolean => {
+  const code = c.charCodeAt(0);
+  return code >= 0x40 && code <= 0x7e;
+};
+const isSgrParam = (c: string): boolean => (c >= "0" && c <= "9") || c === ";" || c === ":";
 
 /** One character through the sanitizer: the next state and what it emits. */
 const step = (s: Sanitizer, c: string): readonly [Sanitizer, string] => {
-  switch (s) {
+  switch (s._tag) {
     case "Text":
-      return c === ESC ? ["Escape", ""] : ["Text", kept(c) ? c : ""];
+      return c === ESC ? [ESCAPE, ""] : [NEW_SANITIZER, kept(c) ? c : ""];
     case "Escape":
-      return c === "[" ? ["Csi", ""] : c === "]" ? ["Osc", ""] : c === ESC ? ["Escape", ""] : ["Text", ""];
-    case "Csi": {
-      const code = c.charCodeAt(0);
-      return code >= 0x40 && code <= 0x7e ? ["Text", ""] : c === ESC ? ["Escape", ""] : ["Csi", ""];
-    }
+      return c === "[" ? [{ _tag: "Csi", params: "" }, ""] : c === "]" ? [OSC, ""] : c === ESC ? [ESCAPE, ""] : [NEW_SANITIZER, ""];
+    case "Csi":
+      if (c === ESC) return [ESCAPE, ""];
+      if (isFinal(c)) return [NEW_SANITIZER, c === "m" ? `${ESC}[${s.params}m` : ""];
+      return isSgrParam(c) && s.params.length < SGR_PARAMS_LIMIT ? [{ _tag: "Csi", params: s.params + c }, ""] : [CSI_DROPPED, ""];
+    case "CsiDropped":
+      return c === ESC ? [ESCAPE, ""] : isFinal(c) ? [NEW_SANITIZER, ""] : [CSI_DROPPED, ""];
     case "Osc":
-      return c === BEL ? ["Text", ""] : c === ESC ? ["OscEscape", ""] : ["Osc", ""];
+      return c === BEL ? [NEW_SANITIZER, ""] : c === ESC ? [OSC_ESCAPE, ""] : [OSC, ""];
     case "OscEscape":
-      return c === "\\" ? ["Text", ""] : c === ESC ? ["OscEscape", ""] : ["Osc", ""];
+      return c === "\\" ? [NEW_SANITIZER, ""] : c === ESC ? [OSC_ESCAPE, ""] : [OSC, ""];
   }
 };
 
-/** A chunk of output through the sanitizer: escape sequences and control characters other than tab, CR and LF removed. */
+/**
+ * A chunk of output through the sanitizer: every escape sequence but SGR (color) and every control character other than
+ * tab, CR and LF removed. An SGR sequence is emitted whole, in the chunk that ends it, so no emitted chunk splits one.
+ */
 export const sanitizeChunk = (sanitizer: Sanitizer, chunk: string): readonly [Sanitizer, string] => {
   let state = sanitizer;
   let out = "";
@@ -125,7 +148,7 @@ export const sanitizeChunk = (sanitizer: Sanitizer, chunk: string): readonly [Sa
 export const sanitizeEnd = (_sanitizer: Sanitizer): Sanitizer => NEW_SANITIZER;
 
 /** A whole text through the sanitizer, the same machine as a chunk, so splitting a text never changes what is shown. */
-export const plainOutput = (text: string): string => sanitizeChunk(NEW_SANITIZER, text)[1];
+export const sanitizedOutput = (text: string): string => sanitizeChunk(NEW_SANITIZER, text)[1];
 
 /** One live output event as the server forwards it to a tab: the run it belongs to and the event. */
 export type OutputEnvelope = Readonly<{ run: number; event: OutputEvent }>;
