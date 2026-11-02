@@ -14,7 +14,7 @@ import type * as S from "../src/schema.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { TrackerUnreachable } from "../src/errors.ts";
 import { makeFakeTracker } from "./fakeTracker.ts";
-import { ack, finished, heldClock, questionEntry, type ScriptedUi, scriptedItem, scriptedStart, summaryReply, tempRepo, testLayer, testWiring } from "./helpers.ts";
+import { sourceOf, ack, finished, heldClock, questionEntry, type ScriptedUi, scriptedItem, scriptedStart, summaryReply, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 const START = Date.UTC(2026, 10, 1, 19, 30);
 const RESET = START + 9_000_000;
@@ -138,7 +138,7 @@ test("G-R1-1: during the first interview, a worker request's backoff ended early
     closings: [{ output: summaryReply("# Requirements\n\nQ1, Q2: A, B.") }],
   });
   const held = heldClock(START);
-  const fiber = Effect.runFork(refinementRun("task", scriptedItem.id, "unchecked").pipe(Effect.provide(layer), Effect.provideService(Clock.Clock, held.clock)));
+  const fiber = Effect.runFork(refinementRun(sourceOf("task"), scriptedItem.id, "unchecked").pipe(Effect.provide(layer), Effect.provideService(Clock.Clock, held.clock)));
   const q2Presented = () => probe.ui.notified.filter((e) => e._tag === "QuestionPresented" && e.question.origin.kind === "clarification" && e.question.origin.id === "Q2").length;
   while (announcing(probe.ui).length === 0 || q2Presented() === 0) await tick();
   const [wait] = announcing(probe.ui);

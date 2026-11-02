@@ -50,7 +50,8 @@ test("(a) a stale file name raised, amended and agreed: Amended, and the records
   const conversation = r.read("conversation.md");
   assert.match(conversation, /U-R1-1/u);
   assert.match(conversation, /### Lines removed[\s\S]*src\/old\.ts[\s\S]*### Lines added[\s\S]*src\/new\.ts/u);
-  assert.ok(r.probe.reviewer.prompts.every((p) => p.includes(prompts.UPDATE_MARKER)));
+  assert.equal(r.probe.reviewer.checkPrompts.length, 2);
+  assert.equal(r.probe.reviewer.prompts.length, 0);
 });
 
 test("(b) the first check raises nothing: Unchanged, and Claude Code is not called", async () => {

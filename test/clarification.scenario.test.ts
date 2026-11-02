@@ -11,7 +11,7 @@ import { TERMS_REQUEST } from "../src/input.ts";
 import { USAGE_LIMIT_RETRY_SECONDS } from "../src/limitReset.ts";
 import { refinementRun } from "../src/run.ts";
 import type * as S from "../src/schema.ts";
-import { ack, steppingClock, followUpOf, type PlanningStep, presentedQuestions, questionEntry, type ScriptedUi, scriptedItem, summaryReply, tempRepo, testLayer, type TestOptions } from "./helpers.ts";
+import { sourceOf, ack, steppingClock, followUpOf, type PlanningStep, presentedQuestions, questionEntry, type ScriptedUi, scriptedItem, summaryReply, tempRepo, testLayer, type TestOptions } from "./helpers.ts";
 
 const q = (id: string, skip: S.SkipCondition | null = null): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { default_answer: "A", skip_if: skip });
 const SUMMARY = "# Requirements\n\nQ1, Q2, Q3: A.";
@@ -36,7 +36,7 @@ const scenario = (questions: readonly S.QuestionEntry[], options: TestOptions, t
     reviews: options.reviews ?? [{ issues: [] }, { issues: [] }],
   });
   const ui = () => probe.ui;
-  const run = () => Effect.runPromiseExit(refinementRun("task", scriptedItem.id, terms).pipe(Effect.provide(layer), (e) => (clock === null ? e : Effect.provideService(e, Clock.Clock, clock))));
+  const run = () => Effect.runPromiseExit(refinementRun(sourceOf("task"), scriptedItem.id, terms).pipe(Effect.provide(layer), (e) => (clock === null ? e : Effect.provideService(e, Clock.Clock, clock))));
   const conversation = () => fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
   return { probe, ui, run, conversation };
 };

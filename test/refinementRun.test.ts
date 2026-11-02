@@ -11,7 +11,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scriptedItem, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { sourceOf, fakeTrackerOf, questionEntry, refinementFails, respond, runFails, scriptedItem, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 // Issue #120, S6 (the developer's decision of 8 Oct 2026): a refinement run is the question phase and nothing after it;
 // it writes requirements.md back to its item as the section Refined using Interloq and sets the item to refined. It sets
@@ -31,7 +31,7 @@ const oneQuestion: TestOptions = {
 
 const refine = (options: TestOptions, tracker: FakeTracker = fakeTrackerOf([item])) => {
   const { layer, probe } = testLayer(tempRepo(), options);
-  const exit = Effect.runPromiseExit(refinementRun("Two modes\n\nMake the page two tabs.", item.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = Effect.runPromiseExit(refinementRun(sourceOf("Two modes\n\nMake the page two tabs."), item.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe, tracker };
 };
 const held = async (tracker: FakeTracker): Promise<FakeItem> => (await Effect.runPromise(tracker.items)).find((i) => i.id === item.id) ?? assert.fail("the item is gone");

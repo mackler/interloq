@@ -10,7 +10,7 @@ import { networkRetryDelaySeconds } from "../src/retryPolicy.ts";
 import { refinementRun } from "../src/run.ts";
 import * as S from "../src/schema.ts";
 import type { ClaudeFailure } from "../src/transport.ts";
-import { finished, type PlanningStep, scriptedItem, scriptedStart, steppingClock, tempRepo, testLayer, testWiring } from "./helpers.ts";
+import { sourceOf, finished, type PlanningStep, scriptedItem, scriptedStart, steppingClock, tempRepo, testLayer, testWiring } from "./helpers.ts";
 
 // Issue #201: an agent unreachable for longer than the transport budget, its failure carrying a network code, is tried
 // again on the Clock with nothing asked, and the run continues once the agent answers; a fault without a code keeps the
@@ -30,7 +30,7 @@ test("a refinement whose question-list call is unreachable beyond its retries tr
   const failures = 6;
   const { layer, probe } = testLayer(tempRepo(), { mode: "refinement", steps: [...Array.from({ length: failures }, () => unreachable), { output: { questions: [] } }], reviews: [{ issues: [] }] });
   const { clock, sleeps } = steppingClock(START);
-  const exit = await Effect.runPromiseExit(refinementRun("task", scriptedItem.id, "checked").pipe(Effect.provide(layer), Effect.provideService(Clock.Clock, clock)));
+  const exit = await Effect.runPromiseExit(refinementRun(sourceOf("task"), scriptedItem.id, "checked").pipe(Effect.provide(layer), Effect.provideService(Clock.Clock, clock)));
   assert.ok(Exit.isSuccess(exit), String(exit));
   assert.ok(!probe.ui.notified.some((e) => e._tag === "QuestionPresented" && e.question.origin.kind === "transport"), "the transport question was asked");
   assert.deepEqual(probe.ui.asked, []);

@@ -5,6 +5,7 @@
 import { type Brand, Result } from "effect";
 import { COMMENTS_TASK_HEADING, commentTaskLine, refinementRecordCommentText, sentBackCommentText, stoppedUnrefinedCommentText } from "./prompts.ts";
 import type { ItemComment } from "./tracker.ts";
+import type { ItemText } from "./refinement.ts";
 
 /**
  * A comment's key, unique among every comment Interloq writes: a send-back's or a guard stop's is
@@ -131,3 +132,10 @@ export const commentsTaskText = (comments: readonly ItemComment[]): string => {
   });
   return shown.length === 0 ? "" : [COMMENTS_TASK_HEADING, ...shown].join("\n\n");
 };
+
+/**
+ * Issue #216: a refinement's task text from the developer's title and text and the item's comments: the title, a blank
+ * line, the text, then the comments as commentsTaskText gives them. Composed again from the text Bring Up to Date amended.
+ */
+export const refinementTaskText = (text: ItemText, comments: readonly ItemComment[]): string =>
+  [text.title, text.text.trim() === "" ? "" : text.text, commentsTaskText(comments)].filter((part) => part !== "").join("\n\n");

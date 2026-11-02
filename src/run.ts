@@ -3,12 +3,13 @@
 
 import { Clock, Effect, Exit, Fiber, Option, Queue, Ref, Result } from "effect";
 import { NEW_SANITIZER, type ProcessKey, processKeyOf, type Sanitizer, sanitizeChunk } from "./liveOutput.ts";
-import { commentDateOf, commentText, runCommentKey } from "./itemComments.ts";
+import { commentDateOf, commentText, refinementTaskText, runCommentKey } from "./itemComments.ts";
+import { bringUpToDate } from "./bringUpToDate.ts";
 import { observingQuestions } from "./questionsSeen.ts";
 import { rootName } from "./park.ts";
-import { type Refinement, refinementOf } from "./refinement.ts";
+import { type ItemText, type Refinement, refinementOf } from "./refinement.ts";
 import { stateAtEnd, stateAtStart } from "./runMode.ts";
-import type { ItemId } from "./tracker.ts";
+import type { ItemComment, ItemId } from "./tracker.ts";
 import { describe, isTrackerError, NotRefinedStopped, type RunError, SuiteStopped, TrackerStepFailed, trackerFailureText } from "./errors.ts";
 import { executionSteps } from "./planSteps.ts";
 import { renderPlanMarkdown, type StepRecords, stepRecordsOf } from "./plan.ts";
@@ -16,7 +17,7 @@ import { askAgreed, questionPhase } from "./interview.ts";
 import { type PreparationFound, preparationOf } from "./preparedComments.ts";
 import { renderQuestions } from "./render.ts";
 import { type EarlierPlan, undonePlan } from "./earlierPlan.ts";
-import { PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
+import { issueObsoleteLine, issueUpdatedLine, PREPARED_TERMS_CHOICE_LINE, preparationCleanupFailedLine, preparationUsedLine, continuingLine, earlierPlanPrompt, type FirstPlanCause, parkedBranchFirstStepRule, planAfterVerdictPrompt, verdictGivenLine, verdictStandsLine, verdictWithdrawnLine, earlierParkingIncompleteLine, earlierPlanSetAsideLine, earlierPlanTakenLine, earlierRunParkedLine, parkedMergedLine, parkedMergeConflictLine, executionContinuingPrompt, itemStartedLine, NOTHING_TO_SETTLE, refinementInvalidText, refinementWrittenLine, requirementsKeptText, type TrackerStep, processEndedQuestion, processEndedRemaining, processEndedSummary, executePrompt, implementationBeganLine, implementationEndedLine, initialPlanPrompt, planningBeganLine, planNotEndedLine, workReviewBeganLine, revisePlanAfterExecutionPrompt, type ExecStop, execStopRevisionLine, type RevisionCause, suiteBeganLine, suiteFailedLine, suiteFailureText, suitePassedLine, suiteRepeatLine, suiteStoppedDetails, suiteStoppedFacts, SUITE_OUTPUT_NAME,
   suiteStoppedHistory, suiteStoppedLine, suiteStoppedQuestion, transportPrompt, uncommittedLine, type WorkExecution } from "./prompts.ts";
 import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
@@ -86,7 +87,20 @@ const deletePreparations = (tracker: TrackerShape, item: ItemId, env: TrackerRet
     yield* store.converse(`${line}\n\n`).pipe(Effect.ignore);
   });
 
-export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, held: readonly string[] = [], prepared: UsedPreparation | null = null): Effect.Effect<void, RunError, Services | Tracker> =>
+/** Issue #216: a refinement's source: the developer's title and text as read and the item's comments, from which its task is composed. */
+export type RefinementSource = Readonly<{ text: ItemText; comments: readonly ItemComment[] }>;
+/** Issue #216 (Q1): how a refinement run finished: refined, or the issue found already built or replaced, labeled obsolete or not. */
+export type RefinementEnd = Readonly<{ _tag: "Refined" }> | Readonly<{ _tag: "Obsolete"; labeled: boolean }>;
+
+/**
+ * A refinement run (issue #120, the developer's decision of 8 Oct 2026): Bring Up to Date first (issue #216), then the
+ * question phase and nothing after it. The phase's corrected title and text are written to the item once, after its loop
+ * ends in agreement and before any question, and the question phase and its decisions work from them; an issue found
+ * already built or replaced ends the run with no question, labeled obsolete where a label is configured. Otherwise
+ * requirements.md becomes the item's `Refined using Interloq` section, written back with its record and the item set
+ * refined (S7).
+ */
+export const refinementRun = (source: RefinementSource, item: ItemId, terms: S.TermsMode, held: readonly string[] = [], prepared: UsedPreparation | null = null): Effect.Effect<RefinementEnd, RunError, Services | Tracker> =>
   Effect.gen(function* () {
     const store = yield* Store;
     const ui = yield* Ui;
@@ -94,14 +108,36 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, he
     const decider = yield* Decider;
     const tracker = yield* Tracker;
     const phase: Phase = { kind: "questions" };
-    yield* store.init(task);
+    const update: Phase = { kind: "update" };
+    const filed = refinementTaskText(source.text, source.comments);
+    yield* store.init(filed);
     yield* converseHeld(held);
-    yield* store.converse(`${itemStartedLine("refinement", item, firstLine(task))}\n\n`);
+    yield* store.converse(`${itemStartedLine("refinement", item, source.text.title)}\n\n`);
     yield* ui.notify({ _tag: "ModelNamed", model: { agent: "codex", name: config.codexModel } });
     yield* ui.notify({ _tag: "PhasesForeseen", phases: foreseen("refinement", iterationsOf(1)) });
     // Issue #186 (requirements Q5): whether the developer was presented any question, which the item's record keeps.
     const asked = yield* Ref.make(false);
-    yield* (prepared === null ? questionPhase(task, terms) : preparedPhase(task, prepared)).pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))), Effect.provideService(Ui, observingQuestions(ui, asked)));
+    const inUpdate = <A, E, R>(body: Effect.Effect<A, E, R>) => body.pipe(Effect.provideService(Decider, decider.at(update, phaseName(update, 1))));
+    const updateEnv = yield* inUpdate(runTrackerEnv);
+    const outcome = yield* inUpdate(bringUpToDate(item, source.text, updateEnv)).pipe(Effect.provideService(Ui, observingQuestions(ui, asked)));
+    if (outcome._tag === "Obsolete") {
+      // Q1: no text is written, no question asked, and Interloq never closes the issue.
+      const labeled = config.tracker !== null && config.tracker.obsoleteLabel !== null;
+      if (labeled) yield* writeStep(tracker, { kind: "setState", item, state: "obsolete" }, updateEnv, "setObsolete", null);
+      yield* sayAndWrite(issueObsoleteLine(item, outcome.reason, labeled));
+      return { _tag: "Obsolete", labeled } satisfies RefinementEnd as RefinementEnd;
+    }
+    if (outcome._tag === "Amended") {
+      yield* writeStep(tracker, { kind: "writeText", item, text: outcome.text }, updateEnv, "writeText", null);
+      yield* sayAndWrite(issueUpdatedLine(item));
+    }
+    // The task and the Decider of Gather Requirements work from the amended text; a preparation of the text as read no
+    // longer matches the item (Q3) and is discarded.
+    const amended = outcome._tag === "Amended";
+    const task = amended ? refinementTaskText(outcome.text, source.comments) : filed;
+    const questionDecider = decider.withTask(task).at(phase, phaseName(phase, 1));
+    const used = amended ? null : prepared;
+    yield* (used === null ? questionPhase(task, terms) : preparedPhase(task, used)).pipe(Effect.provideService(Decider, questionDecider), Effect.provideService(Ui, observingQuestions(ui, asked)));
     // Issue #83: an empty agreed list is no failure; a refinement that asks nothing found nothing to settle.
     if ((yield* store.loadQuestions()).questions.length === 0) {
       yield* store.converse(`${NOTHING_TO_SETTLE}\n\n`);
@@ -112,7 +148,7 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, he
     const refinement = refinementOf(requirements ?? "");
     if (Result.isFailure(refinement)) return yield* Effect.fail(new TrackerStepFailed({ item, step: "writeRefinement", cause: refinementInvalidText(refinement.failure.reason, store.requirements), done: kept, check: null }));
     // Issue #171: the write-back closes the question phase, so its exhaustion question's decision is bound to that phase.
-    const env = yield* runTrackerEnv.pipe(Effect.provideService(Decider, decider.at(phase, phaseName(phase, 1))));
+    const env = yield* runTrackerEnv.pipe(Effect.provideService(Decider, questionDecider));
     yield* writeStep(tracker, { kind: "writeRefinement", item, refinement: refinement.success }, env, "writeRefinement", kept);
     // Issue #186: the record before the state, so an item is never labeled refined without it.
     const key = runCommentKey(rootName(store.root));
@@ -121,6 +157,7 @@ export const refinementRun = (task: string, item: ItemId, terms: S.TermsMode, he
     yield* writeStep(tracker, { kind: "setState", item, state: stateAtEnd("refinement") }, env, "setRefined", kept);
     yield* ui.say(refinementWrittenLine(item, store.requirements));
     yield* deletePreparations(tracker, item, env);
+    return { _tag: "Refined" } satisfies RefinementEnd as RefinementEnd;
   });
 
 /**

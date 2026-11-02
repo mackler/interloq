@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { Effect, Fiber } from "effect";
 import { refinementRun, run } from "../src/run.ts";
 import { countOfKind, foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../src/uiEvents.ts";
-import { finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT, scriptedItem } from "./helpers.ts";
+import { sourceOf, finished, issue, respond, runFails, runTask, scriptedRecordedPlan, scriptedTask, tempRepo, testLayer, presentedQuestions, presentedSubjects , TEST_ROOT, scriptedItem } from "./helpers.ts";
 import { blocksMarkdown, piecesText } from "../src/pieces.ts";
 
 const noQuestions = { questions_for_user: [] };
@@ -611,7 +611,7 @@ test("a stopped execution foresees the second iteration at once; a work review t
 test("a refinement run foresees Bring Up to Date and Gather Requirements; an implementation run foresees neither", async () => {
   // Each run ends at its first agent call, which is not scripted; what was notified before is what counts.
   const refinement = testLayer(tempRepo(), {});
-  await Effect.runPromiseExit(refinementRun("task", scriptedItem.id, "checked").pipe(Effect.provide(refinement.layer)));
+  await Effect.runPromiseExit(refinementRun(sourceOf("task"), scriptedItem.id, "checked").pipe(Effect.provide(refinement.layer)));
   assert.equal(foreseen(refinement.probe.ui.notified)[0], "foreseen U,Q");
   const implementation = testLayer(tempRepo(), {});
   await Effect.runPromiseExit(run("task").pipe(Effect.provide(implementation.layer)));

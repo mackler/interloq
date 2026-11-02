@@ -608,6 +608,7 @@ const recordingDecider = (): { decider: DeciderShape; requests: unknown[]; expla
   const explained: ContextRequest[] = [];
   const decider: DeciderShape = {
     at: () => decider,
+    withTask: () => decider,
     explain: (request) => Effect.sync(() => (explained.push(request), programWritten(request))),
     decide: (request) =>
       Effect.sync(() => {

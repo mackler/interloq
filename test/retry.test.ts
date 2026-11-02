@@ -140,6 +140,7 @@ test("Help me decide at the exhaustion pause runs a decision and asks again", as
   const requests: unknown[] = [];
   const decider: DeciderShape = {
     at: () => decider,
+    withTask: () => decider,
     explain: (request) => Effect.succeed(programWritten(request)),
     decide: (request) => Effect.sync(() => (requests.push(request), { decision: 1, analysis: { decision: "d", columns: [], recommendation: { option: "", reason: "" } }, result: "converged" as const })),
   };
@@ -176,6 +177,7 @@ test("the exhaustion pause for Codex is explained by a context call; the pause f
   const explained: unknown[] = [];
   const decider: DeciderShape = {
     at: () => decider,
+    withTask: () => decider,
     decide: () => Effect.die(new Error("no decision was expected")),
     explain: (request) => Effect.sync(() => (explained.push(request), { context: { blocks: para("Written by Claude Code."), by: "agent" as const }, history: [], explanations: [] })),
   };

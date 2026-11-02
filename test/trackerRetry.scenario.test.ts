@@ -15,7 +15,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, finished, questionEntry, summaryReply, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { sourceOf, fakeTrackerOf, finished, questionEntry, summaryReply, scriptedItem, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
@@ -38,7 +38,7 @@ const failTimes = (tracker: FakeTracker, op: "writeRefinement" | "setState", err
 
 const refine = async (tracker: FakeTracker, options: TestOptions) => {
   const { layer, probe } = testLayer(tempRepo(), options);
-  const exit = await Effect.runPromiseExit(refinementRun("Retry\n\nRepeat a failed request.", unrefined.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = await Effect.runPromiseExit(refinementRun(sourceOf("Retry\n\nRepeat a failed request."), unrefined.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe, conversation: () => fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8") };
 };
 const implement = async (tracker: FakeTracker, options: TestOptions) => {

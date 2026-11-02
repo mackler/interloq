@@ -408,6 +408,8 @@ export type DecisionOutcome = Readonly<{ decision: number; analysis: DecisionAna
  */
 export interface DeciderShape {
   at(phase: Phase, label: string): DeciderShape;
+  /** Issue #216: the same Decider over the given task, its phase kept, for the decisions made after Bring Up to Date amended the task. */
+  withTask(task: string): DeciderShape;
   decide(request: DecisionRequest): Effect.Effect<DecisionOutcome, RunError>;
   /**
    * Writes the context paragraph and terms of a question the program composed (S9), in a fresh session over the run's

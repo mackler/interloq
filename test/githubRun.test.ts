@@ -12,7 +12,7 @@ import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { githubCredential } from "../src/trackerConfig.ts";
 import { LABELS } from "./githubLabels.ts";
-import { questionEntry, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { sourceOf, questionEntry, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 import { type Answer, json, makeStub, type SentRequest } from "./stubHttp.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
@@ -47,7 +47,7 @@ const refine = async (scripted: Answer[]) => {
   const stub = makeStub(server.handler);
   const tracker = Effect.runSync(githubTracker({ kind: "github", owner: "mackler", repo: "interloq", labels: LABELS, prepareLabel: null, obsoleteLabel: null }, TOKEN).pipe(Effect.provide(stub.layer)));
   const { layer, probe } = testLayer(tempRepo(), oneQuestion);
-  const exit = await Effect.runPromiseExit(refinementRun("Retry\n\nRepeat a failed request.", ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = await Effect.runPromiseExit(refinementRun(sourceOf("Retry\n\nRepeat a failed request."), ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe, server, stub };
 };
 

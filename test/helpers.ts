@@ -30,7 +30,8 @@ import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifact
 import { type FakeItem, type FakeTracker, makeFakeTracker } from "./fakeTracker.ts";
 import { itemIdOf, type ItemId, type ItemUrl, itemUrlOf } from "../src/tracker.ts";
 import type { RunMode } from "../src/runMode.ts";
-import { refinementRun, run } from "../src/run.ts";
+import { type RefinementSource, refinementRun, run } from "../src/run.ts";
+import { itemTextOf } from "../src/refinement.ts";
 import * as S from "../src/schema.ts";
 import type { MarkedDisposition, Plan as SPlan, RecordedPlan, StepStatus, TermsMode } from "../src/schema.ts";
 import { TASK_DISPUTE_FIELD } from "../src/schema.ts";
@@ -675,8 +676,10 @@ export class ScriptedReviewer implements ReviewerShape {
   termsReviews: ReviewStep[] = [];
   /** Issue #216: the checks of Bring Up to Date (prompts carrying UPDATE_MARKER), apart from `reviews`; without one, a check raises nothing. */
   updateChecks: ReviewStep[] = [];
+  /** Issue #216: the prompts of the checks of Bring Up to Date, kept apart from `prompts`, so the counts of the other reviews stand. */
+  readonly checkPrompts: string[] = [];
   private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null } {
-    this.prompts.push(prompt);
+    (prompt.includes(UPDATE_MARKER) ? this.checkPrompts : this.prompts).push(prompt);
     this.callPhases.push(phase);
     const terms = prompt.includes(`/${pathOf({ kind: "terms" })}`);
     const step = prompt.includes(UPDATE_MARKER) ? (this.updateChecks.shift() ?? { issues: [] }) : terms ? (this.termsReviews.shift() ?? { issues: [] }) : this.reviews.shift();
@@ -805,7 +808,7 @@ export const DECISION_FORMAT_TEXT = fs.readFileSync(new URL("../docs/decision-ma
 /** A reporter for execution calls that expect no report_step call: a call is a defect. */
 export const noReporter: StepReporter = (id) => Effect.die(new Error(`no report of a step was expected: ${id}`));
 /** A Decider for tests that expect no decision: a call is a defect; a question's context is the program's own (S10). */
-export const noDecider: DeciderShape = { at: () => noDecider, decide: () => Effect.die(new Error("no decision was expected")), explain: (request) => Effect.succeed(programWritten(request)) };
+export const noDecider: DeciderShape = { at: () => noDecider, withTask: () => noDecider, decide: () => Effect.die(new Error("no decision was expected")), explain: (request) => Effect.succeed(programWritten(request)) };
 /** The services with the Decider built over them (decision support, D3), as src/program.ts builds it. */
 export const withDecider = (layer: Layer.Layer<DeciderDeps>, task = "task"): Layer.Layer<Services> => Layer.provideMerge(deciderLayer(task, DECISION_FORMAT_TEXT), layer);
 
@@ -845,14 +848,19 @@ export const runTask = (layer: Layer.Layer<Services>, task = "task"): Promise<nu
   Effect.runPromise(withSuite(run(task).pipe(Effect.map((end) => (end._tag === "Finished" ? end.phases : 0)), Effect.provide(layer))));
 
 /** Runs a refinement run of the scripted item (issue #120): the question phase, written back to the item. */
-export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task", terms: TermsMode = "checked"): Promise<void> => Effect.runPromise(refinementRun(task, scriptedItem.id, terms).pipe(Effect.provide(layer)));
+/** Issue #216: a refinement's source from a task text as the tests write it: its first line the title, the rest after a blank line the text. */
+export const sourceOf = (task: string): RefinementSource => {
+  const [title = "", ...rest] = task.split("\n");
+  return { text: Result.getOrThrow(itemTextOf(title, rest.join("\n").replace(/^\n/u, ""))), comments: [] };
+};
+export const runRefinement = (layer: Layer.Layer<Services | Tracker>, task = "task", terms: TermsMode = "checked"): Promise<unknown> => Effect.runPromise(refinementRun(sourceOf(task), scriptedItem.id, terms).pipe(Effect.provide(layer)));
 /** Runs a refinement run and asserts that it fails with the given error tag and description texts. */
 export async function refinementFails(layer: Layer.Layer<Services | Tracker>, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
   return refinementFailsWith(layer, "checked", tag, ...texts);
 }
 /** refinementFails for a run with the given choice of terms (issue #142). */
 export async function refinementFailsWith(layer: Layer.Layer<Services | Tracker>, terms: TermsMode, tag: RunError["_tag"], ...texts: RegExp[]): Promise<RunError> {
-  const exit = await Effect.runPromiseExit(refinementRun("task", scriptedItem.id, terms).pipe(Effect.provide(layer)));
+  const exit = await Effect.runPromiseExit(refinementRun(sourceOf("task"), scriptedItem.id, terms).pipe(Effect.provide(layer)));
   assert.ok(Exit.isFailure(exit), "the run succeeded");
   const error = Cause.findErrorOption(exit.cause);
   assert.ok(Option.isSome(error), `the run ended with a defect, not a typed error: ${Cause.pretty(exit.cause)}`);

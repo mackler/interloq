@@ -8,7 +8,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import type { FakeItem, FakeTracker } from "./fakeTracker.ts";
-import { fakeTrackerOf, questionEntry, scriptedItem, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { sourceOf, fakeTrackerOf, questionEntry, scriptedItem, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 // Issue #186 (requirements Q5): a refinement run records on its item whether it asked the developer any question, after
 // the requirements are written and before the item is set to refined, so the send-back's guard can read it.
@@ -28,7 +28,7 @@ const logged = (fake: FakeTracker) => {
 const refine = async (options: TestOptions, fake: FakeTracker = fakeTrackerOf([item])) => {
   const { layer, probe } = testLayer(tempRepo(), options);
   const { tracker, order } = logged(fake);
-  const exit = await Effect.runPromiseExit(refinementRun("Send back\n\nDeclare it unrefined.", item.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = await Effect.runPromiseExit(refinementRun(sourceOf("Send back\n\nDeclare it unrefined."), item.id, "checked").pipe(Effect.provide(Layer.succeed(Tracker, tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   const after = (await Effect.runPromise(fake.items)).find((i) => i.id === item.id)!;
   return { exit, probe, after, order };
 };

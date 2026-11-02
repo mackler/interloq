@@ -15,7 +15,7 @@ import type * as S from "../src/schema.ts";
 import { type Services, Tracker } from "../src/services.ts";
 import { itemIdOf } from "../src/tracker.ts";
 import { fakeGitlabTracker, type FakeGitlab, serverIssue } from "./fakeGitlab.ts";
-import { finished, questionEntry, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
+import { sourceOf, finished, questionEntry, summaryReply, type TestOptions, tempRepo, testLayer } from "./helpers.ts";
 
 type QuestionEntry = typeof S.QuestionEntry.Type;
 const q = (id: string): QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", default_answer: "A" });
@@ -34,7 +34,7 @@ const converging: TestOptions = { steps: [{ output: noQuestions, plan: "v1" }], 
 
 const refine = async (options: TestOptions, gitlab: FakeGitlab) => {
   const { layer, probe } = testLayer(tempRepo(), options);
-  const exit = await Effect.runPromiseExit(refinementRun(`Two modes\n\n${DEVELOPER}`, ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, gitlab.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
+  const exit = await Effect.runPromiseExit(refinementRun(sourceOf(`Two modes\n\n${DEVELOPER}`), ID, "checked").pipe(Effect.provide(Layer.succeed(Tracker, gitlab.tracker)), Effect.provide(layer as Layer.Layer<Services>)));
   return { exit, probe };
 };
 const implement = async (options: TestOptions, gitlab: FakeGitlab) => {

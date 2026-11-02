@@ -78,9 +78,11 @@ export type DeciderDeps = Ui | Planner | Reviewer | Store | RunConfig | RunKind;
 export const makeDecider = (task: string, format: string): Effect.Effect<DeciderShape, never, DeciderDeps> =>
   Effect.gen(function* () {
     const context = yield* Effect.context<DeciderDeps>();
-    const at = (phase: DecisionQuestion["phase"], label: string): DeciderShape => {
+    // Issue #216 (P1-R3-1): one shape of (task, phase, label), so withTask and at compose in either order.
+    const shapeOf = (task: string, phase: DecisionQuestion["phase"], label: string): DeciderShape => {
       const self: DeciderShape = {
-        at,
+        at: (p, l) => shapeOf(task, p, l),
+        withTask: (t) => shapeOf(t, phase, label),
         decide: (request) =>
           decisionLoop(format, task, { phase, label, question: request.question, options: request.options, ...(request.shown === undefined ? {} : { shown: request.shown }) }, request.number ?? null, request.opened).pipe(
             Effect.map((end) => ({ decision: end.decision, analysis: end.analysis, result: end.result })),
@@ -91,6 +93,6 @@ export const makeDecider = (task: string, format: string): Effect.Effect<Decider
       };
       return self;
     };
-    return at({ kind: "questions" }, phaseName({ kind: "questions" }, 1));
+    return shapeOf(task, { kind: "questions" }, phaseName({ kind: "questions" }, 1));
   });
 export const deciderLayer = (task: string, format: string): Layer.Layer<Decider, never, DeciderDeps> => Layer.effect(Decider, makeDecider(task, format));
