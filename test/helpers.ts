@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { marked } from "marked";
 import { type PresentedQuestion, type ShownExplanation, shownExplanations } from "../src/question.ts";
 import { programWritten } from "../src/questionContext.ts";
-import { CONTEXT_REQUEST_HEADING, confirmEndText, itemReturnedLine, LIST_DONE_SENTENCE, permissionPrompt, recordSubject } from "../src/prompts.ts";
+import { CONTEXT_REQUEST_HEADING, confirmEndText, itemReturnedLine, LIST_DONE_SENTENCE, permissionPrompt, recordSubject, UPDATE_MARKER } from "../src/prompts.ts";
 import { promptOf } from "../src/userPrompts.ts";
 import { type Block, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces } from "../src/pieces.ts";
 import { askOffering, byLine, permissionDraft } from "../src/offer.ts";
@@ -666,18 +666,20 @@ export class ScriptedReviewer implements ReviewerShape {
   /** The next review's gate, waited for interruptibly before the turn is taken (issue #153); none for a terms review. */
   private gated(prompt: string): Effect.Effect<void> {
     return Effect.suspend(() => {
-      const gate = prompt.includes(`/${pathOf({ kind: "terms" })}`) ? undefined : this.reviews[0]?.gate;
+      const gate = prompt.includes(`/${pathOf({ kind: "terms" })}`) || prompt.includes(UPDATE_MARKER) ? undefined : this.reviews[0]?.gate;
       return gate === undefined ? Effect.void : Effect.callback<void>((resume) => void gate().then(() => resume(Effect.void)));
     });
   }
   /** One scripted turn: its effects on the files, then its reply text, or the fault it fails with. */
   /** The reviews of the terms (S17), apart from `reviews`; without one, a terms review raises no issue. */
   termsReviews: ReviewStep[] = [];
+  /** Issue #216: the checks of Bring Up to Date (prompts carrying UPDATE_MARKER), apart from `reviews`; without one, a check raises nothing. */
+  updateChecks: ReviewStep[] = [];
   private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null } {
     this.prompts.push(prompt);
     this.callPhases.push(phase);
     const terms = prompt.includes(`/${pathOf({ kind: "terms" })}`);
-    const step = terms ? (this.termsReviews.shift() ?? { issues: [] }) : this.reviews.shift();
+    const step = prompt.includes(UPDATE_MARKER) ? (this.updateChecks.shift() ?? { issues: [] }) : terms ? (this.termsReviews.shift() ?? { issues: [] }) : this.reviews.shift();
     if (!step) throw new Error("no scripted review");
     step.onCall?.();
     if (step.plan !== undefined) fs.writeFileSync(planFileOf(this.state), step.plan);
@@ -762,7 +764,7 @@ export class ScriptedSuite implements SuiteRunnerShape {
 }
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** Issue #216: the checks of Bring Up to Date. */ updateChecks?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked
@@ -820,6 +822,7 @@ export function testLayer(repo: string, options: TestOptions = {}): { layer: Lay
   planner.ui = options.ui ?? ui;
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
+  reviewer.updateChecks = [...(options.updateChecks ?? [])];
   const wrap = options.store ?? ((s: StoreShape) => s);
   const store = Layer.effect(Store, makeStore(repo, TEST_ROOT, config.ignorePaths).pipe(Effect.map(wrap))).pipe(Layer.provide(options.platform ?? platformLayer));
   // Issue #120: the project's tracker, a fake holding the scripted item (unrefined, as a refinement run finds it).
@@ -936,6 +939,7 @@ export function testWiring(repo: string, options: TestOptions = {}): { wiring: W
   planner.ui = ui;
   const reviewer = new ScriptedReviewer(paths, options.reviews ?? []);
   reviewer.termsReviews = [...(options.termsReviews ?? [])];
+  reviewer.updateChecks = [...(options.updateChecks ?? [])];
   const tracker = options.tracker === undefined ? fakeTrackerOf([scriptedItem]) : options.tracker;
   const suite = new ScriptedSuite(options.suite ?? []);
   const wiring: Wiring = {

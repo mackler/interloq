@@ -29,7 +29,7 @@ const phase = async (steps: PlanningStep[], reviews: ReviewStep[], options: Read
   const repo = tempRepo();
   const tracker = fakeTrackerOf(options.items ?? [ITEM]);
   // maxIdleRounds raised so that a dispute repeated across rounds is not ended by the idle limit, which is the developer's question.
-  const { layer, probe } = testLayer(repo, { steps, reviews, answers: options.answers ?? [], tracker, mode: "refinement", config: { maxIdleRounds: 5 } });
+  const { layer, probe } = testLayer(repo, { steps, updateChecks: reviews, answers: options.answers ?? [], tracker, mode: "refinement", config: { maxIdleRounds: 5 } });
   const exit = await Effect.runPromiseExit(Effect.andThen(Effect.flatMap(Store, (store) => store.init("task")), Effect.flatMap(runTrackerEnv, (env) => bringUpToDate(id("7"), options.before ?? BEFORE, env))).pipe(Effect.provide(layer)));
   const read = (name: string) => fs.readFileSync(path.join(probe.dir, name), "utf8");
   return { exit, probe, tracker, read, json: (name: string) => JSON.parse(read(name)) };
