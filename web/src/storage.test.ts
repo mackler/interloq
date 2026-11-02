@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { defaultPreferences } from "./notify.ts";
-import { readPanelLines, readPreferences, type StorageLike, writePanelLines, writePreferences } from "./storage.ts";
+import { readColumnWidths, readPanelLines, readPreferences, type StorageLike, writeColumnWidths, writePanelLines, writePreferences } from "./storage.ts";
+import { DEFAULT_COLUMN_WIDTHS, leftPercentOf, railRemOf } from "./columnWidths.ts";
 import { PANEL_LINES } from "./livePanel.ts";
 import { panelLinesOf } from "./panelHeight.ts";
 import { Result } from "effect";
@@ -89,5 +90,47 @@ describe("the panel's remembered height", () => {
     };
     expect(readPanelLines(throwing)).toEqual({ ok: false });
     expect(writePanelLines(lines(12), throwing)).toEqual({ ok: false });
+  });
+});
+
+// Issue #204: the run's column widths, remembered per browser, each field decoded on its own.
+describe("the remembered column widths", () => {
+  const widths = (rail: number, left: number) => ({ rail: Result.getOrThrow(railRemOf(rail)), left: Result.getOrThrow(leftPercentOf(left)) });
+  test("widths written are read back, under their own key", () => {
+    const m = memory();
+    expect(writeColumnWidths(widths(20, 60), () => m)).toEqual({ ok: true, value: undefined });
+    expect(m.items.get("interloq.columns")).toBe(JSON.stringify({ rail: 20, left: 60 }));
+    expect(readColumnWidths(() => m)).toEqual({ ok: true, value: { rail: 20, left: 60 } });
+  });
+
+  test("nothing stored and garbage read as the defaults; a broken field takes its own default", () => {
+    const m = memory();
+    expect(readColumnWidths(() => m)).toEqual({ ok: true, value: DEFAULT_COLUMN_WIDTHS });
+    for (const text of ["{", "[]", "null", "7"]) {
+      m.items.set("interloq.columns", text);
+      expect(readColumnWidths(() => m)).toEqual({ ok: true, value: DEFAULT_COLUMN_WIDTHS });
+    }
+    m.items.set("interloq.columns", JSON.stringify({ rail: 40, left: 50 }));
+    expect(readColumnWidths(() => m)).toEqual({ ok: true, value: { rail: 14, left: 50 } });
+    m.items.set("interloq.columns", JSON.stringify({ rail: 20, left: "x" }));
+    expect(readColumnWidths(() => m)).toEqual({ ok: true, value: { rail: 20, left: 50 } });
+  });
+
+  test("a throwing storage is a failure, not an exception", () => {
+    const throwing = () => {
+      throw securityError();
+    };
+    const broken: StorageLike = {
+      getItem: () => {
+        throw securityError();
+      },
+      setItem: () => {
+        throw securityError();
+      },
+    };
+    for (const acquire of [throwing, () => broken]) {
+      expect(readColumnWidths(acquire)).toEqual({ ok: false });
+      expect(writeColumnWidths(widths(14, 50), acquire)).toEqual({ ok: false });
+    }
   });
 });

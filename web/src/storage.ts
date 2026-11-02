@@ -5,6 +5,7 @@
 import { defaultPreferences, type Preferences, type Toggle } from "./notify.ts";
 import { DEFAULT_PANEL_LINES, type PanelLines, panelLinesOf } from "./panelHeight.ts";
 import { Result } from "effect";
+import { type ColumnWidths, DEFAULT_COLUMN_WIDTHS, leftPercentOf, railRemOf } from "./columnWidths.ts";
 
 /** The part of the browser's Storage this module uses. */
 export type StorageLike = { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void };
@@ -63,5 +64,29 @@ const decodePanelLines = (text: string | null): PanelLines => {
     return typeof lines === "number" ? Result.getOrElse(panelLinesOf(lines), () => DEFAULT_PANEL_LINES) : DEFAULT_PANEL_LINES;
   } catch {
     return DEFAULT_PANEL_LINES;
+  }
+};
+
+// Issue #204: the run's column widths, remembered per browser as the live panel's height is.
+const COLUMNS_KEY = "interloq.columns";
+/** The run's remembered column widths; each field its default where it is missing or unreadable. */
+export const readColumnWidths = (acquire: AcquireStorage = browserStorage): Stored<ColumnWidths> => guarded(acquire, (s) => decodeColumnWidths(s.getItem(COLUMNS_KEY)));
+/** Remembers the run's column widths; `{ ok: false }` when they could not be remembered. */
+export const writeColumnWidths = (widths: ColumnWidths, acquire: AcquireStorage = browserStorage): Stored<void> =>
+  guarded(acquire, (s) => s.setItem(COLUMNS_KEY, JSON.stringify({ rail: widths.rail, left: widths.left })));
+
+/** Total: nothing stored, unparsable text and a non-object give the defaults; each field decodes on its own. */
+const decodeColumnWidths = (text: string | null): ColumnWidths => {
+  if (text === null) return DEFAULT_COLUMN_WIDTHS;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return DEFAULT_COLUMN_WIDTHS;
+    const { rail, left } = value as Record<string, unknown>;
+    return {
+      rail: typeof rail === "number" ? Result.getOrElse(railRemOf(rail), () => DEFAULT_COLUMN_WIDTHS.rail) : DEFAULT_COLUMN_WIDTHS.rail,
+      left: typeof left === "number" ? Result.getOrElse(leftPercentOf(left), () => DEFAULT_COLUMN_WIDTHS.left) : DEFAULT_COLUMN_WIDTHS.left,
+    };
+  } catch {
+    return DEFAULT_COLUMN_WIDTHS;
   }
 };

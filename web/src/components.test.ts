@@ -1587,6 +1587,68 @@ describe("App and the draft", () => {
       }
     });
 
+    // Issue #204: the run's two vertical separators, in the wide layout alone, the widths remembered per browser.
+    const atWidth = async <A>(innerWidth: number, body: () => Promise<A>): Promise<A> => {
+      const width = window.innerWidth;
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: innerWidth });
+      try {
+        return await body();
+      } finally {
+        Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+        localStorage.removeItem("interloq.columns");
+      }
+    };
+    const separators = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>("[role=separator][data-column-resize]")];
+    const railSeparator = (root: HTMLElement) => one(root, '[data-column-resize="rail"]');
+
+    test("in the wide layout a run has the rail's and the panels' separators, at today's widths", async () => {
+      await atWidth(1280, async () => {
+        const { root, ws } = await openPage();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+        const [rail, panels] = separators(root);
+        expect(separators(root)).toHaveLength(2);
+        expect(rail?.getAttribute("aria-label")).toBe(prompts.RAIL_WIDTH_LABEL);
+        expect(rail?.getAttribute("aria-valuenow")).toBe("14");
+        expect(panels?.getAttribute("aria-label")).toBe(prompts.PANEL_SPLIT_LABEL);
+        expect(panels?.getAttribute("aria-valuenow")).toBe("50");
+      });
+    });
+
+    test("the stored widths are shown, and a key stores the new width", async () => {
+      await atWidth(1280, async () => {
+        localStorage.setItem("interloq.columns", JSON.stringify({ rail: 20, left: 60 }));
+        const { root, ws } = await openPage();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+        expect(railSeparator(root).getAttribute("aria-valuenow")).toBe("20");
+        expect(one(root, '[data-column-resize="panels"]').getAttribute("aria-valuenow")).toBe("60");
+        railSeparator(root).dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+        flushSync();
+        expect(railSeparator(root).getAttribute("aria-valuenow")).toBe("21");
+        expect(localStorage.getItem("interloq.columns")).toBe(JSON.stringify({ rail: 21, left: 60 }));
+      });
+    });
+
+    test("the panels' separator is absent on the decision page and present beside the conversation", async () => {
+      const { root, restore } = await decisionPage(1280);
+      try {
+        expect(root.querySelector('[data-column-resize="rail"]')).not.toBe(null);
+        expect(root.querySelector('[data-column-resize="panels"]')).toBe(null);
+        one(root, ".decision button[name=conversation]").click();
+        flushSync();
+        expect(root.querySelector('[data-column-resize="panels"]')).not.toBe(null);
+      } finally {
+        restore();
+      }
+    });
+
+    test("below 840 px there is no separator", async () => {
+      await atWidth(800, async () => {
+        const { root, ws } = await openPage();
+        ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+        expect(separators(root)).toHaveLength(0);
+      });
+    });
+
     test("the heading of every answer sends the ui frame and opens from the shared state", async () => {
       const { root, ws } = await openPage();
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1), { _tag: "Answered", prompt: 1, text: "first" }]) }] });

@@ -4154,6 +4154,11 @@ export const LIVE_PROCESSES_NAME = "Processes running";
 /** Issue #221: the name of the handle on the panel's upper edge, and its value in words. */
 export const LIVE_OUTPUT_RESIZE_LABEL = "Height of the output panel";
 export const panelHeightText = (lines: number): string => `${lines} lines`;
+// Issue #204: the run's two vertical separators, the rail's width and the split between the two panels.
+export const RAIL_WIDTH_LABEL = "Width of the progress column";
+export const railWidthText = (rem: number): string => `${rem} rem wide`;
+export const PANEL_SPLIT_LABEL = "Width of “You and Interloq” beside “Claude and Codex”";
+export const panelSplitText = (left: number): string => `You and Interloq ${left} %, Claude and Codex ${100 - left} %`;
 /** The line the panel adds when a process ends: its name and how it ended, where known. */
 export const outputEndedLine = (name: string, status: ProcessStatus): string => {
   switch (status._tag) {

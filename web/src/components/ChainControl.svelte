@@ -117,6 +117,9 @@
   .switch { display: flex; align-items: center; gap: 0.75rem; }
   .fields { display: flex; flex-wrap: wrap; gap: 0.75rem; }
   .field { display: flex; flex-direction: column; flex: 1 1 10rem; min-width: 0; }
+  /* Issue #203: m3-svelte's outlined field sets min-width: 15rem on its own root, which held inside the wrapper and drew
+     the field past the rail's column; its width yields to the column, its label, supporting text and error unchanged. */
+  .field > :global(.m3-container) { min-width: 0; }
   .support { margin: 0.25rem 1rem 0; color: var(--m3c-on-surface-variant); font-size: 0.75rem; }
   .support.error { color: var(--m3c-error); }
   .status { margin: 0; overflow-wrap: anywhere; }

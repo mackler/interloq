@@ -44,7 +44,7 @@ as CLAUDE.md's section "User interface" requires. "Changed" names what this revi
 
 ## Layout across window sizes (finding 7 of `docs/gui-review.md`, 26 Sep 2026)
 
-The page was a fixed grid of a 14rem rail and two equal panels. At 390 px each panel was 59 px wide and the page
+The page was a fixed grid of a 14rem rail and two equal panels (since issue #204 the default, which the developer can change in the wide layout). At 390 px each panel was 59 px wide and the page
 overflowed sideways; at a 200 % zoom of a desktop window (a 640 × 400 CSS viewport) the panels were 184 px wide. The
 layout now follows M3's window size classes (`web/src/layout.ts`, `App.svelte`, `TopBar.svelte`):
 
@@ -446,3 +446,20 @@ default) for an answer, after which the run stops waiting for it.
   process's output carries (SGR sequences: 16 colors chosen to read on black, 256 colors, truecolor). The look asserts
   that the text is a process's, not Interloq's: it is the one such surface on the page, and replaced the note that said
   so (`LIVE_OUTPUT_NOTE`). Only color is kept; every other escape is removed and the text is never markup.
+
+## The run's column widths (issue #204, 2 Nov 2026)
+
+- **User control and freedom.** In the wide layout the boundary between the rail's column and "You and Interloq", and
+  the boundary between the two panels, are separators the developer drags; the rail goes from 14rem to 28rem and the
+  split from an even one toward either panel, each width remembered per browser.
+- **Flexibility and efficiency of use.** Each separator is focusable and moved by ArrowLeft and ArrowRight one rem or one
+  percent at a time, and by Home and End to its bounds, so the mouse is never required.
+- **Error prevention.** The bounds keep every column usable: the rail never narrower than the width its rows and the
+  chain's control are laid out for, neither panel narrower than 20rem, so the question page's and the decision page's
+  promises hold at the widest rail (L39, L40). A remembered width is shown clamped to the window and never rewritten by a
+  resize, so a window that narrows and widens again shows the developer's width again, and none leaves a panel unusable.
+- **Consistency and standards.** The separators follow the live panel's handle (issue #221): the same role, the same
+  keys turned vertical, a drag committed on release.
+- **Material Design 3, a deviation.** M3 has no splitter component, so the separator follows WAI-ARIA's window splitter by
+  hand with M3's color roles: a thin line in `outline-variant` in a track as wide as the old column gap, and a focus
+  ring in `primary`. It asserts the boundary's position and nothing more.

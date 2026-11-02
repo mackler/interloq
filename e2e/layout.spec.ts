@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -313,6 +313,82 @@ const distinctWidths = async (what: string, scope: Locator) => {
 // a collapsed section under the choices since issue #137.
 const TRANSPORT_LONG_URL = layoutUrl("transportLong");
 
+// Issue #204: the rail's rows inside its column and unclipped (L31), at any width the developer chose.
+const railProblems = (nav: Locator): Promise<string[]> =>
+  nav.evaluate((rail) => {
+    const out: string[] = [];
+    const left = (el: Element | null) => (el === null ? NaN : el.getBoundingClientRect().left);
+    const visible = (el: Element) => el.getBoundingClientRect().width > 0;
+    const style = getComputedStyle(rail);
+    const inner = rail.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+    if (rail.scrollWidth > rail.clientWidth) out.push(`the rail overflows sideways: ${rail.scrollWidth} > ${rail.clientWidth}`);
+    for (const entry of rail.querySelectorAll(".entry")) {
+      const phaseLabel = entry.querySelector(":scope > button [data-label], :scope > [data-label]");
+      const phaseMark = entry.querySelector(":scope > button > .mark, :scope > .mark");
+      for (const stage of entry.querySelectorAll(".stage")) {
+        const stageLabel = stage.querySelector(":scope > button [data-stage], :scope > [data-stage]");
+        const stageMark = stage.querySelector(":scope > button > .mark, :scope > .mark");
+        const name = stageLabel?.textContent?.trim() ?? "?";
+        if (!(left(stageLabel) > left(phaseLabel))) out.push(`${name}: its label starts at ${left(stageLabel)}, not right of its phase's at ${left(phaseLabel)}`);
+        if (!(left(stageMark) > left(phaseMark))) out.push(`${name}: its mark starts at ${left(stageMark)}, not right of its phase's at ${left(phaseMark)}`);
+        for (const step of stage.querySelectorAll(".plan-step")) {
+          const stepLabel = step.querySelector("[data-plan-step-label]");
+          const stepMark = step.querySelector(":scope > .mark");
+          const stepName = stepLabel?.textContent?.trim() ?? "?";
+          if (!(left(stepLabel) > left(stageLabel))) out.push(`${stepName}: its label starts at ${left(stepLabel)}, not right of its stage's at ${left(stageLabel)}`);
+          if (!(left(stepMark) > left(stageMark))) out.push(`${stepName}: its mark starts at ${left(stepMark)}, not right of its stage's at ${left(stageMark)}`);
+        }
+      }
+    }
+    for (const el of rail.querySelectorAll("[data-label], [data-stage], [data-step-label], [data-plan-step], [data-plan-step-label], button.rail-toggle")) {
+      if (!visible(el)) continue;
+      const name = el.textContent?.trim().slice(0, 40) ?? "?";
+      if (el.getBoundingClientRect().right > inner + 0.5) out.push(`${name}: its right edge ${el.getBoundingClientRect().right} is past the rail's content at ${inner}`);
+      if (el.scrollWidth > el.clientWidth + 0.5 && getComputedStyle(el).display !== "inline") out.push(`${name}: clipped, ${el.scrollWidth} > ${el.clientWidth}`);
+    }
+    return out;
+  });
+/** The chain's control lies within the rail's column and does not overflow it (issue #204). */
+const chainInside = async (page: Page) => {
+  const m = await page.locator("div.rail-column").evaluate((column) => {
+    const chain = column.querySelector(".chain");
+    if (chain === null) return null;
+    const [c, k] = [column.getBoundingClientRect(), chain.getBoundingClientRect()];
+    return { left: k.left - c.left, right: c.right - k.right, scroll: chain.scrollWidth, client: chain.clientWidth };
+  });
+  expect(m, "the chain's control is in the rail's column").not.toBe(null);
+  if (m === null) return;
+  expect(m.left, `the chain's control starts left of its column: ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(-0.5);
+  expect(m.right, `the chain's control ends right of its column: ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(-0.5);
+  expect(m.scroll, `the chain's control overflows: ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.client + 0.5);
+};
+const railSeparator = (page: Page) => page.locator('[data-column-resize="rail"]');
+const panelsSeparator = (page: Page) => page.locator('[data-column-resize="panels"]');
+const valueOf = async (separator: Locator) => Number(await separator.getAttribute("aria-valuenow"));
+const rootPx = (page: Page) => page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+/** Drags a separator sideways by `dx` pixels with the mouse, as L36 drags the live panel's handle. */
+const dragBy = async (page: Page, separator: Locator, dx: number) => {
+  const h = await box(separator);
+  const [x, y] = [h.x + h.width / 2, h.y + Math.min(h.height / 2, 40)];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y, { steps: 8 });
+  await page.mouse.up();
+};
+const noSidewaysScroll = async (page: Page) => expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
+/** The widest rail and the narrowest left panel, so the question's panel is at its narrowest (issue #204). */
+const widestBounds = async (page: Page) => {
+  await railSeparator(page).focus();
+  await page.keyboard.press("End");
+  await expect(railSeparator(page)).toHaveAttribute("aria-valuenow", (await railSeparator(page).getAttribute("aria-valuemax")) ?? "");
+  if ((await panelsSeparator(page).count()) > 0) {
+    await panelsSeparator(page).focus();
+    await page.keyboard.press("Home");
+    await expect(panelsSeparator(page)).toHaveAttribute("aria-valuenow", (await panelsSeparator(page).getAttribute("aria-valuemin")) ?? "");
+  }
+  await settled(page);
+};
+
 test.describe("the tests of the tabs server, in order", () => {
   test.describe.configure({ mode: "default" });
 
@@ -596,6 +672,39 @@ test.describe("the tests of the decide server, in order", () => {
     });
   }
 
+  // Issue #204 (review P1-R1-1): beside the conversation the button back to the analysis stays in the first row, above
+  // both panels, and the panels' separator stands in the conversation's row; the grid keeps two rows.
+  test("(L38a) the paused layout at 1280 × 800: the button above the panels, the panels' separator beside the conversation", async ({ page }) => {
+    const analysis = await openAnalysis(page);
+    await page.locator(".decision button[name=conversation]").click();
+    await expect(analysis).toBeHidden();
+    const back = page.locator("button[name=analysis]");
+    await expect(back).toBeVisible();
+    const b = await box(back);
+    for (const sel of [".run > .left", ".run > .right"]) expect((await box(page.locator(sel))).y, `${sel} starts above the button's bottom`).toBeGreaterThanOrEqual(b.y + b.height - 1);
+    expect((await box(panelsSeparator(page))).y).toBeGreaterThanOrEqual(b.y + b.height - 1);
+    const rows = await page.locator("main.run").evaluate((el) => getComputedStyle(el).gridTemplateRows.trim().split(/\s+/).length);
+    expect(rows).toBe(2);
+    await back.click();
+    await expect(analysis).toBeVisible();
+    await answerDismisses(page, analysis);
+  });
+
+  // Issue #204: the decision page's promise at the widest rail: the columns at their floor or more and the tallest
+  // region, the run not scrolled.
+  test("(L40) the decision page at 1280 × 800 with the widest rail", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startTask(page, DECIDE_URL);
+    await widestBounds(page);
+    await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+    const analysis = analysisOf(page);
+    await expect(analysis).toBeVisible();
+    await expect(panelsSeparator(page)).toHaveCount(0);
+    await theOrder(page, analysis, { question: FIRST, oneRow: true, roomy: true });
+    await expect(railSeparator(page)).toHaveAttribute("aria-valuenow", (await railSeparator(page).getAttribute("aria-valuemax")) ?? "");
+    await answerDismisses(page, analysis);
+  });
+
   // Issue #133 and W1-R1-1, replacing issue #79's allotment of the context (L24, L24a) and the yielding of the task of
   // L21 (L27): the opened context or recommendation scrolls inside itself and the columns keep their floor. Where the
   // window has room the text takes at most half and the run does not scroll; at 1280 × 400 the columns get the floor
@@ -872,42 +981,87 @@ test.describe("the tests of the planSteps server, in order", () => {
       await nav.getByRole("button", { name: railToggleName(stageHeading(2, "the page"), RAIL_CONDITION_LABEL.notStarted, null, null), exact: true }).click();
       await expect(nav.locator("[data-plan-step]", { hasText: "The long step" })).toBeVisible();
       await expect(nav.locator("[data-plan-step]", { hasText: LONG_STEP_LABEL }).first()).toBeVisible();
-      const problems = await nav.evaluate((rail) => {
-        const out: string[] = [];
-        const left = (el: Element | null) => (el === null ? NaN : el.getBoundingClientRect().left);
-        const visible = (el: Element) => el.getBoundingClientRect().width > 0;
-        const style = getComputedStyle(rail);
-        const inner = rail.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
-        if (rail.scrollWidth > rail.clientWidth) out.push(`the rail overflows sideways: ${rail.scrollWidth} > ${rail.clientWidth}`);
-        for (const entry of rail.querySelectorAll(".entry")) {
-          const phaseLabel = entry.querySelector(":scope > button [data-label], :scope > [data-label]");
-          const phaseMark = entry.querySelector(":scope > button > .mark, :scope > .mark");
-          for (const stage of entry.querySelectorAll(".stage")) {
-            const stageLabel = stage.querySelector(":scope > button [data-stage], :scope > [data-stage]");
-            const stageMark = stage.querySelector(":scope > button > .mark, :scope > .mark");
-            const name = stageLabel?.textContent?.trim() ?? "?";
-            if (!(left(stageLabel) > left(phaseLabel))) out.push(`${name}: its label starts at ${left(stageLabel)}, not right of its phase's at ${left(phaseLabel)}`);
-            if (!(left(stageMark) > left(phaseMark))) out.push(`${name}: its mark starts at ${left(stageMark)}, not right of its phase's at ${left(phaseMark)}`);
-            for (const step of stage.querySelectorAll(".plan-step")) {
-              const stepLabel = step.querySelector("[data-plan-step-label]");
-              const stepMark = step.querySelector(":scope > .mark");
-              const stepName = stepLabel?.textContent?.trim() ?? "?";
-              if (!(left(stepLabel) > left(stageLabel))) out.push(`${stepName}: its label starts at ${left(stepLabel)}, not right of its stage's at ${left(stageLabel)}`);
-              if (!(left(stepMark) > left(stageMark))) out.push(`${stepName}: its mark starts at ${left(stepMark)}, not right of its stage's at ${left(stageMark)}`);
-            }
-          }
-        }
-        for (const el of rail.querySelectorAll("[data-label], [data-stage], [data-step-label], [data-plan-step], [data-plan-step-label], button.rail-toggle")) {
-          if (!visible(el)) continue;
-          const name = el.textContent?.trim().slice(0, 40) ?? "?";
-          if (el.getBoundingClientRect().right > inner + 0.5) out.push(`${name}: its right edge ${el.getBoundingClientRect().right} is past the rail's content at ${inner}`);
-          if (el.scrollWidth > el.clientWidth + 0.5 && getComputedStyle(el).display !== "inline") out.push(`${name}: clipped, ${el.scrollWidth} > ${el.clientWidth}`);
-        }
-        return out;
-      });
+      const problems = await railProblems(nav);
       expect(problems).toEqual([]);
     });
   }
+
+  // Issue #204: the rail's column widened and narrowed by mouse and keyboard, the boundary between the panels moved, the
+  // widths remembered across a reload and shown clamped, never rewritten, when the window narrows and widens again.
+  test("(L38) the column widths at 1280 × 800: both separators dragged and moved by keys, the rail's rows and the chain inside the column, the widths remembered", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startTask(page, layoutUrl("planSteps"));
+    const nav = page.getByRole("navigation", { name: "Progress of the run" });
+    await nav.getByRole("button", { name: railToggleName(stageHeading(2, "the page"), RAIL_CONDITION_LABEL.notStarted, null, null), exact: true }).click();
+    const rail = railSeparator(page);
+    const split = panelsSeparator(page);
+    const column = page.locator("div.rail-column");
+    const root = await rootPx(page);
+    await expect(rail).toHaveAttribute("role", "separator");
+    await expect(rail).toHaveAttribute("aria-label", RAIL_WIDTH_LABEL);
+    await expect(split).toHaveAttribute("aria-label", PANEL_SPLIT_LABEL);
+    await expect(rail).toHaveAttribute("aria-valuenow", "14");
+    const width0 = (await box(column)).width;
+    expect(Math.abs(width0 - 14 * root)).toBeLessThanOrEqual(1);
+    await chainInside(page);
+
+    // The mouse: dragged 6rem to the right.
+    await dragBy(page, rail, 6 * root);
+    await expect(rail).toHaveAttribute("aria-valuenow", "20");
+    expect(Math.abs((await box(column)).width - (width0 + 6 * root))).toBeLessThanOrEqual(1);
+
+    // The keyboard.
+    await rail.focus();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(rail).toHaveAttribute("aria-valuenow", "22");
+    await page.keyboard.press("End");
+    expect(await rail.getAttribute("aria-valuemax")).toBe("28");
+    await expect(rail).toHaveAttribute("aria-valuenow", "28");
+    await page.keyboard.press("ArrowLeft");
+    await expect(rail).toHaveAttribute("aria-valuenow", "27");
+    await page.keyboard.press("End");
+    await expect(rail).toHaveAttribute("aria-valuenow", "28");
+    await settled(page);
+
+    // At the widest rail: the rows and the chain inside the column, both panels at least 20rem, nothing sideways.
+    expect(await railProblems(nav)).toEqual([]);
+    await chainInside(page);
+    for (const sel of [".run > .left", ".run > .right"]) expect((await box(page.locator(sel))).width, `${sel} is narrower than 20rem`).toBeGreaterThanOrEqual(20 * root - 1);
+    await noSidewaysScroll(page);
+
+    // The split.
+    await split.focus();
+    await page.keyboard.press("Home");
+    const low = Number(await split.getAttribute("aria-valuemin"));
+    await expect(split).toHaveAttribute("aria-valuenow", String(low));
+    expect((await box(page.locator(".run > .left"))).width).toBeGreaterThanOrEqual(20 * root - 1);
+    const panels = (await box(page.locator(".run > .left"))).width + (await box(page.locator(".run > .right"))).width;
+    await dragBy(page, split, 0.1 * panels);
+    const high = Number(await split.getAttribute("aria-valuemax"));
+    await expect(split).toHaveAttribute("aria-valuenow", String(Math.min(low + 10, high)));
+    const left = await valueOf(split);
+
+    // Remembered across a reload.
+    await page.reload();
+    await expect(rail).toHaveAttribute("aria-valuenow", "28");
+    await expect(split).toHaveAttribute("aria-valuenow", String(left));
+
+    // Narrower: shown clamped; below 840 px no separator; wide again: the stored widths, never rewritten.
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await settled(page);
+    const narrowMax = Number(await rail.getAttribute("aria-valuemax"));
+    expect(narrowMax).toBeLessThan(28);
+    await expect(rail).toHaveAttribute("aria-valuenow", String(narrowMax));
+    if ((await valueOf(split)) !== 50) for (const sel of [".run > .left", ".run > .right"]) expect((await box(page.locator(sel))).width).toBeGreaterThanOrEqual(20 * root - 1);
+    expect(await railProblems(nav)).toEqual([]);
+    await noSidewaysScroll(page);
+    await page.setViewportSize({ width: 800, height: 800 });
+    await expect(page.locator("[data-column-resize]")).toHaveCount(0);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(rail).toHaveAttribute("aria-valuenow", "28");
+    await expect(split).toHaveAttribute("aria-valuenow", String(left));
+  });
 });
 
 test.describe("the tests of the longQuestion server, in order", () => {
@@ -937,6 +1091,20 @@ test.describe("the tests of the longQuestion server, in order", () => {
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page overflows horizontally").toBe(true);
       // The pointer is left where Start was clicked; a term may lie under it now and its tooltip cover the answer.
+      await page.mouse.move(0, 0);
+      await continueWithoutDeciding(page).click();
+      await toHaveEnded(page, 0);
+    });
+  }
+  // Issue #204 (review P1-R1-2): the question page's promise with the question's panel at its narrowest, the rail widest.
+  for (const [width, height] of [[1280, 800], [1280, 450]] as const) {
+    test(`(L39) a long question at ${width} × ${height} with the widest rail and the narrowest question panel: the question and its first option in view`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startTask(page, LONG_QUESTION_URL);
+      await widestBounds(page);
+      await expect(pane(page).locator(".question-text")).toBeInViewport();
+      await expect(pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button").first()).toBeInViewport({ ratio: 0.1 });
+      await runNotScrolled(page);
       await page.mouse.move(0, 0);
       await continueWithoutDeciding(page).click();
       await toHaveEnded(page, 0);

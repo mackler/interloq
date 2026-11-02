@@ -220,7 +220,7 @@
   .plan { margin: 0.25rem 0 0; }
   /* Issue #116: each level of the plan has a column for its marks: a stage's indent (1.5rem) holds its mark, and so does a
      step's. A step is drawn 1rem deeper than its stage, mark and label alike, less than a full level of 1.5rem because the
-     column is 14rem wide and a step's label needs the width it would take (7.75rem left, against 7.25rem). */
+     column is at least 14rem wide (issue #204) and a step's label needs the width it would take (7.75rem left, against 7.25rem). */
   .stage { position: relative; margin-top: 0.25rem; padding-left: 1.5rem; }
   .stage .mark { left: 0.25rem; }
   .stage > div > ol { margin-left: -0.5rem; }

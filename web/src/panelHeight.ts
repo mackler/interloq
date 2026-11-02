@@ -31,7 +31,7 @@ const clamp = (n: number, max: number): number => {
 };
 
 /** The root font size in pixels from its computed text, 16 where that is no finite positive number. */
-const rootPxOf = (text: string): number => {
+export const rootPxOf = (text: string): number => {
   const n = Number.parseFloat(text);
   return Number.isFinite(n) && n > 0 ? n : 16;
 };

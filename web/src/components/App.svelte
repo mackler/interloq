@@ -19,10 +19,18 @@
   // the selected tab's indicator for the first five tabs only; the row scrolls sideways inside itself instead.
   // Issue #200: below 840 px the second row is hidden while the decision page is shown, and returns when the developer
   // answers or shows the conversation (his decision of 30 Oct 2026).
+  // Issue #204: in the wide layout two vertical separators stand in the run's grid, between the rail's column and "You
+  // and Interloq" and between the two panels; the developer drags them, or focuses one and presses ArrowLeft,
+  // ArrowRight, Home or End [user control and freedom; flexibility and efficiency of use]. The rail is bounded from
+  // 14rem, the width its rows and the chain's control are laid out for, to 28rem, and neither panel is ever narrower
+  // than 20rem, which keeps the question page's and the decision page's promises; where the window leaves no room
+  // beyond those minimums, the layout is the one before issue #204. The widths are remembered per browser and shown
+  // clamped to the window, so a resize never rewrites them. No separator exists below 840 px, and the panels' one is
+  // absent while the decision page spans both panels.
   import { Button, ConnectedButtons, Tabs } from "m3-svelte";
   import ScrollableTabs from "./ScrollableTabs.svelte";
   import { untrack } from "svelte";
-  import { BACK_TO_LIST, CLOSE_RUN_TAB, runTabsLabel, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
+  import { BACK_TO_LIST, CLOSE_RUN_TAB, PANEL_SPLIT_LABEL, panelSplitText, RAIL_WIDTH_LABEL, railWidthText, runTabsLabel, TAB_TEXTS, TABS_LABEL, waitingTabName, CONNECTION_FAILED_NOTICE, endedOutcome, endNotificationTitle, notSentNotice, PAUSE_NOTIFICATION_BODY, pauseNotificationTitle, SHOW_ANALYSIS, SHOW_QUESTION, UNSENT_HEADING, unseenBadge } from "../../../src/prompts.ts";
   import { type AnalysisKey, analysisShown, EXPANDED_MIN_WIDTH, initialLayout, type Layout, observe, type Pane, select } from "../layout.ts";
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
@@ -36,8 +44,10 @@
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences, unseenEnds } from "../notify.ts";
-  import { readPanelLines, readPreferences, writePanelLines, writePreferences } from "../storage.ts";
-  import { DEFAULT_PANEL_LINES, type PanelLines, panelLinesOf } from "../panelHeight.ts";
+  import { readColumnWidths, readPanelLines, readPreferences, writeColumnWidths, writePanelLines, writePreferences } from "../storage.ts";
+  import { DEFAULT_PANEL_LINES, type PanelLines, panelLinesOf, rootPxOf } from "../panelHeight.ts";
+  import { columnsPxOf, type ColumnWidths, DEFAULT_COLUMN_WIDTHS, gridColumns, leftBounds, leftPercentOf, railBounds, railRemOf, shown as shownWidth } from "../columnWidths.ts";
+  import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
   import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
@@ -293,14 +303,41 @@
   // Issue #221: the run area's height, so that in the compact layout the full dashboard is one screen tall and its
   // panel's bottom is the screen's bottom; measured where the browser can observe it.
   let runHeight = $state(0);
+  // Issue #204: and its client width, without the scrollbar the deciding run may show, from which the columns' bounds follow.
+  let runWidth = $state(0);
   $effect(() => {
     const el = runArea;
     if (el === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => (runHeight = el.clientHeight));
+    const measure = (): void => {
+      runHeight = el.clientHeight;
+      runWidth = el.clientWidth;
+    };
+    const observer = new ResizeObserver(measure);
     observer.observe(el);
-    runHeight = el.clientHeight;
+    measure();
     return () => observer.disconnect();
   });
+  // Issue #204: the widths the developer chose, remembered per browser; a failure of the storage leaves the defaults.
+  let columns = $state<ColumnWidths>(((r) => (r.ok ? r.value : DEFAULT_COLUMN_WIDTHS))(readColumnWidths()));
+  /** A width while its separator is dragged, null otherwise; committed on release. */
+  let railPreview = $state<number | null>(null);
+  let leftPreview = $state<number | null>(null);
+  const rootPx = rootPxOf(typeof document === "undefined" ? "" : getComputedStyle(document.documentElement).fontSize);
+  const columnsPx = $derived(runWidth > 0 ? columnsPxOf(runWidth, rootPx) : null);
+  const railB = $derived(railBounds(columnsPx, rootPx));
+  const railShown = $derived(shownWidth(railPreview ?? columns.rail, railB));
+  const panelsPx = $derived(columnsPx === null ? null : columnsPx - railShown * rootPx);
+  const leftB = $derived(leftBounds(panelsPx, rootPx));
+  const leftShown = $derived(shownWidth(leftPreview ?? columns.left, leftB));
+  // A commit stores what the developer moved to; a resize changes only what is shown.
+  const commitRail = (n: number): void => {
+    columns = { ...columns, rail: Result.getOrElse(railRemOf(n), () => columns.rail) };
+    writeColumnWidths(columns);
+  };
+  const commitLeft = (n: number): void => {
+    columns = { ...columns, left: Result.getOrElse(leftPercentOf(n), () => columns.left) };
+    writeColumnWidths(columns);
+  };
   // The decision page appears with the run at its top, so that the question and its choices are in view.
   let topFor: string | null = null;
   $effect(() => {
@@ -443,7 +480,7 @@
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
          of panels or a resize across 840 px keeps each panel's reading position [user control and freedom]. -->
-    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} bind:this={runArea} style:--run-height="{runHeight}px">
+    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} bind:this={runArea} style:--run-height="{runHeight}px" style:--run-columns={compact ? null : gridColumns(railShown, leftShown)}>
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
@@ -472,6 +509,11 @@
         </div>
       {:else}
         <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
+      {/if}
+      {#if !compact}
+        <!-- Issue #204: the boundaries of the wide layout's grid; the panels' one is absent while the decision page spans both panels. -->
+        <ColumnSeparator name="rail" label={RAIL_WIDTH_LABEL} value={railShown} bounds={railB} valueText={railWidthText(railShown)} unitPx={rootPx} onPreview={(n) => (railPreview = n)} onCommit={commitRail} />
+        {#if !deciding}<ColumnSeparator name="panels" label={PANEL_SPLIT_LABEL} value={leftShown} bounds={leftB} valueText={panelSplitText(leftShown)} unitPx={(panelsPx ?? 100) / 100} onPreview={(n) => (leftPreview = n)} onCommit={commitLeft} />{/if}
       {/if}
       {#if analysis !== null && deciding}
         <div class="decision-area">
@@ -547,7 +589,19 @@
   .tabs, .run-tabs { flex-shrink: 0; }
   .run-tabs { min-width: 0; max-width: 100%; }
   .refusal { color: var(--m3c-error); margin: 0.5rem 1rem 0; }
-  .run { flex: 1; min-height: 0; display: grid; grid-template-columns: 14rem 1fr 1fr; gap: 0.75rem; padding: 0.75rem; }
+  /* Issue #204: five tracks, the rail, a separator, the left panel, a separator, the right panel; the separators' 0.75rem
+     tracks take the place of the column gap, so the default widths draw the page as before. Every item of the wide
+     layout is placed explicitly, since under the paused layout the button that returns to the analysis stands in the
+     first row across the panels, and the panels' separator must stand only in the conversation's row. */
+  .run { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--run-columns, 14rem 0.75rem minmax(0, 50fr) 0.75rem minmax(0, 50fr)); column-gap: 0; row-gap: 0.75rem; padding: 0.75rem; }
+  .run:not(.compact) > :global(.rail) { grid-column: 1; grid-row: 1; }
+  .run:not(.compact) > :global([data-column-resize="rail"]) { grid-column: 2; grid-row: 1; }
+  .run:not(.compact) > .left { grid-column: 3; grid-row: 1; }
+  .run:not(.compact) > :global([data-column-resize="panels"]) { grid-column: 4; grid-row: 1; }
+  .run:not(.compact) > .right { grid-column: 5; grid-row: 1; }
+  .run:not(.compact) > .decision-area { grid-row: 1; }
+  .run.deciding:not(.compact) > .left, .run.deciding:not(.compact) > .right, .run.paused:not(.compact) > .left, .run.paused:not(.compact) > .right, .run.paused:not(.compact) > :global([data-column-resize="panels"]) { grid-row: 2; }
+  .run.deciding:not(.compact) > :global([data-column-resize="rail"]), .run.paused:not(.compact) > :global([data-column-resize="rail"]) { grid-row: 1 / 3; }
   .left, .right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .left :global(.panel), .right :global(.panel) { flex: 1; }
   .chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -564,7 +618,7 @@
      when it holds something, and is counted by DecisionView, which measures the row's box. */
   .run.deciding > .left:has(> :not(.hidden)), .run.deciding > .right:has(> :not(.hidden)) { padding-top: 0.75rem; }
   .run.deciding > :global(.rail) { grid-row: 1 / 3; contain: size; }
-  .decision-area { grid-column: 2 / 4; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+  .decision-area { grid-column: 3 / 6; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   .run.paused { grid-template-rows: auto minmax(0, 1fr); }
   .run.paused > :global(.rail) { grid-row: 1 / 3; }
   .decision-area.back { flex-direction: row; }
