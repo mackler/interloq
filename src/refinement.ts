@@ -1,6 +1,8 @@
 // The `Refined using Interloq` section of an item's body (issue #120, part 1), as a value: written and read by pure
-// functions, so that what is written is what is read. The text the developer wrote is never changed: not one
-// character of it, trailing spaces, blank lines and line endings included.
+// functions, so that what is written is what is read. withRefinement never changes the text the developer wrote: not
+// one character of it, trailing spaces, blank lines and line endings included. Interloq changes the developer's title
+// and text only in the phase Bring Up to Date (issue #216), only after its loop ends in agreement, and records what it
+// changed (withDeveloperText, which keeps the section byte for byte).
 //
 // The section is the opening line, the refinement, and the closing line. The closing line is there because the
 // developer may add text below the section later, which must survive a rewrite, and the refinement may hold headings
@@ -9,6 +11,7 @@
 // removes the separator and gives the body back exactly.
 import { type Brand, Option, Result } from "effect";
 import { LINE_BREAK } from "./pieces.ts";
+import type { TrackerItem } from "./tracker.ts";
 
 export const OPENING_LINE = "## Refined using Interloq";
 export const CLOSING_LINE = "_End of the section Refined using Interloq._";
@@ -26,10 +29,11 @@ export type InvalidRefinement = Readonly<{ _tag: "InvalidRefinement"; reason: "b
 export type SectionMalformed = Readonly<{ _tag: "SectionMalformed"; reason: string }>;
 
 const isMarker = (line: string): boolean => line === OPENING_LINE || line === CLOSING_LINE;
+const hasMarkerLine = (text: string): boolean => text.split(LINE_BREAK).some((part, i) => i % 2 === 0 && isMarker(part));
 
 export const refinementOf = (text: string): Result.Result<Refinement, InvalidRefinement> => {
   if (text.trim() === "") return Result.fail({ _tag: "InvalidRefinement", reason: "blank" });
-  if (text.split(LINE_BREAK).some((part, i) => i % 2 === 0 && isMarker(part))) return Result.fail({ _tag: "InvalidRefinement", reason: "markerLine" });
+  if (hasMarkerLine(text)) return Result.fail({ _tag: "InvalidRefinement", reason: "markerLine" });
   if (text.endsWith("\r")) return Result.fail({ _tag: "InvalidRefinement", reason: "trailingCarriageReturn" });
   return Result.succeed(text as Refinement);
 };
@@ -79,3 +83,35 @@ export const readRefinement = (body: string): Result.Result<Option.Option<Refine
 /** The body without its section and the separator before it: the developer's text alone. */
 export const withoutRefinement = (body: string): Result.Result<string, SectionMalformed> =>
   Result.map(sectionOf(body), Option.match({ onNone: () => body, onSome: (s) => `${body.slice(0, s.from)}${body.slice(s.to)}` }));
+
+/**
+ * The developer's title and text of an item (issue #216): a title with a character other than whitespace and no line
+ * break, and a text, the body without its section, holding neither marker line as a line, so that writing it can never
+ * corrupt or fake the section; built by itemTextOf alone.
+ */
+export type ItemText = Brand.Branded<Readonly<{ title: string; text: string }>, "ItemText">;
+/** Why a title and a text are not an ItemText. */
+export type InvalidItemText = Readonly<{ _tag: "InvalidItemText"; reason: "blankTitle" | "multiLineTitle" | "markerLine" }>;
+
+export const itemTextOf = (title: string, text: string): Result.Result<ItemText, InvalidItemText> => {
+  if (title.trim() === "") return Result.fail({ _tag: "InvalidItemText", reason: "blankTitle" });
+  if (/[\r\n]/u.test(title)) return Result.fail({ _tag: "InvalidItemText", reason: "multiLineTitle" });
+  if (hasMarkerLine(text)) return Result.fail({ _tag: "InvalidItemText", reason: "markerLine" });
+  return Result.succeed({ title, text } as ItemText);
+};
+
+/** The item's title and its body without the section. */
+export const itemTextOfItem = (item: TrackerItem): Result.Result<ItemText, SectionMalformed | InvalidItemText> =>
+  Result.flatMap(withoutRefinement(item.body), (text) => itemTextOf(item.title, text));
+
+/**
+ * The body with everything outside its section replaced by the developer's text: with no section, the text itself;
+ * with one, the text, SEPARATOR where the text is not empty, then the section exactly as it stood. Text the developer
+ * had written after the section is part of what withoutRefinement gives, so it is part of the text and now stands
+ * before the section.
+ */
+export const withDeveloperText = (body: string, text: ItemText): Result.Result<string, SectionMalformed> =>
+  Result.map(sectionOf(body), Option.match({
+    onNone: () => text.text,
+    onSome: (s) => `${text.text}${text.text === "" ? "" : SEPARATOR}${body.slice(s.open, s.to)}`,
+  }));
