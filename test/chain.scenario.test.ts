@@ -1109,10 +1109,16 @@ suite("issue #196: the chain's queue", () => {
   test("a queue edited during a run leaves the run untouched, and only the next start follows the edit", async () => {
     let release = () => {};
     const held = new Promise<void>((r) => (release = r));
-    const h = await harness([{ ...converging, steps: [{ output: noQuestions, plan: "v1", gate: () => held }] }, converging], { settings: settings(2) });
+    // The run publishes until its planning call reaches the gate, so its events are counted only once it is held there.
+    let gated = false;
+    const gate = (): Promise<void> => {
+      gated = true;
+      return held;
+    };
+    const h = await harness([{ ...converging, steps: [{ output: noQuestions, plan: "v1", gate }] }, converging], { settings: settings(2) });
     await change(h, { _tag: "Source", source: "queue" });
     const id = await begin(h, "1");
-    await until("the planning call", () => h.events.some((b) => b.run === id && b.event._tag === "Notified"));
+    await until("the planning call held at its gate", () => gated);
     const before = h.events.filter((b) => b.run === id).length;
     await add(h, "4");
     await add(h, "5");
