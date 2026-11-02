@@ -318,7 +318,7 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     /** A phase's body, with the Decider of that phase: a decision taken in it is recorded in it (D3). */
     // W1-R1-2: the Decider names the phase as its phase line does, by the phases known when the phase begins.
     const inPhase = (phase: Phase) => <A, E, R>(body: Effect.Effect<A, E, R>) =>
-      Effect.suspend(() => Effect.provideService(body, Decider, decider.at(phase, phase.kind === "questions" ? phaseName(phase, 1) : label(phase.kind, phase.n))));
+      Effect.suspend(() => Effect.provideService(body, Decider, decider.at(phase, phase.kind === "questions" || phase.kind === "update" ? phaseName(phase, 1) : label(phase.kind, phase.n))));
     /**
      * Issue #122 (Q1): a planning phase's or a work review's body on a Claude Code session of its own, which every call of
      * the phase reaches through the Planner service (its repair and corrective turns included), and which ends with it.

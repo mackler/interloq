@@ -22,7 +22,9 @@ export type RenderableQuestions = Readonly<{
 
 /** "Question review", "Requirements review", "Planning phase k": the heading of a subject's rounds. */
 export const subjectHeading = (subject: SubjectId): string =>
-  subject === "questions"
+  subject === "update"
+    ? "Bring Up to Date"
+    : subject === "questions"
     ? "Question review"
     : subject === "terms"
       ? "Terms review"

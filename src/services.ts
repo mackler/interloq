@@ -13,7 +13,7 @@ import type { DecisionEvent } from "./reviewState.ts";
 import type { SuiteResult } from "./suite.ts";
 import type { CommitCheck } from "./commitCheck.ts";
 import type { BranchName, GitState, LeftoverCommit, MergeOutcome, ParkRecord } from "./park.ts";
-import type { CommandLine, Config, DecisionAnalysis, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
+import type { CommandLine, Config, DecisionAnalysis, IssueFile, ExecCallOutcome, ExecOutcome, LogEntry, PlannerResponse, PlanWriteResult, QuestionOption, QuestionsFile, RecordedPlan, Review, TermsWrite } from "./schema.ts";
 import type * as SchemaModule from "./schema.ts";
 import type { LoopResult, Phase, UiEvent } from "./uiEvents.ts";
 import type { ContextRequest } from "./prompts.ts";
@@ -373,6 +373,14 @@ export interface StoreShape {
   /** The explanations of terms.json; none when the file does not exist (an empty agreed list, or no question phase). */
   loadTerms(): Effect.Effect<TermsWrite["entries"], StoreError>;
   loadAnalysis(decision: number): Effect.Effect<DecisionAnalysis, StoreError>;
+  /** Issue #216: issue-before.json, the issue's title and text as read when the run began. */
+  saveIssueBefore(text: ItemText): Effect.Effect<void, StoreError>;
+  loadIssueBefore(): Effect.Effect<Readonly<{ title: string; text: string }>, StoreError>;
+  /** Issue #216: issue.json, the update subject's reviewed file, with its protection baseline. */
+  saveIssue(file: IssueFile): Effect.Effect<void, StoreError>;
+  loadIssue(): Effect.Effect<IssueFile, StoreError>;
+  /** Issue #216: cited-issues.md, the issues the item cites, as read. */
+  saveCitedIssues(markdown: string): Effect.Effect<void, StoreError>;
   /** Issue #186: verdict n as it now stands, its reviewed file (`verdict-<n>/verdict.json`). */
   saveVerdict(verdict: number, record: VerdictRecord): Effect.Effect<void, StoreError>;
   loadVerdict(verdict: number): Effect.Effect<VerdictRecord, StoreError>;

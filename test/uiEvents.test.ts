@@ -69,6 +69,10 @@ for (const [tag, [event, expected]] of Object.entries(examples)) {
 }
 
 // Issue #14: the phases are named for what they do; "Question phase" and "Execution" are gone from the labels.
+test("issue #216: the phase Bring Up to Date is named so", () => {
+  assert.equal(phaseName({ kind: "update" }, 1), "Bring Up to Date");
+});
+
 test("phaseName names the phases as the page shows them", () => {
   assert.equal(phaseName({ kind: "questions" }, 1), "Gather Requirements");
   assert.equal(phaseName({ kind: "planning", n: 1 }, 1), "Planning");
@@ -82,8 +86,8 @@ test("phaseName names the phases as the page shows them", () => {
 
 // Issue #6: the run's shape, known from the start, and each further iteration as soon as it is known.
 // Issue #120: a refinement run is Gather Requirements alone, and an implementation run never has it, for any count.
-test("foreseenPhases: a refinement run foresees Gather Requirements alone; an implementation run Planning, Implementation and Code review per iteration", () => {
-  for (const n of [1, 2, 5]) assert.deepEqual(foreseenPhases("refinement", iterationsOf(n)), [{ kind: "questions" }]);
+test("foreseenPhases: a refinement run foresees Bring Up to Date then Gather Requirements (issue #216); an implementation run Planning, Implementation and Code review per iteration", () => {
+  for (const n of [1, 2, 5]) assert.deepEqual(foreseenPhases("refinement", iterationsOf(n)), [{ kind: "update" }, { kind: "questions" }]);
   assert.deepEqual(foreseenPhases("implementation", iterationsOf(2)), [1, 2].flatMap((n) => [{ kind: "planning", n }, { kind: "execution", n }, { kind: "work", n }]));
   for (const n of [1, 3]) assert.equal(countOfKind(foreseenPhases("implementation", iterationsOf(n)), "questions"), 0);
 });

@@ -19,7 +19,7 @@ import { type LoopResult, phaseName } from "./uiEvents.ts";
 export type DecisionEnd = Readonly<{ decision: number; question: DecisionQuestion; analysis: DecisionAnalysis; result: LoopResult }>;
 
 /** The phase number a decision's loop records: 0 in Gather Requirements, the phase's number otherwise. */
-export const phaseNumber = (phase: DecisionQuestion["phase"]): number => (phase.kind === "questions" ? 0 : phase.n);
+export const phaseNumber = (phase: DecisionQuestion["phase"]): number => (phase.kind === "questions" || phase.kind === "update" ? 0 : phase.n);
 
 /**
  * The validation of an analysis against the question's options (issue #37, decision Q1), for the analysis call, a

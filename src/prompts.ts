@@ -2000,9 +2000,11 @@ export const SUMMARY_PROPOSED_HEADING = "Summary proposed by Claude:";
  * execution phase implements the plan. The records keep their own names (question-review/, execution-<k>/). Issue #6:
  * `count` is how many phases of the kind the run holds, begun or foreseen; with one, the phase carries no number.
  */
-export function phaseLabel(kind: "questions" | "planning" | "execution" | "work" | "suite", n: number, count: number): string {
+export function phaseLabel(kind: "update" | "questions" | "planning" | "execution" | "work" | "suite", n: number, count: number): string {
   const numbered = (name: string) => (count === 1 ? name : `${name} ${n}`);
   switch (kind) {
+    case "update":
+      return UPDATE_PHASE;
     case "questions":
       return "Gather Requirements";
     case "planning":
@@ -2370,7 +2372,7 @@ export const DECISION_FORMAT_AUTHORITY =
 
 /** A decision's question as a prompt names it: the phase is where it was asked, `label` its name as the run shows it (W1-R1-2). */
 export type DecisionPromptQuestion = Readonly<{
-  phase: Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work" | "suite"; n: number }>;
+  phase: Readonly<{ kind: "update" }> | Readonly<{ kind: "questions" }> | Readonly<{ kind: "planning" | "execution" | "work" | "suite"; n: number }>;
   label: string;
   question: string;
   options: readonly Readonly<{ label: string; description: string }>[];
@@ -4234,7 +4236,9 @@ export const PREPARED_TERMS_NOTE = "Its terms were explained and reviewed when i
 
 /** The name of the dashboard's heading of the document under review, by the subject the loop reviews (issue #86). */
 export const documentLabel = (subject: SubjectId): string =>
-  subject === "questions"
+  subject === "update"
+    ? "Issue brought up to date"
+    : subject === "questions"
     ? "Question list"
     : subject === "terms"
       ? "Terms"
@@ -4250,6 +4254,9 @@ export const documentLabel = (subject: SubjectId): string =>
 
 // ---- Bring Up to Date (issue #216) ----------------------------------------------------------------------------------
 
+/** What a subject's lines call Codex's pass over it: a check in Bring Up to Date (requirements "Name"), a review otherwise. */
+export const passNoun = (subject: SubjectId): "check" | "review" => (subject === "update" ? "check" : "review");
+
 /** The marker lines of the section `Refined using Interloq` (src/refinement.ts re-exports them). */
 export const OPENING_LINE = "## Refined using Interloq";
 export const CLOSING_LINE = "_End of the section Refined using Interloq._";
@@ -4259,11 +4266,10 @@ export const UPDATE_PHASE = "Bring Up to Date";
 /** The id prefix of the check's points: U-R<n>-<i>. */
 export const UPDATE_ID_PREFIX = "U";
 /** Records of the phase, named in its prompts. */
-export const ISSUE_FILE = "issue.json";
-export const ISSUE_BEFORE_FILE = "issue-before.json";
-export const CITED_FILE = "cited-issues.md";
-export const UPDATE_LOG_FILE = "update-log.json";
-export const UPDATE_DIR = "update-check";
+const ISSUE_FILE = pathOf({ kind: "issue" });
+const ISSUE_BEFORE_FILE = pathOf({ kind: "issueBefore" });
+const CITED_FILE = pathOf({ kind: "cited" });
+const UPDATE_LOG_FILE = pathOf({ kind: "log", subject: "update" });
 /**
  * A sentence every check prompt of the phase contains, which test/helpers.ts's scripted reviewer recognizes (S8), so a
  * scenario scripts the phase's checks apart from its other reviews.
@@ -4311,7 +4317,7 @@ const ISSUE_FIELDS_RULE = `Return in issue the whole title (one line, not blank)
 
 /** Claude Code's response to a check (issue #216). */
 export function updateRespondPrompt(root: RunRoot, round: number): string {
-  return `${runDir(root)}/${UPDATE_DIR}/review-${round}.json contains Codex's check of the issue in ${runDir(root)}/${ISSUE_FILE}.
+  return `${recordPath(root, { kind: "review", subject: "update", round })} contains Codex's check of the issue in ${runDir(root)}/${ISSUE_FILE}.
 ${issueRecords(root)}
 ${respondRules(root, "you correct the title or text for it")}
 ${FACT_DISPUTES}

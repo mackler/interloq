@@ -96,7 +96,7 @@ export type Baseline = typeof Baseline.Type;
 // ---- decision support ------------------------------------------------------------------------------
 
 /** Where a decision took place: the phase of the run as src/uiEvents.ts names it. */
-export const PhaseRecord = Schema.Union([Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(["planning", "execution", "work"]), n: S.NonNegativeInt })]);
+export const PhaseRecord = Schema.Union([Schema.Struct({ kind: Schema.Literal("update") }), Schema.Struct({ kind: Schema.Literal("questions") }), Schema.Struct({ kind: Schema.Literals(["planning", "execution", "work"]), n: S.NonNegativeInt })]);
 /** decision-<k>/question.json: the question the user was asked, with its options, the phase in which it was asked and its label (W1-R1-2). */
 export const DecisionQuestionFile = Schema.Struct({ version: V2, decision: S.PositiveInt, phase: PhaseRecord, label: Schema.String, question: Schema.String, options: Schema.Array(S.QuestionOption) });
 export type DecisionQuestionFile = typeof DecisionQuestionFile.Type;

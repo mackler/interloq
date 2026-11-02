@@ -7,7 +7,7 @@ import type { RunMode } from "./runMode.ts";
  * A reviewed subject: the question list, the requirements, the plan of one planning phase, the work of one execution
  * phase (the work review), or the analysis of decision k (decision support, numbered across the run).
  */
-export type SubjectId = "questions" | "terms" | "requirements" | Readonly<{ plan: number }> | Readonly<{ work: number }> | Readonly<{ decision: number }> | Readonly<{ verdict: number }>;
+export type SubjectId = "update" | "questions" | "terms" | "requirements" | Readonly<{ plan: number }> | Readonly<{ work: number }> | Readonly<{ decision: number }> | Readonly<{ verdict: number }>;
 /**
  * A subject whose phase follows from its identity; a decision's phase is where it took place, which its identity does
  * not say, and so is a verdict's (issue #186: numbered across the run, given at a planning phase or an execution phase).
@@ -15,7 +15,7 @@ export type SubjectId = "questions" | "terms" | "requirements" | Readonly<{ plan
 export type PhasedSubject = Exclude<SubjectId, Readonly<{ decision: number }> | Readonly<{ verdict: number }>>;
 
 export type Artifact =
-  | Readonly<{ kind: "conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked" }>
+  | Readonly<{ kind: "conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked" | "issue" | "issueBefore" | "cited" }>
   | Readonly<{ kind: "log"; subject: SubjectId }>
   | Readonly<{ kind: "review" | "response" | "round"; subject: SubjectId; round: number }>
   /** The raw reply of corrective turn `attempt` of a round (issue #30), beside the round's response. */
@@ -80,7 +80,9 @@ export const recordPath = (root: RunRoot, artifact: Artifact): string => `${RECO
 export const phaseOf = (subject: PhasedSubject): number => (typeof subject !== "object" ? 0 : "plan" in subject ? subject.plan : subject.work);
 /** The subdirectory of plan-review/ that holds a subject's round files. */
 export const subjectDir = (subject: SubjectId): string =>
-  subject === "questions"
+  subject === "update"
+    ? "update-check"
+    : subject === "questions"
     ? "question-review"
     : subject === "terms"
       ? "terms-review"
@@ -99,6 +101,7 @@ const WORK_DIR = /^work-review-([1-9][0-9]*)$/;
 const DECISION_DIR = /^decision-([1-9][0-9]*)$/;
 /** The subject of a subdirectory name, or null for a name that is not one. */
 export const subjectOf = (dirName: string): SubjectId | null => {
+  if (dirName === "update-check") return "update";
   if (dirName === "question-review") return "questions";
   if (dirName === "terms-review") return "terms";
   if (dirName === "requirements-review") return "requirements";
@@ -113,7 +116,9 @@ export const subjectOf = (dirName: string): SubjectId | null => {
 };
 /** The file a subject's review reads. */
 export const reviewedFile = (subject: SubjectId): Artifact =>
-  subject === "questions" || subject === "terms" || subject === "requirements"
+  subject === "update"
+    ? { kind: "issue" }
+    : subject === "questions" || subject === "terms" || subject === "requirements"
     ? { kind: subject }
     : "plan" in subject
       ? { kind: "planFile" }
@@ -122,7 +127,7 @@ export const reviewedFile = (subject: SubjectId): Artifact =>
         : "verdict" in subject
           ? { kind: "verdict", verdict: subject.verdict }
           : { kind: "analysis", decision: subject.decision };
-const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked"), string> = {
+const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation" | "decisions" | "feedback" | "usage" | "questions" | "terms" | "requirements" | "plan" | "planFile" | "checkpoint" | "config" | "parked" | "issue" | "issueBefore" | "cited"), string> = {
   conversation: "conversation.md",
   decisions: "user-decisions.md",
   feedback: "reviewer-feedback.md",
@@ -139,13 +144,21 @@ const FIXED: Record<Extract<Artifact, { kind: string }>["kind"] & ("conversation
   config: "config.json",
   /** The record of the parking of a halted run's work (issue #147), written after the run ended. */
   parked: "parked.json",
+  /** Issue #216: the issue's title and text as Bring Up to Date now holds them, the update subject's reviewed file. */
+  issue: "issue.json",
+  /** Issue #216: the issue's title and text as read when the run began. */
+  issueBefore: "issue-before.json",
+  /** Issue #216: the issues the item cites, two levels deep, as read. */
+  cited: "cited-issues.md",
 };
 const ROUND_FILE = { review: "review", response: "cc", round: "round" } as const;
 /** The path of an artifact relative to plan-review/, with "/" separators. */
 export const pathOf = (artifact: Artifact): string => {
   switch (artifact.kind) {
     case "log":
-      return artifact.subject === "questions"
+      return artifact.subject === "update"
+        ? "update-log.json"
+        : artifact.subject === "questions"
         ? "questions-log.json"
         : artifact.subject === "terms"
           ? "terms-log.json"
@@ -190,8 +203,8 @@ export const pathOf = (artifact: Artifact): string => {
       return FIXED[artifact.kind];
   }
 };
-/** The seven issue logs (one subject of each; issue #186 adds the verdicts'). */
-export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "questions", "terms", "requirements", { work: 1 }, { decision: 1 }, { verdict: 1 }];
+/** The eight issue logs (one subject of each; issue #186 adds the verdicts', issue #216 the update's). */
+export const LOG_SUBJECTS: readonly SubjectId[] = [{ plan: 1 }, "update", "questions", "terms", "requirements", { work: 1 }, { decision: 1 }, { verdict: 1 }];
 
 /**
  * Whether a path relative to a run's records directory is a record that a read-only call must leave unchanged (finding

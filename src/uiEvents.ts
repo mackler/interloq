@@ -15,7 +15,7 @@ import type { ShownDocument } from "./reviewedDocument.ts";
 /** The kinds of a numbered phase; `suite` is the whole suite Interloq runs after the review of the work finds nothing left to correct (issue #162). */
 export const NUMBERED_PHASE_KINDS = ["planning", "execution", "work", "suite"] as const;
 export type NumberedPhaseKind = (typeof NUMBERED_PHASE_KINDS)[number];
-export type Phase = Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
+export type Phase = Readonly<{ kind: "update" }> | Readonly<{ kind: "questions" }> | Readonly<{ kind: NumberedPhaseKind; n: number }>;
 /** Which conversation with the user runs (issue #21): the first clarification, or a follow-up on accepted requirements gaps. An empty agreed list opens none (issue #83). */
 export type InterviewStage = "clarification" | "followUp";
 export type Agent = "claude" | "codex";
@@ -108,7 +108,7 @@ export type StepReport = Readonly<{ id: string; status: "started" | "done" }>;
 
 const AGENT_LABEL: Record<Agent, string> = { claude: "Claude Code", codex: "Codex" };
 /** The name of a phase as the progress display shows it; `count` is how many phases of its kind the run holds (issue #6). */
-export const phaseName = (phase: Phase, count: number): string => (phase.kind === "questions" ? phaseLabel("questions", 0, count) : phaseLabel(phase.kind, phase.n, count));
+export const phaseName = (phase: Phase, count: number): string => (phase.kind === "questions" || phase.kind === "update" ? phaseLabel(phase.kind, 0, count) : phaseLabel(phase.kind, phase.n, count));
 /** How many of the phases are of the kind: the count the phase lines, the progress rail and the bands number by (issue #6). */
 export const countOfKind = (phases: readonly Phase[], kind: Phase["kind"]): number => phases.filter((p) => p.kind === kind).length;
 /** The name of a phase in test output: always numbered. */
@@ -128,7 +128,8 @@ export const iterationsOf = (n: number): readonly Iteration[] => Array.from({ le
 export const foreseenPhases = (mode: RunMode, iterations: readonly Iteration[]): readonly Phase[] => {
   switch (mode) {
     case "refinement":
-      return [{ kind: "questions" }];
+      // Issue #216: Bring Up to Date before Gather Requirements.
+      return [{ kind: "update" }, { kind: "questions" }];
     case "implementation":
       return iterations.flatMap((iteration, i): Phase[] => [
         { kind: "planning", n: i + 1 },

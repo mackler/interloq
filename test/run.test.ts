@@ -573,7 +573,7 @@ test("an interrupted execution leaves its started step unfinished", { timeout: 6
 
 // Issue #6 ("the whole run from the start"): the phases known of the run, notified before they begin.
 const foreseen = (notified: readonly UiEvent[]): string[] =>
-  notified.flatMap((e) => (e._tag === "PhasesForeseen" ? [`foreseen ${e.phases.map((p) => (p.kind === "questions" ? "Q" : `${p.kind[0]}${p.n}`)).join(",")}`] : e._tag === "PhaseBegan" ? [`began ${e.phase.kind === "questions" ? "Q" : `${e.phase.kind[0]}${e.phase.n}`}`] : []));
+  notified.flatMap((e) => (e._tag === "PhasesForeseen" ? [`foreseen ${e.phases.map((p) => (p.kind === "questions" ? "Q" : p.kind === "update" ? "U" : `${p.kind[0]}${p.n}`)).join(",")}`] : e._tag === "PhaseBegan" ? [`began ${e.phase.kind === "questions" ? "Q" : e.phase.kind === "update" ? "U" : `${e.phase.kind[0]}${e.phase.n}`}`] : []));
 const everyBeganForeseen = (notified: readonly UiEvent[]): void => {
   const known = new Set<string>();
   for (const e of notified) {
@@ -607,12 +607,12 @@ test("a stopped execution foresees the second iteration at once; a work review t
   assert.deepEqual(foreseen(revise.probe.ui.notified), ["foreseen p1,e1,w1", "began p1", "began e1", "began w1", "foreseen p1,e1,w1,p2,e2,w2", "began p2", "began e2", "began w2"]);
 });
 
-// Issue #120: a refinement run foresees Gather Requirements alone, and an implementation run never foresees it.
-test("a refinement run foresees Gather Requirements alone; an implementation run foresees it never", async () => {
+// Issue #120: a refinement run foresees Gather Requirements, and an implementation run never foresees it; issue #216: Bring Up to Date before it.
+test("a refinement run foresees Bring Up to Date and Gather Requirements; an implementation run foresees neither", async () => {
   // Each run ends at its first agent call, which is not scripted; what was notified before is what counts.
   const refinement = testLayer(tempRepo(), {});
   await Effect.runPromiseExit(refinementRun("task", scriptedItem.id, "checked").pipe(Effect.provide(refinement.layer)));
-  assert.equal(foreseen(refinement.probe.ui.notified)[0], "foreseen Q");
+  assert.equal(foreseen(refinement.probe.ui.notified)[0], "foreseen U,Q");
   const implementation = testLayer(tempRepo(), {});
   await Effect.runPromiseExit(run("task").pipe(Effect.provide(implementation.layer)));
   assert.equal(foreseen(implementation.probe.ui.notified)[0], "foreseen p1,e1,w1");

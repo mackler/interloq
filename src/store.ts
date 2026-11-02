@@ -7,7 +7,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createHash } from "node:crypto";
 import { type Artifact, guardedRecord, implementationRootsOf, LOG_SUBJECTS, subjectOf, pathOf, RECORDS_DIR, reviewedFile, RUNS_DIR, type RunRoot, recordPath, type SubjectId, suffixedRoot } from "./artifacts.ts";
 import { describe, FileSystemError, GitError } from "./errors.ts";
-import { type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
+import { IssueBeforeFile, IssueFile, type LogEntry, PlanFile, type RecordedPlan, type UsageRecord } from "./schema.ts";
 import { renderPlanMarkdown } from "./plan.ts";
 import type { Platform } from "./platform.ts";
 import { AnalysisFile, Baseline, RoundFile, type RoundRecord, TermsFile, VerdictFile, type CheckpointPoint, questionsFile, type WaitingNote, readLog, readQuestions, readUsage, serializeReply, VERSION } from "./records.ts";
@@ -657,6 +657,17 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
         const file = at({ kind: "analysis", decision });
         return readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(file, AnalysisFile, text))), Effect.map((f) => f.analysis));
       },
+      saveIssueBefore: (text) => saveRecord({ kind: "issueBefore" }, { version: VERSION, title: text.title, text: text.text }),
+      loadIssueBefore: () => {
+        const file = at({ kind: "issueBefore" });
+        return readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(file, IssueBeforeFile, text))), Effect.map((f) => ({ title: f.title, text: f.text })));
+      },
+      saveIssue: (record) => saveRecord({ kind: "issue" }, record),
+      loadIssue: () => {
+        const file = at({ kind: "issue" });
+        return readText(file).pipe(Effect.flatMap((text) => Effect.fromResult(decodeText(file, IssueFile, text))));
+      },
+      saveCitedIssues: (markdown) => writeRecordText(at({ kind: "cited" }), markdown.replace(/\n$/u, "")),
       saveVerdict: (verdict, record) => saveRecord({ kind: "verdict", verdict }, { version: VERSION, verdict: record }),
       loadVerdict: (verdict) => {
         const file = at({ kind: "verdict", verdict });
