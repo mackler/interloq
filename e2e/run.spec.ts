@@ -279,7 +279,7 @@ test.describe("the tests of the interview server, in order", () => {
     await expect(dashboard(page).getByText('"""')).toHaveCount(0);
     // Issue #21: Gather Requirements shows its steps; the clarification counts the agreed question, answered or not.
     const step = (label: string) => rail(page).locator("[data-step]", { has: page.locator("[data-step-label]", { hasText: label }) });
-    await expect(step(NO_UNANSWERED_QUESTIONS)).toHaveAttribute("data-step", "done");
+    await expect(step(stepLabel("formulate"))).toHaveAttribute("data-step", "done");
     await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "active");
     await expect(step(stepLabel("clarification")).locator("[data-count]")).toHaveText("0 of 1 answered");
     await option(page, /PostgreSQL/).click();
@@ -304,7 +304,8 @@ test.describe("the tests of the interview server, in order", () => {
     // written back to its item.
     await toHaveEnded(page, 0);
     await expect(dashboard(page).locator("[data-claude]")).toContainText("That is all I need.");
-    await expect(rail(page).locator("li.entry")).toHaveCount(1);
+    // Bring Up to Date then Gather Requirements (issue #216), as test (23) asserts.
+    await expect(rail(page).locator("li.entry")).toHaveCount(2);
     await expect(rail(page).locator("li.entry", { has: page.getByText("Gather Requirements", { exact: true }) })).toHaveAttribute("data-state", "done");
     await expect(step(stepLabel("clarification"))).toHaveAttribute("data-step", "done");
     await expect(step(stepLabel("clarification")).getByText(loopSummary(1, 0, "converged"), { exact: true })).toBeVisible();
