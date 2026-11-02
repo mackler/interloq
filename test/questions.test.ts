@@ -437,7 +437,7 @@ test("issue #156: a marked rejection of a request to drop a question, raised aga
   await runRefinement(layer);
   const [pause] = pausesOf(probe.ui);
   assert.ok(pause !== undefined, JSON.stringify(presentedSubjects(probe.ui)));
-  assert.deepEqual(pause.origin, { kind: "pause", heading: "Question review", pause: "reraised", id: "Q-R1-1" });
+  assert.deepEqual(pause.origin, { kind: "pause", heading: "Question review", pause: "reraised", id: "Q-R1-1", pass: prompts.passNoun("questions") });
   assert.equal(piecesText(pause.question), prompts.TASK_DISPUTE_QUESTION);
   const descriptions = pause.options.map((o) => piecesText(o.description)).join("\n");
   assert.ok(descriptions.includes(DROP_Q1), descriptions);

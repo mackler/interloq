@@ -456,7 +456,7 @@ test("issue #156: a marked rejection of the terms raised again is put to the dev
   await runRefinement(layer);
   const pauses = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "pause");
   assert.equal(pauses.length, 1, JSON.stringify(pauses.map((x) => x.origin)));
-  assert.deepEqual(pauses[0]!.origin, { kind: "pause", heading: "Terms review", pause: "reraised", id: "T-R1-1" });
+  assert.deepEqual(pauses[0]!.origin, { kind: "pause", heading: "Terms review", pause: "reraised", id: "T-R1-1", pass: prompts.passNoun("terms") });
   assert.equal(piecesText(pauses[0]!.question), prompts.TASK_DISPUTE_QUESTION);
   const descriptions = pauses[0]!.options.map((o) => piecesText(o.description)).join("\n");
   for (const part of [objection, reading]) assert.ok(descriptions.includes(part), part);
