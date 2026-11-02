@@ -220,3 +220,69 @@ test("(o) Stop task during the suite leaves a Finished with Stopped as its last 
   const events = suiteOutputs(probe.ui.outputs);
   assert.deepEqual(events.at(-1), { _tag: "Finished", key: "suite:1", name: SUITE_OUTPUT_NAME, status: { _tag: "Stopped" } });
 });
+
+// Issue #199: the end-to-end command, a second final command run after the suite command passes, each run its own
+// suite run with its own log and limit; a failure of either revises the plan, and then both run again in order.
+const E2E = "script/e2e --all";
+const runsOf = (probe: { suite: { runs: readonly { command: string }[] } }): string[] => probe.suite.runs.map((r) => r.command);
+
+test("(e2e-a) both final commands pass: the suite command, then the end-to-end command, each with its own log and limit", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, tracker, config: { suiteCommand: SUITE, endToEndCommand: E2E } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(probe.suite.runs, [{ command: SUITE, cwd: probe.project, ceilingMs: 2_400_000 }, { command: E2E, cwd: probe.project, ceilingMs: 2_400_000 }]);
+  assert.ok(fs.existsSync(path.join(probe.dir, "suite-1.log")) && fs.existsSync(path.join(probe.dir, "suite-2.log")));
+  assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
+  assert.deepEqual(suitesBegan(probe.ui.notified), [1, 2]);
+  assert.deepEqual(lastForeseen(probe.ui.notified), ["planning1", "execution1", "work1", "suite1", "suite2"]);
+  const first = probe.ui.notified.find((e) => e._tag === "PhasesForeseen");
+  assert.ok(first !== undefined);
+  assert.deepEqual(lastForeseen([first]), ["planning1", "execution1", "work1", "suite1", "suite2"], "both runs are foreseen from the start");
+});
+
+test("(e2e-b) the suite command fails: the end-to-end command does not run until the suite passes after the revision", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    suite: [failing],
+    config: { suiteCommand: SUITE, endToEndCommand: E2E },
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(runsOf(probe), [SUITE, SUITE, E2E]);
+});
+
+test("(e2e-c) the end-to-end command fails, then passes: a revision from its failure, and both run again in order", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }, { output: noQuestions, plan: "v2" }],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished, finished],
+    suite: [{ _tag: "Passed", output: "all passed\n", ms: 1 }, failing],
+    tracker,
+    config: { suiteCommand: SUITE, endToEndCommand: E2E },
+  });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(runsOf(probe), [SUITE, E2E, SUITE, E2E]);
+  const revision = probe.planner.prompts.find((p) => p.includes("Interloq then ran the whole suite"));
+  assert.ok(revision !== undefined, "no planning prompt names the failed run");
+  assert.ok(revision.includes(`\`${E2E}\``) && revision.includes("not ok 7 the parser rejects a blank id"));
+  assert.match(revision, /plan-review\/runs\/[^/\s]+\/suite-2\.log/u);
+  assert.equal(probe.reviewer.prompts.length, 4);
+  assert.deepEqual(lastForeseen(probe.ui.notified), ["planning1", "execution1", "work1", "suite1", "suite2", "planning2", "execution2", "work2", "suite3", "suite4"]);
+  assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
+});
+
+test("(e2e-d) the end-to-end command stopped by its limit once is run again with no question and no revision", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, suite: [{ _tag: "Passed", output: "all passed\n", ms: 1 }, timedOut], config: { suiteCommand: SUITE, endToEndCommand: E2E } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(runsOf(probe), [SUITE, E2E, E2E]);
+  assert.deepEqual(probe.ui.asked, []);
+  assert.equal(planningsBegan(probe.ui.notified), 1);
+});
+
+test("(e2e-e) only the end-to-end command configured: it alone runs", async () => {
+  const { wiring, probe } = testWiring(tempRepo(), { ...one, config: { endToEndCommand: E2E } });
+  assert.equal(await Effect.runPromise(Effect.scoped(program(scriptedStart(probe.project), wiring))), 0);
+  assert.deepEqual(runsOf(probe), [E2E]);
+});

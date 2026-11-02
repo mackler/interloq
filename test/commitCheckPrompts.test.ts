@@ -40,11 +40,24 @@ test("the execution prompt says the work is not finished while the run's changes
 
 test("the revision after an uncommitted check names every file, with and without a suite", () => {
   for (const s of [suite, null]) {
-    const text = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { _tag: "Uncommitted", paths, suite: s }, checks);
+    const passed = s === null ? [] : [s];
+    const text = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { _tag: "Uncommitted", paths, suite: passed }, checks);
     for (const p of paths) assert.ok(text.includes(p), p);
     assert.equal(s !== null && text.includes(`\`${s}\``), s !== null);
-    const line = prompts.uncommittedLine("Code review 2", paths, s);
+    const line = prompts.uncommittedLine("Code review 2", paths, passed);
     for (const p of paths) assert.ok(line.includes(p), p);
+  }
+});
+
+// Issue #199: with the end-to-end command set, the revision and the line name both final commands that passed.
+test("the revision after an uncommitted check names both final commands", () => {
+  const both = Result.getOrThrow(S.stepChecksOf({ checkCommands: [], suiteCommand: "npm test", endToEndCommand: "npm run test:e2e" }));
+  const passed = S.finalCommandsOf(both).map((f) => f.command);
+  const text = prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 2, { _tag: "Uncommitted", paths, suite: passed }, both);
+  const line = prompts.uncommittedLine("Code review 2", paths, passed);
+  for (const command of passed) {
+    assert.ok(text.includes(`\`${command}\``), command);
+    assert.ok(line.includes(command), command);
   }
 });
 

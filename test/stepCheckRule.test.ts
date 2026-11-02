@@ -24,6 +24,15 @@ test("the plan writer's rule and the plan review's first round carry the same cr
   assert.ok(review.includes(prompts.STEP_CHECK_REVIEW_CRITERION), "the plan review raises a step against the rule");
 });
 
+// Issue #199: the rule names the end-to-end command beside the suite command, so that no step runs it.
+test("the plan writer's rule names every final command Interloq runs itself", () => {
+  for (const [suiteCommand, endToEndCommand] of [["npm test", "npm run test:e2e"], [null, "npm run test:e2e"]] as const) {
+    const both = Result.getOrThrow(S.stepChecksOf({ checkCommands: [], suiteCommand, endToEndCommand }));
+    const rule = prompts.planStepCheckRule(both);
+    for (const final of S.finalCommandsOf(both)) assert.ok(rule.includes(`\`${final.command}\``), final.command);
+  }
+});
+
 test("the plan review's criterion names no command where the project lists none", () => {
   const review = prompts.planReviewPrompt(TEST_ROOT, 1, 1, false, S.NO_STEP_CHECKS, "continued");
   assert.ok(review.includes(prompts.STEP_CHECK_REVIEW_CRITERION));

@@ -6,7 +6,7 @@ import { pathOf, RECORDS_DIR, recordPath, type RunRoot, type SubjectId } from ".
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
 import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
 import type { ParkedEnding } from "./runEnding.ts";
-import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
+import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
 import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
@@ -941,9 +941,17 @@ export const STEP_CHECK_NAMED = "Each step's text names the command or commands 
 export const STEP_CHECK_TOUCHED_ONLY = `A step's check runs only the tests its change touches, and all of its check commands together finish within ${stepCheckMinutes} minutes; where the touched tests would take longer, the step runs the part that fits and leaves the rest unrun.`;
 /** Issue #162 (requirements Q3, G-R1-1, F1): no step runs the whole suite. */
 export const STEP_CHECK_NO_SUITE = "No step runs the whole test suite.";
-/** What Interloq does with the configured suite command (requirements G-R1-1, F1), or nothing where none is configured. */
-const suiteSentence = (suite: CommandLine | null): string =>
-  suite === null ? "" : ` Interloq runs the whole suite, ${codeSpan(suite)}, itself after the review of the work finds nothing left to correct.`;
+/** Issue #199: how the final commands are named: the suite command as the whole suite, the end-to-end command as the end-to-end tests. */
+const finalCommandText = (final: FinalCommand): string =>
+  final.key === "suiteCommand" ? `the whole suite, ${codeSpan(final.command)}` : `the end-to-end tests, ${codeSpan(final.command)}`;
+/**
+ * What Interloq does with the configured final commands (requirements G-R1-1, F1; issue #199: the end-to-end command
+ * after the suite command), or nothing where none is configured.
+ */
+const suiteSentence = (finals: ReadonlyArray<FinalCommand>): string =>
+  finals.length === 0 ? "" : ` Interloq runs ${finals.map(finalCommandText).join(", and then ")}, itself after the review of the work finds nothing left to correct.`;
+/** Issue #199: the commands that passed, in the order they ran, as one phrase. */
+const passedCommandsText = (commands: ReadonlyArray<string>, quote: (command: string) => string): string => commands.map(quote).join(", then ");
 /** The project's own commands, one line per entry (requirements Q1), or nothing where the project lists none. */
 const projectCommandLines = (checks: StepChecks): string =>
   checks.commands.length === 0 ? "" : `\nThe project's commands that check each kind of change:${checks.commands.map((entry) => `\n- ${entry.change}: ${codeSpan(entry.command)}`).join("")}`;
@@ -986,7 +994,7 @@ export const PLAN_QUESTIONS_REVIEW_CRITERION =
 export const EXECUTION_COMMIT_SENTENCE =
   "The work is not finished while the run's changes are uncommitted: commit them as the project's own instructions direct before you return status 'finished'. Files that were already uncommitted when the run began are not counted.";
 export const planStepCheckRule = (checks: StepChecks): string =>
-  `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. ${STEP_CHECK_NAMED} ${STEP_CHECK_TOUCHED_ONLY} ${STEP_CHECK_NO_SUITE}${suiteSentence(checks.suite)}${projectCommandLines(checks)}`;
+  `A single shell command may run for at most ${COMMAND_CEILING_MS / 60_000} minutes. ${STEP_CHECK_NAMED} ${STEP_CHECK_TOUCHED_ONLY} ${STEP_CHECK_NO_SUITE}${suiteSentence(finalCommandsOf(checks))}${projectCommandLines(checks)}`;
 /** Claude Code's Monitor tool, with which it starts a watch it may wait for like a background command (issue #161). */
 export const MONITOR_TOOL_NAME = "Monitor";
 /** What Interloq does while a background command or a Monitor watch runs (issues #154, #161): the adapter's Stop hook holds the session. */
@@ -1825,7 +1833,7 @@ export type ExecStop =
 export type RevisionCause =
   | Readonly<{ _tag: "ExecutionEnded"; stop: ExecStop | null; workReview: WorkReviewEnd }>
   | Readonly<{ _tag: "SuiteFailed"; suite: number; command: CommandLine; reason: WorkFailure; tail: string; log: string }>
-  | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: CommandLine | null }>
+  | Readonly<{ _tag: "Uncommitted"; paths: NonEmptyPaths; suite: ReadonlyArray<CommandLine> }>
   /** Issue #186: Claude Code's verdict at the end of execution phase k was withdrawn after Codex's review of it. */
   | Readonly<{ _tag: "VerdictWithdrawn"; verdict: number }>;
 
@@ -1879,8 +1887,9 @@ ${codeFence(cause.tail)}
 ${cause.tail}${cause.tail.endsWith("\n") ? "" : "\n"}${codeFence(cause.tail)}
 Revise the plan with steps that correct this failure; each step still checks its change under the rule below, and Interloq runs the whole suite again after the next review of the work finds nothing left to correct.`;
     case "Uncommitted": {
-      const passed = cause.suite === null ? "" : ` Interloq then ran the whole suite, ${codeSpan(cause.suite)}, and it passed.`;
-      const suiteAgain = cause.suite === null ? "" : " and the whole suite passes";
+      const passed =
+        cause.suite.length === 0 ? "" : ` Interloq then ran the whole suite, ${passedCommandsText(cause.suite, codeSpan)}, and ${cause.suite.length === 1 ? "it" : "each"} passed.`;
+      const suiteAgain = cause.suite.length === 0 ? "" : " and the whole suite passes";
       return `\nWork review ${phase} found nothing left to correct.${passed} Interloq then found these files changed by the run and not committed:
 ${cause.paths.map((p) => `- ${codeSpan(p)}`).join("\n")}
 The run is not finished while they are uncommitted. Revise the plan with steps that commit them as the project's own instructions direct; Interloq checks again after the next review of the work finds nothing left to correct${suiteAgain}.`;
@@ -2097,9 +2106,9 @@ export function suiteStoppedText(command: string, suite: number, stops: number, 
   return `the run was stopped at the user's answer after suite run ${suite} of ${command} was stopped before it finished (${reason}), ${stops} times in a row. The records are preserved.`;
 }
 /** Issue #176: the line of a commit check that found files the run left uncommitted, said on the page and written to conversation.md. */
-export function uncommittedLine(label: string, paths: NonEmptyPaths, suite: string | null): string {
-  const after = suite === null ? `${label} found nothing left to correct` : `${label} found nothing left to correct and the whole suite, ${suite}, passed`;
-  const again = suite === null ? "" : " and the suite passes";
+export function uncommittedLine(label: string, paths: NonEmptyPaths, suite: ReadonlyArray<string>): string {
+  const after = suite.length === 0 ? `${label} found nothing left to correct` : `${label} found nothing left to correct and the whole suite, ${passedCommandsText(suite, (c) => c)}, passed`;
+  const again = suite.length === 0 ? "" : " and the suite passes";
   return `${after}, but the run left ${paths.length === 1 ? "this file" : "these files"} uncommitted: ${paths.join(", ")}. Claude Code revises the plan to commit ${paths.length === 1 ? "it" : "them"}, and Interloq checks again after the next review of the work finds nothing left to correct${again}.`;
 }
 /** Issue #162: a Full test suite's result as the progress rail shows it. */

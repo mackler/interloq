@@ -399,13 +399,17 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
     // where a suite command is set, the next suite run follows the last known iteration, unless that iteration's last
     // run passed, and moves to a new last one when a stop or a correction adds it. Issue #181: an iteration may hold
     // several runs, a repeat after a stop outside the work following the run it repeats.
-    let suiteRuns: ReadonlyArray<Readonly<{ iteration: number; passed: boolean }>> = [];
+    // Issue #199: each run also records which final command it ran, and the last known iteration foresees one run of
+    // each final command it has not yet passed, in order.
+    const finals = S.finalCommandsOf(checks);
+    let suiteRuns: ReadonlyArray<Readonly<{ iteration: number; passed: boolean; key: S.FinalCommand["key"] }>> = [];
     const shape = (): readonly Iteration[] =>
       iterationsOf(known).map((_, i) => {
         const ran = suiteRuns.flatMap((r, j) => (r.iteration === i + 1 ? [j + 1] : []));
-        const last = ran.at(-1);
-        const pending = checks.suite !== null && i + 1 === known && (last === undefined || !suiteRuns[last - 1].passed);
-        return { suites: pending ? [...ran, suiteRuns.length + 1] : ran };
+        if (i + 1 !== known) return { suites: ran };
+        const passed = new Set(suiteRuns.flatMap((r) => (r.iteration === i + 1 && r.passed ? [r.key] : [])));
+        const pending = finals.filter((f) => !passed.has(f.key));
+        return { suites: [...ran, ...pending.map((_, j) => suiteRuns.length + 1 + j)] };
       });
     const foreseeShape = Effect.suspend(() => ui.notify({ _tag: "PhasesForeseen", phases: foreseen("implementation", shape()) }));
     const foresee = (iterations: number) => (iterations <= known ? Effect.void : Effect.suspend(() => ((known = iterations), foreseeShape)));
@@ -468,20 +472,20 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
      */
     let repeated: SuiteStop | null = null;
     /**
-     * The final suite after iteration k's work review found nothing left to correct (issue #162; issue #181, Q1 and Q2):
+     * One final command (issue #199: the suite command or the end-to-end command) after iteration k's work review found nothing left to correct (issue #162; issue #181, Q1 and Q2):
      * null where it passed; the revision's cause where the work failed it (an exit code or a signal). A stop outside the
      * work (the limit, or a shell that could not start) is never a cause: the first in the run is repeated at once
      * without a question, and every later one asks Run the suite again or Stop, Stop halting with SuiteStopped. The
      * question names every stop of this call's loop and the stop that used the repeat (W1-R1-1).
      */
-    const finalSuite = (command: S.CommandLine, k: number) =>
+    const finalSuite = ({ key, command }: S.FinalCommand, k: number) =>
       Effect.gen(function* () {
         // The stops outside the work of this call's loop, in order.
         let here: readonly SuiteStop[] = [];
         for (;;) {
           const n = suiteRuns.length + 1;
           const { verdict, log, tail } = yield* suitePhase(command, n);
-          suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed" }];
+          suiteRuns = [...suiteRuns, { iteration: k, passed: verdict._tag === "Passed", key }];
           if (verdict._tag === "Passed") return null;
           if (verdict._tag === "WorkFailed") return { _tag: "SuiteFailed", suite: n, command, reason: verdict.reason, tail, log } satisfies RevisionCause;
           // The next suite run of this iteration is foreseen first, so that the lines name this one as the run now numbers it.
@@ -654,20 +658,24 @@ const implementationPhases = (task: string, withRequirements: boolean, checks: S
       // project names a suite command, only when the whole suite passes (issue #162, G-R1-1, F1), and then only when no
       // file the run changed is uncommitted (issue #176, Q1): otherwise the plan is revised, without limit.
       if (!stopped && work.result === "converged") {
-        if (checks.suite !== null) {
-          const failed = yield* finalSuite(checks.suite, k);
-          if (failed !== null) {
-            yield* foresee(k + 1);
-            previous = failed;
-            continue;
-          }
+        // Issue #199: the final commands in order, each only after the one before it passed.
+        let failed: RevisionCause | null = null;
+        for (const final of finals) {
+          failed = yield* finalSuite(final, k);
+          if (failed !== null) break;
+        }
+        if (failed !== null) {
+          yield* foresee(k + 1);
+          previous = failed;
+          continue;
         }
         const committed = yield* store.uncommittedSinceStart();
         if (committed._tag === "Committed") return { _tag: "Finished", phases: k } as const;
         // The next iteration is known first, so that the line names this work review as the run now numbers it.
         yield* foresee(k + 1);
-        yield* sayAndWrite(uncommittedLine(label("work", k), committed.paths, checks.suite));
-        previous = { _tag: "Uncommitted", paths: committed.paths, suite: checks.suite };
+        const passedCommands = finals.map((f) => f.command);
+        yield* sayAndWrite(uncommittedLine(label("work", k), committed.paths, passedCommands));
+        previous = { _tag: "Uncommitted", paths: committed.paths, suite: passedCommands };
         continue;
       }
       yield* foresee(k + 1);

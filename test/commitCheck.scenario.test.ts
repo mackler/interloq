@@ -36,7 +36,7 @@ test("(a) a file left uncommitted sends the plan back with its name; the run end
   assert.equal(probe.planner.execPrompts.length, 2);
   const revision = probe.planner.prompts.find((p) => p.includes("changed by the run and not committed"));
   assert.ok(revision !== undefined && revision.includes("b.txt"), "no planning prompt names the uncommitted file");
-  const line = uncommittedLine("Code review 1", ["b.txt"], null);
+  const line = uncommittedLine("Code review 1", ["b.txt"], []);
   assert.ok(probe.ui.said.some((l) => l.includes(line)), probe.ui.said.join("\n"));
   assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(line));
   assert.equal((await Effect.runPromise(tracker.items)).find((i) => i.id === scriptedItem.id)?.state, "implemented");
@@ -66,6 +66,17 @@ test("(d) with a suite: the check follows the suite's pass, and the suite runs a
   const revision = probe.planner.prompts.find((p) => p.includes("changed by the run and not committed"));
   assert.ok(revision !== undefined && revision.includes(`\`${SUITE}\``), "the revision does not say the suite passed");
   assert.deepEqual(kinds(probe.ui.notified), ["planning1", "execution1", "work1", "suite1", "planning2", "execution2", "work2", "suite2"]);
+});
+
+// Issue #199: with both final commands, the revision names both commands that passed, and both run again.
+test("(d2) with both final commands: the revision names both, and both run again before the next check", async () => {
+  const repo = tempRepo();
+  const E2E = "script/e2e --all";
+  const { wiring, probe } = testWiring(repo, { ...two, config: { suiteCommand: SUITE, endToEndCommand: E2E }, execScripts: [{ after: () => writeIn(repo, "b.txt", "b\n") }, { after: () => commitAll(repo, "b") }] });
+  assert.equal(await runOf(wiring, probe.project), 0);
+  assert.deepEqual(probe.suite.runs.map((r) => r.command), [SUITE, E2E, SUITE, E2E]);
+  const revision = probe.planner.prompts.find((p) => p.includes("changed by the run and not committed"));
+  assert.ok(revision !== undefined && revision.includes(`\`${SUITE}\``) && revision.includes(`\`${E2E}\``), "the revision does not name both commands");
 });
 
 test("(e) a file git ignores and does not track, and a file under ignorePaths, are not counted", async () => {
