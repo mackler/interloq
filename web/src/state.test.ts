@@ -18,7 +18,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
 import { tabTitle } from "./title.ts";
@@ -3463,5 +3463,87 @@ describe("queue pending", () => {
   });
   test("null before the first hello", () => {
     expect(queueShown(initialState)).toBeNull();
+  });
+});
+
+describe("the timeline's order after a forecast (issue #173)", () => {
+  type Iter = { suites: number[] };
+  const foresee = (iterations: readonly Iter[]): RunEvent => notified({ _tag: "PhasesForeseen", phases: foreseenPhases("implementation", iterations) });
+  const began = (phase: Phase): RunEvent => notified({ _tag: "PhaseBegan", phase });
+  const endedPhase = (phase: Phase, result = "done"): RunEvent => notified({ _tag: "PhaseEnded", phase, result });
+  const iteration = (n: number): RunEvent[] => (["planning", "execution", "work"] as const).flatMap((kind) => [began({ kind, n }), endedPhase({ kind, n })]);
+  const suite = (n: number): Phase => ({ kind: "suite", n });
+  const order = (s: ViewState) => (runOf(s, "implementation")?.timeline ?? []).map((e) => [bandKey(e.phase), e.state]);
+  /** The timeline folded live and as a replay, asserted equal. */
+  const both = (events: readonly RunEvent[]) => {
+    const liveOrder = order(fold(live([started, ...events])));
+    expect(order(replayed([started, ...events]))).toEqual(liveOrder);
+    return liveOrder;
+  };
+  const reproduction: RunEvent[] = [foresee([{ suites: [1] }]), ...iteration(1), foresee([{ suites: [] }, { suites: [1] }]), ...iteration(2), began(suite(1))];
+
+  test("the reproduction: the suite begun after the second iteration is last", () => {
+    expect(both(reproduction)).toEqual([
+      ["planning-1", "done"], ["execution-1", "done"], ["work-1", "done"],
+      ["planning-2", "done"], ["execution-2", "done"], ["work-2", "done"],
+      ["suite-1", "active"],
+    ]);
+  });
+
+  test("a failed suite stays between its iterations, and the next suite is last", () => {
+    const before: RunEvent[] = [foresee([{ suites: [1] }]), ...iteration(1), began(suite(1)), endedPhase(suite(1), "failed"), foresee([{ suites: [1] }, { suites: [2] }]), ...iteration(2)];
+    const done = ["planning-1", "execution-1", "work-1", "suite-1", "planning-2", "execution-2", "work-2"].map((k) => [k, "done"]);
+    expect(both(before)).toEqual([...done, ["suite-2", "ahead"]]);
+    expect(both([...before, began(suite(2))])).toEqual([...done, ["suite-2", "active"]]);
+    expect(runOf(fold(live([started, ...before])), "implementation")?.timeline.find((e) => bandKey(e.phase) === "suite-1")?.result).toBe("failed");
+  });
+
+  test("a repeat after a stop outside the work follows the run it repeats (issue #181)", () => {
+    const stopped: RunEvent[] = [foresee([{ suites: [1] }]), ...iteration(1), began(suite(1)), endedPhase(suite(1), "failed")];
+    const first = ["planning-1", "execution-1", "work-1", "suite-1"].map((k) => [k, "done"]);
+    expect(both([...stopped, foresee([{ suites: [1, 2] }]), began(suite(2))])).toEqual([...first, ["suite-2", "active"]]);
+    const later: RunEvent[] = [...stopped, foresee([{ suites: [1, 2] }]), began(suite(2)), endedPhase(suite(2), "failed"), foresee([{ suites: [1, 2] }, { suites: [3] }])];
+    expect(both(later)).toEqual([...first, ["suite-2", "done"], ["planning-2", "ahead"], ["execution-2", "ahead"], ["work-2", "ahead"], ["suite-3", "ahead"]]);
+  });
+
+  test("a phase that begins unforeseen stands after the begun entries and before those ahead", () => {
+    const events: RunEvent[] = [foresee([{ suites: [1] }]), ...iteration(1), began({ kind: "planning", n: 2 })];
+    expect(both(events)).toEqual([["planning-1", "done"], ["execution-1", "done"], ["work-1", "done"], ["planning-2", "active"], ["suite-1", "ahead"]]);
+  });
+
+  test("begun: an entry that has begun or ended", () => {
+    const states = ["ahead", "active", "done", "stopped", "notReached"] as const;
+    const entry = runOf(fold(live([started, foresee([{ suites: [] }])])), "implementation")!.timeline[0]!;
+    expect(states.filter((state) => entryBegun({ ...entry, state }))).toEqual(["active", "done", "stopped"]);
+  });
+
+  test("property: every entry ahead follows every begun entry, in the server's order, the begun ones in the order they began", () => {
+    const pool: Phase[] = [...[1, 2, 3].flatMap((n) => (["planning", "execution", "work"] as const).map((kind): Phase => ({ kind, n }))), ...[1, 2, 3, 4].map(suite)];
+    const forecast = fc
+      .record({ count: fc.integer({ min: 1, max: 3 }), suites: fc.uniqueArray(fc.integer({ min: 1, max: 4 }), { maxLength: 4 }), at: fc.array(fc.nat(), { minLength: 4, maxLength: 4 }) })
+      .map(({ count, suites, at }): RunEvent => foresee(Array.from({ length: count }, (_, i) => ({ suites: suites.filter((s, j) => (at[j] ?? 0) % count === i).sort((a, b) => a - b) }))));
+    const op = fc.oneof(forecast, fc.constantFrom(...pool).map(began), fc.constantFrom(...pool).map((p) => endedPhase(p)));
+    const reproductionCase: [RunEvent[]] = [reproduction];
+    fc.assert(
+      fc.property(fc.array(op, { maxLength: 20 }), (events) => {
+        const begunOrder: string[] = [];
+        let last: readonly Phase[] = [];
+        for (const e of events) {
+          if (e._tag !== "Notified") continue;
+          if (e.event._tag === "PhaseBegan" && !begunOrder.includes(bandKey(e.event.phase))) begunOrder.push(bandKey(e.event.phase));
+          if (e.event._tag === "PhasesForeseen") last = e.event.phases;
+        }
+        const timeline = runOf(fold(live([started, ...events])), "implementation")?.timeline ?? [];
+        const flags = timeline.map(entryBegun);
+        const firstAhead = flags.indexOf(false);
+        expect(firstAhead === -1 || flags.slice(firstAhead).every((b) => !b)).toBe(true);
+        expect(timeline.filter(entryBegun).map((e) => bandKey(e.phase))).toEqual(begunOrder);
+        const lastKeys = last.map(bandKey);
+        const aheadInLast = timeline.filter((e) => !entryBegun(e) && lastKeys.includes(bandKey(e.phase))).map((e) => bandKey(e.phase));
+        expect(aheadInLast).toEqual(lastKeys.filter((k) => aheadInLast.includes(k)));
+        expect(runOf(replayed([started, ...events]), "implementation")?.timeline).toEqual(timeline);
+      }),
+      { examples: [reproductionCase] },
+    );
   });
 });

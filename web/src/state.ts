@@ -630,6 +630,32 @@ const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
   record: null,
   result: null,
 });
+/** Whether an entry has begun or ended (issue #173): an entry ahead, or not reached at a halt, has not. */
+export const begun = (e: TimelineEntry): boolean => e.state !== "ahead" && e.state !== "notReached";
+/** A timeline split into its begun entries and those not begun, each in its order (issue #173). */
+const splitBegun = (timeline: readonly TimelineEntry[]): Readonly<{ begun: readonly TimelineEntry[]; rest: readonly TimelineEntry[] }> => ({
+  begun: timeline.filter(begun),
+  rest: timeline.filter((e) => !begun(e)),
+});
+/**
+ * The timeline with an entry that begins placed after the last begun entry (issue #173), so the begun entries stand in
+ * the order they began whatever order the events arrive in; a foreseen entry moves from where it stood.
+ */
+const beganAt = (timeline: readonly TimelineEntry[], entry: TimelineEntry): readonly TimelineEntry[] => {
+  const { begun: done, rest } = splitBegun(timeline);
+  return [...done, entry, ...rest.filter((e) => !samePhase(e.phase, entry.phase))];
+};
+/**
+ * The timeline after a forecast (issue #173, the developer's instruction of 15 Oct 2026 that the suite, the last thing
+ * to run, belongs at the bottom of the rail): every begun entry where it is, in the order they began; then, in the
+ * forecast's order, each of its phases that no begun entry holds, its entry kept where the timeline has one; then any
+ * entry not begun whose phase the forecast does not name, in its order.
+ */
+export const foreseenTimeline = (timeline: readonly TimelineEntry[], phases: readonly Phase[]): readonly TimelineEntry[] => {
+  const { begun: done, rest } = splitBegun(timeline);
+  const ahead = phases.filter((p) => !done.some((e) => samePhase(e.phase, p))).map((p) => rest.find((e) => samePhase(e.phase, p)) ?? newEntry(p, "ahead"));
+  return [...done, ...ahead, ...rest.filter((e) => !phases.some((p) => samePhase(e.phase, p)))];
+};
 /** Issue #162: a Full test suite's result as its PhaseEnded gives it; null for every other phase. */
 const suiteResultOf = (phase: Phase, result: string): SuiteOutcome | null => (phase.kind === "suite" ? (SUITE_OUTCOMES.find((o) => o === result) ?? null) : null);
 /** The index of the last element that satisfies `p`, or -1 (the page's library has no findLastIndex). */
@@ -639,7 +665,7 @@ export const callOf = (calls: readonly AgentCall[], callId: string): AgentCall |
 /** The entry that the run is in: the active one, else the last one begun. */
 export const currentIndex = (timeline: readonly TimelineEntry[]): number => {
   const active = lastIndex(timeline, (e) => e.state === "active");
-  return active >= 0 ? active : lastIndex(timeline, (e) => e.state !== "ahead" && e.state !== "notReached");
+  return active >= 0 ? active : lastIndex(timeline, begun);
 };
 /** The step that an entry is in: the active one, else the last one begun. */
 export const currentStepIndex = (steps: readonly TimelineStep[]): number => {
@@ -806,10 +832,14 @@ const counted = (timeline: readonly TimelineEntry[], count: Readonly<{ answered:
 const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
   switch (event._tag) {
     case "PhaseBegan": {
-      // Issue #6: the foreseen entry becomes active, with its first step; a phase not foreseen is appended.
-      const foreseen = run.timeline.some((e) => samePhase(e.phase, event.phase));
+      // Issue #6: the foreseen entry becomes active, with its first step. Issue #173: the entry that begins, foreseen or
+      // not, stands after the last begun entry; an entry that has begun already is begun again in place.
+      const existing = run.timeline.find((e) => samePhase(e.phase, event.phase));
       const begin = (e: TimelineEntry): TimelineEntry => ({ ...e, state: "active", began: time, steps: e.steps.map((st, i) => (i === 0 ? { ...st, state: "active" } : st)) });
-      const timeline = foreseen ? run.timeline.map((e) => (samePhase(e.phase, event.phase) ? begin(e) : e)) : [...run.timeline, { ...newEntry(event.phase, "active"), began: time }];
+      const timeline =
+        existing !== undefined && begun(existing)
+          ? run.timeline.map((e) => (samePhase(e.phase, event.phase) ? begin(e) : e))
+          : beganAt(run.timeline, existing === undefined ? { ...newEntry(event.phase, "active"), began: time } : begin(existing));
       const next = { ...run, timeline };
       return reshow(relabel({ ...next, phase: bandOf(event.phase, time, countIn(next, event.phase)) }));
     }
@@ -1014,9 +1044,10 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // The question is asked again: the analysis its rejected answer dismissed goes to the next prompt.
       return run.dismissed === null ? run : { ...run, analysis: { ...run.dismissed, prompt: null }, dismissed: null };
     case "PhasesForeseen": {
-      // Issue #6: every phase known and not yet in the timeline is added ahead; the labels follow the new counts.
-      const added = event.phases.filter((p) => !run.timeline.some((e) => samePhase(e.phase, p)));
-      return reshow(relabel({ ...run, foreseen: event.phases, timeline: [...run.timeline, ...added.map((p) => newEntry(p, "ahead"))] }));
+      // Issue #6: every phase known is in the timeline; the labels follow the new counts. Issue #173: an entry not yet
+      // begun takes its place in the server's order, so a pending suite run follows the last known iteration; what began
+      // keeps where it happened.
+      return reshow(relabel({ ...run, foreseen: event.phases, timeline: foreseenTimeline(run.timeline, event.phases) }));
     }
     case "PlanChanged": {
       // Q5, Q9: the plan on the Implementation of its phase. Issue #54: the active one records the steps it acts on.
