@@ -1650,22 +1650,29 @@ test.describe("the tests of the liveOutput server, in order", () => {
   for (const [width, height] of SIZES) {
     const lastSize = width === SIZES[SIZES.length - 1]?.[0];
     test(`(L36) ${width}×${height}: the live panel anchored, resized, scrolled and colored`, async ({ page }) => {
+      // Under the suite's load a tab may receive the scenario's burst compacted, or lose it to a hello, which empties
+      // the panel (issue #163's run: 926 and 883 lines after 60 s, and no panel at all). The scenario's ticks carry
+      // every marker read below, so the test waits for the ticks alone to fill the panel: 1,000 ticks of 300 ms.
+      test.setTimeout(600_000);
       const size = `${width} × ${height}`;
       await page.setViewportSize({ width, height });
       await startTask(page, layoutUrl("liveOutput"));
       const live = LIVE(page);
-      await expect(live.locator("[data-live-processes]")).toContainText(LIVE_LONG_NAME, { timeout: 60_000 });
+      await expect(live.locator("[data-live-processes]")).toContainText(LIVE_LONG_NAME, { timeout: 180_000 });
       const screen = live.locator("[data-live-screen]");
       const handle = live.locator("[data-live-resize]");
       const section = LIVE_SECTION(page);
       const above = section.locator("[data-dashboard-above]");
-      await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
+      await expect(screen.locator("[data-live-line]")).toHaveCount(1000, { timeout: 330_000 });
       await live.scrollIntoViewIfNeeded();
 
-      // The colors and the long line, before the ticks evict them.
+      // The colors and the long line.
       const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).first();
+      await expect(red).toBeAttached();
       expect(await red.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(224, 85, 97)");
-      expect(await screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).first().evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
+      const long = screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).first();
+      await expect(long).toBeAttached();
+      expect(await long.evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
 
       // Following: at its end, the screen stays at its end as ticks arrive.
       await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });

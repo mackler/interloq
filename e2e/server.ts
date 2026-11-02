@@ -344,10 +344,21 @@ const LIVE_EVENTS: readonly OutputEvent[] = [
   { _tag: "Finished", key: liveKey("t4"), name: "false", status: { _tag: "Exited", code: 1 } },
 ];
 const LIVE_TICKS = { key: LIVE_T1, name: LIVE_LONG_NAME, everyMs: LIVE_TICK_MS };
+// Issue #163's run: under the suite's load a tab may receive the burst above compacted, or lose it to a hello, which
+// empties the panel; so every 50th tick is red, the one after it the long line, and the two other running processes
+// are announced again on every 50th tick, so that the ticks alone fill the panel with every marker L36 reads.
+const LIVE_MARKED_TICKS = {
+  ...LIVE_TICKS,
+  marks: {
+    every: 50,
+    texts: [(n: number) => `\u001b[31m${LIVE_RED_TEXT} tick ${n}\u001b[0m\n`, (n: number) => `${"w".repeat(LIVE_LONG_LINE)} tick ${n}\n`],
+    restate: LIVE_EVENTS.filter((e) => e._tag === "Started" && (e.key === liveKey("t2") || e.key === liveKey("t3"))),
+  },
+};
 SCENARIOS.liveOutput = {
   steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }],
   reviews: [{ issues: [] }],
-  execScripts: [{ output: LIVE_EVENTS, ticks: LIVE_TICKS, hang: true }],
+  execScripts: [{ output: LIVE_EVENTS, ticks: LIVE_MARKED_TICKS, hang: true }],
 };
 // Issue #221: the compact panel under a question: four plan questions answered first, whose answers fill the compact
 // dashboard above the panel, then an execution with one running process that asks a permission while it prints.

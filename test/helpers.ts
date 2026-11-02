@@ -362,9 +362,20 @@ export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effe
 /** `uncommitted` leaves the execution's change to a.txt uncommitted; by default it commits it, as the plan's last step does (issue #176). */
 /**
  * Issue #221: `output`, live output events the call sends through the run's Ui at its start; `ticks`, a line `tick <n>`
- * printed on the Clock every `everyMs` while the call runs, for the end-to-end servers of the live panel.
+ * printed on the Clock every `everyMs` while the call runs, for the end-to-end servers of the live panel. Issue #163's
+ * run: `ticks.marks`, tick n with `n % every === i` (for `i < texts.length`) printing `texts[i](n)` in place of its
+ * plain line, and every tick with `n % every === 0` sending `restate`'s events before its line, so a page whose panel
+ * was emptied by a hello still receives every marker within the ticks.
  */
-export type ExecScript = { output?: readonly OutputEvent[]; ticks?: Readonly<{ key: ProcessKey; name: string; everyMs: number }>; uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
+export type TickMarks = Readonly<{ every: number; texts: readonly ((n: number) => string)[]; restate: readonly OutputEvent[] }>;
+export type ExecScript = { output?: readonly OutputEvent[]; ticks?: Readonly<{ key: ProcessKey; name: string; everyMs: number; marks?: TickMarks }>; uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
+/** The events of tick n: its restated events where `marks` restates on it, then its line, marked or plain. */
+const markedTick = (ticks: NonNullable<ExecScript["ticks"]>, n: number): readonly OutputEvent[] => {
+  const marks = ticks.marks;
+  const slot = marks === undefined ? -1 : n % marks.every;
+  const text = marks?.texts[slot]?.(n) ?? `tick ${n}\n`;
+  return [...(marks !== undefined && slot === 0 ? marks.restate : []), { _tag: "Printed", key: ticks.key, name: ticks.name, text }];
+};
 
 /** The paragraph of a context call's reply that a test does not script (S9): it keeps the rules. */
 export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks this question on behalf of the run." };
@@ -604,7 +615,7 @@ export class ScriptedPlanner implements PlannerShape {
         if (ticks !== undefined) {
           const tick = (n: number): Effect.Effect<never> =>
             Effect.sleep(Duration.millis(ticks.everyMs)).pipe(
-              Effect.andThen(ui.output({ _tag: "Printed", key: ticks.key, name: ticks.name, text: `tick ${n}\n` })),
+              Effect.andThen(Effect.forEach(markedTick(ticks, n), (event) => ui.output(event), { discard: true })),
               Effect.andThen(Effect.suspend(() => tick(n + 1))),
             );
           yield* Effect.forkChild(tick(1));

@@ -37,3 +37,27 @@ test("ticks are printed on the Clock while the call runs, until the run is stopp
   const exit = await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
   assert.notEqual(exitCodeOf(exit), 0);
 });
+
+test("ticks with marks print the marked texts and restate their events", timeout, async () => {
+  const every = 300;
+  const K2 = "claude:t2" as ProcessKey;
+  const restated: OutputEvent = { _tag: "Started", key: K2, name: "other" };
+  const marks = { every: 50, texts: [(n: number) => `red ${n}\n`, (n: number) => `long ${n}\n`], restate: [restated] };
+  const { wiring, probe } = testWiring(tempRepo(), {
+    steps: [{ output: noQuestions, plan: "v1" }],
+    reviews: [{ issues: [] }],
+    execScripts: [{ ticks: { key: K, name: "npm test", everyMs: every, marks }, hang: true }],
+  });
+  const held = heldClock(Date.UTC(2026, 10, 2));
+  const fiber = Effect.runFork(Effect.scoped(program(scriptedStart(probe.project), wiring)).pipe(Effect.provideService(Clock.Clock, held.clock)));
+  for (let i = 0; i < 101; i++) {
+    await held.sleepRegistered(every);
+    held.advance(every);
+  }
+  await held.sleepRegistered(every);
+  const shown = probe.ui.outputs.flatMap((e) => (e._tag === "Printed" && e.key === K ? [e.text] : e._tag === "Started" && e.key === K2 ? ["restated"] : []));
+  const expected = Array.from({ length: 101 }, (_, i) => i + 1).flatMap((n) =>
+    n % 50 === 0 ? ["restated", `red ${n}\n`] : n % 50 === 1 ? [`long ${n}\n`] : [`tick ${n}\n`]);
+  assert.deepEqual(shown, expected);
+  await Effect.runPromise(Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber))));
+});
