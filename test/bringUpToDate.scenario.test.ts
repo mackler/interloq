@@ -52,6 +52,13 @@ test("(a) a stale file name raised, amended and agreed: Amended, and the records
   assert.match(conversation, /### Lines removed[\s\S]*src\/old\.ts[\s\S]*### Lines added[\s\S]*src\/new\.ts/u);
   assert.equal(r.probe.reviewer.checkPrompts.length, 2);
   assert.equal(r.probe.reviewer.prompts.length, 0);
+  // W1-R1-3: the page receives the change report as the update subject's last document under review.
+  const shown = r.probe.ui.notified.filter((e) => e._tag === "DocumentShown" && e.subject === "update");
+  const last = shown[shown.length - 1];
+  assert.ok(last !== undefined && last._tag === "DocumentShown" && last.document._tag === "Markdown", "a Markdown document of the update subject");
+  const report = last.document._tag === "Markdown" ? last.document.text : "";
+  for (const part of ["### Before", BEFORE.title, "### After", "### Lines removed", "src/old.ts", "### Lines added", "src/new.ts", "U-R1-1"]) assert.ok(report.includes(part), part);
+  assert.ok(conversation.includes(report), "the same report as conversation.md's section");
 });
 
 test("(b) the first check raises nothing: Unchanged, and Claude Code is not called", async () => {

@@ -72,7 +72,10 @@ export const bringUpToDate = (item: ItemId, before: ItemText, env: TrackerRetryE
         const counts = changeCounts(before, outcome.text);
         yield* ui.say(prompts.updateAmendedLine(counts.added, counts.removed));
         const points = (yield* store.loadLog("update")).filter((e) => e.source === "review" && !e.superseded && (e.action === "accepted" || e.action === "partially_accepted"));
-        yield* store.converse(`## ${prompts.UPDATE_PHASE}: the issue brought up to date\n\n${prompts.updateAmendedLine(counts.added, counts.removed)}\n\n${changeMarkdown(before, outcome.text, points)}\n\n`);
+        const report = changeMarkdown(before, outcome.text, points);
+        yield* store.converse(`## ${prompts.UPDATE_PHASE}: the issue brought up to date\n\n${prompts.updateAmendedLine(counts.added, counts.removed)}\n\n${report}\n\n`);
+        // W1-R1-3: the page shows what changed and why, as the phase's last document under review.
+        yield* ui.notify({ _tag: "DocumentShown", subject: "update", document: { _tag: "Markdown", text: report } });
         break;
       }
     }
