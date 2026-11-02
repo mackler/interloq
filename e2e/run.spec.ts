@@ -1054,9 +1054,11 @@ test.describe("the tests of the prepare server, in order", () => {
     await expect(row).toContainText(preparedMarkText(1), { timeout: 60_000 });
     await row.locator("button[name=start]").click();
     await expect(asking(page, DATABASE)).toBeVisible();
-    // Gather Requirements lists its steps, but no review cycle ran in this run before the question.
-    await expect(rail(page)).toContainText(stepLabel("formulate"));
-    await expect(rail(page)).not.toContainText(/cycle/i);
+    // Gather Requirements lists its steps, but no review cycle ran in it before the question. Bring Up to Date (issue #216)
+    // runs its own check before it, so the cycle is looked for in Gather Requirements alone.
+    const gather = rail(page).locator("li.entry", { has: page.getByText("Gather Requirements", { exact: true }) });
+    await expect(gather).toContainText(stepLabel("formulate"));
+    await expect(gather).not.toContainText(/cycle/i);
   });
 });
 
