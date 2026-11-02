@@ -1,11 +1,12 @@
 // The seam between setting a state on a GitLab issue and reading it back (issue #66: properties over the pure core).
 import { test } from "node:test";
 import fc from "fast-check";
-import { Option, Result } from "effect";
+import { Option, Result, Schema } from "effect";
 import { GITLAB_DESCRIPTION_LIMIT, refinedDescription, relabelBody, stateOfIssue } from "../src/gitlabIssues.ts";
 import { readRefinement, refinementOf, withRefinement } from "../src/refinement.ts";
-import { GITLAB_LABELED_STATES } from "../src/schema.ts";
-import { GITLAB_LABELS } from "./gitlabLabels.ts";
+import { GITLAB_LABELED_STATES, GitlabTrackerConfig, stageLabelsOfConfig } from "../src/schema.ts";
+import type { ItemState } from "../src/tracker.ts";
+import { GITLAB_LABELS, PROJECT } from "./gitlabLabels.ts";
 
 const RUNS = { numRuns: 200, seed: 20261012 };
 const stateLabels: readonly string[] = Object.values(GITLAB_LABELS);
@@ -50,4 +51,36 @@ test("refinedDescription fails exactly when the refined text is over the limit, 
     const back = readRefinement(refined.success);
     return Result.isSuccess(back) && Option.isSome(back.success) && back.success.value === refinement;
   }), { numRuns: 100, seed: 20261012 });
+});
+
+// Issue #216, work review 1 (W1-R1-4): the round trip over a configuration with an obsolete label.
+const OBSOLETE = "Obsolete";
+const config = Result.getOrThrow(Schema.decodeUnknownResult(GitlabTrackerConfig)({ kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS, obsoleteLabel: OBSOLETE }));
+const withObsolete = stageLabelsOfConfig(config);
+const withoutObsolete = stageLabelsOfConfig(Result.getOrThrow(Schema.decodeUnknownResult(GitlabTrackerConfig)({ kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS })));
+const allStage: readonly string[] = [...stateLabels, OBSOLETE];
+const arbOtherNoComma = fc.string({ maxLength: 6 }).filter((l) => !allStage.includes(l) && !l.includes(","));
+const arbLabelsObs = fc.uniqueArray(fc.oneof(fc.constantFrom(...allStage), arbOtherNoComma), { maxLength: 6 });
+const arbTargetObs = fc.constantFrom<Exclude<ItemState, "deployed">>(...GITLAB_LABELED_STATES, "obsolete");
+
+test("with an obsolete label, an open issue relabeled to any state, obsolete included, reads as that state with its other labels unchanged", () => {
+  fc.assert(fc.property(arbLabelsObs, arbTargetObs, (labels, target) => {
+    const after = applied(labels, Result.getOrThrow(relabelBody(withObsolete, target)));
+    const read = stateOfIssue(withObsolete, { state: "opened", labels: after });
+    const others = (ls: readonly string[]) => JSON.stringify(ls.filter((l) => !allStage.includes(l)));
+    return Result.isSuccess(read) && read.success === target && others(after) === others(labels);
+  }), RUNS);
+});
+
+test("an open issue with the obsolete label alone is obsolete, and with another stage label ambiguous", () => {
+  fc.assert(fc.property(fc.uniqueArray(arbOtherNoComma, { maxLength: 4 }), fc.constantFrom(...stateLabels), (others, stage) => {
+    const alone = stateOfIssue(withObsolete, { state: "opened", labels: [...others, OBSOLETE] });
+    const two = stateOfIssue(withObsolete, { state: "opened", labels: [...others, OBSOLETE, stage] });
+    return Result.isSuccess(alone) && alone.success === "obsolete" && Result.isFailure(two) && two.failure._tag === "Ambiguous";
+  }), RUNS);
+});
+
+test("without an obsolete label, relabeling to obsolete is refused", () => {
+  const r = relabelBody(withoutObsolete, "obsolete");
+  if (!(Result.isFailure(r) && r.failure._tag === "NoObsoleteLabel")) throw new Error("expected NoObsoleteLabel");
 });
