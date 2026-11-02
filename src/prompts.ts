@@ -4286,8 +4286,17 @@ export const PROCEED_WITHOUT_UPDATE = "Go on to Gather Requirements with the iss
  * The phase's texts to Codex say check, never review (requirements "Name"): the shared log rules, written for every
  * reviewed file, are reworded word by word; the field value 'review' of a log entry's source is kept as it is.
  */
-const asCheck = (text: string): string =>
-  text.replace(/(?<!')\b([Rr])eview(s|ed)?\b(?!')/gu, (_m, r: string, suffix: string | undefined) => `${r === "R" ? "C" : "c"}heck${suffix === "s" ? "s" : suffix === "ed" ? "ed" : ""}`);
+const isPathToken = (token: string): boolean => token.includes("/") || /\w-review|review-\w/u.test(token) || /\.(json|md|jsonl|diff|log)\b/u.test(token);
+/** Rewords the prose of a text, word by word, and leaves every path token (W1-R1-1) as it is. */
+export const asCheck = (text: string): string =>
+  text
+    .split(/(\s+)/u)
+    .map((token) =>
+      /^\s*$/u.test(token) || isPathToken(token)
+        ? token
+        : token.replace(/(?<!')\b([Rr])eview(s|ed)?\b(?!')/gu, (_m, r: string, suffix: string | undefined) => `${r === "R" ? "C" : "c"}heck${suffix === "s" ? "s" : suffix === "ed" ? "ed" : ""}`),
+    )
+    .join("");
 
 /**
  * Issue #216 (Q4): the counterpart of WORDING_DISPUTES for the phase. A disagreement about a fact of the code is

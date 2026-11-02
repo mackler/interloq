@@ -94,5 +94,6 @@ test("protectedPassagesOf finds block quotes and quoted phrases, not quoted iden
 
 test("the phase's texts to Codex and to the user say check, never review", () => {
   const texts = [prompts.updateCheckPrompt(RUN_ROOT_FOR_TESTS, 1, "continued"), prompts.updateCheckPrompt(RUN_ROOT_FOR_TESTS, 2, "continued"), prompts.updateCheckPrompt(RUN_ROOT_FOR_TESTS, 3, "new"), prompts.UPDATE_PHASE, prompts.PROCEED_WITHOUT_UPDATE];
-  for (const t of texts) assert.doesNotMatch(t.replace(/'review'/gu, ""), /\breview(s|ed)?\b/iu, t.slice(0, 200));
+  const prose = (t: string): string => t.replace(/\S*\/\S*|\S+\.(json|md|jsonl|diff|log)\b/gu, "").replace(/'review'/gu, "");
+  for (const t of texts) assert.doesNotMatch(prose(t), /\breview(s|ed)?\b/iu, t.slice(0, 200));
 });
