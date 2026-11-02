@@ -200,10 +200,11 @@ const faultedAtPlanning = async (options: TestOptions = {}) => {
     }, 5);
   });
   await sleep(10);
+  const faultedAt = Date.now();
   await Effect.runPromise(Deferred.fail(signal.fault, new ServerFault({ message: "write EPIPE" })));
   const ended = await Effect.runPromise(Fiber.await(fiber).pipe(Effect.timeoutOption("20 seconds")));
   if (Option.isNone(ended)) return assert.fail("the run did not end within 20 s of the fault");
-  return { probe, exit: ended.value };
+  return { probe, exit: ended.value, faultedAt };
 };
 
 test("(i) the server fault halts with 1, writes its record, then labels the item refined and says the line", async () => {
@@ -227,11 +228,10 @@ test("(i) after the fault, a write applied and answered with a server error is r
 test("(i) after the fault, a tracker unreachable on every attempt is said within the bound and the code stays 1", async () => {
   const tracker = fakeTrackerOf([scriptedItem]);
   for (let i = 0; i < 10; i++) Effect.runSync(tracker.failNext("setState", unreachable(), "refined"));
-  const started = Date.now();
-  const { probe, exit } = await faultedAtPlanning({ tracker });
+  const { probe, exit, faultedAt } = await faultedAtPlanning({ tracker });
   assert.equal(exitCodeOf(exit), 1);
   assert.ok(said(probe).includes("could not label item"), said(probe));
-  assert.ok(Date.now() - started < 15_000, "the relabeling after the fault was not bounded");
+  assert.ok(Date.now() - faultedAt < 15_000, "the relabeling after the fault was not bounded");
 });
 
 test("(j) a refinement run's halt leaves its item unrefined", async () => {
