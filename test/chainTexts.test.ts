@@ -2,9 +2,13 @@
 // the reader's time, and no cost anywhere (requirements Q2).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AbandonLabel, Chain, ChainEndReason, ChainEntry, ChainState, Cutoff, ParkNote, RunLimit } from "../src/chain.ts";
+import type { AbandonLabel, Chain, ChainEndReason, ChainEntry, ChainState, Cutoff, ParkNote, RunLimit, SkipReason } from "../src/chain.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
-import { chainEndedText, chainEntryText, chainParkingText, chainSaveRefusedText, chainStatusText, earlierRunParkedLine } from "../src/prompts.ts";
+import { EMPTY_QUEUE } from "../src/chainQueue.ts";
+import {
+  CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, chainEndedText, chainEntryText, chainParkingText, chainReselectText, chainSaveRefusedText, chainStatusText, earlierRunParkedLine,
+  QUEUE_ADD, QUEUE_BACKLOG_NOTE, QUEUE_EMPTY, QUEUE_HEADING, QUEUE_STALE, QUEUE_SUPPORT, queuedMarkText, queueHandleName, queueMoveDownName, queueMoveUpName, queueRemoveName,
+} from "../src/prompts.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 
@@ -32,7 +36,7 @@ const chains: readonly Chain[] = [
   { _tag: "Running", run: 4, item, title: "seven", claim: { _tag: "Unclaimed" }, ...common },
   { _tag: "Parking", item, root: "runs/r" as RunRoot, then: null, ...common },
   { _tag: "Ready", ...common },
-  { _tag: "Starting", item, title: "seven", ...common },
+  { _tag: "Starting", item, title: "seven", from: "backlog", ...common },
 ];
 const entries: readonly ChainEntry[] = [
   { item, title: "t", root: null, outcome: { _tag: "Finished" }, returned: null },
@@ -48,7 +52,7 @@ const entries: readonly ChainEntry[] = [
 
 const all = (): readonly string[] => [
   ...reasons.map((r) => chainEndedText(r, time)),
-  ...chains.flatMap((chain) => [DEFAULT_SETTINGS, OFF_SETTINGS].map((settings) => chainStatusText({ settings, chain, generation: 1 } satisfies ChainState))),
+  ...chains.flatMap((chain) => [DEFAULT_SETTINGS, OFF_SETTINGS].map((settings) => chainStatusText({ settings, chain, generation: 1, queue: EMPTY_QUEUE } satisfies ChainState))),
   ...entries.map(chainEntryText),
   chainParkingText("7"),
   chainSaveRefusedText("m"),
@@ -76,8 +80,8 @@ test("no text names a cost", () => {
 
 test("a running chain names its count, and the limit where one is set", () => {
   const running = chains[1]!;
-  assert.ok(chainStatusText({ settings: DEFAULT_SETTINGS, chain: running, generation: 1 }).startsWith("Run 2 of the chain"));
-  assert.ok(chainStatusText({ settings: { enabled: true, limits: { runs: 3 as RunLimit, cutoff: null } }, chain: running, generation: 1 }).startsWith("Run 2 of 3"));
+  assert.ok(chainStatusText({ settings: DEFAULT_SETTINGS, chain: running, generation: 1, queue: EMPTY_QUEUE }).startsWith("Run 2 of the chain"));
+  assert.ok(chainStatusText({ settings: { enabled: true, limits: { runs: 3 as RunLimit, cutoff: null } }, chain: running, generation: 1, queue: EMPTY_QUEUE }).startsWith("Run 2 of 3"));
 });
 
 // Issue #186: a send-back's entry says the item went back to refinement and names its branch where work was parked.
@@ -109,4 +113,28 @@ test("each AbandonLabel of an abandoned entry says what became of the label", ()
     const text = chainEntryText(entry({ _tag: "SendBackUnfinished", step }));
     assert.ok(text.includes(step === "comment" ? "comment" : "`unrefined`") && text.includes("set no label"), text);
   }
+});
+
+// Issue #196: the queue's end, a skipped entry, the status in queue source, and the page's texts of the queue.
+test("the queue's texts", () => {
+  assert.equal(chainEndedText({ _tag: "QueueEmpty" }, time), "The chain ended: no item is left in the queue.");
+  const skipped = (reason: SkipReason): string => chainEntryText({ item, title: "t", root: null, outcome: { _tag: "Skipped", reason }, returned: null });
+  assert.equal(skipped({ _tag: "Abandoned" }), "Item #7 t was skipped: the chain stopped waiting for an answer on it earlier.");
+  assert.equal(skipped({ _tag: "NotListed" }), "Item #7 t was skipped: it is no longer among the refined items.");
+  assert.equal(skipped({ _tag: "Moved", state: "implemented" }), "Item #7 t was skipped: its label is now `implemented`.");
+  const queue = { ...EMPTY_QUEUE, source: "queue" as const };
+  const ready = chains.find((c) => c._tag === "Ready")!;
+  assert.equal(chainStatusText({ settings: DEFAULT_SETTINGS, chain: ready, generation: 1, queue }), "Looking for the next item of the queue.");
+  assert.equal(chainStatusText({ settings: DEFAULT_SETTINGS, chain: ready, generation: 1, queue: EMPTY_QUEUE }), "Looking for the next refined item.");
+  const idle: Chain = { _tag: "Idle", ended: null, history: [] };
+  assert.equal(chainStatusText({ settings: DEFAULT_SETTINGS, chain: idle, generation: 1, queue }), "On. The next run you start begins a chain through the queue.");
+  assert.equal(chainStatusText({ settings: DEFAULT_SETTINGS, chain: idle, generation: 1, queue: EMPTY_QUEUE }), "On. The next run you start begins a chain.");
+  assert.equal(chainStatusText({ settings: OFF_SETTINGS, chain: idle, generation: 1, queue }), "Off. No run starts by itself.");
+  assert.equal(CHAIN_SOURCE_LABEL, "Which items the chain starts");
+  assert.deepEqual(CHAIN_SOURCE_TEXTS, { backlog: "Every refined item", queue: "Only the queue, in its order" });
+  assert.equal(queuedMarkText(2), "In the queue, number 2");
+  for (const name of [queueMoveUpName, queueMoveDownName, queueRemoveName, queueHandleName]) assert.ok(name("#7 t").includes("#7 t"));
+  for (const text of [QUEUE_HEADING, QUEUE_EMPTY, QUEUE_SUPPORT, QUEUE_ADD, QUEUE_STALE, QUEUE_BACKLOG_NOTE, chainReselectText("7")]) assert.notEqual(text.trim(), "");
+  assert.ok(chainReselectText("7").includes("#7"));
+  assert.equal(new Set([queueMoveUpName("x"), queueMoveDownName("x"), queueRemoveName("x"), queueHandleName("x")]).size, 4);
 });

@@ -199,6 +199,10 @@ const session = (manager: RunManager, socket: Socket.Socket, fs: FileSystem.File
           case "preparation":
             // Issue #131: the answer is the preparation broadcast every tab receives; forked like the chain's, since it waits for its save.
             return Effect.forkScoped(manager.setPreparation(message.enabled)).pipe(Effect.asVoid);
+          case "queue":
+            // Issue #196: an edit of the chain's queue; its answer is the chain broadcast every tab receives, the edit's id
+            // among the queue's applied ones; forked like the chain's frame, since it waits for its save.
+            return Effect.forkScoped(manager.editQueue(message.edit)).pipe(Effect.asVoid);
         }
       };
       // Every termination of the socket is a SocketError (Socket.d.ts); it ends the loop.

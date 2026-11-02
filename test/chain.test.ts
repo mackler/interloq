@@ -6,7 +6,9 @@ import { Result, Schema } from "effect";
 import {
   begun, blocksImplementationStart, type ChainSettings, type ChainState, ChainFileSchema, configured, cutoffOf, DEFAULT_SETTINGS, due, ended, initialState,
   listed, OFF_SETTINGS, abandonedItems, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand, claimParking, itemReturned,
+  consumed, movedAtStart, queueEdited, reselected, startCheck, startRefused,
 } from "../src/chain.ts";
+import { editIdOf, type QueueChange } from "../src/chainQueue.ts";
 import type { ItemId } from "../src/tracker.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 
@@ -470,4 +472,114 @@ test("a chain.json written before issue #185 decodes, and one holding a KeptImpl
   const [s] = ended(startedChain(), 1, { code: 2, root: root("1"), parked: { _tag: "ParkFailed", message: "m" }, abandoned: { _tag: "KeptImplementing" } });
   const file = { version: 2 as const, state: s, preparation: PREPARATION_KEPT_OFF };
   assert.deepEqual(decode(JSON.parse(JSON.stringify(file))), file);
+});
+
+// ---- issue #196: the queue ----
+
+const ITEMS196 = ["11", "12", "13", "14"] as const;
+/** The refined listing in the tracker's order, and the queue its reverse, both from one list. */
+const listing196 = ITEMS196.map((i) => ({ item: id(i), title: `title ${i}` }));
+const queued196 = [...listing196].reverse();
+let edits196 = 0;
+const editId = (n: number) => Result.getOrThrow(editIdOf(`t:${n}`));
+const edit196 = (s: ChainState, change: QueueChange): ChainState => queueEdited(s, { id: editId(++edits196), change });
+const withQueue = (s: ChainState, entries: readonly { item: ItemId; title: string }[], source: "queue" | "backlog" = "queue"): ChainState =>
+  entries.reduce((acc, e) => edit196(acc, { _tag: "Add", item: e.item, title: e.title }), edit196(s, { _tag: "Source", source }));
+/** A chain whose first run finished, Ready, with the queue given. */
+const readyWith = (entries: readonly { item: ItemId; title: string }[], settings: ChainSettings = DEFAULT_SETTINGS, source: "queue" | "backlog" = "queue"): ChainState => {
+  const [r] = ended(withQueue(startedChain(settings), entries, source), 1, { code: 0, root: root("1"), parked: null, abandoned: null });
+  return r;
+};
+
+test("in queue source, listed starts the queue's head, not the listing's first item", () => {
+  const r = readyWith(queued196);
+  const [l, c] = listed(r, gen(r), listing196);
+  assert.equal(l.chain._tag === "Starting" && l.chain.item, queued196[0]?.item);
+  assert.notEqual(queued196[0]?.item, listing196[0]?.item);
+  assert.equal(l.chain._tag === "Starting" && l.chain.from, "queue");
+  assert.deepEqual(c?.command, { _tag: "Start", item: queued196[0]?.item });
+});
+
+test("in backlog source, listed starts the listing's first item whatever the queue holds", () => {
+  const r = readyWith(queued196, DEFAULT_SETTINGS, "backlog");
+  const [l] = listed(r, gen(r), listing196);
+  assert.equal(l.chain._tag === "Starting" && l.chain.item, listing196[0]?.item);
+  assert.equal(l.chain._tag === "Starting" && l.chain.from, "backlog");
+});
+
+test("queued items absent from the listing are skipped into the history and leave the queue; the first listed one starts", () => {
+  const r = readyWith([{ item: id("90"), title: "gone" }, ...queued196]);
+  const [l] = listed(r, gen(r), listing196);
+  assert.equal(l.chain._tag === "Starting" && l.chain.item, queued196[0]?.item);
+  assert.deepEqual(l.chain.history.at(-1), { item: "90", title: "gone", root: null, outcome: { _tag: "Skipped", reason: { _tag: "NotListed" } }, returned: null });
+  assert.deepEqual(l.queue.entries.map((e) => e.item), queued196.map((e) => e.item));
+});
+
+test("an empty or exhausted queue ends the chain QueueEmpty and starts nothing outside it", () => {
+  const empty = readyWith([]);
+  const [d, dc] = due(empty, gen(empty), 0);
+  assert.deepEqual(d.chain._tag === "Idle" && d.chain.ended, { _tag: "QueueEmpty" });
+  assert.equal(dc, null);
+  const stale = readyWith([{ item: id("90"), title: "gone" }]);
+  const [l, lc] = listed(stale, gen(stale), listing196);
+  assert.deepEqual(l.chain._tag === "Idle" && l.chain.ended, { _tag: "QueueEmpty" });
+  assert.equal(lc, null);
+  assert.equal(l.chain.history.at(-1)?.outcome._tag, "Skipped");
+  assert.deepEqual(l.queue.entries, []);
+});
+
+test("startCheck: Go for the head, Again after the head moved or was removed or the source changed, End at the limits", () => {
+  const r = readyWith(queued196, withRuns(3));
+  const [l] = listed(r, gen(r), listing196);
+  const head = queued196[0]?.item as ItemId;
+  assert.deepEqual(startCheck(l, gen(l), head, 0), { _tag: "Go" });
+  assert.deepEqual(startCheck(edit196(l, { _tag: "Move", item: head, before: null }), gen(l), head, 0), { _tag: "Again" });
+  assert.deepEqual(startCheck(edit196(l, { _tag: "Remove", item: head }), gen(l), head, 0), { _tag: "Again" });
+  assert.deepEqual(startCheck(edit196(l, { _tag: "Source", source: "backlog" }), gen(l), head, 0), { _tag: "Again" });
+  assert.deepEqual(startCheck(configured(l, withRuns(1), null), gen(l), head, 0), { _tag: "End", reason: { _tag: "RunLimitReached", limit: limit(1) } });
+  assert.deepEqual(startCheck(l, gen(l) + 1, head, 0), { _tag: "End", reason: { _tag: "ChainChanged", item: head } });
+  const again = reselected(l, gen(l));
+  assert.equal(again.chain._tag, "Ready");
+  assert.deepEqual(startRefused(again, gen(l), head, "r")[1]?.command, { _tag: "Due" });
+});
+
+test("consumed removes a started item from the queue in either source", () => {
+  for (const source of ["queue", "backlog"] as const) {
+    const s = withQueue(initialState(OFF_SETTINGS), queued196, source);
+    const head = queued196[0]?.item as ItemId;
+    assert.ok(!consumed(s, head).queue.entries.some((e) => e.item === head));
+    assert.equal(consumed(s, id("99")), s);
+  }
+});
+
+test("movedAtStart skips a queued item found moved and chooses again; a backlog start still ends StartRefused", () => {
+  const r = readyWith(queued196);
+  const [l] = listed(r, gen(r), listing196);
+  const head = queued196[0]?.item as ItemId;
+  const moved = movedAtStart(l, gen(l), head, "implemented");
+  assert.equal(moved.chain._tag, "Ready");
+  assert.deepEqual(moved.chain.history.at(-1)?.outcome, { _tag: "Skipped", reason: { _tag: "Moved", state: "implemented" } });
+  assert.ok(!moved.queue.entries.some((e) => e.item === head));
+  assert.deepEqual(startRefused(moved, gen(l), head, "moved")[1]?.command, { _tag: "Due" });
+  const b = readyWith(queued196, DEFAULT_SETTINGS, "backlog");
+  const [lb] = listed(b, gen(b), listing196);
+  const first = listing196[0]?.item as ItemId;
+  assert.equal(movedAtStart(lb, gen(lb), first, "implemented"), lb);
+  const [ended196] = startRefused(lb, gen(lb), first, "moved");
+  assert.deepEqual(ended196.chain._tag === "Idle" && ended196.chain.ended, { _tag: "StartRefused", item: first, reason: "moved" });
+});
+
+test("a run limit of 1 with a queue of three ends RunLimitReached", () => {
+  const r = readyWith(queued196.slice(0, 3), withRuns(1));
+  const [d] = due(r, gen(r), 0);
+  assert.deepEqual(d.chain._tag === "Idle" && d.chain.ended, { _tag: "RunLimitReached", limit: limit(1) });
+});
+
+test("an abandoned item in the queue is skipped as Abandoned", () => {
+  const head = queued196[0]?.item as ItemId;
+  const s = withQueue(begun(initialState(DEFAULT_SETTINGS), 1, head, "h"), queued196);
+  const [r] = ended(s, 1, { code: 2, root: root("1"), parked: null, abandoned: { _tag: "SetRefined" } });
+  const [l] = listed(r, gen(r), listing196);
+  assert.equal(l.chain._tag === "Starting" && l.chain.item, queued196[1]?.item);
+  assert.deepEqual(l.chain.history.at(-1)?.outcome, { _tag: "Skipped", reason: { _tag: "Abandoned" } });
 });

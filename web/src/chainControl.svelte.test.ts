@@ -12,6 +12,8 @@ import { helloChain } from "./testChain.ts";
 import type { ServerMessage } from "../../src/protocol.ts";
 import { chainFrame } from "./tabs.ts";
 import { fullTime } from "./time.ts";
+import { type ChainQueue, type ChainSource, EMPTY_QUEUE, type QueueChange } from "../../src/chainQueue.ts";
+import type { ItemId } from "../../src/tracker.ts";
 
 let mounted: ReturnType<typeof mount>[] = [];
 afterEach(() => {
@@ -258,5 +260,42 @@ describe("ChainControl's consecutive changes", () => {
     expect(input(root, "chain-cutoff").value).toBe("07:00");
     commit(input(root, "chain-cutoff"), "07:00");
     expect(sent.at(-1)).toEqual({ enabled: true, runs: null, cutoff: CUTOFF });
+  });
+});
+
+// Issue #196 (S8): the choice of source and the queue shown read-only.
+describe("ChainControl's queue", () => {
+  const withQueue = (queue: ChainQueue) => {
+    const changes: QueueChange[] = [];
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const state = { ...initialState(DEFAULT_SETTINGS), queue };
+    const shown = chainShown({ ...initialView, chain: state }, (iso) => fullTime(iso))!;
+    mounted.push(mount(ChainControl, { target: root, props: { shown, queue, onChange: () => undefined, onQueueEdit: (c: QueueChange) => void changes.push(c) } }));
+    flushSync();
+    return { root, changes };
+  };
+  const entries = [{ item: "5" as ItemId, title: "five" }, { item: "3" as ItemId, title: "three" }];
+  const choice = (root: HTMLElement, source: ChainSource) => root.querySelector<HTMLInputElement>(`input[name=chain-source][value=${source}]`)!;
+
+  test("the choice shows the queue's source, and choosing the other sends exactly one Source edit", () => {
+    const { root, changes } = withQueue({ ...EMPTY_QUEUE, source: "backlog" });
+    expect(root.querySelector(`[role=radiogroup][aria-label="${prompts.CHAIN_SOURCE_LABEL}"]`)).not.toBeNull();
+    expect(choice(root, "backlog").checked).toBe(true);
+    expect(root.textContent).toContain(prompts.CHAIN_SOURCE_TEXTS.queue);
+    choice(root, "queue").click();
+    flushSync();
+    expect(changes).toEqual([{ _tag: "Source", source: "queue" }]);
+  });
+
+  test("in queue source the entries are listed in order, or the empty text; in backlog source with entries, the note", () => {
+    const queued = withQueue({ ...EMPTY_QUEUE, source: "queue", entries });
+    expect([...queued.root.querySelectorAll("li[data-queued]")].map((li) => li.getAttribute("data-queued"))).toEqual(["5", "3"]);
+    expect(queued.root.querySelector("li[data-queued]")?.textContent).toContain("#5 five");
+    const empty = withQueue({ ...EMPTY_QUEUE, source: "queue" });
+    expect(empty.root.textContent).toContain(prompts.QUEUE_EMPTY);
+    const backlog = withQueue({ ...EMPTY_QUEUE, source: "backlog", entries });
+    expect(backlog.root.textContent).toContain(prompts.QUEUE_BACKLOG_NOTE);
+    expect(backlog.root.querySelectorAll("li[data-queued]").length).toBe(0);
   });
 });

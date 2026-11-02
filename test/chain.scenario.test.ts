@@ -13,6 +13,7 @@ import { runRootOf } from "../src/artifacts.ts";
 import type { ItemId } from "../src/tracker.ts";
 import { type Broadcast, type ChainPersistence, type EventBroadcast, makeRunManager, type Refusal, type RunManager } from "../src/runManager.ts";
 import { type ChainSettings, type ChainState, cutoffOf, DEFAULT_SETTINGS, OFF_SETTINGS, type ParkNote, runLimitOf } from "../src/chain.ts";
+import { editIdOf, EMPTY_QUEUE, type QueueChange } from "../src/chainQueue.ts";
 import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
 import { parkHalted } from "../src/parking.ts";
 import type { StoreShape, UiShape } from "../src/services.ts";
@@ -192,7 +193,7 @@ test("a passed cutoff ends the chain and says so, after a restart past it too", 
   assert.equal(await endedReason(h), "CutoffPassed");
   // A manager made from a saved Ready chain whose cutoff has passed starts nothing.
   const repo = identified();
-  const ready: ChainState = { settings: settings(null, "2000-01-01T00:00:00.000Z"), generation: 1, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } };
+  const ready: ChainState = { settings: settings(null, "2000-01-01T00:00:00.000Z"), generation: 1, queue: EMPTY_QUEUE, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } };
   await run(saveChain(repo, { chain: ready, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
   const restarted = await harness([converging], { repo });
   await idle(restarted);
@@ -250,10 +251,10 @@ test("a run started with the mode off starts nothing; a refinement runs beside t
 test("a restart: from Running or Starting nothing starts and the chain says the server ended; from Ready the item starts at once", async () => {
   for (const chain of [
     { _tag: "Running", run: 3, item: "4", title: "t", generation: 1, count: 1, halts: [], history: [] },
-    { _tag: "Starting", item: "4", title: "t", generation: 1, count: 1, halts: [], history: [] },
+    { _tag: "Starting", item: "4", title: "t", from: "backlog", generation: 1, count: 1, halts: [], history: [] },
   ] as const) {
     const repo = identified();
-    await run(saveChain(repo, { chain: { settings: DEFAULT_SETTINGS, generation: 1, chain: chain as never }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
+    await run(saveChain(repo, { chain: { settings: DEFAULT_SETTINGS, generation: 1, queue: EMPTY_QUEUE, chain: chain as never }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
     const h = await harness([converging], { repo });
     await idle(h);
     assert.equal(startedRuns(h).length, 0);
@@ -264,7 +265,7 @@ test("a restart: from Running or Starting nothing starts and the chain says the 
     });
   }
   const repo = identified();
-  await run(saveChain(repo, { chain: { settings: settings(2), generation: 1, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
+  await run(saveChain(repo, { chain: { settings: settings(2), generation: 1, queue: EMPTY_QUEUE, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
   const h = await harness([converging], { repo });
   await idle(h);
   assert.equal(startedRuns(h).length, 1);
@@ -366,7 +367,7 @@ test("a restart from Parking finishes the parking and continues with the next it
   await run(store.init("task"));
   await run(store.writeBaseline());
   committedWork(repo);
-  const parking: ChainState = { settings: settings(2), generation: 1, chain: { _tag: "Parking", item: "1" as ItemId, root, then: null, generation: 1, count: 1, halts: [{ item: "1" as ItemId, times: 1 }], history: [] } };
+  const parking: ChainState = { settings: settings(2), generation: 1, queue: EMPTY_QUEUE, chain: { _tag: "Parking", item: "1" as ItemId, root, then: null, generation: 1, count: 1, halts: [{ item: "1" as ItemId, times: 1 }], history: [] } };
   await run(saveChain(repo, { chain: parking, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
   const tracker = fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.id === "1" ? { ...i, state: "implementing" as const } : i)));
   const h = await harness([converging], { repo, tracker });
@@ -1068,4 +1069,158 @@ test("abandon: a parking that fails and its line cannot be written ends the chai
   const entry = (await chainOf(h)).chain.history[0]!;
   assert.deepEqual(entry.outcome._tag === "Abandoned" && entry.outcome.label, { _tag: "KeptImplementing" });
   assert.equal(startedRuns(h).length, 1);
+});
+
+// ---- issue #196: the queue (S5) ----
+
+suite("issue #196: the chain's queue", () => {
+  let edits = 0;
+  const change = (h: Harness, c: QueueChange): Promise<ChainState> => run(h.manager.editQueue({ id: Result.getOrThrow(editIdOf(`test:${++edits}`)), change: c }));
+  const add = (h: Harness, item: string) => change(h, { _tag: "Add", item: item as ItemId, title: `title ${item}` });
+  const toQueue = async (h: Harness, items: readonly string[]) => {
+    await change(h, { _tag: "Source", source: "queue" });
+    for (const item of items) await add(h, item);
+  };
+  const queued = async (h: Harness) => (await chainOf(h)).queue.entries.map((e) => e.item as string);
+  const onDisk = (repo: string) => run(loadChain(repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer))).then((k) => k.chain.queue);
+  const heldReads = (n: number) => {
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let reads = 0;
+    return {
+      release: () => release(),
+      reads: () => reads,
+      trackerOf: (fake: FakeTracker): TrackerShape => ({ ...fake.tracker, read: (id) => Effect.suspend(() => (++reads === n ? Effect.promise(() => held) : Effect.void)).pipe(Effect.andThen(fake.tracker.read(id))) }),
+    };
+  };
+
+  test("the chain starts the queue's head, not the tracker's next item, and the head leaves the queue", async () => {
+    const h = await harness([converging, converging], { settings: settings(2) });
+    const order = await refinedOrder(h.tracker);
+    const rest = order.slice(1).reverse();
+    await toQueue(h, rest);
+    await begin(h, order[0]!);
+    await idle(h);
+    assert.notEqual(rest[0], order[1]);
+    assert.deepEqual(startedRuns(h).map((r) => r.item), [order[0], rest[0]]);
+    assert.deepEqual(await queued(h), rest.slice(1));
+  });
+
+  test("a queue edited during a run leaves the run untouched, and only the next start follows the edit", async () => {
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const h = await harness([{ ...converging, steps: [{ output: noQuestions, plan: "v1", gate: () => held }] }, converging], { settings: settings(2) });
+    await change(h, { _tag: "Source", source: "queue" });
+    const id = await begin(h, "1");
+    await until("the planning call", () => h.events.some((b) => b.run === id && b.event._tag === "Notified"));
+    const before = h.events.filter((b) => b.run === id).length;
+    await add(h, "4");
+    await add(h, "5");
+    await add(h, "6");
+    await change(h, { _tag: "Move", item: "6" as ItemId, before: "4" as ItemId });
+    await change(h, { _tag: "Remove", item: "4" as ItemId });
+    assert.equal((await run(h.manager.current)).implementation, id);
+    assert.equal(h.events.filter((b) => b.run === id).length, before);
+    assert.equal(startedRuns(h).length, 1);
+    release();
+    await idle(h);
+    assert.equal(endCode(h, id), 0);
+    assert.deepEqual(startedRuns(h).map((r) => r.item), ["1", "6"]);
+  });
+
+  test("the queue survives a restart, and from Ready the queue's head starts", async () => {
+    const first = await harness([]);
+    await toQueue(first, ["5", "3"]);
+    const again = await harness([], { repo: first.repo });
+    assert.deepEqual((await chainOf(again)).queue.source, "queue");
+    assert.deepEqual(await queued(again), ["5", "3"]);
+    const repo = identified();
+    const queue = (await chainOf(first)).queue;
+    await run(saveChain(repo, { chain: { settings: settings(2), generation: 1, queue, chain: { _tag: "Ready", generation: 1, count: 1, halts: [], history: [] } }, preparation: PREPARATION_KEPT_OFF }).pipe(Effect.provide(platformLayer)));
+    const h = await harness([converging], { repo });
+    await idle(h);
+    assert.deepEqual(startedRuns(h).map((r) => r.item), ["5"]);
+  });
+
+  test("a queued head found moved by its start's read is skipped with Moved, and the next queued item starts", async () => {
+    const reads = heldReads(2);
+    const h = await harness([converging, converging], { settings: settings(2), trackerOf: reads.trackerOf });
+    await toQueue(h, ["5", "3"]);
+    await begin(h, "1");
+    await until("the chained start's read", () => reads.reads() === 2);
+    await run(h.tracker.edit("5" as ItemId, (i) => ({ ...i, state: "implemented" })));
+    reads.release();
+    await idle(h);
+    assert.deepEqual(startedRuns(h).map((r) => r.item), ["1", "3"]);
+    const history = (await chainOf(h)).chain.history;
+    assert.ok(history.some((e) => e.item === "5" && e.outcome._tag === "Skipped" && e.outcome.reason._tag === "Moved"), JSON.stringify(history));
+    assert.deepEqual(await queued(h), []);
+  });
+
+  test("a head removed from the queue while its start's read is held is not started; the reservation chooses the new head", async () => {
+    const reads = heldReads(2);
+    const h = await harness([converging, converging], { settings: settings(2), trackerOf: reads.trackerOf });
+    await toQueue(h, ["5", "3"]);
+    await begin(h, "1");
+    await until("the chained start's read", () => reads.reads() === 2);
+    await change(h, { _tag: "Remove", item: "5" as ItemId });
+    reads.release();
+    await idle(h);
+    assert.deepEqual(startedRuns(h).map((r) => r.item), ["1", "3"]);
+  });
+
+  test("an empty queue, and a queue of items not listed, end the chain QueueEmpty and start nothing outside it", async () => {
+    const empty = await harness([converging, converging]);
+    await change(empty, { _tag: "Source", source: "queue" });
+    await begin(empty, "1");
+    await idle(empty);
+    assert.equal(startedRuns(empty).length, 1);
+    assert.equal(await endedReason(empty), "QueueEmpty");
+    const stale = await harness([converging, converging]);
+    await toQueue(stale, ["90"]);
+    await begin(stale, "1");
+    await idle(stale);
+    assert.equal(startedRuns(stale).length, 1);
+    assert.equal(await endedReason(stale), "QueueEmpty");
+    assert.equal((await chainOf(stale)).chain.history.at(-1)?.outcome._tag, "Skipped");
+  });
+
+  test("two edits sent at once are both kept, in the state and in chain.json", async () => {
+    const h = await harness([]);
+    await Promise.all([add(h, "4"), add(h, "6")]);
+    assert.deepEqual([...(await queued(h))].sort(), ["4", "6"]);
+    await until("both edits on disk", async () => (await onDisk(h.repo)).entries.length === 2);
+  });
+
+  test("with the mode off a manual start consumes its queued item, saved before the run's gate; a start whose save and removal fail is refused", async () => {
+    let release = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    let armed = false;
+    let holding = false;
+    const repo = identified();
+    const persistence: ChainPersistence = {
+      save: (kept) =>
+        Effect.suspend(() => (armed && !holding ? ((holding = true), Effect.promise(() => held)) : Effect.void)).pipe(Effect.andThen(saveChain(repo, kept).pipe(Effect.provide(platformLayer), Effect.mapError(String)))),
+      remove: Effect.void,
+    };
+    const h = await harness([converging], { repo, persistence, defaults: OFF_SETTINGS });
+    await toQueue(h, ["1", "2"]);
+    armed = true;
+    const starting = run(h.manager.start(startOf("implementation", "1")));
+    await until("the held save", () => holding);
+    await sleep(300);
+    assert.equal(startedRuns(h).length, 0, "the run's gate was released before its consumption was saved");
+    release();
+    assert.equal(typeof (await starting), "number");
+    assert.deepEqual((await onDisk(repo)).entries.map((e) => e.item), ["2"]);
+    await idle(h);
+    const restarted = await harness([], { repo });
+    assert.deepEqual(await queued(restarted), ["2"]);
+    const failing: ChainPersistence = { save: (kept) => (kept.chain.queue.entries.length === 1 ? Effect.fail("disk full") : Effect.void), remove: Effect.fail("read-only") };
+    const refusedH = await harness([converging], { persistence: failing, defaults: OFF_SETTINGS });
+    await toQueue(refusedH, ["1", "2"]);
+    const result = await run(refusedH.manager.start(startOf("implementation", "1")));
+    assert.equal(typeof result, "object");
+    assert.equal(startedRuns(refusedH).length, 0);
+  });
 });

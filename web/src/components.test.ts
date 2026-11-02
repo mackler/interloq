@@ -44,6 +44,7 @@ import type { Mark, Preferences } from "./notify.ts";
 import { readPreferences, writePreferences } from "./storage.ts";
 import { AudioContextStub, NotificationStub, shownOf } from "./test-setup.ts";
 import { helloChain } from "./testChain.ts";
+import { queueEdited } from "../../src/chain.ts";
 const ref = (text: string, id: string) => ({ text, ref: id, code: false });
 
 // Plan step 4.5: the components, mounted in jsdom.
@@ -1027,6 +1028,48 @@ describe("App and the draft", () => {
       commitField(root, "chain-runs", "3");
       expect((one(root, "input[name=chain-runs]") as HTMLInputElement).value).toBe("");
       expect(root.textContent).toContain(prompts.notSentNotice("chain", "disconnected"));
+    });
+
+    // Issue #196 (S10): the queue's edits through App over the fake socket.
+    describe("queue edits", () => {
+      const queueFrames = (ws: FakeWebSocket) => sentOf(ws).filter((m) => m.type === "queue");
+      const listedImplementation = async () => {
+        const page = await begin();
+        select(page.root, "implementation");
+        page.ws.receive({ type: "items", mode: "implementation", result: { _tag: "Listed", items: [fixture] } });
+        flushSync();
+        return page;
+      };
+      test("Add to queue sends one queue frame, the row shows its number before the server answers, and once after the acknowledgment", async () => {
+        const { root, ws } = await listedImplementation();
+        one(root, `button[name=queue-add][data-item="${fixture.id}"]`).click();
+        flushSync();
+        const frames = queueFrames(ws);
+        expect(frames.length).toBe(1);
+        const frame = frames[0] as Extract<ClientMessage, { type: "queue" }>;
+        expect(frame.edit.change).toEqual({ _tag: "Add", item: fixture.id, title: fixture.title });
+        expect(root.textContent).toContain(prompts.queuedMarkText(1));
+        ws.receive({ type: "chain", state: queueEdited(helloChain, frame.edit) });
+        flushSync();
+        expect(root.querySelectorAll(`[data-queued-mark]`).length).toBe(1);
+        expect(root.textContent?.split(prompts.queuedMarkText(1)).length).toBe(2);
+      });
+      test("a reconnection's hello sends no edit again", async () => {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const { root, ws } = await listedImplementation();
+        one(root, `button[name=queue-add][data-item="${fixture.id}"]`).click();
+        flushSync();
+        ws.close();
+        flushSync();
+        vi.advanceTimersByTime(30_000);
+        flushSync();
+        const next = FakeWebSocket.last!;
+        expect(next).not.toBe(ws);
+        next.onopen?.({});
+        next.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "a" });
+        flushSync();
+        expect(queueFrames(next)).toEqual([]);
+      });
     });
 
     test("the Implementation tab has no choice of terms", async () => {
@@ -3429,6 +3472,29 @@ describe("QuestionPane: the countdown (issue #185)", () => {
       expect(root.textContent).toContain(then === "abandon" ? prompts.questionExpiredText(120) : prompts.limitQuestionExpiredText(120));
       expect(root.querySelector("[name=answer]")).toBe(null);
     }
+  });
+});
+
+describe("ItemList: Add to queue (issue #196)", () => {
+  const items = [
+    { id: "5", title: "five", excerpt: "", url: null, sentBack: 0, preparation: null },
+    { id: "3", title: "three", excerpt: "", url: null, sentBack: 0, preparation: null },
+  ];
+  const listed = (props: Record<string, unknown> = {}) => show(ItemList, { mode: "implementation", items: { _tag: "Listed", items }, startable: { _tag: "None" }, onStart: () => undefined, onRefresh: () => undefined, ...props });
+  test("Add sends the item and its title, enabled while a run is in progress; a queued row shows its number instead", () => {
+    const added: unknown[] = [];
+    const root = listed({ queued: ["3"], onQueue: (item: unknown) => void added.push(item) });
+    const add = root.querySelector<HTMLButtonElement>('button[name=queue-add][data-item="5"]')!;
+    expect(add.textContent?.trim()).toBe(prompts.QUEUE_ADD);
+    expect(add.disabled).toBe(false);
+    add.click();
+    expect(added).toEqual([items[0]]);
+    expect(root.querySelector('button[name=queue-add][data-item="3"]')).toBeNull();
+    expect(root.textContent).toContain(prompts.queuedMarkText(1));
+  });
+  test("the button exists only in the Implementation tab", () => {
+    expect(listed({ mode: "refinement", startable: { _tag: "Except", items: [] }, queued: [], onQueue: () => undefined }).querySelector("button[name=queue-add]")).toBeNull();
+    expect(listed().querySelector("button[name=queue-add]")).toBeNull();
   });
 });
 

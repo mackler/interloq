@@ -2,6 +2,7 @@
 // frame, so that the mode and the item the page sends are the ones the server starts (the seam tested in
 // test/webServer.test.ts).
 import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../src/protocol.ts";
+import type { QueueEdit } from "../../src/chainQueue.ts";
 import type { RunMode } from "../../src/runMode.ts";
 import type { TermsMode } from "../../src/schema.ts";
 
@@ -14,6 +15,8 @@ export const startFrame = (start: TabStart): ClientMessage =>
 export const itemsFrame = (mode: RunMode): ClientMessage => ({ type: "items", mode });
 /** The frame that sets the chain's settings (issue #147): the mode on or off and its two optional limits. */
 export const chainFrame = (settings: ChainFrameSettings): ClientMessage => ({ type: "chain", settings });
+/** Issue #196: the frame that sends one edit of the chain's queue. */
+export const queueFrame = (edit: QueueEdit): ClientMessage => ({ type: "queue", edit });
 /** Issue #185: the frame that says the developer is working on a prompt, so its countdown stops. */
 export const holdFrame = (incarnation: string, run: number, prompt: number): ClientMessage => ({ type: "hold", incarnation, run, prompt });
 /** Issue #215: the frame that ends the wait `wait` of a run, so its request is made again at once. */

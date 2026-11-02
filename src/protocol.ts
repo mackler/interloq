@@ -12,6 +12,7 @@ import { itemUrlOf, type TrackerItem } from "./tracker.ts";
 import { ATTACHED_KINDS } from "./question.ts";
 import { NETWORK_CODES } from "./transport.ts";
 import { type ChainSettings, type ChainState, ChainStateSchema, cutoffOf, runLimitOf } from "./chain.ts";
+import { type QueueEdit, QueueEditSchema } from "./chainQueue.ts";
 import type { OutputEvent } from "./liveOutput.ts";
 
 /**
@@ -112,7 +113,12 @@ export type ClientMessage =
   /** The chain's settings (issue #147): the mode on or off, a number of runs and the resolved cutoff instant, each optional. */
   | Readonly<{ type: "chain"; settings: ChainFrameSettings }>
   /** Issue #131 (requirements Q4): the preparation's switch turned on or off. */
-  | Readonly<{ type: "preparation"; enabled: boolean }>;
+  | Readonly<{ type: "preparation"; enabled: boolean }>
+  /**
+   * Issue #196: one edit of the chain's queue, by item, with an id unique across tabs; acknowledged by the id appearing in
+   * the queue's `applied` of the `chain` frame every tab then receives.
+   */
+  | Readonly<{ type: "queue"; edit: QueueEdit }>;
 /** The chain's settings as the page sends them: the run limit a positive whole number, the cutoff an ISO instant. */
 export type ChainFrameSettings = Readonly<{ enabled: boolean; runs: number | null; cutoff: string | null }>;
 /** The settings a decoded chain frame names; a value its schema let through that the constructors refuse is the reason. */
@@ -339,6 +345,7 @@ export const ClientMessageSchema = Schema.Union([
     }),
   }),
   typed("preparation", { enabled: Schema.Boolean }),
+  typed("queue", { edit: QueueEditSchema }),
 ]);
 const CurrentRunsSchema = Schema.Struct({ refinement: Schema.Array(Int), implementation: Schema.NullOr(Int) });
 // Issue #49: the live output.

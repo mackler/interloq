@@ -54,6 +54,7 @@ const managerOf = (current: CurrentRuns): RunManager => ({
   haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
   chain: Effect.succeed(initialChain(OFF_SETTINGS)),
   setChain: () => Effect.succeed(initialChain(OFF_SETTINGS)),
+  editQueue: () => Effect.succeed(initialChain(OFF_SETTINGS)),
   preparation: Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
   setPreparation: () => Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
 });

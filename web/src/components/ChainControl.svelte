@@ -8,14 +8,25 @@
   // Nothing asks a confirmation (behavior 1), and nothing names a cost (Q2).
   import { Result } from "effect";
   import { untrack } from "svelte";
-  import { Switch, TextFieldOutlined } from "m3-svelte";
-  import { CHAIN_CUTOFF_LABEL, CHAIN_CUTOFF_SUPPORT, CHAIN_INVALID_RUNS, CHAIN_RUNS_LABEL, CHAIN_RUNS_SUPPORT, CHAIN_SWITCH_LABEL, chainCutoffResolved } from "../../../src/prompts.ts";
+  import { Button, ConnectedButtons, Switch, TextFieldOutlined } from "m3-svelte";
+  import { CHAIN_SOURCES, type ChainQueue, type QueueChange } from "../../../src/chainQueue.ts";
+  import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, QUEUE_BACKLOG_NOTE, QUEUE_EMPTY, QUEUE_HEADING, CHAIN_CUTOFF_LABEL, CHAIN_CUTOFF_SUPPORT, CHAIN_INVALID_RUNS, CHAIN_RUNS_LABEL, CHAIN_RUNS_SUPPORT, CHAIN_SWITCH_LABEL, chainCutoffResolved } from "../../../src/prompts.ts";
   import type { ChainFrameSettings } from "../../../src/protocol.ts";
   import type { ChainShown } from "../state.ts";
   import { cutoffAt } from "../cutoff.ts";
   import { fullTime } from "../time.ts";
 
-  let { shown, onChange, now = () => new Date() }: { shown: ChainShown; onChange: (settings: ChainFrameSettings) => void; now?: () => Date } = $props();
+  // Issue #196: `queue`, the queue the page shows (the server's with this page's pending edits), and `onQueueEdit`, which
+  // sends a change of it. The choice of source is M3's connected buttons, two named, mutually exclusive choices
+  // [recognition rather than recall], explicit and never inferred from the queue's emptiness; the queue itself is shown
+  // read-only here, at the rail's width, and edited in the list view's QueueEditor.
+  let {
+    shown,
+    onChange,
+    now = () => new Date(),
+    queue = null,
+    onQueueEdit = () => undefined,
+  }: { shown: ChainShown; onChange: (settings: ChainFrameSettings) => void; now?: () => Date; queue?: ChainQueue | null; onQueueEdit?: (change: QueueChange) => void } = $props();
 
   const pad = (n: number) => String(n).padStart(2, "0");
   const hourOf = (ms: number) => {
@@ -104,6 +115,30 @@
       <p class="support m3-font-body-small">{shown.effective.cutoff === null ? CHAIN_CUTOFF_SUPPORT : chainCutoffResolved(fullTime(shown.effective.cutoff))}</p>
     </div>
   </div>
+  {#if queue !== null}
+    <div class="source">
+      <span class="m3-font-label-large">{CHAIN_SOURCE_LABEL}</span>
+      <ConnectedButtons role="radiogroup" aria-label={CHAIN_SOURCE_LABEL}>
+        {#each CHAIN_SOURCES as value (value)}
+          <Button variant="tonal" label>
+            <input type="radio" name="chain-source" {value} checked={queue.source === value} onchange={() => onQueueEdit({ _tag: "Source", source: value })} />
+            {CHAIN_SOURCE_TEXTS[value]}
+          </Button>
+        {/each}
+      </ConnectedButtons>
+    </div>
+    {#if queue.source === "queue"}
+      {#if queue.entries.length === 0}
+        <p class="queue-empty m3-font-body-small">{QUEUE_EMPTY}</p>
+      {:else}
+        <ol class="queue m3-font-body-small" aria-label={QUEUE_HEADING}>
+          {#each queue.entries as entry (entry.item)}<li data-queued={entry.item}>#{entry.item} {entry.title}</li>{/each}
+        </ol>
+      {/if}
+    {:else if queue.entries.length > 0}
+      <p class="queue-empty m3-font-body-small">{QUEUE_BACKLOG_NOTE}</p>
+    {/if}
+  {/if}
   <p class="status m3-font-body-medium" role="status">{shown.status}{#if shown.ended !== null}<br /><span class="ended">{shown.ended}</span>{/if}</p>
   {#if shown.runs.length > 0}
     <ol class="runs m3-font-body-small">
@@ -124,5 +159,10 @@
   .support.error { color: var(--m3c-error); }
   .status { margin: 0; overflow-wrap: anywhere; }
   .ended { color: var(--m3c-on-surface-variant); }
+  .source { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+  /* The two choices share the rail's 14rem column: each label wraps rather than drawing past it. */
+  .source :global(.m3-container > *) { min-width: 0; white-space: normal; height: auto; min-height: 2.5rem; }
+  .queue { margin: 0; padding-left: 1.25rem; overflow-wrap: anywhere; }
+  .queue-empty { margin: 0; color: var(--m3c-on-surface-variant); overflow-wrap: anywhere; }
   .runs { margin: 0; padding-left: 1.25rem; color: var(--m3c-on-surface-variant); overflow-wrap: anywhere; }
 </style>

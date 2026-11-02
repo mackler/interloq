@@ -13,7 +13,7 @@ import { loadConfig } from "./config.ts";
 import type { Config } from "./schema.ts";
 import { describe, ServerFault, trackerFailureText } from "./errors.ts";
 import { listedState, RUN_MODES, type RunMode } from "./runMode.ts";
-import { WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
+import { WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITING_TEXT, ALREADY_ANSWERED_TEXT, answerExpiredText, limitAnswerExpiredText, chainEndedText, chainParkingText, chainReselectText, chainSaveRefusedText, ITEM_ID_EMPTY, preparationNotWrittenReason, itemMovedText, itemNotReturnedLine, itemReturnedLine, TRANSPORT_ANSWERS, serverEndingText } from "./prompts.ts";
 import { type StoreShape, Tracker, type TrackerError, type TrackerShape, type UiShape } from "./services.ts";
 import { type TrackerRetryEnv, unattendedTrackerEnv, writeWithRetry } from "./trackerRetry.ts";
 import { parkBranchOf } from "./park.ts";
@@ -23,9 +23,11 @@ import type { CurrentRuns, ItemsAnswer, ItemsResult, RunEvent, StartRequest, Run
 import { listedItemOf } from "./protocol.ts";
 import { sentBackCount } from "./itemComments.ts";
 import {
-  type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted, startGuard,
+  consumed, movedAtStart, queueEdited, reselected, startCheck, startRefused,
+  type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted,
   type KeptState,
 } from "./chain.ts";
+import type { QueueEdit } from "./chainQueue.ts";
 import { loadChain, removeChain, saveChain } from "./chainFile.ts";
 import { failureCounts, isReleased, type PreparationKept, type PreparationMark, type PreparationView, switched, withFailure, withoutFailure, withoutRelease, withRelease } from "./preparationSwitch.ts";
 import { type Candidate, makePreparationPass, type PreparationPass } from "./preparationPass.ts";
@@ -109,6 +111,8 @@ export type RunManager = Readonly<{
   setPreparation: (enabled: boolean) => Effect.Effect<PreparationView>;
   /** Changes the chain's settings at once; turning the mode off ends a chain and never interrupts a run (issue #147). */
   setChain: (settings: ChainSettings) => Effect.Effect<ChainState>;
+  /** Issue #196: one edit of the chain's queue, applied, broadcast and saved; it never touches a run, so it takes effect at the next start. */
+  editQueue: (edit: QueueEdit) => Effect.Effect<ChainState>;
 }>;
 
 /**
@@ -514,7 +518,9 @@ export const makeRunManager = (
         case "Start":
           return start({ mode: "implementation", item: command.item }, { _tag: "chain", generation }).pipe(
             Effect.flatMap((result) =>
-              typeof result === "number" ? Effect.succeed(null) : chainStep((s) => [chainRefused(s.chain, generation, { _tag: "StartRefused", item: command.item, reason: result.refused }), null]),
+              // Issue #196: a start still Starting its item ends the chain as before; one the reservation sent back to Ready
+              // (a stale queue head, or a queued item found moved) chooses again.
+              typeof result === "number" ? Effect.succeed(null) : chainStep((s) => startRefused(s.chain, generation, command.item, result.refused)),
             ),
           );
       }
@@ -592,7 +598,11 @@ export const makeRunManager = (
         if (Result.isFailure(read)) return refused(read.failure);
         const { item, seconds, comments } = read.success;
         const found = preparationOf(comments, item, before.preparation.settings.generation);
-        if (item.state !== listedState(mode)) return refused(itemMovedText(item.id, listedState(mode), item.state));
+        if (item.state !== listedState(mode)) {
+          // Issue #196: a queued item found no longer refined is skipped, its chain back at Ready.
+          if (origin._tag === "chain") yield* chainStep((s) => [movedAtStart(s.chain, origin.generation, item.id, item.state), null]);
+          return refused(itemMovedText(item.id, listedState(mode), item.state));
+        }
         const gate = yield* Deferred.make<void>();
         const signal = yield* makeFaultSignal;
         // The ui's sink needs the id, and the id is taken with the reservation of the run.
@@ -644,36 +654,44 @@ export const makeRunManager = (
             );
             // The reservation is the one atomic check of closing (issue #158): a start that waited on the tracker while
             // haltAll ran is refused here. Issue #147: in the same step, an implementation start is refused while a halted
-            // run's work is being parked, the chain's own start is checked against its limits at this moment (startGuard,
+            // run's work is being parked, the chain's own start is checked against its limits at this moment (startCheck,
             // the Clock read just before), and the chain learns of the start, so it is Running with the run's id before
             // the gate exists to release (P1-R3-2).
             const nowMs = yield* Clock.currentTimeMillis;
-            const reservation = yield* step((s): readonly [number | string, readonly Broadcast[], State] => {
+            const reservation = yield* step((s): readonly [Readonly<{ id: number; consumed: boolean }> | string, readonly Broadcast[], State] => {
               if (s.closing) return [serverEndingText, [], s];
               // Issue #191: the same check as before the read, in the one atomic step, so two starts of one item cannot both succeed.
               const busy = refusalOf(mode, s.runs[mode], item.id);
               if (busy !== null) return [busy, [], s];
               if (mode === "implementation" && blocksImplementationStart(s.chain)) return [chainParkingText(s.chain.chain._tag === "Parking" ? s.chain.chain.item : item.id), [], s];
-              const guard = origin._tag === "chain" ? startGuard(s.chain, origin.generation, item.id, nowMs) : null;
-              if (guard !== null) {
-                const chain = chainRefused(s.chain, origin._tag === "chain" ? origin.generation : 0, guard);
-                return [chainEndedText(guard, (iso) => iso), chainChange(s.chain, chain), { ...s, chain }];
+              // Issue #196: the chain's own start is checked against its limits and against the queue as it now is.
+              const check = origin._tag === "chain" ? startCheck(s.chain, origin.generation, item.id, nowMs) : null;
+              if (check?._tag === "End") {
+                const chain = chainRefused(s.chain, origin._tag === "chain" ? origin.generation : 0, check.reason);
+                return [chainEndedText(check.reason, (iso) => iso), chainChange(s.chain, chain), { ...s, chain }];
+              }
+              if (check?._tag === "Again") {
+                const chain = reselected(s.chain, origin._tag === "chain" ? origin.generation : 0);
+                return [chainReselectText(item.id), chainChange(s.chain, chain), { ...s, chain }];
               }
               const id = s.nextId;
-              const chain = mode !== "implementation" ? s.chain : origin._tag === "chain" ? chainStarted(s.chain, origin.generation, id, item.id, item.title) : begun(s.chain, id, item.id, item.title);
+              // Issue #196: a started item leaves the queue, manual or chained, the mode on or off.
+              const kept = mode === "implementation" ? consumed(s.chain, item.id) : s.chain;
+              const chain = mode !== "implementation" ? s.chain : origin._tag === "chain" ? chainStarted(kept, origin.generation, id, item.id, item.title) : begun(kept, id, item.id, item.title);
               const next = withSlot({ ...s, nextId: id + 1, chain }, mode, reserved(mode, s.runs[mode], { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal }));
-              return [id, chainChange(s.chain, chain), next];
+              return [{ id, consumed: kept !== s.chain }, chainChange(s.chain, chain), next];
             });
-            if (typeof reservation !== "number") {
+            if (typeof reservation === "string") {
               yield* Fiber.interrupt(fiber);
               return refused(reservation);
             }
-            const runId = reservation;
+            const runId = reservation.id;
             // The chain's Running is saved before the run's gate is released (P1-R1-5), so a server that ends during the
             // run finds it cut off after the restart and starts nothing. Where neither the save nor the removal of the old
             // file succeeded, the run is not started: its slot is freed in one step and its fiber, whose id is still 0, interrupted.
             const chainOf = (yield* Ref.get(state)).chain.chain;
-            if (mode === "implementation" && chainOf._tag === "Running" && chainOf.run === runId) {
+            // Issue #196: so is a start's consumption of its queued item, with the mode on or off.
+            if (mode === "implementation" && ((chainOf._tag === "Running" && chainOf.run === runId) || reservation.consumed)) {
               const saved = yield* persist;
               if (saved === "lost") {
                 yield* step((s) => [null, [], withSlot(s, mode, { ...s.runs[mode], current: s.runs[mode].current.filter((r) => r.id !== runId) })] as const);
@@ -785,6 +803,16 @@ export const makeRunManager = (
         Effect.uninterruptible(
           Effect.gen(function* () {
             yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current[0]?.item ?? null), null]);
+            yield* persist;
+            return (yield* Ref.get(state)).chain;
+          }),
+        ),
+      // Issue #196: as setChain, one uninterruptible region of the change, its broadcast and its save; two tabs' edits are
+      // applied in the publisher's serialized steps, each to the queue as it then is, so both are kept.
+      editQueue: (edit) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            yield* chainStep((s) => [queueEdited(s.chain, edit), null]);
             yield* persist;
             return (yield* Ref.get(state)).chain;
           }),

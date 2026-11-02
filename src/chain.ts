@@ -8,6 +8,7 @@ import { type ItemId, ItemState } from "./tracker.ts";
 import { ABANDONED_EXIT_CODE } from "./prompts.ts";
 import type { RunRoot } from "./artifacts.ts";
 import { PositiveInt } from "./schema.ts";
+import { applyQueueEdit, type ChainQueue, ChainQueueSchema, type ChainSource, ChainSourceSchema, EMPTY_QUEUE, type QueueEdit, withoutItem } from "./chainQueue.ts";
 
 /** The number of runs a chain may hold, the developer's own first run included (requirements G-R1-2): a positive integer. */
 export type RunLimit = Brand.Branded<number, "RunLimit">;
@@ -86,19 +87,33 @@ export const AbandonLabelSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("SendBackUnfinished"), step: Schema.Literals(["comment", "label"]) }),
 ]);
 
+/**
+ * Issue #196: why a queued item was skipped without a run: the chain abandoned it earlier, it is no longer among the
+ * refined items listed, or the start's own read found it carrying another state.
+ */
+export type SkipReason = Readonly<{ _tag: "Abandoned" }> | Readonly<{ _tag: "NotListed" }> | Readonly<{ _tag: "Moved"; state: ItemState }>;
+const SkipReasonSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Abandoned") }),
+  Schema.Struct({ _tag: Schema.Literal("NotListed") }),
+  Schema.Struct({ _tag: Schema.Literal("Moved"), state: ItemState }),
+]);
+
 /** Issue #185: a run abandoned for want of an answer (2), its parking (null where it had no records) and its label. */
+/** Issue #196: a queued item skipped without a run (no records, no run counted, no halt). */
 export type ChainRunOutcome =
   | Readonly<{ _tag: "Finished" }>
   | Readonly<{ _tag: "SentBack"; park: ParkNote }>
   | Readonly<{ _tag: "Stopped"; park: ParkNote | null }>
   | Readonly<{ _tag: "Halted"; park: ParkNote }>
-  | Readonly<{ _tag: "Abandoned"; park: ParkNote | null; label: AbandonLabel }>;
+  | Readonly<{ _tag: "Abandoned"; park: ParkNote | null; label: AbandonLabel }>
+  | Readonly<{ _tag: "Skipped"; reason: SkipReason }>;
 const ChainRunOutcomeSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Finished") }),
   Schema.Struct({ _tag: Schema.Literal("SentBack"), park: ParkNoteSchema }),
   Schema.Struct({ _tag: Schema.Literal("Stopped"), park: Schema.NullOr(ParkNoteSchema).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))) }),
   Schema.Struct({ _tag: Schema.Literal("Halted"), park: ParkNoteSchema }),
   Schema.Struct({ _tag: Schema.Literal("Abandoned"), park: Schema.NullOr(ParkNoteSchema), label: AbandonLabelSchema }),
+  Schema.Struct({ _tag: Schema.Literal("Skipped"), reason: SkipReasonSchema }),
 ]);
 
 /**
@@ -133,7 +148,8 @@ export type ChainEndReason =
   | Readonly<{ _tag: "SaveFailed"; message: string }>
   | Readonly<{ _tag: "Unreadable"; message: string }>
   | Readonly<{ _tag: "ChainChanged"; item: ItemId }>
-  | Readonly<{ _tag: "ListingFailed"; message: string }>;
+  | Readonly<{ _tag: "ListingFailed"; message: string }>
+  | Readonly<{ _tag: "QueueEmpty" }>;
 const ChainEndReasonSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("NoItems") }),
   Schema.Struct({ _tag: Schema.Literal("RunLimitReached"), limit: RunLimitSchema }),
@@ -148,6 +164,7 @@ const ChainEndReasonSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Unreadable"), message: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("ChainChanged"), item: ItemIdSchema }),
   Schema.Struct({ _tag: Schema.Literal("ListingFailed"), message: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("QueueEmpty") }),
 ]);
 
 /** The halts of one item within one chain (the requirements' default: reset when a new chain begins). */
@@ -178,14 +195,15 @@ const ParkClaimSchema = Schema.Union([
 /**
  * The chain: none going (`Idle`, with the last chain's runs and why it ended, for display), a run of it in progress
  * (`Running`, `run` the run manager's id of it), a halted run's work being parked (`Parking`, `then` the end decided
- * meanwhile), its next start due (`Ready`), or a start asked of the manager (`Starting`).
+ * meanwhile), its next start due (`Ready`), or a start asked of the manager (`Starting`, `from` the source its item was
+ * chosen from, issue #196).
  */
 export type Chain =
   | Readonly<{ _tag: "Idle"; ended: ChainEndReason | null; history: readonly ChainEntry[] }>
   | (Readonly<{ _tag: "Running"; run: number; item: ItemId; title: string; claim: ParkClaim }> & Common)
   | (Readonly<{ _tag: "Parking"; item: ItemId; root: RunRoot; then: ChainEndReason | null }> & Common)
   | (Readonly<{ _tag: "Ready" }> & Common)
-  | (Readonly<{ _tag: "Starting"; item: ItemId; title: string }> & Common);
+  | (Readonly<{ _tag: "Starting"; item: ItemId; title: string; from: ChainSource }> & Common);
 const ChainSchema = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Idle"), ended: Schema.NullOr(ChainEndReasonSchema), history: Schema.Array(ChainEntrySchema) }),
   Schema.Struct({
@@ -199,12 +217,28 @@ const ChainSchema = Schema.Union([
   }),
   Schema.Struct({ _tag: Schema.Literal("Parking"), item: ItemIdSchema, root: RunRootSchema, then: Schema.NullOr(ChainEndReasonSchema), ...commonFields }),
   Schema.Struct({ _tag: Schema.Literal("Ready"), ...commonFields }),
-  Schema.Struct({ _tag: Schema.Literal("Starting"), item: ItemIdSchema, title: Schema.String, ...commonFields }),
+  Schema.Struct({
+    _tag: Schema.Literal("Starting"),
+    item: ItemIdSchema,
+    title: Schema.String,
+    // A chain.json written before issue #196 chose every start from the backlog.
+    from: ChainSourceSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed<ChainSource>("backlog"))),
+    ...commonFields,
+  }),
 ]);
 
-/** The whole state of the mode: its settings, the chain, and the last generation given to a chain. */
-export type ChainState = Readonly<{ settings: ChainSettings; chain: Chain; generation: number }>;
-export const ChainStateSchema = Schema.Struct({ settings: ChainSettingsSchema, chain: ChainSchema, generation: Count });
+/**
+ * The whole state of the mode: its settings, the chain, and the last generation given to a chain. Issue #196: the queue,
+ * kept here rather than on a chain, so it survives a chain's end and a restart; a chain.json written before it reads as
+ * the backlog with an empty queue, today's behavior.
+ */
+export type ChainState = Readonly<{ settings: ChainSettings; chain: Chain; generation: number; queue: ChainQueue }>;
+export const ChainStateSchema = Schema.Struct({
+  settings: ChainSettingsSchema,
+  chain: ChainSchema,
+  generation: Count,
+  queue: ChainQueueSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed(EMPTY_QUEUE))),
+});
 /** `plan-review/chain.json`, as it is written (S9). */
 /**
  * plan-review/chain.json: the chain's state and, since issue #131 (requirements F4), the preparation's switch, failures
@@ -236,7 +270,7 @@ export type RunEnd = Readonly<{ code: number; root: RunRoot | null; parked: Park
 /** A refined item of the listing, in the tracker's order. */
 export type Listed = Readonly<{ item: ItemId; title: string }>;
 
-export const initialState = (settings: ChainSettings): ChainState => ({ settings, chain: { _tag: "Idle", ended: null, history: [] }, generation: 0 });
+export const initialState = (settings: ChainSettings): ChainState => ({ settings, chain: { _tag: "Idle", ended: null, history: [] }, generation: 0, queue: EMPTY_QUEUE });
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const same = <T extends true>(): T | undefined => undefined;
@@ -335,24 +369,48 @@ export const itemReturned = (state: ChainState, generation: number, item: ItemId
 };
 
 /** The next start is due: the limits are checked here, so a restored `Ready` is checked again. */
+/**
+ * The next start is due: the limits are checked here, so a restored `Ready` is checked again. Issue #196: in queue source
+ * an empty queue ends the chain with no listing; the limits come first, so whichever is reached first ends the chain.
+ */
 export const due = (state: ChainState, generation: number, nowMs: number): Step => {
   const chain = state.chain;
   if (chain._tag !== "Ready" || chain.generation !== generation) return [state, null];
-  const reason = limitReason(state, chain.count, nowMs);
+  const reason = limitReason(state, chain.count, nowMs) ?? (state.queue.source === "queue" && state.queue.entries.length === 0 ? QUEUE_EMPTY : null);
   return reason !== null ? [idle(state, reason), null] : [state, { generation, command: { _tag: "List" } }];
 };
+const QUEUE_EMPTY: ChainEndReason = { _tag: "QueueEmpty" };
+/** A queued item skipped without a run, as the chain's history records it. */
+const skippedEntry = (entry: Listed, reason: SkipReason): ChainEntry => ({ item: entry.item, title: entry.title, root: null, outcome: { _tag: "Skipped", reason }, returned: null });
 
 /**
  * The listing of refined items answered: its first item, in the tracker's order, that the chain has not abandoned for
- * want of an answer (issue #185), or none.
+ * want of an answer (issue #185), or none. Issue #196: in queue source, the queue's first entry that is listed and not
+ * abandoned, the entries before it skipped into the history and out of the queue; never an item outside the queue.
  */
 export const listed = (state: ChainState, generation: number, items: readonly Listed[]): Step => {
   const chain = state.chain;
   if (chain._tag !== "Ready" || chain.generation !== generation) return [state, null];
+  if (state.queue.source === "queue") return listedFromQueue(state, chain, items);
   const skipped = abandonedItems(state);
   const first = items.find((i) => !skipped.has(i.item));
   if (first === undefined) return [idle(state, { _tag: "NoItems" }), null];
-  return [{ ...state, chain: { _tag: "Starting", item: first.item, title: first.title, ...commonOf(chain) } }, { generation, command: { _tag: "Start", item: first.item } }];
+  return [{ ...state, chain: { _tag: "Starting", item: first.item, title: first.title, from: "backlog", ...commonOf(chain) } }, { generation, command: { _tag: "Start", item: first.item } }];
+};
+
+/** Issue #196: the queue's selection, its skipped head entries recorded; the item's title as the listing now gives it. */
+const listedFromQueue = (state: ChainState, chain: Extract<Chain, { _tag: "Ready" }>, items: readonly Listed[]): Step => {
+  const abandoned = abandonedItems(state);
+  const refined = new Map(items.map((i) => [i.item, i]));
+  const reasonOf = (entry: Listed): SkipReason | null => (abandoned.has(entry.item) ? { _tag: "Abandoned" } : refined.has(entry.item) ? null : { _tag: "NotListed" });
+  const entries = state.queue.entries;
+  const at = entries.findIndex((e) => reasonOf(e) === null);
+  const skipped = at < 0 ? entries : entries.slice(0, at);
+  const history = [...chain.history, ...skipped.map((e) => skippedEntry(e, reasonOf(e) ?? { _tag: "NotListed" }))];
+  const next: ChainState = { ...state, queue: { ...state.queue, entries: entries.slice(skipped.length) } };
+  const found = at < 0 ? undefined : refined.get(entries[at]?.item as ItemId);
+  if (found === undefined) return [{ ...next, chain: { _tag: "Idle", ended: QUEUE_EMPTY, history } }, null];
+  return [{ ...next, chain: { _tag: "Starting", item: found.item, title: found.title, from: "queue", ...commonOf(chain), history } }, { generation: chain.generation, command: { _tag: "Start", item: found.item } }];
 };
 
 /** Checked in the step that reserves a chained start: null lets it go, a reason refuses it and ends the chain. */
@@ -360,6 +418,43 @@ export const startGuard = (state: ChainState, generation: number, item: ItemId, 
   const chain = state.chain;
   if (!state.settings.enabled || chain._tag !== "Starting" || chain.generation !== generation || chain.item !== item) return { _tag: "ChainChanged", item };
   return limitReason(state, chain.count, nowMs);
+};
+
+/** Issue #196: what the step that reserves a chained start decides: go, end the chain, or choose again from the queue as it now is. */
+export type StartCheck = Readonly<{ _tag: "Go" }> | Readonly<{ _tag: "End"; reason: ChainEndReason }> | Readonly<{ _tag: "Again" }>;
+
+/** Issue #196: the developer edited the queue; the chain is untouched, so the edit takes effect at the next selection. */
+export const queueEdited = (state: ChainState, edit: QueueEdit): ChainState => withQueue(state, applyQueueEdit(state.queue, edit));
+const withQueue = (state: ChainState, queue: ChainQueue): ChainState => (queue === state.queue ? state : { ...state, queue });
+/** Issue #196: an implementation run of `item` was reserved, so the item leaves the queue, whatever the source or the switch. */
+export const consumed = (state: ChainState, item: ItemId): ChainState => withQueue(state, withoutItem(state.queue, item));
+/** Issue #196: the reservation's check of a chained start, startGuard's ends first, then the queue as it now is. */
+export const startCheck = (state: ChainState, generation: number, item: ItemId, nowMs: number): StartCheck => {
+  const reason = startGuard(state, generation, item, nowMs);
+  if (reason !== null) return { _tag: "End", reason };
+  const chain = state.chain;
+  const queue = state.queue;
+  const stale = chain._tag !== "Starting" || chain.from !== queue.source || (queue.source === "queue" && queue.entries[0]?.item !== item);
+  return stale ? { _tag: "Again" } : { _tag: "Go" };
+};
+/** Issue #196: a start the reservation found stale goes back to `Ready`, so the chain chooses again. */
+export const reselected = (state: ChainState, generation: number): ChainState => {
+  const chain = state.chain;
+  return chain._tag === "Starting" && chain.generation === generation ? { ...state, chain: { _tag: "Ready", ...commonOf(chain) } } : state;
+};
+/** Issue #196: a queued item whose start's read found it no longer refined is skipped, and the chain chooses again. */
+export const movedAtStart = (state: ChainState, generation: number, item: ItemId, itemState: ItemState): ChainState => {
+  const chain = state.chain;
+  if (chain._tag !== "Starting" || chain.generation !== generation || chain.item !== item || chain.from !== "queue") return state;
+  const history = [...chain.history, skippedEntry(chain, { _tag: "Moved", state: itemState })];
+  return { ...state, queue: withoutItem(state.queue, item), chain: { _tag: "Ready", ...commonOf(chain), history } };
+};
+/** Issue #196: a chained start was refused: still `Starting` that item, the chain ends; back at `Ready`, it chooses again. */
+export const startRefused = (state: ChainState, generation: number, item: ItemId, reason: string): Step => {
+  const chain = state.chain;
+  if (chain._tag === "Starting" && chain.generation === generation && chain.item === item) return [idle(state, { _tag: "StartRefused", item, reason }), null];
+  if (chain._tag === "Ready" && chain.generation === generation) return [state, { generation, command: { _tag: "Due" } }];
+  return [state, null];
 };
 
 /**

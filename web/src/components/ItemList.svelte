@@ -24,14 +24,18 @@
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
   import type { PreparationMark } from "../../../src/preparationSwitch.ts";
-  import { PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
+  import { QUEUE_ADD, queuedMarkText, PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
   import type { ItemsView, StartableItems } from "../state.ts";
 
   // Issue #185: `abandoned`, the items whose run in the current chain stopped waiting for an answer, which carry a mark,
   // so an item back in the refined list does not look untouched [visibility of system status].
   // Issue #131 (requirements Q6): `markOf`, what a row shows of its preparation (shownMark of web/src/state.ts).
-  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void };
-  let { mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh }: Props = $props();
+  // Issue #196: `queued`, the items of the chain's queue in its order, and `onQueue`, which adds an item to it; given in
+  // the Implementation tab alone. A row not queued offers Add to queue, enabled while a run is in progress (unlike the
+  // start), and a queued row shows its place in the queue instead [visibility of system status].
+  type Props = { mode: RunMode; items: ItemsView; startable: StartableItems; offline?: boolean; terms?: TermsMode | null; abandoned?: ReadonlySet<string>; markOf?: (item: ListedItem) => PreparationMark | null; onTerms?: (terms: TermsMode) => void; onStart: (item: ListedItem) => void; onRefresh: () => void; queued?: readonly string[]; onQueue?: ((item: ListedItem) => void) | null };
+  let { mode, items, startable, offline = false, terms = null, abandoned = new Set<string>(), markOf = (i: ListedItem) => i.preparation, onTerms = () => undefined, onStart, onRefresh, queued = [], onQueue = null }: Props = $props();
+  const queueable = $derived(mode === "implementation" && onQueue !== null);
   const markText = (mark: PreparationMark): string => (mark._tag === "Preparing" ? PREPARING_MARK : mark._tag === "Prepared" ? preparedMarkText(mark.questions) : setAsideMarkText(mark.reason));
   const texts = $derived(TAB_TEXTS[mode]);
   const inProgress = (id: string): boolean => startable._tag === "Except" && startable.items.includes(id);
@@ -83,6 +87,10 @@
             {#if inProgress(item.id)}<span class="in-progress m3-font-label-medium">{ITEM_IN_PROGRESS}</span>{/if}
             <!-- Issue #131: the item's preparation, set aside in the error color; the start stays enabled for every mark. -->
             {#if markOf(item) !== null}<span class="in-progress m3-font-label-medium" class:error={markOf(item)?._tag === "SetAside"} data-preparation>{markText(markOf(item)!)}</span>{/if}
+            {#if queueable}
+              {#if queued.includes(item.id)}<span class="in-progress m3-font-label-medium" data-queued-mark>{queuedMarkText(queued.indexOf(item.id) + 1)}</span>
+              {:else}<Button variant="text" type="button" name="queue-add" data-item={item.id} disabled={offline} onclick={() => onQueue?.(item)}>{QUEUE_ADD}</Button>{/if}
+            {/if}
             <Button variant="text" type="button" name="start" data-item={item.id} disabled={!startableItem(item.id) || offline} onclick={() => onStart(item)}>{texts.action}</Button>
           </div>
         </li>
@@ -101,7 +109,7 @@
   li { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1.5rem 0.5rem 1rem; min-height: 3.5rem; box-sizing: border-box; }
   li.two-line { min-height: 4.5rem; }
   .body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-  .trailing { flex: none; display: flex; align-items: center; gap: 0.5rem; }
+  .trailing { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.5rem; max-width: 50%; }
   .in-progress { color: var(--m3c-on-surface-variant); }
   .in-progress.error { color: var(--m3c-error); }
   /* Body large and body medium, set here since the m3-font classes are absent from the build. */

@@ -23,6 +23,8 @@ import type { ShownDocument } from "../../src/reviewedDocument.ts";
 import { emptyUiState, newer, type RunUiState } from "../../src/uiState.ts";
 import { abandonedItems, type ChainSettings, type ChainState } from "../../src/chain.ts";
 import { acknowledged, type ChainField, differingFields, effective, type InFlight, NO_IN_FLIGHT, sameFrame, sameSettings, sent, withdrawn } from "./chainPending.ts";
+import { afterServer, NO_PENDING_EDITS, type QueuePending, shownQueue } from "./queuePending.ts";
+import type { ChainQueue, QueueEdit } from "../../src/chainQueue.ts";
 
 /** The authors of the "Claude and Codex" panel, the one panel of messages (issue #22). */
 export type Author = "codex" | "claude";
@@ -335,6 +337,12 @@ export type ViewState = Readonly<{
   chainQueued: number;
   /** A change of what the control shows that leaves the server's settings equal, which the control cannot see. */
   chainReset: ChainReset;
+  /**
+   * Issue #196: this page's queue edits sent or queued and not yet seen in the server's `queue.applied`, oldest first,
+   * and how many of the last are still in the socket's queue. No edit is ever sent twice.
+   */
+  queuePending: QueuePending;
+  queueQueued: number;
   /** The preparation's switch and status from the last hello or preparation frame (issue #131); null before the first hello. */
   preparation: PreparationView | null;
   /**
@@ -371,6 +379,8 @@ export const initialState: ViewState = {
   chainPending: NO_IN_FLIGHT,
   chainQueued: 0,
   chainReset: { version: 0, fields: [] },
+  queuePending: NO_PENDING_EDITS,
+  queueQueued: 0,
   preparation: null,
   itemsRefresh: 0,
   refinementOutstanding: 0,
@@ -1215,6 +1225,33 @@ const chainAfterHello = (state: ViewState, chain: ChainState, restarted: boolean
   return { chainPending, chainQueued: 0, chainReset: fields.length === 0 ? state.chainReset : { version: state.chainReset.version + 1, fields } };
 };
 
+/** Issue #196: the edits acknowledged by the server's queue leave the pending ones; the queued ones stay counted. */
+const queueAfterServer = (state: ViewState, queue: ChainQueue): Pick<ViewState, "queuePending" | "queueQueued"> => {
+  const queuePending = afterServer(state.queuePending, queue);
+  return { queuePending, queueQueued: Math.min(state.queueQueued, queuePending.length) };
+};
+/**
+ * Issue #196: after a hello the edits still in the socket's queue are kept, since the socket sends them right after it;
+ * those already transmitted either reached the server and were acknowledged or were lost with the connection, so they
+ * are dropped and the page shows the server's queue. Nothing is sent again.
+ */
+const queueAfterHello = (state: ViewState): Pick<ViewState, "queuePending" | "queueQueued"> => ({ queuePending: state.queuePending.slice(state.queuePending.length - state.queueQueued), queueQueued: 0 });
+/** Issue #196: an edit this page sent, or queued in the socket while disconnected. */
+export const queueSent = (state: ViewState, edit: QueueEdit, queued: boolean): ViewState => ({
+  ...state,
+  queuePending: [...state.queuePending, edit],
+  queueQueued: queued ? state.queueQueued + 1 : state.queueQueued,
+});
+/** Issue #196: an edit the failed page hands back unsent is withdrawn. */
+export const queueUnsent = (state: ViewState, edit: QueueEdit): ViewState => {
+  const at = state.queuePending.findIndex((e) => e.id === edit.id);
+  if (at === -1) return state;
+  const wasQueued = at >= state.queuePending.length - state.queueQueued;
+  return { ...state, queuePending: state.queuePending.filter((e) => e.id !== edit.id), queueQueued: wasQueued ? Math.max(0, state.queueQueued - 1) : state.queueQueued };
+};
+/** Issue #196: the queue the page shows, the server's with this page's pending edits over it; null before the first hello. */
+export const queueShown = (view: ViewState): ChainQueue | null => (view.chain === null ? null : shownQueue(view.chain.queue, view.queuePending));
+
 export const keepUnsent = (state: ViewState, text: string): ViewState => ({ ...state, unsent: [...state.unsent, text] });
 /** The user dismisses one kept answer; the others stay. */
 export const dismissUnsent = (state: ViewState, index: number): ViewState => ({ ...state, unsent: state.unsent.filter((_, i) => i !== index) });
@@ -1282,7 +1319,7 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
       // a new server's (`restartedMode`); the same incarnation is a reconnection (`reconnectedMode`).
       const restarted = state.incarnation !== null && state.incarnation !== message.incarnation;
       const modes = Object.fromEntries(RUN_MODES.map((m) => [m, restarted ? restartedMode(currentOf(message.current, m)) : reconnectedMode(state.modes[m], currentOf(message.current, m))])) as Record<RunMode, ModeView>;
-      const helloed: ViewState = { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, preparation: message.preparation, ...chainAfterHello(state, message.chain, restarted) };
+      const helloed: ViewState = { ...state, modes, closed: restarted ? [] : state.closed, runModes: restarted ? {} : state.runModes, connection: "open", location: message.location, incarnation: message.incarnation, needsReconnect: false, termsChoice: restarted ? null : state.termsChoice, chain: message.chain, preparation: message.preparation, ...chainAfterHello(state, message.chain, restarted), ...queueAfterHello(state) };
       // W3-R1-1: a reconnection of the same incarnation asks again, once, for a Refinement list still shown and listed,
       // whatever was outstanding: a preparation frame, an automatic listing or a deferred change may have been lost with
       // the old connection, and the hello cannot tell which. It costs one listing per reconnection while the list is
@@ -1328,7 +1365,13 @@ export const reduce = (state: ViewState, message: ServerMessage): ViewState => {
     case "chain":
       // Issue #147: every frame carries the chain's whole state. A change of the settings acknowledges the frames it
       // answers; equal settings (a status change, a run event) leave the list as it is.
-      return { ...state, chain: message.state, chainPending: state.chain !== null && sameSettings(state.chain.settings, message.state.settings) ? state.chainPending : acknowledged(state.chainPending, message.state.settings) };
+      // Issue #196: an edit of the queue is acknowledged by its id among the queue's applied ones.
+      return {
+        ...state,
+        chain: message.state,
+        chainPending: state.chain !== null && sameSettings(state.chain.settings, message.state.settings) ? state.chainPending : acknowledged(state.chainPending, message.state.settings),
+        ...queueAfterServer(state, message.state.queue),
+      };
     case "preparation": {
       // Issue #131: the whole view replaces the last; a change of the item being prepared, with the Refinement list
       // shown, asks for its items again, so the marks of the rows other than the one being prepared follow the pass.

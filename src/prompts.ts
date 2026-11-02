@@ -4,7 +4,8 @@ import type { PreparationCause } from "./preparedComments.ts";
 import type { PreparationStatus } from "./preparationSwitch.ts";
 import { pathOf, RECORDS_DIR, recordPath, type RunRoot, type SubjectId } from "./artifacts.ts";
 import { type GitState, type MergeRefusal, PARK_NO_VERIFY, type ParkedRecord, parkTrailerOf, rootName } from "./park.ts";
-import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote } from "./chain.ts";
+import type { AbandonLabel, ChainEndReason, ChainEntry, ChainState, ParkNote, SkipReason } from "./chain.ts";
+import type { ChainSource } from "./chainQueue.ts";
 import type { ParkedEnding } from "./runEnding.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, finalCommandsOf, type FinalCommand, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
@@ -2161,7 +2162,7 @@ export function draftWithdrawnNotice(text: string): string {
 export const SERVER_CLOSED_NOTICE = "The server has ended. The page reconnects when it is started again.";
 /** The heading of the answers the page could not send (G-R1-1, P1-R1-2 of the defects' plan). */
 export const UNSENT_HEADING = "Not sent";
-const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait", string> = {
+const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "queue", string> = {
   answer: "Your answer was not sent",
   // Issue #185.
   hold: "That you are working on the question was not sent, so its countdown may still run",
@@ -2174,6 +2175,8 @@ const NOT_SENT_SUBJECT: Record<"answer" | "stop" | "start" | "items" | "ui" | "c
   preparation: "Turning the preparation of marked items' questions on or off was not sent",
   // Issue #215.
   endWait: "The request to end the wait was not sent",
+  // Issue #196.
+  queue: "The change of the chain's queue was not sent",
 };
 const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = {
   ended: "the run has ended",
@@ -2184,7 +2187,7 @@ const NOT_SENT_REASON: Record<"ended" | "restarted" | "disconnected", string> = 
  * An action that was not sent: queued while disconnected and overtaken by the reconnection, or refused because the page
  * has stopped reconnecting. A disconnected answer says where its text is: in the answer field, or quoted and kept.
  */
-export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
+export function notSentNotice(kind: "answer" | "stop" | "start" | "items" | "ui" | "chain" | "hold" | "preparation" | "endWait" | "queue", reason: "ended" | "restarted" | "disconnected", quoted?: string): string {
   const base = `${NOT_SENT_SUBJECT[kind]}: ${NOT_SENT_REASON[reason]}.`;
   if (kind !== "answer" || reason !== "disconnected") return base;
   return quoted === undefined ? `${base} Its text is still in the answer field.` : `${base} Its text is kept under “${UNSENT_HEADING}”: «${quoted}»`;
@@ -3819,11 +3822,11 @@ export const chainStatusText = (state: ChainState): string => {
     case "Parking":
       return `Keeping the work of the halted run of item #${chain.item} on a branch.`;
     case "Ready":
-      return "Looking for the next refined item.";
+      return state.queue.source === "queue" ? "Looking for the next item of the queue." : "Looking for the next refined item.";
     case "Starting":
       return `Starting item #${chain.item} ${chain.title}.`;
     case "Idle":
-      return state.settings.enabled ? "On. The next run you start begins a chain." : "Off. No run starts by itself.";
+      return !state.settings.enabled ? "Off. No run starts by itself." : state.queue.source === "queue" ? "On. The next run you start begins a chain through the queue." : "On. The next run you start begins a chain.";
   }
 };
 
@@ -3858,12 +3861,44 @@ export const chainEndedText = (reason: ChainEndReason, time: TimeText): string =
       return `The chain ended: it changed before item #${reason.item} could start.`;
     case "ListingFailed":
       return `The chain ended: the refined items could not be listed: ${reason.message}`;
+    case "QueueEmpty":
+      return "The chain ended: no item is left in the queue.";
   }
 };
 
 /** The refusal of an implementation start while a halted run's work is being moved to its branch. */
 export const chainParkingText = (item: string): string =>
   `No implementation run can start yet: the work of the halted run of item #${item} is being moved to a branch of its own. Try again in a moment.`;
+
+/** Issue #196: why a queued item was skipped without a run. */
+const skipReasonText = (reason: SkipReason): string => {
+  switch (reason._tag) {
+    case "Abandoned":
+      return "the chain stopped waiting for an answer on it earlier";
+    case "NotListed":
+      return "it is no longer among the refined items";
+    case "Moved":
+      return `its label is now \`${reason.state}\``;
+  }
+};
+
+/** Issue #196: the refusal of a chained start the queue's edit made stale; the chain chooses again. */
+export const chainReselectText = (item: string): string => `The queue changed before item #${item} could start; the chain looks again.`;
+
+/** Issue #196: the page's texts of the chain's queue. */
+export const CHAIN_SOURCE_LABEL = "Which items the chain starts";
+export const CHAIN_SOURCE_TEXTS: Readonly<Record<ChainSource, string>> = { backlog: "Every refined item", queue: "Only the queue, in its order" };
+export const QUEUE_HEADING = "Queue";
+export const QUEUE_EMPTY = "The queue is empty. Add refined items from the list below.";
+export const QUEUE_SUPPORT = "Each item is removed from the queue when its run starts. The run limit and the cutoff still apply; whichever is reached first ends the chain.";
+export const QUEUE_ADD = "Add to queue";
+export const queuedMarkText = (n: number): string => `In the queue, number ${n}`;
+export const queueMoveUpName = (item: string): string => `Move ${item} up`;
+export const queueMoveDownName = (item: string): string => `Move ${item} down`;
+export const queueRemoveName = (item: string): string => `Remove ${item} from the queue`;
+export const queueHandleName = (item: string): string => `Drag ${item} to another place in the queue`;
+export const QUEUE_STALE = "Not in the refined list now; the chain will skip it.";
+export const QUEUE_BACKLOG_NOTE = "The chain starts every refined item now; the queue is used when you choose the queue above.";
 
 /** The refusal of a start whose chain state could be neither saved nor removed. */
 export const chainSaveRefusedText = (message: string): string =>
@@ -3922,6 +3957,8 @@ const chainOutcomeText = (entry: ChainEntry): string => {
     }
     case "Abandoned":
       return `${head}: ${abandonedEntryText(entry.outcome.park, entry.outcome.label)}`;
+    case "Skipped":
+      return `${head} was skipped: ${skipReasonText(entry.outcome.reason)}.`;
   }
 };
 

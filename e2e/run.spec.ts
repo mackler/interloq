@@ -4,7 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
-import { EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, NO_UNANSWERED_QUESTIONS } from "../src/prompts.ts";
+import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, QUEUE_HEADING, queueMoveUpName, EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, NO_UNANSWERED_QUESTIONS } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
 // fails on an uncaught error or a console error in any of its pages (e2e/fixtures.ts, finding 10 of docs/gui-review.md).
@@ -1036,6 +1036,37 @@ test.describe("the tests of the chain server, in order", () => {
     await control.locator("label.switch").click();
     await expect(control.getByRole("status")).toContainText(`Turned off. The run of item #${second} goes on to its end`);
     await expect(page.locator("button[name=stop]")).toBeEnabled();
+  });
+});
+
+// Issue #196: the chain's queue over the real server. While the first run waits on its question, the developer chooses
+// the queue, adds two refined items and reorders them from the list; when the run ends, the chain starts the queue's
+// head, not the tracker's next refined item.
+test.describe("the tests of the chainQueue server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(39) the chain starts the head of the queue composed during a run, not the tracker's next item", async ({ page }) => {
+    const first = await startFromTab(page, url("chainQueue"), "implementation");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await listTabOf(page, "implementation").click();
+    const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+    const queueChoice = control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.queue, { exact: true });
+    await expect(queueChoice).toBeVisible({ timeout: 10_000 });
+    await queueChoice.click();
+    const queued = ["5", "3"];
+    for (const item of queued) await listOf(page).locator(`button[name=queue-add][data-item="${item}"]`).click();
+    const editor = page.getByRole("region", { name: QUEUE_HEADING });
+    await expect(editor.locator("li[data-queued]")).toHaveCount(2);
+    await editor.getByRole("button", { name: queueMoveUpName(`#3 Refined item 3`) }).click();
+    const order = [queued[1]!, queued[0]!];
+    await expect(editor.locator("li[data-queued]").first()).toHaveAttribute("data-queued", order[0]!);
+    await runTabOf(page, first, "implementation").click();
+    await expect(asking(page, DATABASE)).toBeVisible();
+    await pane(page).locator("input[name=answer], textarea[name=answer]").fill("PostgreSQL");
+    await pane(page).locator("input[name=answer], textarea[name=answer]").press("Enter");
+    await expect(control.getByRole("status")).toContainText(`Run 2 of the chain: item #${order[0]}`, { timeout: 60_000 });
+    await expect(control.locator("li[data-queued]")).toHaveCount(1);
+    await expect(control.locator("li[data-queued]").first()).toHaveAttribute("data-queued", order[1]!);
   });
 });
 

@@ -9,6 +9,8 @@ import { platformLayer } from "../src/platform.ts";
 import { loadChain, removeChain, saveChain } from "../src/chainFile.ts";
 import { begun, DEFAULT_SETTINGS, initialState, OFF_SETTINGS } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
+import { editIdOf, EMPTY_QUEUE } from "../src/chainQueue.ts";
+import { Result } from "effect";
 import { PREPARATION_KEPT_OFF, type PreparationKept } from "../src/preparationSwitch.ts";
 
 const kept = (chain: ReturnType<typeof initialState>, preparation: PreparationKept = PREPARATION_KEPT_OFF) => ({ chain, preparation });
@@ -65,4 +67,23 @@ test("a file written before the preparation's key loads with the switch off and 
   fs.writeFileSync(file(cwd), JSON.stringify({ version: 2, state: initialState(DEFAULT_SETTINGS) }));
   const loaded = await go(loadChain(cwd, OFF_SETTINGS));
   assert.deepEqual(loaded, kept(initialState(DEFAULT_SETTINGS)));
+});
+
+// Issue #196: the queue is kept with the chain's state, and a file written before it reads as the backlog.
+test("a state with a queue saves and loads back equal", async () => {
+  const cwd = temp();
+  const queue = { source: "queue" as const, entries: [{ item: "5" as ItemId, title: "five" }, { item: "3" as ItemId, title: "three" }], applied: ["page:1", "page:2"].map((t) => Result.getOrThrow(editIdOf(t))) };
+  const state = { ...begun(initialState(DEFAULT_SETTINGS), 3, "12" as ItemId, "twelve"), queue };
+  await go(saveChain(cwd, kept(state)));
+  assert.deepEqual(await go(loadChain(cwd, OFF_SETTINGS)), kept(state));
+});
+
+test("a file written before the queue loads as the backlog with an empty queue, a start in flight from the backlog", async () => {
+  const cwd = temp();
+  fs.mkdirSync(path.join(cwd, "plan-review"));
+  const starting = { _tag: "Starting", item: "4", title: "four", generation: 1, count: 1, halts: [], history: [] };
+  fs.writeFileSync(file(cwd), JSON.stringify({ version: 2, state: { settings: DEFAULT_SETTINGS, generation: 1, chain: starting } }));
+  const loaded = await go(loadChain(cwd, OFF_SETTINGS));
+  assert.deepEqual(loaded.chain.queue, EMPTY_QUEUE);
+  assert.equal(loaded.chain.chain._tag === "Starting" && loaded.chain.chain.from, "backlog");
 });

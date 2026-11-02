@@ -4,8 +4,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result, Schema } from "effect";
 import fc from "fast-check";
-import { abandonedItems, begun, claimParking, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, type ParkClaim, parked, restored, runLimitOf, saveFailed, started } from "../src/chain.ts";
+import { abandonedItems, begun, claimParking, type ChainCommand, type ChainState, ChainFileSchema, configured, due, ended, initialState, listed, OFF_SETTINGS, type ParkClaim, parked, restored, runLimitOf, saveFailed, started, startCheck, startGuard } from "../src/chain.ts";
 import type { ItemId } from "../src/tracker.ts";
+import { EMPTY_QUEUE } from "../src/chainQueue.ts";
 import type { RunRoot } from "../src/artifacts.ts";
 
 const RUNS = { numRuns: 300, seed: 20261020 };
@@ -180,6 +181,7 @@ const arbRunning = (claim: fc.Arbitrary<ParkClaim>) =>
   fc.record({
     settings: arbSettings,
     generation: fc.nat(50),
+    queue: fc.constant(EMPTY_QUEUE),
     chain: fc.record({
       _tag: fc.constant("Running" as const),
       run: fc.nat(100),
@@ -290,3 +292,32 @@ test("an abandoned item is never the item of a later start of its chain, and aba
     RUNS,
   );
 });
+
+// Issue #196: in backlog source, the queue changes nothing the chain decides: due, listed and the reservation's check
+// give what they gave with no queue, apart from the queue they carry.
+const arbQueued = fc.uniqueArray(fc.constantFrom("1", "2", "3", "4"), { maxLength: 4 }).map((items) => items.map((i) => ({ item: i as ItemId, title: `q${i}` })));
+const arbListing = fc.uniqueArray(fc.constantFrom("1", "2", "3", "4", "5"), { maxLength: 5 }).map((items) => items.map((i) => ({ item: i as ItemId, title: `l${i}` })));
+const withoutQueue = (s: ChainState): ChainState => ({ ...s, queue: EMPTY_QUEUE });
+
+test("in backlog source the queue changes neither due, listed nor the reservation's check", () =>
+  fc.assert(
+    fc.property(arbQueued, arbListing, fc.integer({ min: 1, max: 3 }), fc.boolean(), (entries, listing, limit, abandonedFirst) => {
+      const settings = { enabled: true, limits: { runs: Result.getOrThrow(runLimitOf(limit)), cutoff: null } };
+      const first = (listing[0]?.item ?? ("1" as ItemId)) as ItemId;
+      const queue = { source: "backlog" as const, entries, applied: [] };
+      const begunState: ChainState = { ...begun(initialState(settings), 1, first, "f"), queue };
+      const [r] = ended(begunState, 1, { code: abandonedFirst ? 2 : 0, root: "runs/r" as RunRoot, parked: null, abandoned: abandonedFirst ? { _tag: "SetRefined" } : null });
+      const g = r.chain._tag === "Idle" ? -1 : r.chain.generation;
+      const [d, dc] = due(r, g, 0);
+      const [d0, dc0] = due(withoutQueue(r), g, 0);
+      assert.deepEqual([withoutQueue(d), dc], [d0, dc0]);
+      const [l, lc] = listed(r, g, listing);
+      const [l0, lc0] = listed(withoutQueue(r), g, listing);
+      assert.deepEqual([withoutQueue(l), lc], [l0, lc0]);
+      for (const item of listing.map((i) => i.item)) {
+        const guard = startGuard(l, g, item, 0);
+        assert.deepEqual(startCheck(l, g, item, 0), guard === null ? { _tag: "Go" } : { _tag: "End", reason: guard });
+      }
+    }),
+    RUNS,
+  ));

@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -479,6 +479,59 @@ test.describe("the tests of the tabs server, in order", () => {
     await expect(page.locator("[name=answer]")).toBeVisible();
     await other.close();
   });
+
+  // Issue #196: the queue editor in the Implementation tab's list view: its rows hold their text and buttons, none drawn
+  // over the next, the long title whole and wrapped, and the page never scrolls sideways.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L42) the queue editor at ${width} × ${height}: rows hold their text and buttons, the long title whole`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(URL);
+      await expect(page.getByText("connected", { exact: true })).toBeVisible();
+      await toTheList(page, "implementation");
+      const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+      await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.queue, { exact: true }).click();
+      const editor = page.getByRole("region", { name: QUEUE_HEADING });
+      await expect(editor).toBeVisible();
+      for (const item of ["41", "1", "2"]) {
+        const add = listOf(page).locator(`button[name=queue-add][data-item="${item}"]`);
+        if ((await add.count()) > 0) await add.click();
+      }
+      await expect(editor.locator("li[data-queued]")).toHaveCount(3);
+      const problems = await editor.evaluate((section, title) => {
+        const out: string[] = [];
+        const TOLERANCE = 0.5;
+        const s = section.getBoundingClientRect();
+        const rows = [...section.querySelectorAll("li[data-queued]")];
+        rows.forEach((row, i) => {
+          const r = row.getBoundingClientRect();
+          const name = row.textContent?.trim().slice(0, 30) ?? "?";
+          const next = rows[i + 1];
+          if (next !== undefined && r.bottom > next.getBoundingClientRect().top + TOLERANCE) out.push(`${name}: its bottom ${r.bottom} is below the next row's top ${next.getBoundingClientRect().top}`);
+          for (const el of row.querySelectorAll("p, span, button")) {
+            const b = el.getBoundingClientRect();
+            if (b.width === 0 && b.height === 0) continue;
+            if (b.top < r.top - TOLERANCE || b.bottom > r.bottom + TOLERANCE || b.left < r.left - TOLERANCE || b.right > r.right + TOLERANCE) out.push(`${name}: ${el.tagName} (${el.textContent?.trim().slice(0, 20)}) at ${b.left}–${b.right} × ${b.top}–${b.bottom} lies outside its row at ${r.left}–${r.right} × ${r.top}–${r.bottom}`);
+          }
+          for (const button of row.querySelectorAll("button[aria-label]")) {
+            const b = button.getBoundingClientRect();
+            if (b.left < s.left - TOLERANCE || b.right > s.right + TOLERANCE) out.push(`${name}: ${button.getAttribute("aria-label")} lies outside the editor`);
+          }
+        });
+        const long = rows.find((row) => row.textContent?.includes(title));
+        const headline = long?.querySelector(".headline");
+        if (headline === undefined || headline === null) return [...out, "no row holds the long title"];
+        const lineHeight = parseFloat(getComputedStyle(headline).lineHeight);
+        if (!(headline.getBoundingClientRect().height > 1.5 * lineHeight)) out.push(`the long title did not wrap: ${headline.getBoundingClientRect().height} px`);
+        if (headline.scrollWidth > headline.clientWidth + TOLERANCE || headline.scrollHeight > headline.clientHeight + TOLERANCE) out.push("the long title is clipped");
+        return out;
+      }, LONG_ITEM_TITLE);
+      expect(problems).toEqual([]);
+      await noSidewaysScroll(page);
+      // The server is shared by the file's other tests: its source goes back to the backlog, which hides the editor.
+      await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
+      await expect(editor).toHaveCount(0);
+    });
+  }
 
   // Issue #125: a title that wraps grows its row; no row's text is drawn over the next row, and the whole title shows.
   for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
@@ -1092,6 +1145,15 @@ test.describe("the tests of the planSteps server, in order", () => {
       await expect(page.locator("div.rail-column .chain").getByText(CHAIN_INVALID_RUNS)).toBeVisible();
       await settled(page);
       await chainInside(page);
+      // Issue #196: the choice of source and the queue's empty text lie inside the column too; the backlog restored after.
+      const sources = page.locator("div.rail-column .chain").getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL });
+      await sources.getByText(CHAIN_SOURCE_TEXTS.queue, { exact: true }).click();
+      await expect(page.locator("div.rail-column .chain").getByText(QUEUE_EMPTY)).toBeVisible();
+      // m3-svelte's click ripple, a circle clipped by its own SVG's overflow, is gone before the parts are measured.
+      await expect(page.locator("div.rail-column .chain .active-ripple")).toHaveCount(0);
+      await settled(page);
+      await chainInside(page);
+      await sources.getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
       await noSidewaysScroll(page);
     });
   }

@@ -21,7 +21,9 @@ import { DECISION_SECTIONS, type RunUiState, type UiScope } from "../src/uiState
 import { promptOf } from "../src/userPrompts.ts";
 import * as prompts from "../src/prompts.ts";
 import { entryOf, workExecution , TEST_ROOT } from "./helpers.ts";
-import { begun, DEFAULT_SETTINGS, initialState } from "../src/chain.ts";
+import { begun, DEFAULT_SETTINGS, initialState, queueEdited } from "../src/chain.ts";
+import { editIdOf, type QueueChange, type QueueEdit } from "../src/chainQueue.ts";
+import { queueFrame } from "../web/src/tabs.ts";
 import type { ItemId } from "../src/tracker.ts";
 
 // Plan step 3.1: both sides decode with the same schemas; every variant survives the JSON round trip.
@@ -640,4 +642,34 @@ test("a pause, limit or unchanged origin round-trips with pass check, and decode
     assert.deepEqual(Result.getOrThrow(decode(checked)), checked);
     assert.deepEqual(Result.getOrThrow(decode(question(o))), question({ ...o, pass: "review" }));
   }
+});
+
+// Issue #196: the queue frame, built by the page's one builder, decodes for every change; a blank id does not; the
+// chain's state carries the queue, and an old-shaped state without one decodes as the backlog.
+test("the queue frame round-trips for each change, refuses a blank item or edit id, and the chain frame carries the queue", () => {
+  const edit = (n: number, change: QueueChange): QueueEdit => ({ id: Result.getOrThrow(editIdOf(`page:${n}`)), change });
+  const item = Result.getOrThrow(itemIdOf("5"));
+  const changes: readonly QueueChange[] = [
+    { _tag: "Add", item, title: "five" },
+    { _tag: "Remove", item },
+    { _tag: "Move", item, before: null },
+    { _tag: "Move", item, before: Result.getOrThrow(itemIdOf("3")) },
+    { _tag: "Source", source: "queue" },
+  ];
+  changes.forEach((change, n) => {
+    const frame = queueFrame(edit(n, change));
+    assert.deepEqual(decoded(decodeClient(JSON.stringify(frame))), frame);
+  });
+  for (const bad of [
+    { type: "queue", edit: { id: " ", change: { _tag: "Remove", item: "5" } } },
+    { type: "queue", edit: { id: "p:1", change: { _tag: "Remove", item: "" } } },
+    { type: "queue", edit: { id: "p:1", change: { _tag: "Source", source: "all" } } },
+  ]) assert.ok(Result.isFailure(decodeClient(JSON.stringify(bad))), JSON.stringify(bad));
+  const state = queueEdited(initialState(DEFAULT_SETTINGS), edit(9, { _tag: "Add", item, title: "five" }));
+  const server: ServerMessage = { type: "chain", state };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(server))), server);
+  const { queue: _queue, ...old } = initialState(DEFAULT_SETTINGS);
+  assert.deepEqual(decoded(decodeServer(JSON.stringify({ type: "chain", state: old }))), { type: "chain", state: initialState(DEFAULT_SETTINGS) });
+  const hello = { type: "hello", location: "/p", current: { refinement: [], implementation: null }, incarnation: "i", chain: state, preparation: PREPARATION_VIEW_OFF };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(hello))), hello);
 });

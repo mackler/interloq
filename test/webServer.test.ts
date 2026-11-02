@@ -20,7 +20,9 @@ import { makeWebServer, OUTPUT_BACKLOG_BOUND, requestTarget } from "../src/webSe
 import { SCROLLBACK_LINES } from "../src/liveOutput.ts";
 import { askedInPlanReview, fakeTrackerOf, finished, MANAGER_ITEMS, type TestOptions, tempDir, tempRepo, testWiring, trackerAccessOf, questionOf, runDirOf, runDirsOf } from "./helpers.ts";
 import type { FakeTracker } from "./fakeTracker.ts";
-import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, queueFrame, startFrame as pageStartFrame } from "../web/src/tabs.ts";
+import { editIdOf, type QueueEdit } from "../src/chainQueue.ts";
+import type { ItemId } from "../src/tracker.ts";
 import { listedState } from "../src/runMode.ts";
 import { runInProgressText, termsChoiceLine, WAIT_ALREADY_ENDED_TEXT } from "../src/prompts.ts";
 import { initialState, reduce } from "../web/src/state.ts";
@@ -510,6 +512,7 @@ test("a tab that falls behind by its queue's bound is told, its socket is closed
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
     setChain: () => Effect.succeed(initialChain(OFF_SETTINGS)),
+    editQueue: () => Effect.succeed(initialChain(OFF_SETTINGS)),
     preparation: Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
     setPreparation: () => Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
   };
@@ -858,6 +861,7 @@ test("output frames reach the tab outside its event queue: a burst never closes 
     haltAll: () => Effect.succeed({ halted: [], unconfirmed: [] }),
     chain: Effect.succeed(initialChain(OFF_SETTINGS)),
     setChain: () => Effect.succeed(initialChain(OFF_SETTINGS)),
+    editQueue: () => Effect.succeed(initialChain(OFF_SETTINGS)),
     preparation: Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
     setPreparation: () => Effect.succeed({ settings: PREPARATION_OFF, status: { _tag: "Off" } }),
   };
@@ -972,5 +976,25 @@ test("the page's endWait frame ends the run's usage-limit wait; the same frame a
     a.send({ type: "stop", incarnation: hello.incarnation, run: waiting.run });
     await until("the run's end", () => a.messages.some((m) => m.type === "event" && m.event._tag === "Ended"));
     a.close();
+  });
+});
+
+// Issue #196 (S6): the seam of the queue's edit. The frame the page builds, sent over the real server, reaches the
+// manager, and the chain frame every tab receives carries the entry and the edit's id among the applied ones.
+test("the queue frame the page builds edits the manager's queue, and every tab's chain frame carries the entry and the edit's id", async () => {
+  const repo = tempRepo();
+  const manager = await managerOf(repo, []);
+  await serve(manager, dist(), async (port) => {
+    const a = await connect(port);
+    const b = await connect(port);
+    await until("the replays", () => a.messages.length >= 2 && b.messages.length >= 2);
+    const edit: QueueEdit = { id: Result.getOrThrow(editIdOf("page-a:1")), change: { _tag: "Add", item: "3" as ItemId, title: "three" } };
+    a.send(queueFrame(edit));
+    const queueOf = (c: Client) => c.messages.flatMap((m) => (m.type === "chain" ? [m.state.queue] : [])).at(-1);
+    await until("the queue in both tabs", () => queueOf(a)?.applied.includes(edit.id) === true && queueOf(b)?.applied.includes(edit.id) === true);
+    for (const c of [a, b]) assert.deepEqual(queueOf(c)?.entries, edit.change._tag === "Add" ? [{ item: edit.change.item, title: edit.change.title }] : []);
+    assert.deepEqual((await Effect.runPromise(manager.chain)).queue, queueOf(a));
+    a.close();
+    b.close();
   });
 });

@@ -463,3 +463,20 @@ default) for an answer, after which the run stops waiting for it.
 - **Material Design 3, a deviation.** M3 has no splitter component, so the separator follows WAI-ARIA's window splitter by
   hand with M3's color roles: a thin line in `outline-variant` in a track as wide as the old column gap, and a focus
   ring in `primary`. It asserts the boundary's position and nothing more.
+
+## The chain's queue (issue #196, 2 Nov 2026)
+
+- **Recognition rather than recall.** The chain's control offers the two sources by name, "Every refined item" and
+  "Only the queue, in its order", as M3's connected buttons. The choice is explicit and never inferred from whether the
+  queue is empty, so an exhausted queue ends the chain instead of carrying on through the backlog.
+- **Visibility of system status.** A queued row of the Implementation list shows its place in the queue in place of
+  "Add to queue"; the rail's control shows the queue read-only during a run; the editor marks an entry the loaded listing
+  no longer holds, which the chain will skip; the chain's history records every skipped entry with its reason.
+- **User control and freedom; flexibility and efficiency of use.** The queue is edited while a run goes on and never
+  disturbs it. Each row's Move up, Move down and Remove buttons make reordering operable by keyboard, beside a drag
+  handle for the pointer that previews the drop with a line, sends one move on release, and is cancelled by Escape.
+- **Material Design 3, two deviations.** The editor's rows are laid out by hand after M3's list item, as `ItemList`'s
+  are (issue #125): M3's padding, gap, one-line minimum height and body-large headline, the whole title wrapped. They
+  assert what M3's list item asserts and nothing more. M3 has no reorderable list, so the drag is built by hand with
+  pointer events: the handle (⠿) asserts only that the row can be dragged, and the drop line in `primary` only where it
+  would go. The handle is out of the tab order, since the buttons cover the keyboard.

@@ -35,7 +35,8 @@
   import type { ChainFrameSettings, ClientMessage, ListedItem } from "../../../src/protocol.ts";
   import type { TermsMode } from "../../../src/schema.ts";
   import { RUN_MODES, type RunMode } from "../../../src/runMode.ts";
-  import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, startFrame } from "../tabs.ts";
+  import { chainFrame, endWaitFrame, holdFrame, itemsFrame, preparationFrame, queueFrame, startFrame } from "../tabs.ts";
+  import { itemIdOf } from "../../../src/tracker.ts";
   import { fullTime } from "../time.ts";
   import { awaitedKey, carried, type Draft, draftFor, pendingKey, reconcile, restoreUnsent } from "../draft.ts";
   import { isTermsRequest } from "../../../src/input.ts";
@@ -50,7 +51,7 @@
   import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
-  import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -58,6 +59,9 @@
   import { railView } from "../rail.ts";
   import ItemList from "./ItemList.svelte";
   import ChainControl from "./ChainControl.svelte";
+  import QueueEditor from "./QueueEditor.svelte";
+  import { newEdit } from "../queuePending.ts";
+  import type { QueueChange } from "../../../src/chainQueue.ts";
   import PreparationControl from "./PreparationControl.svelte";
   import QuestionPane from "./QuestionPane.svelte";
   import TimelineRail from "./TimelineRail.svelte";
@@ -155,7 +159,7 @@
         const shown = presented(view).find((p) => p.key === key)?.shown ?? shownRun(view);
         const restored = restoreUnsent(drafts[key] ?? null, shown, m);
         drafts = { ...drafts, [key]: restored.draft };
-        const withdrawn = m.type === "chain" ? chainUnsent(view, m.settings) : view;
+        const withdrawn = m.type === "chain" ? chainUnsent(view, m.settings) : m.type === "queue" ? queueUnsent(view, m.edit) : view;
         const kept = restored.quoted === null ? withdrawn : keepUnsent(withdrawn, restored.quoted);
         view = notice(kept, notSentNotice(m.type, "disconnected", restored.quoted ?? undefined));
       },
@@ -211,6 +215,21 @@
     const delivery = connection?.send(chainFrame(settings));
     if (delivery === "sent" || delivery === "queued") view = chainSent(view, settings, delivery === "queued");
   };
+  // Issue #196: every edit of the queue has an id unique across tabs (this page's id and a counter), is sent once and
+  // recorded until the server's queue shows it applied; nothing resends an edit. One handed back is not recorded.
+  const pageId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `page-${Date.now()}-${Math.random()}`;
+  let edits = 0;
+  const editQueue = (change: QueueChange) => {
+    const edit = newEdit(pageId, ++edits, change);
+    const delivery = connection?.send(queueFrame(edit));
+    if (delivery === "sent" || delivery === "queued") view = queueSent(view, edit, delivery === "queued");
+  };
+  const addToQueue = (item: ListedItem) => {
+    const id = itemIdOf(item.id);
+    if (Result.isSuccess(id)) editQueue({ _tag: "Add", item: id.success, title: item.title });
+  };
+  const queue = $derived(mode === "implementation" ? queueShown(view) : null);
+  const listedIds = $derived(tab.items._tag === "Listed" ? tab.items.items.map((i) => i.id) : null);
   /** Selecting a tab that shows its list asks for its items every time, so a revisited list is current (S15). */
   const selectTab = (value: RunMode) => {
     view = selectMode(view, value);
@@ -473,9 +492,10 @@
            notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
-      {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
+      {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} />{/if}
       {#if preparation !== null}<PreparationControl view={preparation} onChange={setPreparation} />{/if}
-      <ItemList {mode} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
+      {#if queue !== null && queue.source === "queue"}<QueueEditor {queue} listed={listedIds} {offline} onEdit={editQueue} />{/if}
+      <ItemList {mode} queued={queue?.entries.map((e) => e.item) ?? []} onQueue={mode === "implementation" ? addToQueue : null} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
     </main>
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
@@ -484,7 +504,7 @@
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
-          {#if chain !== null}<ChainControl shown={chain} onChange={setChain} />{/if}
+          {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} />{/if}
           <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
         </details>
         <!-- While the analysis is shown both panels are hidden, so the buttons would select nothing; "Show the
@@ -504,7 +524,7 @@
         <!-- Issue #147: the chain's control at the top of the rail's column, which holds no question, so the question
              pane and the decision page keep their room. The column takes the rail's place in the grid. -->
         <div class="rail rail-column">
-          <ChainControl shown={chain} onChange={setChain} />
+          <ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} />
           <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
         </div>
       {:else}

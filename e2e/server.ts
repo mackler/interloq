@@ -409,6 +409,10 @@ const BY_MODE: Partial<Record<string, Readonly<Record<RunMode, TestOptions>>>> =
 const CHAIN_LATER: TestOptions = { steps: [{ output: noQuestions, plan: "1. [ ] the step\n", hang: true }] };
 let chainRuns = 0;
 const chainScript = (): TestOptions => (++chainRuns === 1 ? SCENARIOS.converge : CHAIN_LATER);
+// Issue #196: the server of the chain's queue, the mode on: its first run waits on the plan writer's question, so the
+// test composes the queue while it runs, and every later run waits in its planning call.
+let chainQueueRuns = 0;
+const chainQueueScript = (): TestOptions => (++chainQueueRuns === 1 ? SCENARIOS.decision! : CHAIN_LATER);
 // Issue #131: the server of the preparation: its first wiring prepares the marked item's one question, unattended; the
 // second is the refinement run of that item, which asks the prepared question at once and needs only its answer's
 // closing reply and the requirements review.
@@ -419,7 +423,7 @@ const prepareScript = (): TestOptions => (++prepareWirings === 1 ? PREPARE_LIST 
 // Issue #120: the server of a project whose tracker cannot be reached: no tracker is configured, so each tab shows a notice.
 SCENARIOS.noTracker = SCENARIOS.converge;
 const name = process.env.SCENARIO ?? "converge";
-const scenarioOf = (mode: RunMode): TestOptions => (name === "chain" ? chainScript() : name === "prepare" ? prepareScript() : (BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge));
+const scenarioOf = (mode: RunMode): TestOptions => (name === "chain" ? chainScript() : name === "chainQueue" ? chainQueueScript() : name === "prepare" ? prepareScript() : (BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge));
 const port = Number(process.env.PORT ?? "8101");
 const repo = tempRepo();
 const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
@@ -432,7 +436,7 @@ const tracker = fakeTrackerOf(name === "prepare" ? [...E2E_ITEMS, PREPARED_ITEM]
 const access = name === "noTracker" ? { ...trackerAccessOf(tracker), tracker: () => Result.fail(new NoTracker()) } : trackerAccessOf(tracker);
 
 const main = Effect.gen(function* () {
-  const manager = yield* makeRunManager((ui, mode) => ({ ...testWiring(repo, { ...scenarioOf(mode), tracker }).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${name}`, access, name === "chain" ? DEFAULT_SETTINGS : OFF_SETTINGS);
+  const manager = yield* makeRunManager((ui, mode) => ({ ...testWiring(repo, { ...scenarioOf(mode), tracker }).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${name}`, access, name === "chain" || name === "chainQueue" ? DEFAULT_SETTINGS : OFF_SETTINGS);
   // As src/web.ts: the tabs are closed by a finalizer registered after serveEffect, so it runs first (finding 15).
   const web = yield* makeWebServer(manager, distDir);
   yield* HttpServer.serveEffect(web.handler);

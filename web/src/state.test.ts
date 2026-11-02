@@ -18,10 +18,11 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
 import { tabTitle } from "./title.ts";
-import { begun, type ChainState, configured, ended, OFF_SETTINGS } from "../../src/chain.ts";
+import { begun, type ChainState, configured, ended, OFF_SETTINGS, queueEdited } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
 
 // Plan step 4.2: the page's reducer.
@@ -3426,5 +3427,41 @@ describe("waits ended early", () => {
     expect(runAfter([transport, { _tag: "WaitEndedEarly", wait: 6 }]).retry?.wait?.waitId).toBe(7);
     expect(runAfter([limit, { _tag: "WaitEndedEarly", wait: 10 }]).limitWait).toBe(null);
     expect(runAfter([limit, { _tag: "WaitEndedEarly", wait: 6 }]).limitWait?.waitId).toBe(10);
+  });
+});
+
+// Issue #196 (S7): the queue edits this page sent and the server has not acknowledged; none is ever sent twice.
+describe("queue pending", () => {
+  const helloOf = (incarnation: string, chain: ChainState = helloChain): ServerMessage => ({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain, location: "/p", current: { refinement: [], implementation: null }, incarnation });
+  const open = reduce(initialState, helloOf("a"));
+  const add = newEdit("page", 1, { _tag: "Add", item: "3" as ItemId, title: "three" });
+  const move = newEdit("page", 2, { _tag: "Source", source: "queue" });
+
+  test("an edit sent shows at once and is acknowledged by its id in the server's applied", () => {
+    const one = queueSent(open, add, false);
+    expect(one.queuePending).toEqual([add]);
+    expect(queueShown(one)?.entries).toEqual([{ item: "3", title: "three" }]);
+    const acked = reduce(one, { type: "chain", state: queueEdited(helloChain, add) });
+    expect(acked.queuePending).toEqual([]);
+    expect(queueShown(acked)?.entries).toEqual([{ item: "3", title: "three" }]);
+  });
+  test("a hello of the same or another incarnation keeps the queued edits and drops the transmitted ones", () => {
+    const both = queueSent(queueSent(open, add, false), move, true);
+    expect(both.queueQueued).toBe(1);
+    for (const incarnation of ["a", "b"]) {
+      const after = reduce(both, helloOf(incarnation));
+      expect(after.queuePending).toEqual([move]);
+      expect(after.queueQueued).toBe(0);
+    }
+  });
+  test("an edit the failed page hands back is withdrawn", () => {
+    const both = queueSent(queueSent(open, add, false), move, true);
+    const back = queueUnsent(both, move);
+    expect(back.queuePending).toEqual([add]);
+    expect(back.queueQueued).toBe(0);
+    expect(queueShown(back)?.source).toBe("backlog");
+  });
+  test("null before the first hello", () => {
+    expect(queueShown(initialState)).toBeNull();
   });
 });
