@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -348,19 +348,29 @@ const railProblems = (nav: Locator): Promise<string[]> =>
     }
     return out;
   });
-/** The chain's control lies within the rail's column and does not overflow it (issue #204). */
+/** The chain's control lies within the rail's column and does not overflow it (issue #204), and so does every part of it
+ *  with a box, each outlined field's container, input and outline included (issue #203). */
 const chainInside = async (page: Page) => {
   const m = await page.locator("div.rail-column").evaluate((column) => {
     const chain = column.querySelector(".chain");
     if (chain === null) return null;
     const [c, k] = [column.getBoundingClientRect(), chain.getBoundingClientRect()];
-    return { left: k.left - c.left, right: c.right - k.right, scroll: chain.scrollWidth, client: chain.clientWidth };
+    const outside: string[] = [];
+    for (const el of chain.querySelectorAll("*")) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0) continue;
+      const name = `${el.tagName.toLowerCase()}.${[...el.classList].join(".")} "${el.textContent?.trim().slice(0, 40) ?? ""}"`;
+      if (r.left < c.left - 0.5) outside.push(`${name}: its left edge ${r.left} is left of the column's ${c.left}`);
+      if (r.right > c.right + 0.5) outside.push(`${name}: its right edge ${r.right} is ${r.right - c.right} px past the column's ${c.right}`);
+    }
+    return { left: k.left - c.left, right: c.right - k.right, scroll: chain.scrollWidth, client: chain.clientWidth, outside };
   });
   expect(m, "the chain's control is in the rail's column").not.toBe(null);
   if (m === null) return;
   expect(m.left, `the chain's control starts left of its column: ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(-0.5);
   expect(m.right, `the chain's control ends right of its column: ${JSON.stringify(m)}`).toBeGreaterThanOrEqual(-0.5);
   expect(m.scroll, `the chain's control overflows: ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.client + 0.5);
+  expect(m.outside, `parts of the chain's control lie outside the rail's column:\n${m.outside.join("\n")}`).toEqual([]);
 };
 const railSeparator = (page: Page) => page.locator('[data-column-resize="rail"]');
 const panelsSeparator = (page: Page) => page.locator('[data-column-resize="panels"]');
@@ -1062,6 +1072,29 @@ test.describe("the tests of the planSteps server, in order", () => {
     await expect(rail).toHaveAttribute("aria-valuenow", "28");
     await expect(split).toHaveAttribute("aria-valuenow", String(left));
   });
+
+  // Issue #203: m3-svelte's outlined fields held a 15rem minimum inside the 14rem rail and drew over the dashboard. At
+  // every width where the rail is a column, during a run, every part of the chain's control lies inside the column, the
+  // runs field with a limit of 10 and in its error state included.
+  for (const width of [1280, 1000, 840] as const) {
+    test(`(L41) the chain's control at ${width} × 800: every part inside the rail's column`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await startTask(page, layoutUrl("planSteps"));
+      await expect(railSeparator(page)).toHaveAttribute("aria-valuenow", "14");
+      await expect(page.locator("div.rail-column .chain")).toBeVisible();
+      const runs = page.locator('div.rail-column input[name="chain-runs"]');
+      await runs.fill("10");
+      await runs.press("Enter");
+      await settled(page);
+      await chainInside(page);
+      await runs.fill("x");
+      await runs.press("Enter");
+      await expect(page.locator("div.rail-column .chain").getByText(CHAIN_INVALID_RUNS)).toBeVisible();
+      await settled(page);
+      await chainInside(page);
+      await noSidewaysScroll(page);
+    });
+  }
 });
 
 test.describe("the tests of the longQuestion server, in order", () => {
