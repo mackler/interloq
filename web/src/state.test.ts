@@ -9,7 +9,8 @@ import * as prompts from "../../src/prompts.ts";
 import { chainSettingsOf, decodeServer, type RunEvent, type ServerMessage, type Stamped } from "../../src/protocol.ts";
 import { foreseenPhases, iterationsOf, type Phase, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 /** The phases of a run of Gather Requirements followed by planning, as runs had them before issue #120 separated the modes. */
-const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [...(questions ? foreseenPhases("refinement", iterationsOf(1)) : []), ...foreseenPhases("implementation", iterationsOf(iterations))];
+// A run with the question phase, as the tests of the timeline model it; issue #216 put Bring Up to Date before it in a refinement run, which the refinement tests name.
+const phasesOf = (questions: boolean, iterations: number): readonly Phase[] => [...(questions ? [{ kind: "questions" } as const] : []), ...foreseenPhases("implementation", iterationsOf(iterations))];
 import { emptyUiState, type UiFlag, type UiScope, withFlag } from "../../src/uiState.ts";
 import { conditionOf, type Disclosure, disclosureStateOf, type NodeView, PLAIN, railView, stageGlyph } from "./rail.ts";
 import { promptOf } from "../../src/userPrompts.ts";
@@ -1236,10 +1237,16 @@ describe("the whole run in the timeline", () => {
 
   // Issue #120, S6: a refinement run foresees Gather Requirements alone, so a finished refinement run leaves no phase not
   // reached (which means a halt) and none ahead; the events are those of src/run.ts's refinementRun.
-  test("a finished refinement run: Gather Requirements alone, done, and no entry not reached or ahead", () => {
+  // Issue #216: Bring Up to Date before it, with its cycles on its own entry.
+  test("a finished refinement run: Bring Up to Date then Gather Requirements, both done, and no entry not reached or ahead", () => {
+    const update = { kind: "update" } as const;
     const events: RunEvent[] = [
       started,
       notified({ _tag: "PhasesForeseen", phases: foreseenPhases("refinement", iterationsOf(1)) }),
+      began(update),
+      notified({ _tag: "RoundBegan", subject: "update", round: 1, limit: 5 }),
+      notified({ _tag: "LoopFinished", subject: "update", result: "converged" }),
+      notified({ _tag: "PhaseEnded", phase: update, result: "converged" }),
       began(q),
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
@@ -1247,7 +1254,8 @@ describe("the whole run in the timeline", () => {
       { _tag: "Ended", code: 0 },
     ];
     for (const s of [fold(live(events)), replayed(events)]) {
-      expect(entries(s)).toEqual([["Gather Requirements", "done"]]);
+      expect(entries(s)).toEqual([["Bring Up to Date", "done"], ["Gather Requirements", "done"]]);
+      expect(runOf(s, "implementation")?.timeline[0]?.groups.length).toBeGreaterThan(0);
       expect(runOf(s, "implementation")?.timeline.some((e) => (e.state as string) === "notReached" || (e.state as string) === "ahead")).toBe(false);
     }
   });

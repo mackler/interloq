@@ -588,7 +588,7 @@ const withRight = (run: RunView, m: Unplaced): RunView => {
 };
 
 /** The key of a phase: of its band, and of its entry in the rail. */
-export const bandKey = (phase: Phase): string => (phase.kind === "questions" ? "questions" : `${phase.kind}-${phase.n}`);
+export const bandKey = (phase: Phase): string => (phase.kind === "questions" || phase.kind === "update" ? phase.kind : `${phase.kind}-${phase.n}`);
 /** The band of a phase that began at `time`. */
 const bandOf = (phase: Phase, time: string, count: number): Band => ({ key: bandKey(phase), kind: phase.kind, name: phaseName(phase, count), began: time });
 /** How many phases of the kind the run holds, begun or foreseen: the timeline holds both (issue #6). */

@@ -445,6 +445,18 @@ const showRail = (props: RailProps) => show(TimelineRail, { ...props, rail: allO
 
 describe("TimelineRail", () => {
   const cycle = (round: number, raised: number | null, counted: number | null = raised) => ({ round, raised, counted, reviewIds: [] });
+  // Issue #216: a refinement's rail shows Bring Up to Date before Gather Requirements, with its cycles.
+  test("Bring Up to Date before Gather Requirements, with its cycles", () => {
+    const root = showRail({
+      busy: true,
+      timeline: [
+        { ...fresh, phase: { kind: "update" }, label: "Bring Up to Date", state: "done", groups: [{ subject: "update", heading: "Bring Up to Date", rounds: [cycle(1, 1), cycle(2, 0)], corrections: 1, result: "converged", done: true }], steps: [], plan: null },
+        { ...fresh, phase: { kind: "questions" }, label: "Gather Requirements", state: "active", groups: [], steps: [], plan: null },
+      ],
+    });
+    const entries = [...root.querySelectorAll("[data-state]")].map((e) => `${e.getAttribute("data-state")}:${e.querySelector("[data-label]")?.textContent?.trim()}`);
+    expect(entries).toEqual(["done:Bring Up to Date", "active:Gather Requirements"]);
+  });
   test("phases in order with their state, and the cycles grouped under each review with their issues, no limit", () => {
     const root = showRail({
       busy: true,
