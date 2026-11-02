@@ -23,7 +23,8 @@ import { fileURLToPath } from "node:url";
 import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
-import { LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
+import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
+import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import { E2E_ITEMS, PREPARED_ITEM } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
 import type { RunMode } from "../src/runMode.ts";
@@ -321,6 +322,52 @@ SCENARIOS.longHistory = {
   closings: [{ output: summaryReply("# Requirements\n\nAbsolute clock time.", "That is all I need.") }],
   reviews: [{ issues: [] }, { issues: [] }],
 };
+
+// Issue #221: an execution that prints 1,200 lines on a process with a 200-character name, a red line and a line of
+// 700 characters among them, beside two more running processes and one ended, then a tick every 300 ms while the call
+// hangs, so that the panel's scrollback is full and every tick evicts its oldest line.
+const liveKey = (id: string): ProcessKey => `claude:${id}` as ProcessKey;
+const LIVE_T1 = liveKey("t1");
+const liveName80 = (c: string): string => `${c} `.repeat(40).slice(0, 80);
+const LIVE_EVENTS: readonly OutputEvent[] = [
+  { _tag: "Started", key: LIVE_T1, name: LIVE_LONG_NAME },
+  { _tag: "Started", key: liveKey("t2"), name: liveName80("watch") },
+  { _tag: "Started", key: liveKey("t3"), name: liveName80("serve") },
+  ...Array.from({ length: 1200 }, (_, i): OutputEvent => ({
+    _tag: "Printed",
+    key: LIVE_T1,
+    name: LIVE_LONG_NAME,
+    text: i === 1150 ? `\u001b[31m${LIVE_RED_TEXT}\u001b[0m\n` : i === 1100 ? `${"w".repeat(LIVE_LONG_LINE)}\n` : `line ${i + 1}\n`,
+  })),
+  { _tag: "Started", key: liveKey("t4"), name: "false" },
+  { _tag: "Printed", key: liveKey("t4"), name: "false", text: "failing\n" },
+  { _tag: "Finished", key: liveKey("t4"), name: "false", status: { _tag: "Exited", code: 1 } },
+];
+const LIVE_TICKS = { key: LIVE_T1, name: LIVE_LONG_NAME, everyMs: LIVE_TICK_MS };
+SCENARIOS.liveOutput = {
+  steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }],
+  reviews: [{ issues: [] }],
+  execScripts: [{ output: LIVE_EVENTS, ticks: LIVE_TICKS, hang: true }],
+};
+// Issue #221: the compact panel under a question: four plan questions answered first, whose answers fill the compact
+// dashboard above the panel, then an execution with one running process that asks a permission while it prints.
+const LIVE_QUESTION_OPTIONS = LONG_ANSWERS.slice(0, 2).map((a) => {
+  const [label, ...rest] = a.replace(/^\d+\. /, "").split(": ");
+  return { label: label ?? "", description: rest.join(": ") };
+});
+SCENARIOS.liveOutputQuestion = askedInPlanReview({
+  steps: [
+    { output: { questions_for_user: Array.from({ length: 4 }, (_, i) => questionOf({ context: "The plan leaves this open.", question: `How should message ${i + 1} show its time?`, terms: [], options: LIVE_QUESTION_OPTIONS })) }, plan: "1. [ ] the step\n" },
+    { output: noQuestions },
+  ],
+  reviews: [{ issues: [] }, { issues: [] }],
+  execScripts: [{
+    output: [{ _tag: "Started", key: LIVE_T1, name: LIVE_LONG_NAME }, ...Array.from({ length: 300 }, (_, i): OutputEvent => ({ _tag: "Printed", key: LIVE_T1, name: LIVE_LONG_NAME, text: `line ${i + 1}\n` }))],
+    ticks: LIVE_TICKS,
+    permission: { tool: "Bash", input: { command: "npm run build", description: "Build the page" } },
+    hang: true,
+  }],
+});
 
 // S49 (W4-R1-1): a permission request with a 40-line command, which stays in the details while the question names the
 // action; Help me decide on it shows the analysis beside the question.

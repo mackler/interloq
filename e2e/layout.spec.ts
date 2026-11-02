@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
 import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
-import { LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
+import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
@@ -1281,4 +1281,169 @@ test.describe("the tests of the refinementTabs server, in order", () => {
       expect(await page.locator("nav.tabs > div").first().evaluate((el) => el.scrollWidth - el.clientWidth), `the top row at ${width} × ${height}`).toBeLessThanOrEqual(1);
     });
   }
+});
+
+// Issue #221: the live panel's bottom edge is its column's bottom whatever is above it; its handle moves it by mouse and
+// keyboard, the content above scrolling; it keeps 1,000 lines, following new output at its end and staying put while
+// scrolled up, the oldest line evicted under it; its colors are shown and no line is cut. One run, three sizes.
+const LIVE = (page: Page) => page.locator(".left .chat [data-live-output]");
+const LIVE_SECTION = (page: Page) => page.locator('.left .chat section[aria-label="You and Interloq"]');
+const bottomOf = async (l: Locator) => {
+  const b = await box(l);
+  return b.y + b.height;
+};
+/** The section's content bottom: its box less its bottom padding. */
+const contentBottom = async (l: Locator) => (await bottomOf(l)) - (await l.evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingBottom) || 0));
+/** The first line in view of the screen, screen-relative: its id and its top below the screen's top. */
+const firstInView = (screen: Locator) =>
+  screen.evaluate((s) => {
+    const top = s.getBoundingClientRect().top;
+    const first = [...s.querySelectorAll<HTMLElement>("[data-live-line]")].find((el) => el.getBoundingClientRect().bottom > top);
+    return { id: Number(first?.dataset.lineId ?? -1), offset: (first?.getBoundingClientRect().top ?? 0) - top };
+  });
+const lastTick = (screen: Locator) => screen.evaluate((s) => Number(/tick (\d+)/u.exec([...s.querySelectorAll("[data-live-line]")].at(-1)?.textContent ?? "")?.[1] ?? 0));
+const atEnd = (screen: Locator) => screen.evaluate((s) => s.scrollHeight - s.scrollTop - s.clientHeight <= 4);
+
+test.describe("the tests of the liveOutput server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(L36) the live panel anchored, resized, scrolled and colored at 1280 × 800, 640 × 400 and 390 × 844", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startTask(page, layoutUrl("liveOutput"));
+    const live = LIVE(page);
+    await expect(live.locator("[data-live-processes]")).toContainText(LIVE_LONG_NAME, { timeout: 60_000 });
+    const screen = live.locator("[data-live-screen]");
+    const handle = live.locator("[data-live-resize]");
+    const above = LIVE_SECTION(page).locator("[data-dashboard-above]");
+    await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
+
+    // The colors and the long line, before the ticks evict them.
+    const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).first();
+    expect(await red.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(224, 85, 97)");
+    expect(await screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).first().evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
+
+    // Following: at its end, the screen stays at its end as ticks arrive.
+    const tick = await lastTick(screen);
+    await expect.poll(() => lastTick(screen)).toBeGreaterThan(tick);
+    expect(await atEnd(screen)).toBe(true);
+
+    // Staying put across eviction: scrolled halfway, the first line in view keeps its id and its place.
+    await screen.evaluate((s) => { s.scrollTop = (s.scrollHeight - s.clientHeight) / 2; });
+    const before = await firstInView(screen);
+    const from = await lastTick(screen);
+    await expect.poll(() => lastTick(screen)).toBeGreaterThanOrEqual(from + 2);
+    const after = await firstInView(screen);
+    expect(after.id).toBe(before.id);
+    expect(Math.abs(after.offset - before.offset)).toBeLessThanOrEqual(2);
+
+    // The anchor evicted: at the top, the oldest line goes and the screen stays at its top, showing a later line.
+    await screen.evaluate((s) => { s.scrollTop = 0; });
+    const oldest = await firstInView(screen);
+    const at = await lastTick(screen);
+    await expect.poll(() => lastTick(screen)).toBeGreaterThan(at);
+    expect(await screen.evaluate((s) => s.scrollTop)).toBe(0);
+    expect((await firstInView(screen)).id).toBeGreaterThan(oldest.id);
+    await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });
+
+    let last = 0;
+    for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+      const size = `${width} × ${height}`;
+      await page.setViewportSize({ width, height });
+      await live.scrollIntoViewIfNeeded();
+      const section = LIVE_SECTION(page);
+      const placed = async (what: string) => {
+        expect(Math.abs((await bottomOf(live)) - (await contentBottom(section))), `${what}: the panel's bottom at the section's at ${size}`).toBeLessThanOrEqual(1);
+        expect((await box(live)).y, `${what}: the panel's top below the section's at ${size}`).toBeGreaterThan((await box(section)).y);
+      };
+      await placed("placed");
+      if (width >= 840) expect(Math.abs((await bottomOf(section)) - (await bottomOf(page.locator(".left"))))).toBeLessThanOrEqual(1);
+      else expect((await box(section)).height).toBeLessThanOrEqual(await page.locator("main.run").evaluate((el) => el.clientHeight));
+      expect(await live.locator("[data-live-processes]").evaluate((el) => el.scrollHeight > el.clientHeight), `the running list scrolls at ${size}`).toBe(true);
+
+      // The keyboard: five lines taller at most, the bottom unmoved.
+      const bottom = await bottomOf(live);
+      const start = Number(await handle.getAttribute("aria-valuenow"));
+      const max = Number(await handle.getAttribute("aria-valuemax"));
+      const screenHeight = (await box(screen)).height;
+      await handle.focus();
+      for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowUp");
+      await expect(handle).toHaveAttribute("aria-valuenow", String(Math.min(start + 5, max)));
+      if (start < max) expect((await box(screen)).height).toBeGreaterThan(screenHeight);
+      expect(Math.abs((await bottomOf(live)) - bottom)).toBeLessThanOrEqual(1);
+
+      // The mouse: dragged up by three lines.
+      await page.keyboard.press("Home");
+      const low = Number(await handle.getAttribute("aria-valuenow"));
+      const line = await page.evaluate(() => 1.125 * (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16));
+      const h = await box(handle);
+      await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2 - 3 * line, { steps: 6 });
+      await page.mouse.up();
+      await expect(handle).toHaveAttribute("aria-valuenow", String(Math.min(low + 3, max)));
+      expect(Math.abs((await bottomOf(live)) - bottom)).toBeLessThanOrEqual(1);
+
+      // End: the panel takes what the room allows, and the content above scrolls.
+      await handle.focus();
+      await page.keyboard.press("End");
+      await expect(handle).toHaveAttribute("aria-valuenow", String(max));
+      expect(await above.evaluate((el) => el.scrollHeight > el.clientHeight), `the content above scrolls at ${size}`).toBe(true);
+      await placed("at the most lines");
+      last = max;
+      await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
+    }
+
+    // The height is remembered across a reload.
+    await page.reload();
+    await expect(handle).toHaveAttribute("aria-valuenow", String(last), { timeout: 60_000 });
+  });
+});
+
+// Issue #221: the compact panel under a question, anchored at the compact dashboard's bottom while a process runs,
+// four earlier answers filling the region above it, which scrolls; no handle; its running list one line high.
+test.describe("the tests of the liveOutputQuestion server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(L37) the compact panel anchored under a question at 1280 × 800, 640 × 400 and 390 × 844", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startTask(page, layoutUrl("liveOutputQuestion"));
+    const firstCard = pane(page).getByRole("group", { name: "Proposed answers" }).getByRole("button").first();
+    for (let i = 1; i <= 4; i++) {
+      await expect(asking(page, `How should message ${i} show its time?`)).toBeVisible({ timeout: 60_000 });
+      await firstCard.click();
+    }
+    const compact = page.locator(".dashboard-compact");
+    const live = compact.locator("[data-live-output]");
+    await expect(live).toBeVisible({ timeout: 60_000 });
+    await expect(pane(page)).toBeVisible();
+    const toggle = compact.locator("[data-answers-heading] button").first();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(compact.locator("[data-answer]")).toHaveCount(4);
+    const above = compact.locator("[data-dashboard-above]");
+    const screen = live.locator("[data-live-screen]");
+    const list = live.locator("[data-live-processes]");
+    const line = await page.evaluate(() => 1.125 * (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16));
+
+    for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+      const size = `${width} × ${height}`;
+      await page.setViewportSize({ width, height });
+      await compact.scrollIntoViewIfNeeded();
+      await expect.poll(() => above.evaluate((el) => el.scrollHeight > el.clientHeight), { message: `the region above overflows at ${size}` }).toBe(true);
+      const bottom = await bottomOf(live);
+      expect(Math.abs(bottom - (await bottomOf(compact))), `the panel's bottom at the compact dashboard's at ${size}`).toBeLessThanOrEqual(1);
+      if (width >= 840) expect(Math.abs(bottom - (await bottomOf(page.locator(".left"))))).toBeLessThanOrEqual(1);
+      expect((await box(live)).y, `the panel's top within the compact dashboard at ${size}`).toBeGreaterThanOrEqual((await box(compact)).y);
+      expect((await box(screen)).height, `the screen's height at ${size}`).toBeGreaterThanOrEqual(2 * line);
+      await above.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      expect(await above.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+      expect(Math.abs((await bottomOf(live)) - bottom), `the panel unmoved by the region above at ${size}`).toBeLessThanOrEqual(1);
+      expect(await list.evaluate((el) => el.clientHeight)).toBeLessThanOrEqual(Math.ceil(line) + 1);
+      expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight), `the running list scrolls at ${size}`).toBe(true);
+      await expect(live.locator("[data-live-resize]")).toHaveCount(0);
+      const tick = await lastTick(screen);
+      await expect.poll(() => lastTick(screen)).toBeGreaterThan(tick);
+      expect(await atEnd(screen), `the screen follows the end at ${size}`).toBe(true);
+    }
+  });
 });

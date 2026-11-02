@@ -20,7 +20,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import type { Schema, Scope } from "effect";
 import type { RunError } from "../src/errors.ts";
 import type { LimitReset } from "../src/limitReset.ts";
-import type { OutputEvent } from "../src/liveOutput.ts";
+import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import type { ClaudeFailure, NetworkCode } from "../src/transport.ts";
 import { callFailure } from "../src/claude.ts";
 import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
@@ -358,7 +358,11 @@ export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effe
 /** `usage` appends a Claude Code line to usage.jsonl with the session the execution ran on, as the adapter does (issue #117). */
 /** `sessionTooLong` fails the call with ClaudeSessionTooLong after its reports, as the adapter does (issue #122). */
 /** `uncommitted` leaves the execution's change to a.txt uncommitted; by default it commits it, as the plan's last step does (issue #176). */
-export type ExecScript = { uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
+/**
+ * Issue #221: `output`, live output events the call sends through the run's Ui at its start; `ticks`, a line `tick <n>`
+ * printed on the Clock every `everyMs` while the call runs, for the end-to-end servers of the live panel.
+ */
+export type ExecScript = { output?: readonly OutputEvent[]; ticks?: Readonly<{ key: ProcessKey; name: string; everyMs: number }>; uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
 
 /** The paragraph of a context call's reply that a test does not script (S9): it keeps the rules. */
 export const SCRIPTED_CONTEXT = { context: "Interloq, the orchestrator, asks this question on behalf of the run." };
@@ -591,6 +595,19 @@ export class ScriptedPlanner implements PlannerShape {
       self.execPrompts.push(prompt);
       script.onCall?.();
       if (script.usage) self.recordUsage();
+      // Issue #221: the call's live output, then its ticks on the Clock, a child that ends with the call.
+      if (ui !== null) {
+        for (const event of script.output ?? []) yield* ui.output(event);
+        const ticks = script.ticks;
+        if (ticks !== undefined) {
+          const tick = (n: number): Effect.Effect<never> =>
+            Effect.sleep(Duration.millis(ticks.everyMs)).pipe(
+              Effect.andThen(ui.output({ _tag: "Printed", key: ticks.key, name: ticks.name, text: `tick ${n}\n` })),
+              Effect.andThen(Effect.suspend(() => tick(n + 1))),
+            );
+          yield* Effect.forkChild(tick(1));
+        }
+      }
       if (script.permission !== undefined && ui !== null && self.callStore !== null) {
         const draft = permissionDraft(script.permission.tool, script.permission.input);
         const answer = yield* askOffering(byLine((p) => ui.ask(p)), permissionPrompt, draft).pipe(Effect.provideService(Ui, ui), Effect.provideService(Store, self.callStore));

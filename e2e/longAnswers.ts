@@ -18,3 +18,12 @@ export const LONG_ANSWERS = [
   "2. Relative time: how long ago the message was published, such as five minutes ago, updated by a timer while the page is open. It answers the question of recency at a glance but changes under the reader, which needs care for assistive technology.",
   "3. Both, with the absolute time in the header and the relative time as its title; the configuration lives in /workspace/plan-review/archive-2026-09-27T19-14-30-277Z/work-review-1/changes.diff and nowhere else, so that nothing else has to change.",
 ] as const;
+
+/** Issue #221: the live panel's scenarios: a process name of 200 characters, which no line may cut. */
+export const LIVE_LONG_NAME = "npm run test:unit -- " + Array.from({ length: 12 }, (_, i) => `test/part${i + 1}.test.ts`).join(" ").slice(0, 161) + " && echo done-200x";
+/** The text of the colored line, red in the process's output. */
+export const LIVE_RED_TEXT = "red line";
+/** The length of the long line, which the panel wraps and never cuts. */
+export const LIVE_LONG_LINE = 700;
+/** How often the scripted process prints a tick, in milliseconds. */
+export const LIVE_TICK_MS = 300;

@@ -119,7 +119,7 @@
 
 <style>
   .dashboard { display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; flex: 1; padding: 0.75rem 1rem; border-radius: var(--m3-shape-large); background: var(--m3c-surface-container-low); overflow-wrap: anywhere; }
-  .dashboard.compact { flex: none; gap: 0.25rem; padding: 0.25rem 0; background: transparent; }
+  .dashboard.compact { flex: none; gap: 0.25rem; padding: 0.25rem 0 0; background: transparent; }
   /* M3's title-large for the header, small type for the models, set here since the m3-font-* classes are absent. */
   .header { margin: 0; font-size: 1.375rem; line-height: 1.75rem; font-weight: 400; }
   .models { margin: 0; display: flex; flex-wrap: wrap; gap: 0 1rem; font-size: 0.75rem; line-height: 1rem; color: var(--m3c-on-surface-variant); }

@@ -32,6 +32,8 @@
     const measure = (): void => {
       sectionHeight = sec.clientHeight;
       screenHeight = scr.clientHeight;
+      // A screen resized while it follows its end (the column shrinking or growing) stays at its end.
+      if (following) scr.scrollTop = scr.scrollHeight;
     };
     const observer = new ResizeObserver(measure);
     observer.observe(sec);
@@ -72,13 +74,18 @@
   // and where; after it, the screen at its end again, or that line back where it was, or the top where it was evicted.
   // Every position is measured against the screen itself (getBoundingClientRect), never an offset parent.
   let anchor: { atEnd: true } | { atEnd: false; id: string | null; offset: number } = { atEnd: true };
+  /** Whether the screen follows its end: true until a scroll leaves it, again once a scroll reaches it. */
+  let following = true;
+  const onScroll = (): void => {
+    if (screen !== undefined) following = followsEnd(screen.scrollTop, screen.clientHeight, screen.scrollHeight);
+  };
   const lineEl = (s: HTMLElement, id: string): HTMLElement | null => s.querySelector(`[data-line-id="${id}"]`);
   $effect.pre(() => {
     void view;
     void shown;
     const s = screen;
     if (s === undefined) return;
-    if (followsEnd(s.scrollTop, s.clientHeight, s.scrollHeight)) {
+    if (following) {
       anchor = { atEnd: true };
       return;
     }
@@ -144,7 +151,7 @@
       {/each}
     </ul>
   {/if}
-  <div class="screen" bind:this={screen} style:--shown={shown} data-live-screen aria-live="off">
+  <div class="screen" bind:this={screen} style:--shown={shown} data-live-screen aria-live="off" onscroll={onScroll}>
     {#each view.lines as line (line.id)}
       <div class="line" data-live-line data-line-id={line.id}>
         <span class="tag">{line._tag === "Touched" ? "" : line.tag}</span>
@@ -155,8 +162,9 @@
 </section>
 
 <style>
-  .live { display: flex; flex-direction: column; gap: 0.25rem; flex: none; font-family: var(--m3-font-mono); font-size: 0.75rem; line-height: 1.125rem; }
-  .live.compact { flex: 0 1 auto; min-height: 0; }
+  /* The panel may shrink below its height in lines where the column is smaller than its smallest height, so its bottom
+     stays the column's bottom; its screen keeps two lines at the least. */
+  .live { display: flex; flex-direction: column; gap: 0.25rem; flex: 0 1 auto; min-height: 0; font-family: var(--m3-font-mono); font-size: 0.75rem; line-height: 1.125rem; }
   .handle { height: 0.5rem; flex: none; cursor: row-resize; border-radius: var(--m3-shape-full); background: var(--m3c-outline-variant); touch-action: none; }
   .handle:focus-visible { outline: 2px solid var(--m3c-primary); outline-offset: 2px; }
   .header { margin: 0; color: var(--m3c-on-surface-variant); font-family: var(--m3-font); font-size: 0.875rem; line-height: 1.25rem; }
@@ -164,8 +172,7 @@
   .compact .processes { max-height: calc(1.125rem); padding-block: 0; }
   .processes li { white-space: pre-wrap; overflow-wrap: anywhere; }
   /* The screen: a terminal's look, its height in lines, scrolling through its scrollback. */
-  .screen { position: relative; overflow-y: auto; overflow-anchor: none; height: calc(var(--shown) * 1.125rem + 1rem); box-sizing: border-box; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--term-bg); color: var(--term-fg); }
-  .compact .screen { flex: 0 1 auto; min-height: calc(2 * 1.125rem + 1rem); }
+  .screen { position: relative; overflow-y: auto; overflow-anchor: none; height: calc(var(--shown) * 1.125rem + 1rem); box-sizing: border-box; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--term-bg); color: var(--term-fg); flex: 0 1 auto; min-height: calc(2 * 1.125rem + 1rem); }
   .line { display: grid; grid-template-columns: max-content 1fr; column-gap: 0.5rem; }
   .text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
   .tag, .dim { color: var(--term-dim); }
