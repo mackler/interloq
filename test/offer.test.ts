@@ -32,7 +32,7 @@ test("a permission's options show y and n, and the permission reply reads y as a
 });
 
 test("the unchanged pause's options show the answers parseUnchangedAnswer reads as their actions", () => {
-  const options = unchangedOptions(false);
+  const options = unchangedOptions(false, "review");
   const actions = ["retry", "proceed", "stop"] as const;
   options.forEach((o, i) => {
     assert.equal(parseUnchangedAnswer(token(o)), actions[i], o.label);

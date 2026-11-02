@@ -9,7 +9,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -819,7 +819,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     case "ReviewReceived": {
       const counts = (c: Cycle): Cycle => ({ ...c, raised: event.review.issues.length, counted: event.counted, reviewIds: event.review.issues.map((i) => i.id) });
       const timeline = openGroups(run.timeline, event.subject, (g) => inCycle(g, event.round, counts));
-      const body = event.review.issues.length === 0 ? "No issue: the review has converged." : withoutAuthorHeading(renderReview(event.review));
+      const body = event.review.issues.length === 0 ? noIssueLine(event.subject) : withoutAuthorHeading(renderReview(event.review));
       return withRight({ ...run, timeline }, message(run, time, "codex", body, "markdown", cycleHeading(subjectHeading(event.subject), event.round)));
     }
     case "ResponseReceived": {

@@ -66,19 +66,21 @@ const markedDisposition = fc.tuple(disposition, fc.boolean()).map(([d, task_disp
 const markedListResponse = fc.tuple(plannerResponse, fc.array(markedDisposition, { maxLength: 3 }), fc.array(questionEntry, { maxLength: 2 })).map(([r, dispositions, questions]) => ({ ...r, dispositions, questions }));
 const response = fc.oneof(plannerResponse, markedListResponse);
 const outcome = fc.record({ status: fc.constantFrom("finished" as const, "needs_input" as const, "blocked" as const, "aborted" as const), summary: text, question: text, remainingWork: text, userInput: fc.option(text, { nil: null }), checks: fc.array(fc.record({ step: text, command: text, seconds: fc.double({ noNaN: true, noDefaultInfinity: true }) }), { maxLength: 2 }) });
+// Issue #216 (W1-R1-2): the noun of Codex's pass that a pause, limit or unchanged origin carries.
+const pass = fc.constantFrom("check" as const, "review" as const);
 // S5: a question as the user is shown it, with every kind of origin and both kinds of answer.
 const origin = fc.oneof(
   fc.record({ kind: fc.constantFrom("clarification" as const, "followUp" as const), id: text }),
   fc.record({ kind: fc.constantFrom("reply" as const, "relayed" as const) }),
   fc.record({ kind: fc.constant("planner" as const), heading: text }),
   fc.record({ kind: fc.constant("permission" as const), tool: text, input: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constantFrom("reraised" as const, "secondClarification" as const, "disputedSelfCorrection" as const), id: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("reversal" as const), id: text, reverses: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("repeatedUnderNewId" as const), id: text, repeats: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("identical" as const), fileLabel: text }),
-  fc.record({ kind: fc.constant("pause" as const), heading: text, pause: fc.constant("idle" as const), idle: nat }),
-  fc.record({ kind: fc.constant("limit" as const), heading: text, limit: nat }),
-  fc.record({ kind: fc.constant("unchanged" as const), heading: text, fileLabel: text, accepted: fc.array(text, { maxLength: 2 }) }),
+  fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constantFrom("reraised" as const, "secondClarification" as const, "disputedSelfCorrection" as const), id: text }),
+  fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("reversal" as const), id: text, reverses: text }),
+  fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("repeatedUnderNewId" as const), id: text, repeats: text }),
+  fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("identical" as const), fileLabel: text }),
+  fc.record({ kind: fc.constant("pause" as const), heading: text, pass, pause: fc.constant("idle" as const), idle: nat }),
+  fc.record({ kind: fc.constant("limit" as const), heading: text, pass, limit: nat }),
+  fc.record({ kind: fc.constant("unchanged" as const), heading: text, pass, fileLabel: text, accepted: fc.array(text, { maxLength: 2 }) }),
   fc.record({ kind: fc.constant("transport" as const), agent, what: text, attempts: nat, fault: text }),
   // Issue #171: the tracker's exhaustion question.
   fc.record({ kind: fc.constant("tracker" as const), tracker: text, what: text, attempts: nat, fault: text }),
@@ -607,5 +609,23 @@ test("the four endable waits carry their id, required, and WaitEndedEarly decode
     assert.deepEqual(decoded(decodeServer(frame(event))), { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event } });
     const { wait: _, ...without } = event;
     assert.ok(Result.isFailure(decodeServer(frame(without))), event._tag);
+  }
+});
+
+// Issue #216 (W1-R1-2): a pause, limit or unchanged origin carries its pass; one recorded before the field decodes as review.
+test("a pause, limit or unchanged origin round-trips with pass check, and decodes with pass review where it has none", () => {
+  const decode = Schema.decodeUnknownResult(PresentedQuestionSchema);
+  const question = (origin: unknown) => ({ number: 1, origin, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: [], options: [], attached: null, decision: null });
+  const origins = [
+    { kind: "pause", heading: "h", pause: "idle", idle: 2 },
+    { kind: "pause", heading: "h", pause: "reraised", id: "U-R1-1" },
+    { kind: "pause", heading: "h", pause: "identical", fileLabel: "issue.json" },
+    { kind: "limit", heading: "h", limit: 5 },
+    { kind: "unchanged", heading: "h", fileLabel: "issue.json", accepted: ["U-R1-1"] },
+  ];
+  for (const o of origins) {
+    const checked = question({ ...o, pass: "check" });
+    assert.deepEqual(Result.getOrThrow(decode(checked)), checked);
+    assert.deepEqual(Result.getOrThrow(decode(question(o))), question({ ...o, pass: "review" }));
   }
 });

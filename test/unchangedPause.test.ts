@@ -16,7 +16,7 @@ for (const interview of [false, true]) {
     assert.equal(widget.kind, "unchanged");
     assert.deepEqual(widget.choices.filter((c) => c.sends !== "q" && c.sends !== DECIDE), []);
     assert.ok(widget.choices.some((c) => c.label === prompts.HELP_ME_DECIDE && c.sends === DECIDE), "the pause carries no offer");
-    const options = unchangedOptions(interview);
+    const options = unchangedOptions(interview, "review");
     assert.deepEqual(options.map((o) => o.label), [prompts.UNCHANGED_RETRY, prompts.UNCHANGED_PROCEED, prompts.UNCHANGED_STOP]);
     for (const option of options) {
       const sends = "token" in option.answer ? option.answer.token : "";
@@ -32,7 +32,7 @@ test("a blank or unknown answer at the pause is no answer, so it is asked again"
 });
 
 test("the requirements' Retry is another interview; the others' is another corrective turn", () => {
-  assert.notEqual(unchangedOptions(true)[0]!.description, unchangedOptions(false)[0]!.description);
-  assert.match(unchangedOptions(true)[0]!.description, /interview/);
-  assert.match(unchangedOptions(false)[0]!.description, /corrective turn/);
+  assert.notEqual(unchangedOptions(true, "review")[0]!.description, unchangedOptions(false, "review")[0]!.description);
+  assert.match(unchangedOptions(true, "review")[0]!.description, /interview/);
+  assert.match(unchangedOptions(false, "review")[0]!.description, /corrective turn/);
 });

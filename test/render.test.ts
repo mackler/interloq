@@ -115,7 +115,7 @@ test("conversation.md records a question under its displayed number with the rec
   assert.ok(record.includes("- 1. **Declare it**  \n  add it to package.json"), record);
   assert.ok(record.includes("- zod: a library"), record);
   assert.match(renderQuestionRecord({ ...q, origin: { kind: "relayed" } }), /^### Question 3\n/);
-  assert.match(renderQuestionRecord({ ...q, origin: { kind: "pause", heading: "Planning phase 1", pause: "reraised", id: "P1-R1-2" } }), /^### Question 3 \(P1-R1-2\)\n/);
+  assert.match(renderQuestionRecord({ ...q, origin: { kind: "pause", pass: "review", heading: "Planning phase 1", pause: "reraised", id: "P1-R1-2" } }), /^### Question 3 \(P1-R1-2\)\n/);
 });
 
 // S11 (issue #19): a pause's facts are prose, never JSON: the issue's problem and evidence, each earlier disposition

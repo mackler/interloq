@@ -9,7 +9,8 @@ import type { ParkedEnding } from "./runEnding.ts";
 import { FILE_CHANGE_FIELD, FIRST_PLAN_KINDS, TASK_DISPUTE_FIELD, WORK_EFFECT_FIELD, type WorkEffect, type WorkEffectReply, type WorkEffects, type Block, type CommandLine, type StepChecks, type ExecOutcome, type Explanation, type LogEntry, type Piece, type PieceOption, type Review, type TermsMode } from "./schema.ts";
 import type { ShownBlock } from "./pieces.ts";
 import type { InterviewStage } from "./uiEvents.ts";
-import type { AttachedKind, PauseOrigin, QuestionOrigin } from "./question.ts";
+import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./question.ts";
+export type { PassNoun } from "./question.ts";
 import type { Skipped, SkipProblem, TurnProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
 import type { ItemState } from "./tracker.ts";
@@ -2546,10 +2547,10 @@ export const UNCHANGED_PROCEED = "Proceed";
 export const UNCHANGED_STOP = "Stop the run";
 export const UNCHANGED_ANSWERS = { retry: "r", proceed: "p", stop: "s" } as const;
 export const unchangedPrompt = `${UNCHANGED_ANSWERS.retry} = retry; ${UNCHANGED_ANSWERS.proceed} = proceed with the file unchanged; ${UNCHANGED_ANSWERS.stop} = stop the run > `;
-export function unchangedOptionDescriptions(interview: boolean): Readonly<{ retry: string; proceed: string; stop: string }> {
+export function unchangedOptionDescriptions(interview: boolean, pass: PassNoun): Readonly<{ retry: string; proceed: string; stop: string }> {
   return {
     retry: interview ? "another interview is held on the accepted issues, so that the summary can be amended." : "Claude Code gets one more corrective turn to apply the amendments it described or to change its answers to the issues.",
-    proceed: "the answers to the issues stand with the file unchanged, and the next cycle's review goes ahead.",
+    proceed: `the answers to the issues stand with the file unchanged, and the next cycle's ${pass} goes ahead.`,
     stop: "the run ends here, and no further cycle runs.",
   };
 }
@@ -2891,12 +2892,12 @@ export function permissionFacts(tool: string, input: unknown): string {
   return `Claude Code, while it carries out the plan, asks to use its tool ${tool} with this input:\n${lines}\nIf the user allows it, the tool runs in the project; if not, Claude Code is told so and continues without it. The user is shown the input under the heading "${attachedHeading("request")}".${unknown.length === 0 ? "" : `\n${unknownSettingsRequest(unknown)}`}`;
 }
 /** The facts of the cycle limit a context call is given (S12). */
-export function limitFacts(heading: string, limit: number, counts: readonly number[]): string {
-  return `${heading} has had ${limit} rounds of review without convergence; the configuration allows ${limit} before the user is asked. The issues Codex counted in each round: ${counts.join(", ") || "none"}.`;
+export function limitFacts(heading: string, limit: number, counts: readonly number[], pass: PassNoun): string {
+  return `${heading} has had ${limit} rounds of ${pass} without convergence; the configuration allows ${limit} before the user is asked. The issues Codex counted in each round: ${counts.join(", ") || "none"}.`;
 }
 /** The facts of the unchanged pause a context call is given (S12). */
-export function unchangedFacts(heading: string, fileLabel: string, accepted: readonly string[]): string {
-  return `In ${heading}, Claude Code accepted ${accepted.join(", ")} of Codex's review in full or in part, but ${fileLabel}, the file under review, did not change, also after Claude Code was told so.`;
+export function unchangedFacts(heading: string, fileLabel: string, accepted: readonly string[], pass: PassNoun): string {
+  return `In ${heading}, Claude Code accepted ${accepted.join(", ")} of Codex's ${pass} in full or in part, but ${fileLabel}, ${fileUnder(pass)}, did not change, also after Claude Code was told so.`;
 }
 /**
  * The program's record labels of the two positions at a disputed pause (decision Q1): what Codex asks for, and what
@@ -3360,12 +3361,12 @@ const originText = (origin: QuestionOrigin): string => {
       return "Claude Code, the coding agent, asks for permission while it carries out the plan";
     case "pause":
       return origin.pause === "identical" || origin.pause === "idle"
-        ? `Asked because the review in ${origin.heading} is not making progress`
+        ? `Asked because the ${origin.pass} in ${origin.heading} is not making progress`
         : `Asked because Claude Code and Codex disagree during ${origin.heading}`;
     case "limit":
-      return `Asked because ${origin.heading} has used all its rounds of review`;
+      return `Asked because ${origin.heading} has used all its rounds of ${origin.pass}`;
     case "unchanged":
-      return `Asked because Claude Code accepted points of the review in ${origin.heading} but did not change the file`;
+      return `Asked because Claude Code accepted points of the ${origin.pass} in ${origin.heading} but did not change the file`;
     case "transport":
       return `Asked because ${origin.agent === "claude" ? "Claude Code" : "Codex"} could not be reached`;
     case "tracker":
@@ -3391,7 +3392,7 @@ export function recordSubject(origin: QuestionOrigin, question: string): string 
       return text;
   }
 }
-const pauseSubject = (p: PauseOrigin): string => {
+export const pauseSubject = (p: PauseOrigin): string => {
   switch (p.pause) {
     case "reraised":
       return `issue ${p.id}, raised again after Claude Code did not accept it in full`;
@@ -3417,7 +3418,7 @@ const pauseSubject = (p: PauseOrigin): string => {
 export const TASK_DISPUTE_QUESTION =
   "Codex and Claude Code read the task differently on this point: the first option follows Codex's reading and the second Claude Code's. Which reading of the task do you want the work to follow?";
 /** The question a pause of behaviour 7 asks, its interrogative sentence last (issue #34). */
-export function pauseQuestion(p: PauseOrigin): string {
+export function pauseQuestion(p: PauseOrigin, pass: PassNoun): string {
   switch (p.pause) {
     case "reraised":
     case "secondClarification":
@@ -3427,9 +3428,9 @@ export function pauseQuestion(p: PauseOrigin): string {
     case "disputedSelfCorrection":
       return "Claude Code now considers wrong a correction it made earlier for a point that Codex raised. Do you want the correction to stay or to be withdrawn?";
     case "identical":
-      return `${p.fileLabel} has returned to a version it had before, so the review alternates between two versions. Which of the two versions do you want kept?`;
+      return `${p.fileLabel} has returned to a version it had before, so the ${pass} alternates between two versions. Which of the two versions do you want kept?`;
     case "idle":
-      return `Claude Code has accepted no point of the review ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What do you want Claude Code and Codex to do about the points that led to no change?`;
+      return `Claude Code has accepted no point of the ${pass} ${p.idle === 1 ? "in the last cycle" : `in ${p.idle} cycles in a row`}. What do you want Claude Code and Codex to do about the points that led to no change?`;
   }
 }
 /** The heading of a question's context on the page (issue #137), the name issue #133 gives the same field on the decision page. */
@@ -3491,7 +3492,7 @@ export function processEndedRemaining(unfinished: readonly NamedStep[]): string 
 }
 
 /** The opening sentence of the program's own context paragraphs: what Interloq and the two agents are. */
-const INTERLOQ_SENTENCE =
+export const INTERLOQ_SENTENCE =
   "Interloq, the orchestrator that runs this task, starts two AI agents in this project and passes their work between them: Claude Code, the planning and coding agent, writes the plan and carries it out, and Codex, the reviewing agent, checks each document and the finished work.";
 /**
  * The program's context of a disputed pause whose disagreement Claude Code marked as about what the task requires
@@ -3526,12 +3527,12 @@ export function fallbackContext(origin: QuestionOrigin): string {
       return `${interloq} While Claude Code carries out the plan, it asks before it uses a tool that Interloq's permission settings do not allow on their own: here ${origin.tool}, with the input shown below. If you allow it, the tool runs in this project; if not, Claude Code is told so and continues without it. The question protects the project from an action you did not intend.`;
     case "pause":
       return origin.pause === "identical" || origin.pause === "idle"
-        ? `${interloq} During ${origin.heading}, Codex reviews a document in rounds and Claude Code answers each point and amends the document. When the rounds stop making progress, Interloq halts the review and asks you how to continue, so that the agents do not go round in circles at your cost.`
-        : `${interloq} During ${origin.heading}, Codex reviews a document in rounds, and Claude Code accepts, rejects or questions each point it raises. When the two keep disagreeing about a point, Interloq stops the review and asks you to settle it, so that the document follows your judgment rather than whichever agent insists longer.`;
+        ? `${interloq} During ${origin.heading}, Codex ${origin.pass}s a document in rounds and Claude Code answers each point and amends the document. When the rounds stop making progress, Interloq halts the ${origin.pass} and asks you how to continue, so that the agents do not go round in circles at your cost.`
+        : `${interloq} During ${origin.heading}, Codex ${origin.pass}s a document in rounds, and Claude Code accepts, rejects or questions each point it raises. When the two keep disagreeing about a point, Interloq stops the ${origin.pass} and asks you to settle it, so that the document follows your judgment rather than whichever agent insists longer.`;
     case "limit":
-      return `${interloq} During ${origin.heading}, Codex reviews a document in rounds until it raises no further point; the configuration allows ${origin.limit} rounds. They are used up without agreement, so Interloq asks you whether to continue, accept the document as it is, or stop, because further rounds take time and cost money.`;
+      return `${interloq} During ${origin.heading}, Codex ${origin.pass}s a document in rounds until it raises no further point; the configuration allows ${origin.limit} rounds. They are used up without agreement, so Interloq asks you whether to continue, accept the document as it is, or stop, because further rounds take time and cost money.`;
     case "unchanged":
-      return `${interloq} During ${origin.heading}, Claude Code accepted points ${origin.accepted.join(", ")} of Codex's review but did not change ${origin.fileLabel}, the file under review, even after being told so. Interloq asks you how to continue, because an accepted point that changes nothing would otherwise be reviewed again and again.`;
+      return `${interloq} During ${origin.heading}, Claude Code accepted points ${origin.accepted.join(", ")} of Codex's ${origin.pass} but did not change ${origin.fileLabel}, ${fileUnder(origin.pass)}, even after being told so. Interloq asks you how to continue, because an accepted point that changes nothing would otherwise be ${origin.pass}ed again and again.`;
     case "transport":
       return `${interloq} Every call to an agent goes over the network. ${agentWords(origin.agent)} could not be reached for ${origin.what} after ${origin.attempts} attempts; the last error is shown below. Interloq waited and tried again automatically. It now asks you whether to try again or stop the run; the run's records are kept either way.`;
     case "tracker":
@@ -4081,11 +4082,11 @@ export const notRefinedStoppedText = (item: string | null, reason: "refinementAs
  * Issue #185 (G-R1-3): a review loop's round limit (`rounds`) or limit of cycles without a correction (`idle`) extended
  * by `added` cycles: `first` where its question went unanswered, otherwise a later limit extended without a question.
  */
-export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", added: number, first: boolean): string => {
+export const limitExtendedLine = (heading: string, kind: "rounds" | "idle", added: number, first: boolean, pass: PassNoun): string => {
   const cycles = `${added} more ${added === 1 ? "cycle" : "cycles"}`;
   const limit = kind === "rounds" ? "its limit of cycles" : "its limit of cycles without a correction";
   return first
-    ? `No answer came to the question at ${limit} of ${heading}, so the review goes on for ${cycles}.`
+    ? `No answer came to the question at ${limit} of ${heading}, so the ${pass} goes on for ${cycles}.`
     : `${heading} reached ${limit} again; Interloq gave it ${cycles} without asking, because an earlier limit went unanswered.`;
 };
 /** Issue #185 (G-R1-1): the tracker's repeats used up after an abandonment, where nothing is asked. */
@@ -4259,7 +4260,11 @@ export const documentLabel = (subject: SubjectId): string =>
 // ---- Bring Up to Date (issue #216) ----------------------------------------------------------------------------------
 
 /** What a subject's lines call Codex's pass over it: a check in Bring Up to Date (requirements "Name"), a review otherwise. */
-export const passNoun = (subject: SubjectId): "check" | "review" => (subject === "update" ? "check" : "review");
+/** How a text names the reviewed file in a loop by its pass (W1-R1-2): the review's wording unchanged. */
+const fileUnder = (pass: PassNoun): string => (pass === "check" ? "the file being checked" : "the file under review");
+/** The line of a review or check that raised no issue (W1-R1-2), shown on the page as Codex's message. */
+export const noIssueLine = (subject: SubjectId): string => (passNoun(subject) === "check" ? "No issue: the check found nothing left to correct." : "No issue: the review has converged.");
+export const passNoun = (subject: SubjectId): PassNoun => (subject === "update" ? "check" : "review");
 
 /** The marker lines of the section `Refined using Interloq` (src/refinement.ts re-exports them). */
 export const OPENING_LINE = "## Refined using Interloq";

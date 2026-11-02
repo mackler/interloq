@@ -218,6 +218,14 @@ describe("ordering and the panels", () => {
     const none = fold(live([started, notified({ _tag: "ReviewReceived", subject: { plan: 1 }, round: 3, review: { issues: [] }, counted: 0 })]));
     expect(runOf(none, "implementation")?.right[0].body).toBe("No issue: the review has converged.");
   });
+
+  test("issue #216 (W1-R1-2): an empty check of Bring Up to Date says check, never review", () => {
+    const empty = fold(live([started, notified({ _tag: "ReviewReceived", subject: "update", round: 1, review: { issues: [] }, counted: 0 })]));
+    const body = runOf(empty, "implementation")?.right[0].body ?? "";
+    expect(body).toBe(prompts.noIssueLine("update"));
+    expect(body).toMatch(/\bcheck\b/u);
+    expect(body).not.toMatch(/\breview/iu);
+  });
 });
 
 // Issue #5: what Claude Code writes is attributed to Claude, as data; the page names it "Claude". Issue #22: it is the
@@ -1038,7 +1046,7 @@ describe("phase bands", () => {
 // Decision support, plan step 3.6.
 describe("decision support", () => {
   const positions = [{ label: "Follow Codex", description: "the issue" }, { label: "Follow Claude", description: "the rationale" }];
-  const presented: UiEvent = presentedEvent("Should Codex's position or Claude Code's position stand?", positions, { kind: "pause", heading: "Planning phase 1", pause: "reraised", id: "A" });
+  const presented: UiEvent = presentedEvent("Should Codex's position or Claude Code's position stand?", positions, { kind: "pause", heading: "Planning phase 1", pass: "review", pause: "reraised", id: "A" });
   const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
   const analyzed = (decision: number): UiEvent => ({ _tag: "DecisionAnalyzed", decision, question: "issue A", presented: { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: [], attached: null, decision: null }, options: positions, analysis });
 

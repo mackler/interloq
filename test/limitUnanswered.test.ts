@@ -43,13 +43,13 @@ test("an unanswered round limit extends the review by maxRounds and writes the l
   const extended = advance(atLimit.state, { kind: "LimitUnanswered" });
   assert.equal(extended.state.limit, 2);
   assert.equal(extended.state.unanswered, true);
-  const first = limitExtendedLine("Planning phase 1", "rounds", 1, true);
+  const first = limitExtendedLine("Planning phase 1", "rounds", 1, true, "review");
   assert.ok(converses(extended).includes(first) && says(extended).includes(first));
   assert.deepEqual(last(extended), { kind: "CallReviewer", round: 2, unexplained: null });
   const again = roundOf(extended, 2);
   assert.ok(!again.commands.some((c) => c.kind === "AskLimit"));
   assert.equal(again.state.limit, 3);
-  assert.ok(converses(again).includes(limitExtendedLine("Planning phase 1", "rounds", 1, false)));
+  assert.ok(converses(again).includes(limitExtendedLine("Planning phase 1", "rounds", 1, false, "review")));
   assert.deepEqual(last(again), { kind: "CallReviewer", round: 3, unexplained: null });
 });
 
@@ -60,11 +60,11 @@ test("an unanswered idle limit resets the idle count without recording a decisio
   assert.equal(extended.state.idle, 0);
   assert.equal(extended.state.unanswered, true);
   assert.ok(!extended.commands.some((c) => c.kind === "RecordDecision"));
-  assert.ok(converses(extended).includes(limitExtendedLine("Planning phase 1", "idle", 1, true)));
+  assert.ok(converses(extended).includes(limitExtendedLine("Planning phase 1", "idle", 1, true, "review")));
   assert.deepEqual(last(extended), { kind: "CallReviewer", round: 2, unexplained: null });
   const again = roundOf(extended, 2);
   assert.ok(!again.commands.some((c) => c.kind === "AskDecision" || c.kind === "RecordDecision"));
-  assert.ok(converses(again).includes(limitExtendedLine("Planning phase 1", "idle", 1, false)));
+  assert.ok(converses(again).includes(limitExtendedLine("Planning phase 1", "idle", 1, false, "review")));
   assert.deepEqual(last(again), { kind: "CallReviewer", round: 3, unexplained: null });
 });
 
@@ -82,5 +82,5 @@ test("the events are ignored at any other step", () => {
 });
 
 test("no extension line says give up", () => {
-  for (const kind of ["rounds", "idle"] as const) for (const first of [true, false]) assert.doesNotMatch(limitExtendedLine("H", kind, 3, first), /give up/i);
+  for (const kind of ["rounds", "idle"] as const) for (const first of [true, false]) assert.doesNotMatch(limitExtendedLine("H", kind, 3, first, "review"), /give up/i);
 });

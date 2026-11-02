@@ -191,6 +191,8 @@ const AgentSchema = Schema.Literals(["claude", "codex"]);
 const round = { subject: SubjectIdSchema, round: Int };
 
 const withHeading = { heading: Str };
+// Issue #216 (W1-R1-2): the noun of Codex's pass; an origin recorded before the field belongs to a review.
+const withPass = { ...withHeading, pass: Schema.Literals(["check", "review"]).pipe(Schema.withDecodingDefaultKey(Effect.succeed("review" as const))) };
 /** QuestionOrigin of src/question.ts, variant by variant (S5). */
 const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("clarification"), id: Str }),
@@ -199,13 +201,13 @@ const QuestionOriginSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("planner"), ...withHeading }),
   Schema.Struct({ kind: Schema.Literal("relayed") }),
   Schema.Struct({ kind: Schema.Literal("permission"), tool: Str, input: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literals(["reraised", "secondClarification", "disputedSelfCorrection"]), id: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("reversal"), id: Str, reverses: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("repeatedUnderNewId"), id: Str, repeats: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("identical"), fileLabel: Str }),
-  Schema.Struct({ kind: Schema.Literal("pause"), ...withHeading, pause: Schema.Literal("idle"), idle: Int }),
-  Schema.Struct({ kind: Schema.Literal("limit"), ...withHeading, limit: Int }),
-  Schema.Struct({ kind: Schema.Literal("unchanged"), ...withHeading, fileLabel: Str, accepted: Schema.Array(Str) }),
+  Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literals(["reraised", "secondClarification", "disputedSelfCorrection"]), id: Str }),
+  Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("reversal"), id: Str, reverses: Str }),
+  Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("repeatedUnderNewId"), id: Str, repeats: Str }),
+  Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("identical"), fileLabel: Str }),
+  Schema.Struct({ kind: Schema.Literal("pause"), ...withPass, pause: Schema.Literal("idle"), idle: Int }),
+  Schema.Struct({ kind: Schema.Literal("limit"), ...withPass, limit: Int }),
+  Schema.Struct({ kind: Schema.Literal("unchanged"), ...withPass, fileLabel: Str, accepted: Schema.Array(Str) }),
   Schema.Struct({ kind: Schema.Literal("transport"), agent: AgentSchema, what: Str, attempts: Int, fault: Str }),
   Schema.Struct({ kind: Schema.Literal("tracker"), tracker: Str, what: Str, attempts: Int, fault: Str }),
   Schema.Struct({ kind: Schema.Literal("suiteStopped"), command: Str, suite: Int, stops: Int, reason: Str }),

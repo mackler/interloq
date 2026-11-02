@@ -195,6 +195,12 @@ export const validateQuestions = (questions: readonly Readonly<{ where: string; 
 // ---- the one presentation of a question (S5, issues #46 and #57) ------------------------------------------------------
 
 /** The pause of behaviour 7 that asks the question, with the ids and names it concerns (S5, S11). */
+/**
+ * The noun of Codex's pass over a document (issue #216, W1-R1-2): "check" in Bring Up to Date, "review" in every other
+ * loop. A question a loop asks carries it, so every text the user reads of that question names the pass as the loop does.
+ */
+export type PassNoun = "check" | "review";
+
 export type PauseOrigin =
   | Readonly<{ pause: "reraised"; id: string }>
   | Readonly<{ pause: "secondClarification"; id: string }>
@@ -289,9 +295,9 @@ export type QuestionOrigin =
   | Readonly<{ kind: "relayed" }>
   /** A permission request of Claude Code while implementing the plan. */
   | Readonly<{ kind: "permission"; tool: string; input: string }>
-  | (Readonly<{ kind: "pause"; heading: string }> & PauseOrigin)
-  | Readonly<{ kind: "limit"; heading: string; limit: number }>
-  | Readonly<{ kind: "unchanged"; heading: string; fileLabel: string; accepted: readonly string[] }>
+  | (Readonly<{ kind: "pause"; heading: string; pass: PassNoun }> & PauseOrigin)
+  | Readonly<{ kind: "limit"; heading: string; pass: PassNoun; limit: number }>
+  | Readonly<{ kind: "unchanged"; heading: string; pass: PassNoun; fileLabel: string; accepted: readonly string[] }>
   | Readonly<{ kind: "transport"; agent: "claude" | "codex"; what: string; attempts: number; fault: string }>
   /** Issue #171: a request to the project's issue tracker whose repeats are used up. */
   | Readonly<{ kind: "tracker"; tracker: string; what: string; attempts: number; fault: string }>

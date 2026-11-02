@@ -588,7 +588,7 @@ test("the questions the program composes embed no agent-written or SDK-written t
     assert.ok(prompts.limitQuestion(heading, 5).length < 200, heading);
     for (const file of files) assert.ok(prompts.unchangedQuestion(heading, file).length < 200, `${heading} ${file}`);
   }
-  for (const file of files) for (const pause of ["identical"] as const) assert.ok(prompts.pauseQuestion({ pause, fileLabel: file, heading: "Planning phase 1", round: 1 } as never).length < 200, file);
+  for (const file of files) for (const pause of ["identical"] as const) assert.ok(prompts.pauseQuestion({ pause, fileLabel: file, heading: "Planning phase 1", round: 1 } as never, "review").length < 200, file);
 });
 test("the transport pause's details hold the attempts and the whole fault; the fallback context points to them", () => {
   const fault = `read ECONNRESET ${"z".repeat(2500)}`;
@@ -722,7 +722,7 @@ test("S17: every question Interloq composes names the user as the one who decide
     { pause: "idle", idle: 2 },
   ] as const;
   const questions = [
-    ...pauses.map((p) => prompts.pauseQuestion(p)),
+    ...pauses.map((p) => prompts.pauseQuestion(p, "review")),
     prompts.limitQuestion("Planning phase 1", 5),
     prompts.unchangedQuestion("Planning phase 1", "plan.json"),
     prompts.transportExhaustedQuestion("codex", "the review"),
@@ -740,8 +740,8 @@ test("S17: every question Interloq composes names the user as the one who decide
 test("S17: the options Interloq composes do not repeat what they share", () => {
   const groups = [
     [prompts.PERMISSION_ALLOW_DESCRIPTION, prompts.PERMISSION_DENY_DESCRIPTION],
-    Object.values(prompts.unchangedOptionDescriptions(false)),
-    Object.values(prompts.unchangedOptionDescriptions(true)),
+    Object.values(prompts.unchangedOptionDescriptions(false, "review")),
+    Object.values(prompts.unchangedOptionDescriptions(true, "review")),
     Object.values(prompts.limitOptionDescriptions("proceed to implementation with the plan as it is")),
     Object.values(prompts.transportOptionDescriptions()),
   ];

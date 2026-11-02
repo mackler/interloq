@@ -28,10 +28,10 @@ const requestOf = (origin: QuestionOrigin, question: string): prompts.ContextReq
   fallback: plainBlocks(prompts.fallbackContext(origin)),
   history: [],
 });
-const disputedOrigin: QuestionOrigin = { kind: "pause", heading: "Planning 1", pause: "reraised", id: "P1-R1-1" };
-const disputed = requestOf(disputedOrigin, prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }));
-const identicalOrigin: QuestionOrigin = { kind: "pause", heading: "Planning 1", pause: "identical", fileLabel: "plan.json" };
-const identical = requestOf(identicalOrigin, prompts.pauseQuestion({ pause: "identical", fileLabel: "plan.json" }));
+const disputedOrigin: QuestionOrigin = { kind: "pause", pass: "review", heading: "Planning 1", pause: "reraised", id: "P1-R1-1" };
+const disputed = requestOf(disputedOrigin, prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }, "review"));
+const identicalOrigin: QuestionOrigin = { kind: "pause", pass: "review", heading: "Planning 1", pause: "identical", fileLabel: "plan.json" };
+const identical = requestOf(identicalOrigin, prompts.pauseQuestion({ pause: "identical", fileLabel: "plan.json" }, "review"));
 const withLabels = (reply: QuestionContext, labels: readonly string[]): QuestionContext => ({
   ...reply,
   options: reply.options.map((o, i) => ({ ...o, label: plainPieces(labels[i]) })),

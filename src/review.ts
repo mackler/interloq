@@ -100,15 +100,15 @@ export const showDocument = <R extends PlannerResponse, D>(subject: Subject<R, D
  * The question a decision of a review loop asks (S7): a pause of behaviour 7 with its fixed question and the
  * program's context, or Claude Code's question with its own; `decision` is k inside decision k (issue #57).
  */
-export const decisionDraft = (heading: string, asks: Asks, options: readonly Option[], decision: number | null): QuestionDraft => {
+export const decisionDraft = (heading: string, asks: Asks, options: readonly Option[], decision: number | null, pass: prompts.PassNoun): QuestionDraft => {
   if (asks.kind === "planner") return plannerDraft(asks.question, heading, decision);
   const pause = pauseOriginOf(asks.facts);
-  const origin: QuestionOrigin = { kind: "pause", heading, ...pause };
+  const origin: QuestionOrigin = { kind: "pause", heading, pass, ...pause };
   // S12: Claude Code writes the context from the pause's facts, which the user reads beside it as prose (S11).
   // Issue #156: a disagreement Claude Code marked asks which reading of the task the work should follow.
   const taskDispute = taskDisputeOf(asks.facts);
   const context = taskDispute ? { blocks: plainBlocks(prompts.taskDisputeContext(heading)), by: "program" as const } : programContext(origin);
-  const question = taskDispute ? prompts.TASK_DISPUTE_QUESTION : prompts.pauseQuestion(pause);
+  const question = taskDispute ? prompts.TASK_DISPUTE_QUESTION : prompts.pauseQuestion(pause, pass);
   return { origin, context, history: [], explanations: [], question: plainPieces(question), options: prompts.isDisputedKind(pause.pause) ? positionOptions(pause.pause, options) : numberedOptions(options), attached: attachedOf("reviewFacts", pauseProse(asks.facts)), explain: taskDispute ? prompts.TASK_DISPUTE_CONTEXT_FACTS : "", decision };
 };
 /** A question Claude Code returned with a plan or a response (S7): its context, terms and options as it wrote them. */
@@ -339,6 +339,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
     const config = yield* RunConfig;
     const reviewer = yield* Reviewer;
     const { id, heading, fileLabel } = subject;
+    const pass = prompts.passNoun(id);
     // Issue #183: Codex's reply is decoded with the subject's review schema, the one its turns are given.
     const reviewText = Schema.fromJsonString(subject.reviewSchema);
     const phase = subject.phase;
@@ -479,8 +480,8 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           case "AskLimit": {
             // The limit is a choice between options (decision Q6), so it carries the offer; the answer is passed on as typed.
             const { proceed } = state.setup;
-            const origin: QuestionOrigin = { kind: "limit", heading, limit: command.limit };
-            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.limitQuestion(heading, command.limit)), options: limitOptions(proceed), explain: prompts.limitFacts(heading, command.limit, state.counts), decision: within };
+            const origin: QuestionOrigin = { kind: "limit", heading, pass, limit: command.limit };
+            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.limitQuestion(heading, command.limit)), options: limitOptions(proceed), explain: prompts.limitFacts(heading, command.limit, state.counts, pass), decision: within };
             // Issue #185 (G-R1-3): asked with "extend"; only the expiry of this prompt itself extends the review, while a
             // question asked inside it (the context call's, decision support's) expires with "abandon" and ends the run.
             return yield* askOffering(byLine((p) => ui.ask(p, "extend")), proceed === null ? prompts.limitNoProceedPrompt : prompts.limitPrompt, draft).pipe(
@@ -490,13 +491,13 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
           }
           case "AskUnchanged": {
             // Issue #30: Retry, Proceed or Stop, with the offer of decision support; an answer that is none of them is asked again.
-            const origin: QuestionOrigin = { kind: "unchanged", heading, fileLabel, accepted: command.accepted };
-            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(command.retry === "interview"), explain: prompts.unchangedFacts(heading, fileLabel, command.accepted), decision: within };
+            const origin: QuestionOrigin = { kind: "unchanged", heading, pass, fileLabel, accepted: command.accepted };
+            const draft: QuestionDraft = { origin, context: programContext(origin), history: [], explanations: [], question: plainPieces(prompts.unchangedQuestion(heading, fileLabel)), options: unchangedOptions(command.retry === "interview", pass), explain: prompts.unchangedFacts(heading, fileLabel, command.accepted, pass), decision: within };
             const answer = yield* askOffering(byLine((p) => ui.ask(p)), prompts.unchangedPrompt, draft, (a) => parseUnchangedAnswer(a) !== null);
             return { kind: "UnchangedAnswer", answer: parseUnchangedAnswer(answer)! };
           }
           case "AskDecision": {
-            const draft = decisionDraft(heading, command.asks, command.options, within);
+            const draft = decisionDraft(heading, command.asks, command.options, within, pass);
             // Issue #185 (G-R1-3): the idle limit extends the review when unanswered, as the round limit does.
             if (command.asks.kind === "pause" && command.asks.facts.pause === "idle")
               return yield* askDecisionQuestion(draft, "extend").pipe(

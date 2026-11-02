@@ -175,11 +175,11 @@ test("decisionDraft asks a marked disagreement as a reading of the task, and an 
   const { piecesText, blocksText } = await import("../src/pieces.ts");
   const options = [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }];
   const facts = (taskDispute: boolean) => ({ pause: "reraised" as const, id: "Q-R1-1", history: [], issue: null, taskDispute, effects: null });
-  const markedDraft = decisionDraft("Question review", { kind: "pause", facts: facts(true) }, options, null);
+  const markedDraft = decisionDraft("Question review", { kind: "pause", facts: facts(true) }, options, null, "review");
   assert.equal(piecesText(markedDraft.question), prompts.TASK_DISPUTE_QUESTION);
   assert.deepEqual(markedDraft.context, { blocks: [{ kind: "paragraph", pieces: [{ text: prompts.taskDisputeContext("Question review"), ref: "", code: false }] }], by: "program" });
-  const plainDraft = decisionDraft("Question review", { kind: "pause", facts: facts(false) }, options, null);
-  assert.equal(piecesText(plainDraft.question), prompts.pauseQuestion({ pause: "reraised", id: "Q-R1-1" }));
+  const plainDraft = decisionDraft("Question review", { kind: "pause", facts: facts(false) }, options, null, "review");
+  assert.equal(piecesText(plainDraft.question), prompts.pauseQuestion({ pause: "reraised", id: "Q-R1-1" }, "review"));
   assert.deepEqual(plainDraft.context, programContext(plainDraft.origin));
   assert.deepEqual(markedDraft.options.map((o) => o.label), plainDraft.options.map((o) => o.label));
   // Issue #159: both keep the record labels and show the outcome labels.
@@ -213,7 +213,7 @@ test("decisionDraft shows the outcome labels of every disputed pause, naming no 
     }
   };
   for (const kind of prompts.DISPUTED_PAUSE_KINDS) {
-    const draft = decisionDraft("Planning 1", { kind: "pause", facts: factsOf(kind) }, options, null);
+    const draft = decisionDraft("Planning 1", { kind: "pause", facts: factsOf(kind) }, options, null, "review");
     assert.deepEqual(draft.options.map((o) => o.label), [prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION], kind);
     const presented = presentedQuestion(draft, 1);
     assert.ok(Result.isSuccess(presented));
@@ -231,7 +231,7 @@ test("a context-written label of a disputed pause chooses its position, and a pe
   const { plainOption } = await import("../src/pieces.ts");
   const { optionText } = await import("../src/input.ts");
   const options = positionOptions("reraised", [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }]);
-  const origin = { kind: "pause" as const, heading: "Planning 1", pause: "reraised" as const, id: "P1-R1-1" };
+  const origin = { kind: "pause" as const, heading: "Planning 1", pass: "review" as const, pause: "reraised" as const, id: "P1-R1-1" };
   const draft = { origin, context: programContext(origin), history: [], explanations: [], question: [], options, decision: null };
   const written = { context: programContext(origin), history: [], explanations: [], options: [plainOption("Accept the review's point", "Drop Q1."), plainOption("Leave the plan as it is now", "Keep Q1.")] };
   const rephrased = withContext(draft, written).options;
@@ -264,7 +264,7 @@ test("a marked pause keeps its context when the context call falls back, and the
     const { layer, probe } = testLayer(tempRepo(), { answers: ["1"] });
     const requests: prompts.ContextRequest[] = [];
     const decider = { ...noDecider, explain: (request: prompts.ContextRequest) => Effect.sync(() => (requests.push(request), programWritten(request))) };
-    const draft = decisionDraft("Question review", { kind: "pause", facts: facts(taskDispute) }, options, null);
+    const draft = decisionDraft("Question review", { kind: "pause", facts: facts(taskDispute) }, options, null, "review");
     await Effect.runPromise(Effect.gen(function* () {
       yield* (yield* Store).init("the task");
       const ui = yield* Ui;

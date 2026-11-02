@@ -124,7 +124,7 @@ export type Asks = Readonly<{ kind: "pause"; facts: PauseFacts }> | Readonly<{ k
 type Ask = Readonly<{ asks: Asks; id: IssueId | null; options?: readonly Option[]; key?: string; taskDispute?: boolean }>;
 /** The subject of a decision in the records, from what it asks (S7): prompts.recordSubject is the one place it is composed. */
 export const subjectOf = (heading: string, asks: Asks): string =>
-  asks.kind === "pause" ? prompts.recordSubject({ kind: "pause", heading, ...pauseOriginOf(asks.facts) }, "") : prompts.recordSubject({ kind: "planner", heading }, piecesText(asks.question.question));
+  asks.kind === "pause" ? prompts.pauseSubject(pauseOriginOf(asks.facts)) : prompts.recordSubject({ kind: "planner", heading }, piecesText(asks.question.question));
 /** The reviewer's position and the planner's position at a disputed pause (decision Q1). */
 const positions = (reviewer: string, planner: string): readonly Option[] => [
   { label: prompts.REVIEWER_POSITION, description: reviewer },
@@ -276,7 +276,7 @@ const ask = (s: ReviewState, step: Step, asking: Ask, before: readonly ReviewCom
  * the unanswered question, otherwise a later limit extended without one. Each adds as many cycles as the limit reached.
  */
 const extension = (s: ReviewState, kind: "rounds" | "idle", first: boolean): readonly ReviewCommand[] => {
-  const text = prompts.limitExtendedLine(s.setup.heading, kind, kind === "rounds" ? s.setup.maxRounds : s.setup.maxIdleRounds, first);
+  const text = prompts.limitExtendedLine(s.setup.heading, kind, kind === "rounds" ? s.setup.maxRounds : s.setup.maxIdleRounds, first, prompts.passNoun(s.setup.subject));
   return [say(text), { kind: "Converse", markdown: `${text}\n\n` }];
 };
 /** The round limit extended by maxRounds, the next round started. */

@@ -27,8 +27,8 @@ test("an unanswered round limit extends the plan review, the next limit is exten
   assert.equal(probe.ui.asked.length, 1);
   assert.deepEqual(probe.ui.expiries, ["extend"]);
   const conversation = conversationOf(probe.dir);
-  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "rounds", 1, true)), conversation);
-  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "rounds", 1, false)), conversation);
+  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "rounds", 1, true, "review")), conversation);
+  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "rounds", 1, false, "review")), conversation);
   assert.match(conversation, /The review of plan.json has converged/);
 });
 
@@ -44,8 +44,8 @@ test("an unanswered idle limit extends the plan review without recording a decis
   assert.equal(probe.ui.asked.length, 1);
   assert.deepEqual(probe.ui.expiries, ["extend"]);
   const conversation = conversationOf(probe.dir);
-  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "idle", 1, true)), conversation);
-  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "idle", 1, false)), conversation);
+  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "idle", 1, true, "review")), conversation);
+  assert.ok(conversation.includes(limitExtendedLine("Planning phase 1", "idle", 1, false, "review")), conversation);
   assert.ok(!(await probe.loadLog()).some((e) => e.action === "decided_by_user"));
 });
 
@@ -74,5 +74,5 @@ test("a question inside decision support at a round limit that goes unanswered e
   const error = await runFails(layer, "NoAnswer", /no answer came within/);
   assert.equal(error._tag === "NoAnswer" && error.then, "abandon");
   assert.deepEqual(probe.ui.expiries, ["extend", "abandon"]);
-  assert.ok(!conversationOf(probe.dir).includes(limitExtendedLine("Planning phase 1", "rounds", 1, true)), conversationOf(probe.dir));
+  assert.ok(!conversationOf(probe.dir).includes(limitExtendedLine("Planning phase 1", "rounds", 1, true, "review")), conversationOf(probe.dir));
 });

@@ -124,7 +124,7 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
   await runTask(pause.layer);
   const paused = presentedQuestions(pause.probe.ui).find((q) => q.origin.kind === "pause");
   assert.deepEqual([paused?.context, paused?.explanations], [{ blocks: context, by: "agent" }, explanations]);
-  assert.equal(paused && questionText(paused), prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }));
+  assert.equal(paused && questionText(paused), prompts.pauseQuestion({ pause: "reraised", id: "P1-R1-1" }, "review"));
   // The context call was given the pause's facts, which the user also reads (S11).
   assert.ok(pause.probe.planner.contextPrompts[0].includes(JSON.stringify(paused?.attached?.blocks ?? "?")));
 
@@ -139,7 +139,7 @@ test("S12: a pause, the cycle limit and the unchanged pause are presented with t
   const [atLimit] = presentedQuestions(limit.probe.ui);
   assert.equal(atLimit.origin.kind, "limit");
   assert.equal(atLimit.context.by, "agent");
-  assert.match(limit.probe.planner.contextPrompts[0], new RegExp(prompts.limitFacts("Planning phase 1", 1, [1]).replace(/[.()]/g, "\\$&")));
+  assert.match(limit.probe.planner.contextPrompts[0], new RegExp(prompts.limitFacts("Planning phase 1", 1, [1], "review").replace(/[.()]/g, "\\$&")));
 
   const unchanged = testLayer(tempRepo(), {
     answers: [prompts.UNCHANGED_ANSWERS.proceed],

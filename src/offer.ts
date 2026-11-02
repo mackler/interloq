@@ -141,8 +141,8 @@ export const permissionDraft = (tool: string, input: unknown): QuestionDraft => 
   };
 };
 /** The pause of issue #30: Retry, Proceed and Stop, each chosen by the answers parseUnchangedAnswer reads as it. */
-export const unchangedOptions = (interview: boolean): readonly OfferedOption[] => {
-  const d = prompts.unchangedOptionDescriptions(interview);
+export const unchangedOptions = (interview: boolean, pass: prompts.PassNoun): readonly OfferedOption[] => {
+  const d = prompts.unchangedOptionDescriptions(interview, pass);
   return [
     own(prompts.UNCHANGED_RETRY, d.retry, { token: prompts.UNCHANGED_ANSWERS.retry }, (answer: string) => parseUnchangedAnswer(answer) === "retry"),
     own(prompts.UNCHANGED_PROCEED, d.proceed, { token: prompts.UNCHANGED_ANSWERS.proceed }, (answer: string) => parseUnchangedAnswer(answer) === "proceed"),
