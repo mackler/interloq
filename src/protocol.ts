@@ -250,7 +250,7 @@ export const UiEventSchema = Schema.Union([
   // The question subject's response is the planner's plus `questions` (defect A of docs/page-question-phase-defects.md).
   // A decision's response carries its amended analysis (W2-R1-1), the plan's the whole plan (issue #6), Bring Up to Date's
   // the issue brought up to date (issue #216) and a verdict's what the requirements leave out (issue #186).
-  tagged("ResponseReceived", { ...round, response: Schema.Union([S.QuestionListResponse, S.TermsResponse, S.DecisionResponse, S.PlanResponse, S.WorkResponse, S.UpdateResponse, S.VerdictResponse, S.PlannerResponse]), resultText: Str }),
+  tagged("ResponseReceived", { ...round, response: S.LoopResponse, resultText: Str }),
   tagged("LoopFinished", { subject: SubjectIdSchema, result: Schema.Literals(["converged", "proceed", "revise"]) }),
   tagged("PlanWritten", { phase: Int, resultText: Str }),
   tagged("ExecutionEnded", { phase: Int, outcome: S.ExecOutcome }),

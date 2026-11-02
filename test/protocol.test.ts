@@ -13,7 +13,7 @@ import { ON_EXPIRIES, chainSettingsOf, type ClientMessage, currentIds, listedIte
 import type { ProcessKey } from "../src/liveOutput.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
-import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, UpdateResponse, VerdictResponse, WorkResponse } from "../src/schema.ts";
+import type { DecisionResponse, PlannerResponse, QuestionListResponse } from "../src/schema.ts";
 import { TERMS_MODES } from "../src/schema.ts";
 import { decisionSubject, planSubject, questionSubject, requirementsSubject, updateSubject, verdictSubject, workSubject } from "../src/subjects.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
@@ -396,10 +396,13 @@ test("every subject's response, as its own schema decodes it, survives the round
 // The audit of defect A (step 2.3 of its plan): the response type of every subject must be exactly one of the members
 // the event carries. `Subject<R>` requires only `R extends PlannerResponse`, so assignability would admit a wider R;
 // equality does not. Both parameters are inferred: `applyDecisions.after` takes D, so fixing D would yield never.
-// A subject added to src/subjects.ts is covered once it is added to this list.
+// A subject added to src/subjects.ts is covered once it is added to this list. The members are the event's own
+// (`UiEvent`'s ResponseReceived), so a response type the event does not carry fails here, not only at run time.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type EventResponse = Extract<UiEvent, { _tag: "ResponseReceived" }>["response"];
+type MemberOf<R, U> = true extends (U extends unknown ? Same<R, U> : never) ? true : false;
 type RespondOf<T> = T extends Subject<infer R, infer _D> ? R : never;
-type Carried<R> = Same<R, PlannerResponse> extends true ? true : Same<R, QuestionListResponse> extends true ? true : Same<R, PlanResponse> extends true ? true : Same<R, WorkResponse> extends true ? true : Same<R, UpdateResponse> extends true ? true : Same<R, VerdictResponse> extends true ? true : Same<R, DecisionResponse>;
+type Carried<R> = MemberOf<R, EventResponse>;
 const holds = <_T extends true>(): void => undefined;
 const fails = <_T extends false>(): void => undefined;
 type Responses = [RespondOf<ReturnType<typeof questionSubject>>, RespondOf<ReturnType<typeof requirementsSubject>>, RespondOf<ReturnType<typeof planSubject>>, RespondOf<ReturnType<typeof workSubject>>, RespondOf<ReturnType<typeof decisionSubject>>];

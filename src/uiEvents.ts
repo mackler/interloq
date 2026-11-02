@@ -5,8 +5,8 @@ import type { LimitWaitBasis } from "./limitReset.ts";
 import type { NetworkCode } from "./transport.ts";
 import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
-import type { TermsResponse, UpdateResponse, VerdictResponse } from "./schema.ts";
-import type { DecisionAnalysis, DecisionResponse, ExecOutcome, PlannerResponse, PlanResponse, QuestionListResponse, RecordedPlan, Review, UserQuestion, WorkResponse, EffectReview } from "./schema.ts";
+import type { LoopResponse } from "./schema.ts";
+import type { DecisionAnalysis, ExecOutcome, RecordedPlan, Review, UserQuestion, EffectReview } from "./schema.ts";
 import { piecesText } from "./pieces.ts";
 import type { RunMode } from "./runMode.ts";
 import type { ShownDocument } from "./reviewedDocument.ts";
@@ -27,7 +27,7 @@ export type UiEvent =
   | Readonly<{ _tag: "RoundBegan"; subject: SubjectId; round: number; limit: number }>
   | Readonly<{ _tag: "ReviewReceived"; subject: SubjectId; round: number; review: Review | EffectReview; counted: number }>
   /** The question subject answers with its amended list besides (defect A of docs/page-question-phase-defects.md), a decision with its amended analysis (W2-R1-1), the plan with the whole plan (issue #6). */
-  | Readonly<{ _tag: "ResponseReceived"; subject: SubjectId; round: number; response: PlannerResponse | QuestionListResponse | TermsResponse | DecisionResponse | PlanResponse | WorkResponse | UpdateResponse | VerdictResponse; resultText: string }>
+  | Readonly<{ _tag: "ResponseReceived"; subject: SubjectId; round: number; response: LoopResponse; resultText: string }>
   | Readonly<{ _tag: "LoopFinished"; subject: SubjectId; result: LoopResult }>
   /** A plan was written; its questions for the user are presented one by one after it (S19), not listed here. */
   | Readonly<{ _tag: "PlanWritten"; phase: number; resultText: string }>

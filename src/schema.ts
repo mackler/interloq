@@ -343,6 +343,13 @@ export const TermsResponse = Schema.Struct({ ...markedResponseFields, entries: S
 
 /** A response to a review of a decision analysis: the dispositions and the complete amended analysis. */
 export const DecisionResponse = Schema.Struct({ ...plannerResponseFields, analysis: DecisionAnalysis });
+/**
+ * Every response a review loop's subject can return, the one list the event ResponseReceived carries (src/protocol.ts
+ * decodes it, src/uiEvents.ts types it). Its order is the decoder's: a response with more fields comes before the
+ * planner's, which every other one extends.
+ */
+export const LoopResponse = Schema.Union([QuestionListResponse, TermsResponse, DecisionResponse, PlanResponse, WorkResponse, UpdateResponse, VerdictResponse, PlannerResponse]);
+export type LoopResponse = typeof LoopResponse.Type;
 /** The output of applying the user's decisions to an analysis. */
 export const DecisionApplied = Schema.Struct({ analysis: DecisionAnalysis });
 
