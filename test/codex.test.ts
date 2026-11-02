@@ -181,7 +181,7 @@ test("the final response is the text of the last agent message", async () => {
 test("turn.failed, a stream error event, and a turn without an agent message fail with CodexCallFailed", async () => {
   const noReply = [{ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } }] as ThreadEvent[];
   const streamError = [{ type: "error", message: "stream lost" }] as ThreadEvent[];
-  for (const [events, text] of [[turnFailed("rate limited"), /rate limited/], [streamError, /stream lost/], [noReply, /no reply/]] as const) {
+  for (const [events, text] of [[turnFailed("model refused the request"), /model refused the request/], [streamError, /stream lost/], [noReply, /no reply/]] as const) {
     const fake = await reviewer([[...events]]);
     const session = await run(fake.reviewer.startPhase);
     const error = await typedFailure(session.review("review", S.Review));
@@ -294,4 +294,26 @@ test("two turns that reuse an item id give two Started and Finished pairs under 
   await run(session.review("review", S.Review));
   const pairs = fake.ui.outputs.flatMap((e) => (e._tag === "Started" || e._tag === "Finished" ? [`${e._tag} ${e.key}`] : []));
   assert.deepEqual(pairs, ["Started codex:codex-1:item_0", "Finished codex:codex-1:item_0", "Started codex:codex-2:item_0", "Finished codex:codex-2:item_0"]);
+});
+
+// Issue #233: a turn refused with 429 Too Many Requests is UsageLimited with no known end; a quota stays CodexCallFailed.
+import { CODEX_RATE_LIMIT_TYPE } from "../src/limitReset.ts";
+const TOO_MANY = "exceeded retry limit, last status: 429 Too Many Requests";
+const rateLimitedAs = (message: string) => (e: unknown): boolean => {
+  const u = e as { _tag: string; agent: string; reset: unknown; limitType: string | null; message: string };
+  assert.deepEqual({ _tag: u._tag, agent: u.agent, reset: u.reset, limitType: u.limitType, message: u.message }, { _tag: "UsageLimited", agent: "codex", reset: { kind: "unknown" }, limitType: CODEX_RATE_LIMIT_TYPE, message });
+  return true;
+};
+
+test("a stream that throws the CLI's exit with a 429 fails the review with UsageLimited", async () => {
+  const message = `Codex Exec exited with code 1: ${TOO_MANY}`;
+  assert.ok(rateLimitedAs(message)(await failureOf(new Error(message))));
+});
+
+test("turn.failed with a 429 fails the review with UsageLimited", async () => {
+  assert.ok(rateLimitedAs(TOO_MANY)(await failureOf(turnFailed(TOO_MANY))));
+});
+
+test("a 429 naming a quota still fails with CodexCallFailed", async () => {
+  assert.equal((await failureOf(turnFailed("429 Too Many Requests: exceeded your current quota")))._tag, "CodexCallFailed");
 });

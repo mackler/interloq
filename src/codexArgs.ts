@@ -4,9 +4,11 @@
 // 'error' listener, so a write to a CLI that has exited (EPIPE) became an uncaught exception that ended
 // the web server. What the SDK's `CodexExec.run` (node_modules/@openai/codex-sdk/dist/index.js) builds
 // from a thread's options is reproduced here, in its order; test/codexArgs.test.ts compares the two
-// over a recording executable.
+// over a recording executable. Issue #233: when the CLI exits nonzero having printed nothing of its cause, the cause
+// is read from what the CLI streamed (`streamFailureOf`) or from Codex's own session file (`sessionFailureOf`), and put
+// before the exit's text (`recordedFailureText`).
 
-import type { ThreadOptions } from "@openai/codex-sdk";
+import type { ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
 
 /** What one turn's command line is built from: the thread's options, its id once known, the output schema's file. */
 export type CodexArgsInput = Readonly<{
@@ -78,3 +80,45 @@ export const turnEnd = <E>(kept: E | null, exit: CliExit, stderr: string): Reado
   const text = exitText(exit, stderr);
   return text === null ? null : { kind: "exited", text };
 };
+
+/** The failure the CLI's JSON stream carried: the `turn.failed` error's message, and the last `error` event's message. */
+export const streamFailureOf = (events: readonly ThreadEvent[]): Readonly<{ failed: string | null; notice: string | null }> => ({
+  failed: events.flatMap((e) => (e.type === "turn.failed" ? [e.error.message] : [])).at(-1) ?? null,
+  notice: events.flatMap((e) => (e.type === "error" ? [e.message] : [])).at(-1) ?? null,
+});
+
+/** A plain object, or null. */
+const objectOf = (value: unknown): Readonly<Record<string, unknown>> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+/** A session file's line as a record's body: its object `payload` where it has one, else the record itself; null where it is no JSON object. */
+const bodyOf = (line: string): Readonly<Record<string, unknown>> | null => {
+  const record = ((): Readonly<Record<string, unknown>> | null => {
+    try {
+      return objectOf(JSON.parse(line));
+    } catch {
+      return null;
+    }
+  })();
+  return record === null ? null : (objectOf(record.payload) ?? record);
+};
+const stringOf = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+/**
+ * The failure Codex recorded in its session file for the last turn of the lines given (issue #233): among the bodies
+ * after the last `task_started`, the `error.message` of the last `task_complete` that has one, else the `message` of
+ * the last `error`, else null. The file is Codex's, so it is read leniently: a line that is no JSON object is skipped.
+ */
+export const sessionFailureOf = (lines: readonly string[]): string | null => {
+  const bodies = lines.map(bodyOf).filter((b): b is Readonly<Record<string, unknown>> => b !== null);
+  const turn = bodies.slice(bodies.map((b) => b.type).lastIndexOf("task_started") + 1);
+  /** The last message of a body of the type given, by where that type keeps it. */
+  const last = (type: string, messageOf: (body: Readonly<Record<string, unknown>>) => unknown): string | null =>
+    turn.flatMap((body) => {
+      const message = body.type === type ? stringOf(messageOf(body)) : null;
+      return message === null ? [] : [message];
+    }).at(-1) ?? null;
+  return last("task_complete", (body) => objectOf(body.error)?.message) ?? last("error", (body) => body.message);
+};
+
+/** The text of a turn's failure where Codex recorded a cause: the cause, then the exit's text as evidence. */
+export const recordedFailureText = (recorded: string, exit: string): string => `${recorded} (${exit.trim()})`;

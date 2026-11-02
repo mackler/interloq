@@ -120,6 +120,9 @@ export const USAGE_LIMIT_MARGIN_SECONDS = 60;
  */
 export const USAGE_LIMIT_RETRY_SECONDS = 300;
 
+/** The limit type of a Codex turn refused with 429 Too Many Requests (issue #233), in `limit_type` of usage.jsonl. */
+export const CODEX_RATE_LIMIT_TYPE = "codex_too_many_requests";
+
 /**
  * What a usage limit's wait rests on: a stated reset (from a rate-limit event or the error result's text); a time of
  * day the text named that was already past at the refusal, tried again one minute after it (requirement Q4); or no

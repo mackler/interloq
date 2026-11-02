@@ -65,7 +65,7 @@ export class AgentUnreachable extends Data.TaggedError("AgentUnreachable")<{ rea
  * rate-limit event stated, a time of day the error result's text named, or none. Not a RunError: withTransportRetry
  * waits each one out by planLimitWait of src/limitReset.ts.
  */
-export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude"; readonly message: string; readonly reset: LimitReset; readonly limitType: string | null }> {}
+export class UsageLimited extends Data.TaggedError("UsageLimited")<{ readonly agent: "claude" | "codex"; readonly message: string; readonly reset: LimitReset; readonly limitType: string | null }> {}
 /**
  * An execution call whose Claude Code process ended by a signal or a nonzero exit code (issue #157), with its message
  * and `attempts`, the attempts made when it was raised. Not a RunError: withTransportRetry retries it like a

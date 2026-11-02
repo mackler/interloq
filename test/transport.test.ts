@@ -10,30 +10,43 @@ const isRetried = (failure: ClaudeFailure | null): boolean => classifyClaude(fai
 const issue26 = "Reconnecting... 2/5 (stream disconnected before completion: WebSocket protocol error: Connection reset without closing handshake)";
 
 test("Codex: the message of #26 is a transport fault", () => {
-  assert.equal(classifyCodex(issue26), true);
+  assert.equal(classifyCodex(issue26).kind === "transport", true);
 });
 
 test("Codex: transport patterns are retried", () => {
   for (const m of ["stream disconnected before completion", "read ECONNRESET", "connect ETIMEDOUT 1.2.3.4:443", "socket hang up", "request timed out", "unexpected status 503 Service Unavailable", "getaddrinfo EAI_AGAIN api.openai.com", "connection closed before message completed"]) {
-    assert.equal(classifyCodex(m), true, m);
+    assert.equal(classifyCodex(m).kind === "transport", true, m);
   }
 });
 
 test("Codex: permanent evidence is not retried, and wins over transport evidence", () => {
-  for (const m of ["You've hit your usage limit. Upgrade to Pro", "rate limit reached", "exceeded your current quota", "unexpected status 400 Bad Request: invalid_json_schema", "Invalid outputSchema", "unexpected status 401 Unauthorized", "stream disconnected: unexpected status 429 Too Many Requests"]) {
-    assert.equal(classifyCodex(m), false, m);
+  for (const m of ["You've hit your usage limit. Upgrade to Pro", "exceeded your current quota", "unexpected status 400 Bad Request: invalid_json_schema", "Invalid outputSchema", "unexpected status 401 Unauthorized"]) {
+    assert.deepEqual(classifyCodex(m), { kind: "permanent" }, m);
+  }
+});
+
+// Issue #233 (the developer's decision of 2 Nov 2026): a 429 waits and tries again; a quota stays permanent.
+test("Codex: a 429 or a rate limit is rateLimited", () => {
+  for (const m of ["exceeded retry limit, last status: 429 Too Many Requests", "stream disconnected: unexpected status 429 Too Many Requests", "rate limit reached", "Too Many Requests", "Codex Exec exited with code 1: exceeded retry limit, last status: 429 Too Many Requests"]) {
+    assert.deepEqual(classifyCodex(m), { kind: "rateLimited" }, m);
+  }
+});
+
+test("Codex: a 429 naming a usage limit or a quota stays permanent", () => {
+  for (const m of ["429 Too Many Requests: usage limit reached", "status 429: insufficient_quota", "rate limit: you exceeded your current quota"]) {
+    assert.deepEqual(classifyCodex(m), { kind: "permanent" }, m);
   }
 });
 
 test("Codex: an unrecognized failure is not retried", () => {
-  assert.equal(classifyCodex("something went wrong"), false);
-  assert.equal(classifyCodex("no reply"), false);
+  assert.equal(classifyCodex("something went wrong").kind === "transport", false);
+  assert.equal(classifyCodex("no reply").kind === "transport", false);
 });
 
 test("Codex: an exec exit is retried only when its stderr shows a transport fault and nothing permanent", () => {
-  assert.equal(classifyCodex("Codex Exec exited with code 1: error: stream disconnected before completion"), true);
-  assert.equal(classifyCodex("Codex Exec exited with code 1: error: unknown flag"), false);
-  assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; usage limit"), false);
+  assert.equal(classifyCodex("Codex Exec exited with code 1: error: stream disconnected before completion").kind === "transport", true);
+  assert.equal(classifyCodex("Codex Exec exited with code 1: error: unknown flag").kind === "transport", false);
+  assert.equal(classifyCodex("Codex Exec exited with code 1: stream disconnected; usage limit").kind === "transport", false);
 });
 
 const none: ClaudeFailure = { streamCode: null, apiStatus: null, terminalReason: null, assistantError: null, retrySeen: null, subtype: null, rejection: null, resultText: null, processEnd: null };
@@ -88,18 +101,18 @@ test("Claude: the stopping subtypes are not retried", () => {
 
 // W1-R1-1: any 4xx or 5xx status with its reason phrase, not only the listed ones; permanent evidence still first.
 test("Codex: every 4xx with its reason phrase is permanent, every 5xx retryable; other numbers are not statuses", () => {
-  for (const m of ["408 Request Timeout", "unexpected status 408 Request Timeout", "status 418"]) assert.equal(classifyCodex(m), false, m);
-  for (const m of ["501 Not Implemented", "504 Gateway Timeout"]) assert.equal(classifyCodex(m), true, m);
-  assert.equal(classifyCodex("retry 2 of 500 items"), false);
-  assert.equal(classifyCodex("line 404 of the diff"), false);
-  assert.equal(classifyCodex("stream disconnected at line 404 of the diff"), true);
+  for (const m of ["408 Request Timeout", "unexpected status 408 Request Timeout", "status 418"]) assert.equal(classifyCodex(m).kind === "transport", false, m);
+  for (const m of ["501 Not Implemented", "504 Gateway Timeout"]) assert.equal(classifyCodex(m).kind === "transport", true, m);
+  assert.equal(classifyCodex("retry 2 of 500 items").kind === "transport", false);
+  assert.equal(classifyCodex("line 404 of the diff").kind === "transport", false);
+  assert.equal(classifyCodex("stream disconnected at line 404 of the diff").kind === "transport", true);
 });
 
 // W1-R1-2: the code of the thrown value is evidence too; permanent evidence in the text still wins.
 test("Codex: a network code classifies as a transport fault unless the text is permanent", () => {
-  assert.equal(classifyCodex("x", "ECONNRESET"), true);
-  assert.equal(classifyCodex("usage limit", "ECONNRESET"), false);
-  assert.equal(classifyCodex("x", "ENOENT"), false);
+  assert.equal(classifyCodex("x", "ECONNRESET").kind === "transport", true);
+  assert.equal(classifyCodex("usage limit", "ECONNRESET").kind === "transport", false);
+  assert.equal(classifyCodex("x", "ENOENT").kind === "transport", false);
 });
 
 // Issue #68: a usage-limit rejection with a stated reset is a third kind of failure, waited out; without one it stays permanent.
@@ -229,10 +242,10 @@ test("Claude: the codes of an unreachable network are retried (issue #201)", () 
 });
 
 test("Codex: the codes of an unreachable network are retried, by code or in the message (issue #201)", () => {
-  assert.equal(classifyCodex("the connection failed", "ENETUNREACH"), true);
-  assert.equal(classifyCodex("getaddrinfo ENOTFOUND api.openai.com"), true);
-  assert.equal(classifyCodex("connect EHOSTUNREACH 1.2.3.4:443"), true);
-  assert.equal(classifyCodex("ENETDOWN"), true);
+  assert.equal(classifyCodex("the connection failed", "ENETUNREACH").kind === "transport", true);
+  assert.equal(classifyCodex("getaddrinfo ENOTFOUND api.openai.com").kind === "transport", true);
+  assert.equal(classifyCodex("connect EHOSTUNREACH 1.2.3.4:443").kind === "transport", true);
+  assert.equal(classifyCodex("ENETDOWN").kind === "transport", true);
 });
 
 test("Claude: an error result naming a network code is retried; a 401 beside it is not (issue #201)", () => {

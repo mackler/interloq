@@ -202,3 +202,124 @@ test("findCodexExecutable: from a directory without the package, a failure namin
   assert.ok(Result.isFailure(found));
   if (Result.isFailure(found)) assert.match(found.failure, /@openai\/codex/);
 });
+
+// Issue #233: a CLI that exits nonzero having printed nothing of its cause fails the turn with the cause Codex recorded,
+// on its JSON stream or in its session file under $CODEX_HOME/sessions, and only what this invocation appended.
+const TOO_MANY = "exceeded retry limit, last status: 429 Too Many Requests";
+const PLAIN_EXIT = "Codex Exec exited with code 1: Reading prompt from stdin...";
+const sessionLine = (payload: object): string => JSON.stringify({ timestamp: "2026-11-02T12:40:01.000Z", type: "event_msg", payload });
+const STARTED = sessionLine({ type: "task_started" });
+const REFUSED = sessionLine({ type: "task_complete", last_agent_message: null, error: { message: TOO_MANY, codex_error_info: { response_too_many_failed_attempts: { http_status_code: 429 } } } });
+const COMPLETED = sessionLine({ type: "task_complete", last_agent_message: "{}" });
+
+type CliTurn = Readonly<{ lines: readonly unknown[]; append?: Readonly<{ file: string; records: readonly string[] }>; exit: number }>;
+/** A CLI whose first turn and resumed turn each print their lines, append their records to a session file and exit so. */
+const sessionCli = (first: CliTurn, resumed: CliTurn = first): CodexExecutable =>
+  executable(`#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const turn = process.argv.includes("resume") ? ${JSON.stringify(resumed)} : ${JSON.stringify(first)};
+process.stdin.on("data", () => undefined);
+process.stdin.on("end", () => {
+  process.stderr.write("Reading prompt from stdin...\\n");
+  for (const line of turn.lines) process.stdout.write(JSON.stringify(line) + "\\n");
+  if (turn.append) {
+    fs.mkdirSync(path.dirname(turn.append.file), { recursive: true });
+    fs.appendFileSync(turn.append.file, turn.append.records.map((r) => r + "\\n").join(""));
+  }
+  process.exitCode = turn.exit;
+});
+`);
+const codexHome = (): string => fs.mkdtempSync(path.join(DIR, "codex-home-"));
+const rollout = (home: string, day: string, threadId: string): string => path.join(home, "sessions", ...day.split("/"), `rollout-${day.replaceAll("/", "-")}T12-39-55-${threadId}.jsonl`);
+const failedWith = async (thread: ReturnType<typeof codexThread>): Promise<string> => {
+  const error = await consume((await thread.runStreamed("p")).events).then(
+    () => assert.fail("the turn succeeded"),
+    (e: unknown) => e as Error,
+  );
+  return error.message;
+};
+const threadStarted = (id: string) => ({ type: "thread.started", thread_id: id });
+
+test("a CLI that records a 429 in its session file and exits 1 fails the turn with the 429, and the reviewer with UsageLimited", async () => {
+  const home = codexHome();
+  const exe = sessionCli({ lines: [threadStarted("t-233")], append: { file: rollout(home, "2026/11/02", "t-233"), records: [STARTED, REFUSED] }, exit: 1 });
+  const message = await failedWith(codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: home }));
+  assert.ok(message.startsWith(TOO_MANY), message);
+  assert.match(message, /exited with code 1/);
+
+  const fake = new FakeSdk();
+  const sdk: AgentSdk = {
+    inheritedEnv: fake.inheritedEnv,
+    readOutputTail: (p) => fake.readOutputTail(p),
+    query: (p) => fake.query(p),
+    stepReporter: (h) => fake.stepReporter(h),
+    // A home of its own: the first thread's file is not this thread's, so the 429 read is the one this turn appends.
+    startThread: (options) => {
+      const own = codexHome();
+      return codexThread(Result.succeed(sessionCli({ lines: [threadStarted("t-r")], append: { file: rollout(own, "2026/11/02", "t-r"), records: [STARTED, REFUSED] }, exit: 1 })), options ?? {}, { ...process.env, CODEX_HOME: own });
+    },
+  };
+  const store = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
+  await Effect.runPromise(store.init("task"));
+  const deps = Layer.mergeAll(Layer.succeed(Store, store), Layer.succeed(Sdk, sdk), Layer.succeed(Ui, new ScriptedUi([])), Layer.succeed(RunConfig, S.defaultConfig));
+  const reviewer = await Effect.runPromise(makeCodexReviewer.pipe(Effect.provide(deps)));
+  const session = await Effect.runPromise(reviewer.startPhase);
+  const failure = await Effect.runPromise(Effect.flip(session.review("p", S.Review)));
+  assert.equal((failure as { _tag: string })._tag, "UsageLimited");
+  assert.equal((failure as { agent?: string }).agent, "codex");
+});
+
+test("a CLI that streams turn.failed and exits 1 fails the turn with that message", async () => {
+  const exe = sessionCli({ lines: [threadStarted("t-2"), { type: "turn.failed", error: { message: "the model refused" } }], exit: 1 });
+  const message = await failedWith(codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: codexHome() }));
+  assert.ok(message.startsWith("the model refused ("), message);
+});
+
+test("a CLI that exits 1 recording nothing fails with the exit's text, as before", async () => {
+  const exe = sessionCli({ lines: [threadStarted("t-3")], exit: 1 });
+  assert.equal(await failedWith(codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: codexHome() })), `${PLAIN_EXIT}\n`);
+});
+
+test("a sessions tree that cannot be read, or holds no file for the thread, changes nothing and nothing is uncaught", async () => {
+  const notADir = path.join(DIR, "codex-home-file");
+  fs.writeFileSync(notADir, "x");
+  const other = codexHome();
+  fs.mkdirSync(path.join(other, "sessions", "2026", "11", "02"), { recursive: true });
+  fs.writeFileSync(rollout(other, "2026/11/02", "someone-else"), `${STARTED}\n${REFUSED}\n`);
+  for (const home of [notADir, other]) {
+    const exe = sessionCli({ lines: [threadStarted("t-4")], exit: 1 });
+    const uncaught = await uncaughtDuring(async () => {
+      assert.equal(await failedWith(codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: home })), `${PLAIN_EXIT}\n`);
+    });
+    assert.deepEqual(uncaught, []);
+  }
+});
+
+test("a resumed thread whose session file is in an old day directory: the 429 its second turn appends is found", async () => {
+  const home = codexHome();
+  const file = rollout(home, "2026/10/01", "t-233");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${STARTED}\n${COMPLETED}\n`);
+  for (const day of ["2026/11/01", "2026/11/02", "2026/12/01"]) {
+    fs.mkdirSync(path.join(home, "sessions", ...day.split("/")), { recursive: true });
+    fs.writeFileSync(rollout(home, day, "another"), `${STARTED}\n`);
+  }
+  const exe = sessionCli({ lines: TURN.map((e) => (e.type === "thread.started" ? threadStarted("t-233") : e)), exit: 0 }, { lines: [], append: { file, records: [STARTED, REFUSED] }, exit: 1 });
+  const thread = codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: home });
+  await consume((await thread.runStreamed("first")).events);
+  assert.equal(thread.id, "t-233");
+  const message = await failedWith(thread);
+  assert.ok(message.startsWith(TOO_MANY), message);
+});
+
+test("a session file that already ends with a 429 before a resumed turn that appends nothing: the plain exit text", async () => {
+  const home = codexHome();
+  const file = rollout(home, "2026/11/02", "t-6");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${STARTED}\n${REFUSED}\n`);
+  const exe = sessionCli({ lines: TURN.map((e) => (e.type === "thread.started" ? threadStarted("t-6") : e)), exit: 0 }, { lines: [], exit: 1 });
+  const thread = codexThread(Result.succeed(exe), OPTIONS, { ...process.env, CODEX_HOME: home });
+  await consume((await thread.runStreamed("first")).events);
+  assert.equal(await failedWith(thread), `${PLAIN_EXIT}\n`);
+});

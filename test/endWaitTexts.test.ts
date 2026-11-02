@@ -6,7 +6,7 @@ import { END_WAIT_LABEL, notSentNotice, WAIT_ALREADY_ENDED_TEXT, WAIT_NOT_WAITIN
 
 const agent = fc.constantFrom("claude" as const, "codex" as const);
 const subject: fc.Arbitrary<WaitSubject> = fc.oneof(
-  fc.record({ kind: fc.constant("usageLimit" as const), agent }),
+  fc.record({ kind: fc.constant("usageLimit" as const), agent, limitType: fc.constantFrom(null, "five_hour", "codex_too_many_requests") }),
   fc.record({ kind: fc.constant("retry" as const), agent }),
   fc.record({ kind: fc.constant("network" as const), agent }),
   fc.record({ kind: fc.constant("tracker" as const), tracker: fc.constantFrom("GitHub", "GitLab"), what: fc.string({ minLength: 1, maxLength: 20 }) }),

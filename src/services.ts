@@ -141,7 +141,7 @@ export type ReviewReply = Readonly<{ text: string; inputTokens: number | null }>
 export type ReviewSchema = typeof SchemaModule.Review | typeof SchemaModule.EffectReview;
 export interface ReviewSession {
   /** One review turn. Returns the reply with the turn's input tokens; the caller decodes the text. */
-  review(prompt: string, schema: ReviewSchema): Effect.Effect<ReviewReply, ReviewerError | TransportFault>;
+  review(prompt: string, schema: ReviewSchema): Effect.Effect<ReviewReply, ReviewerError | TransportFault | UsageLimited>;
 }
 export interface ReviewerShape {
   /** Starts a new thread and returns the session bound to it. Called at the start of every review loop. A start failure is a typed error (finding 11). */

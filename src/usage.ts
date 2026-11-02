@@ -16,7 +16,7 @@ export type UsageLine =
  * the margin), recorded when the wait begins.
  */
 export type LimitWaitBegan = Readonly<{
-  agent: "claude";
+  agent: "claude" | "codex";
   limitType: string | null;
   /** What the wait rested on (issue #170). */
   basis: LimitWaitBasis["kind"];

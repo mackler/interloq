@@ -25,7 +25,7 @@ import type { ReviewThread } from "./reviewThread.ts";
 import type { NonEmptyPaths } from "./commitCheck.ts";
 import type { WriteCheck } from "./errors.ts";
 import type { TrackerOperation } from "./trackerRetry.ts";
-import { type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
+import { CODEX_RATE_LIMIT_TYPE, type LimitWaitBasis, USAGE_LIMIT_RETRY_SECONDS } from "./limitReset.ts";
 
 /**
  * The run's records directory as the prompts name it, relative to the project: plan-review/<root> (issue #120). Every
@@ -3059,6 +3059,8 @@ const LIMIT_NAMES: Readonly<Record<string, string>> = {
   seven_day_sonnet: "weekly Sonnet limit",
   seven_day_overage_included: "weekly limit (overage included)",
   overage: "overage limit",
+  /** Issue #233: a Codex turn refused with 429 Too Many Requests. */
+  [CODEX_RATE_LIMIT_TYPE]: "rate limit (429 Too Many Requests)",
 };
 /** The name of a usage limit by the Agent SDK's rateLimitType (issue #68); an unknown or missing type is "usage limit". */
 export function limitName(limitType: string | null): string {
@@ -3087,8 +3089,19 @@ export function usageLimitWaitLine(agent: "claude" | "codex", limitType: string 
   }
 }
 /** The end of a wait for a usage limit whose end was not stated (issue #170): a try, with no claim that the limit lifted. */
-export function usageLimitTryingAgainLine(agent: "claude" | "codex"): string {
-  return `${agentName(agent)}: trying again after the wait for the usage limit`;
+export function usageLimitTryingAgainLine(agent: "claude" | "codex", limitType: string | null): string {
+  return `${agentName(agent)}: trying again after the wait for the ${waitedLimitNoun(limitType)}`;
+}
+/**
+ * The noun of the limit a wait's end names: Codex's rate limit by its name (issue #233), every other limit "usage
+ * limit", as before, so Claude Code's texts are unchanged.
+ */
+function waitedLimitNoun(limitType: string | null): string {
+  return limitType === CODEX_RATE_LIMIT_TYPE ? limitName(limitType) : "usage limit";
+}
+/** Issue #233: the failure Codex recorded for a turn it refused, said and written before the wait's line. */
+export function codexRefusalLine(message: string): string {
+  return `Codex refused the request: ${message}`;
 }
 /**
  * Issue #215: the text of the control beside a wait's countdown. It asserts only that the wait ends and the request is
@@ -3097,7 +3110,7 @@ export function usageLimitTryingAgainLine(agent: "claude" | "codex"): string {
 export const END_WAIT_LABEL = "Try again now";
 /** Issue #215: the wait the developer ended early, by what it waited for. */
 export type WaitSubject =
-  | Readonly<{ kind: "usageLimit"; agent: "claude" | "codex" }>
+  | Readonly<{ kind: "usageLimit"; agent: "claude" | "codex"; limitType: string | null }>
   | Readonly<{ kind: "retry"; agent: "claude" | "codex" }>
   | Readonly<{ kind: "network"; agent: "claude" | "codex" }>
   | Readonly<{ kind: "tracker"; tracker: string; what: string }>;
@@ -3105,7 +3118,7 @@ export type WaitSubject =
 export function waitEndedLine(subject: WaitSubject): string {
   switch (subject.kind) {
     case "usageLimit":
-      return `You ended the wait for ${agentName(subject.agent)}'s usage limit; Interloq is trying the request again now`;
+      return `You ended the wait for ${agentName(subject.agent)}'s ${waitedLimitNoun(subject.limitType)}; Interloq is trying the request again now`;
     case "retry":
       return `You ended the wait before the next try to reach ${agentName(subject.agent)}; Interloq is trying the request again now`;
     case "network":

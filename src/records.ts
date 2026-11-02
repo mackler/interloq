@@ -159,7 +159,7 @@ export const CheckpointStage = Schema.Literals(["started", "reviewed", "responde
  * committed transition, which it leaves unchanged. It says nothing about whether the limit has since lifted.
  */
 export const WaitingNote = Schema.Struct({
-  agent: Schema.Literal("claude"),
+  agent: Schema.Literals(["claude", "codex"]),
   limit_type: Schema.NullOr(Schema.String),
   basis: Schema.Literals(S.LIMIT_WAIT_BASES),
   from: Schema.String,

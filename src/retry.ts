@@ -123,6 +123,8 @@ export const withTransportRetry = <A, E, R>(
         const end = yield* Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* ui.openWait;
+            // Issue #233: the failure Codex recorded is said and written, so the real cause is seen, not only the wait.
+            if (error.agent === "codex") yield* say(prompts.codexRefusalLine(error.message));
             yield* ui.notify({ _tag: "UsageLimitWaiting", agent: error.agent, purpose, limitType: error.limitType, basis, fromMs, untilMs, wait: handle.id });
             yield* say(prompts.usageLimitWaitLine(error.agent, error.limitType, basis, untilMs));
             // One uninterruptible step from the begin record to the finalizer's attachment, so that an interruption between
@@ -130,7 +132,7 @@ export const withTransportRetry = <A, E, R>(
             const end = yield* Effect.uninterruptibleMask((restore) =>
               store.recordLimitWaitBegan(began).pipe(Effect.andThen(restore(handle.sleepUntil(untilMs)).pipe(Effect.onExit((exit) => record(Exit.isSuccess(exit) ? (exit.value === "endedEarly" ? "ended" : ranOut) : "interrupted"))))),
             );
-            if (end === "endedEarly") yield* reportEarlyEnd(handle.id, { kind: "usageLimit", agent: error.agent });
+            if (end === "endedEarly") yield* reportEarlyEnd(handle.id, { kind: "usageLimit", agent: error.agent, limitType: error.limitType });
             return end;
           }),
         );
@@ -140,7 +142,7 @@ export const withTransportRetry = <A, E, R>(
           const waitedMs = (yield* Clock.currentTimeMillis) - fromMs;
           yield* ui.notify({ _tag: "UsageLimitLifted", agent: error.agent, waitedMs });
           yield* say(prompts.usageLimitLiftedLine(error.agent, waitedMs));
-        } else if (end === "ranOut") yield* say(prompts.usageLimitTryingAgainLine(error.agent));
+        } else if (end === "ranOut") yield* say(prompts.usageLimitTryingAgainLine(error.agent, error.limitType));
         yield* beforeRetry;
         continue;
       }

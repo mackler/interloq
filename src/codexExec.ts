@@ -6,10 +6,18 @@
 // listeners are never removed: a write error can arrive after the turn ended, a kill included, and a
 // removed listener would make it uncaught again. The decisions (arguments, environment, which error
 // ends a turn, the exit's text) are the pure functions of src/codexArgs.ts.
+//
+// Issue #233: a CLI that gives up on a 429 exits with code 1 having printed nothing of the cause, which Codex records
+// only in its own session file, `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl` (`~/.codex` where
+// CODEX_HOME is unset). After such an exit the turn's failure is the cause the CLI streamed (`turn.failed`), else the
+// one that file records, else the CLI's last `error` notice, before the exit's text. The file is Codex's and its format
+// may change, so it is read leniently, a failure to find or read it changing nothing; and only the bytes this
+// invocation appended are read (the file's size is taken before a resumed turn starts), so an earlier turn's failure is
+// never reused.
 
 import { spawn } from "node:child_process";
 import { statSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,7 +25,7 @@ import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { ThreadEvent, ThreadOptions, TurnOptions } from "@openai/codex-sdk";
 import { Result } from "effect";
-import { type CliExit, codexArgs, codexEnv, turnEnd } from "./codexArgs.ts";
+import { type CliExit, codexArgs, codexEnv, recordedFailureText, sessionFailureOf, streamFailureOf, turnEnd } from "./codexArgs.ts";
 import type { SdkThread } from "./sdk.ts";
 
 /** The CLI's executable and the directories its package puts first on PATH. */
@@ -115,6 +123,70 @@ const eventOf = (line: string): ThreadEvent => {
   return parsed.type === "turn.completed" ? { ...parsed, usage: { ...parsed.usage, cache_write_input_tokens: parsed.usage.cache_write_input_tokens ?? 0 } } : parsed;
 };
 
+/** A CLI that ended other than cleanly, with the SDK's text of its exit; told apart from an error kept from a stream. */
+export class CliExited extends Error {
+  readonly text: string;
+  constructor(text: string) {
+    super(text);
+    this.text = text;
+  }
+}
+
+/** The directory of Codex's session files, as the CLI chooses it from its environment. */
+const sessionsRoot = (env: Readonly<Record<string, string | undefined>>): string =>
+  path.join(env.CODEX_HOME ?? path.join(env.HOME ?? os.homedir(), ".codex"), "sessions");
+/** The entries of a directory whose names are numbers, the largest first; none where it cannot be read. */
+const numberedDescending = async (dir: string): Promise<readonly string[]> => {
+  try {
+    return (await readdir(dir)).filter((name) => /^\d+$/.test(name)).sort((a, b) => Number(b) - Number(a));
+  } catch {
+    return [];
+  }
+};
+/**
+ * The session file of a thread: every day directory searched, newest first, with no age window, since a run resumes a
+ * thread by its id however old its file is; null where none is found or the tree cannot be read.
+ */
+export const findSessionFile = async (env: Readonly<Record<string, string | undefined>>, threadId: string): Promise<string | null> => {
+  const root = sessionsRoot(env);
+  const suffix = `-${threadId}.jsonl`;
+  for (const year of await numberedDescending(root)) {
+    for (const month of await numberedDescending(path.join(root, year))) {
+      for (const day of await numberedDescending(path.join(root, year, month))) {
+        const dir = path.join(root, year, month, day);
+        const names = await readdir(dir).catch((): string[] => []);
+        const name = names.find((n) => n.endsWith(suffix));
+        if (name !== undefined) return path.join(dir, name);
+      }
+    }
+  }
+  return null;
+};
+/** Where this invocation's records begin in a thread's session file: the file and its size before the turn, or none yet. */
+type SessionMark = Readonly<{ file: string | null; offset: number }>;
+const fileSize = async (file: string): Promise<number> => stat(file).then((s) => s.size, () => 0);
+/** At most the last bytes this invocation appended that are read. */
+const SESSION_TAIL_BYTES = 256 * 1024;
+/** The lines appended to a file past `offset`, at most its last SESSION_TAIL_BYTES, a partial first line dropped; none on any failure. */
+const appendedLines = async (file: string, offset: number): Promise<readonly string[]> => {
+  try {
+    const handle = await open(file, "r");
+    try {
+      const size = (await handle.stat()).size;
+      const from = Math.max(offset, size - SESSION_TAIL_BYTES);
+      if (size <= from) return [];
+      const buffer = Buffer.alloc(size - from);
+      await handle.read(buffer, 0, buffer.length, from);
+      const lines = buffer.toString("utf8").split("\n");
+      return from > offset ? lines.slice(1) : lines;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return [];
+  }
+};
+
 /** One turn: the CLI started, its every stream listened to for errors, its prompt written, its lines read. */
 async function* turnLines(
   executable: CodexExecutable,
@@ -152,7 +224,7 @@ async function* turnLines(
     const exit = kept.first === null ? await exited : { code: null, signal: null };
     const end = turnEnd(kept.first, exit, Buffer.concat(stderr).toString("utf8"));
     if (end?.kind === "kept") throw end.error;
-    if (end?.kind === "exited") throw new Error(end.text);
+    if (end?.kind === "exited") throw new CliExited(end.text);
   } finally {
     lines.close();
     child.stderr.off("data", onStderr);
@@ -170,17 +242,34 @@ export const codexThread = (
   async function* events(input: string, turnOptions: TurnOptions): AsyncGenerator<ThreadEvent> {
     if (Result.isFailure(executable)) throw new Error(executable.failure);
     const schema = await schemaFile(turnOptions.outputSchema);
+    const seen: ThreadEvent[] = [];
+    // Issue #233: a resumed turn's session file is marked before the CLI starts, so only what it appends is read.
+    const before = id === null ? null : await findSessionFile(env, id);
+    const mark: SessionMark = { file: before, offset: before === null ? 0 : await fileSize(before) };
     try {
       const args = codexArgs({ options, threadId: id, outputSchemaFile: schema.path });
       for await (const line of turnLines(executable.success, args, env, input, turnOptions.signal)) {
         const event = eventOf(line);
         if (event.type === "thread.started") id = event.thread_id;
+        seen.push(event);
         yield event;
       }
+    } catch (e) {
+      if (!(e instanceof CliExited)) throw e;
+      const cause = await recordedCause(seen, mark);
+      throw cause === null ? e : new Error(recordedFailureText(cause, e.text));
     } finally {
       await schema.remove();
     }
   }
+  /** The cause Codex recorded for a turn whose CLI exited: what it streamed, else its session file, else its last notice. */
+  const recordedCause = async (seen: readonly ThreadEvent[], mark: SessionMark): Promise<string | null> => {
+    const streamed = streamFailureOf(seen);
+    if (streamed.failed !== null) return streamed.failed;
+    const file = mark.file ?? (id === null ? null : await findSessionFile(env, id));
+    const recorded = file === null ? null : sessionFailureOf(await appendedLines(file, mark.offset));
+    return recorded ?? streamed.notice;
+  };
   return {
     get id() {
       return id;

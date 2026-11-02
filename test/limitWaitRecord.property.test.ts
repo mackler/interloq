@@ -71,3 +71,18 @@ test("property: claude_call_failed lines between call lines change neither the s
     { numRuns: 10, seed: 20261029 },
   );
 });
+
+// Issue #233: a Codex wait's lines and the checkpoint's note name agent codex and read back so.
+test("a Codex wait's began and end lines read back with agent codex, and its checkpoint note decodes", async () => {
+  const s = await Effect.runPromise(makeStore(tempRepo(), TEST_ROOT, []).pipe(Effect.provide(platformLayer)));
+  await Effect.runPromise(s.init("task"));
+  const began = { agent: "codex" as const, limitType: "codex_too_many_requests", basis: "noKnownEnd" as const, fromMs: 0, untilMs: 300_000 };
+  await Effect.runPromise(s.recordLimitWaitBegan(began));
+  const note = Schema.decodeUnknownResult(Checkpoint)(JSON.parse(await import("node:fs").then((fs) => fs.readFileSync(`${s.dir}/checkpoint.json`, "utf8"))));
+  assert.ok(Result.isSuccess(note));
+  assert.equal(note.success.waiting?.agent, "codex");
+  await Effect.runPromise(s.recordLimitWait({ ...began, endedMs: 300_000, outcome: "elapsed" }));
+  const lines = await Effect.runPromise(s.usageLines());
+  assert.deepEqual(lines.began.map((b) => b.agent), ["codex"]);
+  assert.deepEqual(lines.waits.map((w) => [w.agent, w.outcome]), [["codex", "elapsed"]]);
+});

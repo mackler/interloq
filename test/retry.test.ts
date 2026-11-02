@@ -373,7 +373,7 @@ test("Q4: a time earlier than the refusal is tried a minute later; earlier again
   const second = REFUSED_15_OCT + MARGIN_MS;
   assert.deepEqual(sleeps, [MARGIN_MS, Date.parse("2026-10-16T00:31:00Z") - second]);
   assert.deepEqual(limitWaits(ui).map((e) => e.basis), [{ kind: "pastReset", namedMs: Date.parse("2026-10-15T00:30:00Z") }, { kind: "reset" }]);
-  assert.ok(conversation().includes(prompts.usageLimitTryingAgainLine("claude")), "the try after the past reset is not recorded");
+  assert.ok(conversation().includes(prompts.usageLimitTryingAgainLine("claude", null)), "the try after the past reset is not recorded");
   assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.basis, l.outcome]), [["pastReset", "elapsed"], ["reset", "lifted"]]);
   assert.deepEqual(ui.asked, []);
 });
@@ -676,3 +676,40 @@ for (const kind of ["ask", "fail", "background"] as const) {
     }
   }
 }
+
+// Issue #233: a Codex 429 is waited out like a Claude Code limit with no known end, the refusal's own text said first.
+import { CODEX_RATE_LIMIT_TYPE } from "../src/limitReset.ts";
+test("texts: Codex's rate limit is named as such, and Claude's texts are unchanged", () => {
+  assert.equal(prompts.limitName(CODEX_RATE_LIMIT_TYPE), "rate limit (429 Too Many Requests)");
+  assert.match(prompts.usageLimitWaitLine("codex", CODEX_RATE_LIMIT_TYPE, { kind: "noKnownEnd", attempt: 1 }, START), /^Codex: rate limit \(429 Too Many Requests\) reached with no stated end; /);
+  assert.equal(prompts.usageLimitTryingAgainLine("codex", CODEX_RATE_LIMIT_TYPE), "Codex: trying again after the wait for the rate limit (429 Too Many Requests)");
+  assert.match(prompts.waitEndedLine({ kind: "usageLimit", agent: "codex", limitType: CODEX_RATE_LIMIT_TYPE }), /rate limit \(429 Too Many Requests\)/);
+  assert.equal(prompts.codexRefusalLine("M"), "Codex refused the request: M");
+  for (const limitType of [null, "five_hour", "seven_day", "overage", "unheard_of"]) {
+    assert.equal(prompts.usageLimitTryingAgainLine("claude", limitType), "Claude Code: trying again after the wait for the usage limit");
+    assert.equal(prompts.waitEndedLine({ kind: "usageLimit", agent: "claude", limitType }), "You ended the wait for Claude Code's usage limit; Interloq is trying the request again now");
+  }
+});
+
+test("a Codex 429: the refusal's text is said and written before the wait line; a Claude limit says no such line", async () => {
+  const M = "exceeded retry limit, last status: 429 Too Many Requests";
+  const { layer, ui, conversation, usage, checkpoint } = await setup([]);
+  const { clock } = steppingClock(START);
+  const { calls, attempt } = limitScripted([new UsageLimited({ agent: "codex", message: M, reset: UNKNOWN, limitType: CODEX_RATE_LIMIT_TYPE }), "ok"]);
+  const exit = await exitOf(withTransportRetry("codex", "review", "the plan", attempt, Effect.void).pipe(withClock(clock)), layer);
+  assert.deepEqual(exit, Exit.succeed("reply 2"));
+  assert.deepEqual(calls, [1, 2]);
+  const refusal = prompts.codexRefusalLine(M);
+  const waitLine = prompts.usageLimitWaitLine("codex", CODEX_RATE_LIMIT_TYPE, { kind: "noKnownEnd", attempt: 1 }, START + 300_000);
+  assert.ok(ui.said.includes(refusal), "the refusal was not said");
+  assert.ok(conversation().indexOf(refusal) >= 0 && conversation().indexOf(refusal) < conversation().indexOf(waitLine), "the refusal does not precede the wait line in conversation.md");
+  assert.ok(conversation().includes(prompts.usageLimitTryingAgainLine("codex", CODEX_RATE_LIMIT_TYPE)));
+  assert.deepEqual(usage().filter((l) => l.kind === "usage_limit_wait").map((l) => [l.agent, l.limit_type, l.outcome]), [["codex", CODEX_RATE_LIMIT_TYPE, "elapsed"]]);
+  assert.equal(checkpoint().waiting, null);
+  assert.deepEqual(ui.asked, []);
+
+  const claude = await setup([]);
+  const { attempt: claudeAttempt } = limitScripted([limitedBy(UNKNOWN, null), "ok"]);
+  await exitOf(withTransportRetry("claude", "review", "the plan", claudeAttempt, Effect.void).pipe(withClock(steppingClock(START).clock)), claude.layer);
+  assert.ok(!claude.ui.said.some((l) => l.startsWith("Codex refused")), "a Claude limit said a Codex refusal");
+});

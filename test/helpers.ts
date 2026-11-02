@@ -23,7 +23,8 @@ import type { LimitReset } from "../src/limitReset.ts";
 import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import type { ClaudeFailure, NetworkCode } from "../src/transport.ts";
 import { callFailure } from "../src/claude.ts";
-import { AgentUnreachable, ClaudeCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
+import { AgentUnreachable, ClaudeCallFailed, type CodexCallFailed, ClaudeSessionTooLong, NoTracker, describe, TransportFault, UsageLimited, UserStopped, NoAnswer, type AskedQuestion } from "../src/errors.ts";
+import { turnFailure } from "../src/codex.ts";
 import { endingOf, parseAskLine, parseConfirmEnd, parseMessage } from "../src/input.ts";
 import { type RunStart, type Task, taskOf, type Wiring } from "../src/program.ts";
 import { pathOf, type RunRoot, runRootOf, type SubjectId } from "../src/artifacts.ts";
@@ -639,7 +640,7 @@ export class ScriptedPlanner implements PlannerShape {
  * `raw` replaces the reply text, for a reply that is not a review (or not JSON). `inputTokens` is the turn's input as
  * Codex would report it (issue #165), null without one.
  */
-export type ReviewStep = Review & { inputTokens?: number; fault?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
+export type ReviewStep = Review & { inputTokens?: number; fault?: string; /** Issue #233: fails the turn by the adapter's own mapping, turnFailure of src/codex.ts, from this message. */ failure?: string; /** Issue #201: the network code the fault carries. */ faultCode?: NetworkCode; plan?: string; raw?: string; touchProject?: boolean; editRecord?: string; onCall?: () => void; /** Issue #153: the turn waits for this promise (interruptibly) before it is taken. */ gate?: () => Promise<void> };
 
 export class ScriptedReviewer implements ReviewerShape {
   phases = 0;
@@ -657,10 +658,16 @@ export class ScriptedReviewer implements ReviewerShape {
     const phase = ++this.phases;
     return {
       /** Returns the reply text as Codex would: the caller decodes it. */
-      review: (prompt: string): Effect.Effect<ReviewReply, TransportFault> =>
+      review: (prompt: string): Effect.Effect<ReviewReply, TransportFault | UsageLimited | CodexCallFailed> =>
         this.gated(prompt).pipe(
           Effect.andThen(Effect.sync(() => this.turn(prompt, phase))),
-          Effect.flatMap((reply) => (reply.fault === null ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens }) : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null, networkCode: reply.faultCode })))),
+          Effect.flatMap((reply) =>
+            reply.failure !== null
+              ? Effect.fail(turnFailure(reply.failure))
+              : reply.fault === null
+                ? Effect.succeed({ text: reply.text, inputTokens: reply.inputTokens })
+                : Effect.fail(new TransportFault({ agent: "codex", message: reply.fault, status: null, networkCode: reply.faultCode })),
+          ),
         ),
     };
   });
@@ -678,7 +685,7 @@ export class ScriptedReviewer implements ReviewerShape {
   updateChecks: ReviewStep[] = [];
   /** Issue #216: the prompts of the checks of Bring Up to Date, kept apart from `prompts`, so the counts of the other reviews stand. */
   readonly checkPrompts: string[] = [];
-  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null } {
+  private turn(prompt: string, phase: number): { text: string; inputTokens: number | null; fault: string | null; faultCode: NetworkCode | null; failure: string | null } {
     (prompt.includes(UPDATE_MARKER) ? this.checkPrompts : this.prompts).push(prompt);
     this.callPhases.push(phase);
     const terms = prompt.includes(`/${pathOf({ kind: "terms" })}`);
@@ -689,7 +696,7 @@ export class ScriptedReviewer implements ReviewerShape {
     if (step.touchProject) fs.appendFileSync(path.join(this.state.project, "a.txt"), "codex\n");
     // A record under plan-review/ that the turn edits, as Codex could (the work review's changes.diff).
     if (step.editRecord !== undefined) fs.appendFileSync(path.join(this.state.records(), step.editRecord), "edited by the reviewer\n");
-    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map(withIssueEffect) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null };
+    return { text: step.raw ?? JSON.stringify({ issues: step.issues.map(withIssueEffect) }), inputTokens: step.inputTokens ?? null, fault: step.fault ?? null, faultCode: step.faultCode ?? null, failure: step.failure ?? null };
   }
 }
 

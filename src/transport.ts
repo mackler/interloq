@@ -146,7 +146,10 @@ const statusesIn = (message: string): readonly number[] => [
   ...[...message.matchAll(/\b([45]\d\d)\s+[A-Z][A-Za-z-]*(?:\s+[A-Z][A-Za-z-]*)*\b/g)].map((m) => Number(m[1])),
 ];
 
-const codexPermanent = /usage limit|rate limit|quota|invalid_json_schema|outputSchema/i;
+/** A Codex usage limit or quota, or a schema Codex refused: permanent whatever else the message says. */
+const codexPermanent = /usage limit|quota|invalid_json_schema|outputSchema/i;
+/** Codex refused the request for too many at once (issue #233), named in words where no status is given. */
+const codexRateLimited = /rate limit|too many requests/i;
 const codexTransport = new RegExp(`stream disconnected|connection reset|connection closed|timed out|timeout|WebSocket protocol error|Reconnecting|socket hang up|${NETWORK_CODES.join("|")}`, "i");
 
 /** The code of a thrown value (`ECONNRESET`, …), or null: both adapters read it here (W1-R1-2). */
@@ -156,13 +159,20 @@ export const errorCode = (e: unknown): string | null => {
 };
 
 /**
- * Whether a failed Codex turn, by its message and the code of the thrown value if any, is a transport fault that a
- * retry could fix; permanent evidence in the message wins.
+ * What a failed Codex turn is, by its message and the code of the thrown value if any. The evidence is read in this
+ * order: a usage limit, a quota or a refused schema is permanent; then a 429 status or a rate limit named in words is
+ * `rateLimited` (issue #233), waited out and tried again; then any other 4xx is permanent; then a network code, a
+ * transport pattern or a 5xx is a transport fault a retry could fix; anything else is permanent.
  */
-export const classifyCodex = (message: string, code: string | null = null): boolean => {
+export type CodexFailureKind = Readonly<{ kind: "permanent" }> | Readonly<{ kind: "transport" }> | Readonly<{ kind: "rateLimited" }>;
+const CODEX_PERMANENT: CodexFailureKind = { kind: "permanent" };
+export const classifyCodex = (message: string, code: string | null = null): CodexFailureKind => {
   const statuses = statusesIn(message);
-  if (codexPermanent.test(message) || statuses.some((s) => s >= 400 && s <= 499)) return false;
-  return (code !== null && isNetworkCode(code)) || codexTransport.test(message) || statuses.some((s) => s >= 500 && s <= 599);
+  const inRange = (from: number, to: number): boolean => statuses.some((s) => s >= from && s <= to);
+  if (codexPermanent.test(message)) return CODEX_PERMANENT;
+  if (statuses.includes(429) || codexRateLimited.test(message)) return { kind: "rateLimited" };
+  if (inRange(400, 499)) return CODEX_PERMANENT;
+  return (code !== null && isNetworkCode(code)) || codexTransport.test(message) || inRange(500, 599) ? { kind: "transport" } : CODEX_PERMANENT;
 };
 
 /** The assistant errors of the Agent SDK (SDKAssistantMessageError) that no retry fixes. */
@@ -209,7 +219,7 @@ const isOtherPermanentError = (e: string | null): boolean => e !== null && e !==
  * (src/claude.ts, `callFailure`), so only an execution call is ever `processEnded`.
  */
 export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
-  if (failure === null) return PERMANENT;
+  if (failure === null) return CODEX_PERMANENT;
   const { streamCode, apiStatus, assistantError, retrySeen, subtype, rejection, resultText } = failure;
   if (resultText !== null && CONTEXT_TOO_LONG_PATTERN.test(resultText)) return CONTEXT_TOO_LONG;
   const limitType = rejection?.limitType ?? null;
@@ -221,7 +231,7 @@ export const classifyClaude = (failure: ClaudeFailure | null): FailureKind => {
     isOtherPermanentError(assistantError) ||
     (retrySeen !== null && ((is4xx(retrySeen.status) && !isRateLimit(retrySeen.status, null)) || isOtherPermanentError(retrySeen.error))) ||
     (subtype !== null && STOPPING_SUBTYPES.includes(subtype));
-  if (otherPermanent) return PERMANENT;
+  if (otherPermanent) return CODEX_PERMANENT;
   if (eventReset !== null) return { kind: "limited", reset: eventReset, limitType };
   const rateLimited = rejection !== null || isRateLimit(apiStatus, assistantError) || (retrySeen !== null && isRateLimit(retrySeen.status, retrySeen.error));
   if (rateLimited) return { kind: "limited", reset: UNKNOWN_RESET, limitType };

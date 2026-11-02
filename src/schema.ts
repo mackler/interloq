@@ -692,7 +692,7 @@ export const LIMIT_WAIT_OUTCOMES = ["lifted", "elapsed", "interrupted", "ended"]
 export const LimitWaitUsage = Schema.Struct({
   version: Schema.Literal(2),
   kind: Schema.Literal("usage_limit_wait"),
-  agent: Schema.Literal("claude"),
+  agent: Schema.Literals(["claude", "codex"]),
   time: Schema.String,
   limit_type: Schema.NullOr(Schema.String),
   basis: Schema.Literals(LIMIT_WAIT_BASES),
@@ -709,7 +709,7 @@ export const LimitWaitUsage = Schema.Struct({
 export const LimitWaitBeganUsage = Schema.Struct({
   version: Schema.Literal(2),
   kind: Schema.Literal("usage_limit_wait_began"),
-  agent: Schema.Literal("claude"),
+  agent: Schema.Literals(["claude", "codex"]),
   time: Schema.String,
   limit_type: Schema.NullOr(Schema.String),
   basis: Schema.Literals(LIMIT_WAIT_BASES),

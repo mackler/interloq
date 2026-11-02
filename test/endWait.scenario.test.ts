@@ -65,7 +65,7 @@ test("a usage-limit wait ended early: the call is made again at once and succeed
   assert.deepEqual(usageWaits(probe.dir).map((w) => w.outcome), ["ended"]);
   const checkpoint = JSON.parse(fs.readFileSync(path.join(probe.dir, "checkpoint.json"), "utf8")) as Record<string, unknown>;
   assert.equal(checkpoint.waiting, null);
-  const line = prompts.waitEndedLine({ kind: "usageLimit", agent: "claude" });
+  const line = prompts.waitEndedLine({ kind: "usageLimit", agent: "claude", limitType: null });
   assert.ok(fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8").includes(line));
   assert.ok(probe.ui.said.includes(line));
   assert.ok(!probe.ui.notified.some((e) => e._tag === "UsageLimitLifted"));

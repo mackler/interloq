@@ -134,3 +134,55 @@ test("turnEnd: a kept error wins over a nonzero exit; otherwise the exit's text 
   assert.deepEqual(turnEnd(null, { code: 3, signal: null }, "e"), { kind: "exited", text: "Codex Exec exited with code 3: e" });
   assert.equal(turnEnd(null, { code: 0, signal: null }, ""), null);
 });
+
+// Issue #233: the failure Codex recorded when its CLI exits without printing it.
+import type { ThreadEvent } from "@openai/codex-sdk";
+import { classifyCodex } from "../src/transport.ts";
+import { recordedFailureText, sessionFailureOf, streamFailureOf } from "../src/codexArgs.ts";
+
+const TOO_MANY = "exceeded retry limit, last status: 429 Too Many Requests";
+const completeWithError = { type: "task_complete", last_agent_message: null, error: { message: TOO_MANY, codex_error_info: { response_too_many_failed_attempts: { http_status_code: 429 } } } };
+const wrapped = (payload: object) => JSON.stringify({ timestamp: "2026-11-02T12:40:01.000Z", type: "event_msg", payload });
+
+test("streamFailureOf: the turn.failed message and the last error notice, each null where absent", () => {
+  const events = [
+    { type: "thread.started", thread_id: "t" },
+    { type: "error", message: "Reconnecting... 1/5" },
+    { type: "error", message: "Reconnecting... 2/5" },
+    { type: "turn.failed", error: { message: TOO_MANY } },
+  ] as ThreadEvent[];
+  assert.deepEqual(streamFailureOf(events), { failed: TOO_MANY, notice: "Reconnecting... 2/5" });
+  assert.deepEqual(streamFailureOf([]), { failed: null, notice: null });
+});
+
+test("sessionFailureOf: the last turn's task_complete error, wrapped in a payload or at the top level", () => {
+  assert.equal(sessionFailureOf([wrapped({ type: "task_started" }), wrapped(completeWithError)]), TOO_MANY);
+  assert.equal(sessionFailureOf([JSON.stringify({ type: "task_started" }), JSON.stringify(completeWithError)]), TOO_MANY);
+});
+
+test("sessionFailureOf: an earlier turn's error before a clean turn, garbage lines and no lines give null", () => {
+  assert.equal(sessionFailureOf([wrapped({ type: "task_started" }), wrapped(completeWithError), wrapped({ type: "task_started" }), wrapped({ type: "task_complete", last_agent_message: "ok" })]), null);
+  assert.equal(sessionFailureOf(["not json", "{", "42", "null"]), null);
+  assert.equal(sessionFailureOf([]), null);
+});
+
+test("sessionFailureOf: an error record's message where no task_complete carries one, garbage skipped", () => {
+  assert.equal(sessionFailureOf(["{", wrapped({ type: "task_started" }), wrapped({ type: "error", message: "boom" }), wrapped({ type: "task_complete", last_agent_message: null })]), "boom");
+});
+
+test("recordedFailureText: the recorded cause first, the exit kept as evidence, trimmed", () => {
+  assert.equal(recordedFailureText(TOO_MANY, "Codex Exec exited with code 1: Reading prompt from stdin...\n"), `${TOO_MANY} (Codex Exec exited with code 1: Reading prompt from stdin...)`);
+});
+
+test("property: recordedFailureText begins with the cause, contains the trimmed exit, and a recorded 429 is rateLimited", () => {
+  fc.assert(
+    fc.property(fc.string(), fc.string(), (exitTail, extra) => {
+      const exit = `Codex Exec exited with code 1: ${exitTail}`;
+      const text = recordedFailureText(`${TOO_MANY}${extra.replace(/usage limit|quota|invalid_json_schema|outputSchema/gi, "")}`, exit);
+      assert.ok(text.startsWith(TOO_MANY));
+      assert.ok(text.includes(exit.trim()));
+      if (!/usage limit|quota|invalid_json_schema|outputSchema/i.test(text)) assert.deepEqual(classifyCodex(text), { kind: "rateLimited" });
+    }),
+    { numRuns: 200 },
+  );
+});

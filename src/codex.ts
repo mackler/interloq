@@ -2,7 +2,8 @@
 
 import type { ThreadEvent } from "@openai/codex-sdk";
 import { Effect, Exit, Layer, Ref } from "effect";
-import { CodexCallFailed, TransportFault } from "./errors.ts";
+import { CodexCallFailed, TransportFault, UsageLimited } from "./errors.ts";
+import { CODEX_RATE_LIMIT_TYPE } from "./limitReset.ts";
 import { classifyCodex, errorCode, networkCodeOf } from "./transport.ts";
 import { thrownText } from "./prompts.ts";
 import { agentJsonSchema } from "./jsonSchema.ts";
@@ -11,11 +12,24 @@ import type { SdkThread } from "./sdk.ts";
 import { REVIEW_PURPOSE, Reviewer, type ReviewerShape, type ReviewSession, RunConfig, Sdk, Store, type StoreShape, Ui, type UiShape } from "./services.ts";
 
 const failedWith = (e: unknown): CodexCallFailed => new CodexCallFailed({ message: e instanceof Error ? e.message : String(e) });
-/** A failure of a turn: TransportFault when src/transport.ts identifies a transport fault, CodexCallFailed otherwise (issue #26). */
-const turnFailure = (message: string, code: string | null = null): CodexCallFailed | TransportFault =>
-  classifyCodex(message, code) ? new TransportFault({ agent: "codex", message, status: null, networkCode: networkCodeOf(code, [message]) }) : new CodexCallFailed({ message });
+/**
+ * A failure of a turn, by src/transport.ts: TransportFault for a transport fault (issue #26), UsageLimited with no known
+ * end for a 429 or a rate limit (issue #233), waited out like a Claude Code limit with no known end, CodexCallFailed
+ * otherwise. Exported so that the scripted reviewer of the tests fails a turn by this mapping.
+ */
+export const turnFailure = (message: string, code: string | null = null): CodexCallFailed | TransportFault | UsageLimited => {
+  const kind = classifyCodex(message, code).kind;
+  switch (kind) {
+    case "transport":
+      return new TransportFault({ agent: "codex", message, status: null, networkCode: networkCodeOf(code, [message]) });
+    case "rateLimited":
+      return new UsageLimited({ agent: "codex", message, reset: { kind: "unknown" }, limitType: CODEX_RATE_LIMIT_TYPE });
+    case "permanent":
+      return new CodexCallFailed({ message });
+  }
+};
 /** A thrown value's text, with its code where the text does not name it (W1-R1-2). */
-const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault => {
+const turnFailedWith = (e: unknown): CodexCallFailed | TransportFault | UsageLimited => {
   const code = errorCode(e);
   const message = typeof e === "object" && e !== null ? (e as { message?: unknown }).message : undefined;
   const text = typeof message === "string" ? message : typeof e === "object" && e !== null ? "" : String(e);

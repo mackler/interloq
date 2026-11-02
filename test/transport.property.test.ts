@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import fc from "fast-check";
-import { type ClaudeFailure, classifyClaude, isNetworkCode, NETWORK_CODES, networkCodeOf, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
+import { type ClaudeFailure, classifyClaude, classifyCodex, isNetworkCode, NETWORK_CODES, networkCodeOf, PERMANENT_ASSISTANT_ERRORS, processEndOf, type Rejection } from "../src/transport.ts";
 import { timeOfDayIn } from "../src/limitReset.ts";
 
 // Issue #68 (issue #66 applies): the classification of a failed Claude Code call over arbitrary facts.
@@ -238,5 +238,20 @@ test("property: networkCodeOf finds a code named as a whole word, never inside a
       assert.equal(networkCodeOf(null, [`X${c}Y`]), null);
     }),
     RUNS,
+  );
+});
+
+// Issue #233: any text around a 429 status is rateLimited, unless a usage limit or a quota is named anywhere in it.
+const plainWord = fc.constantFrom("the", "request", "was", "refused", "after", "retry", "exceeded", "last", "turn", "of", "codex", "12", "3");
+const plainText = fc.array(plainWord, { maxLength: 6 }).map((ws) => ws.join(" "));
+test("property: a 429 is rateLimited, and a usage limit or quota named anywhere makes it permanent", () => {
+  fc.assert(
+    fc.property(plainText, plainText, fc.constantFrom(" usage limit ", " quota "), fc.nat(), (prefix, suffix, permanent, at) => {
+      const text = `${prefix} status 429 ${suffix}`;
+      assert.deepEqual(classifyCodex(text), { kind: "rateLimited" });
+      const i = at % (text.length + 1);
+      assert.deepEqual(classifyCodex(text.slice(0, i) + permanent + text.slice(i)), { kind: "permanent" });
+    }),
+    { numRuns: 200 },
   );
 });
