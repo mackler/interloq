@@ -65,10 +65,10 @@ test("iidOf takes a positive decimal integer without leading zeros that is a saf
 });
 
 test("relabelBody adds the target's label and removes the other three state labels, in the states' order", () => {
-  assert.deepEqual(relabelBody(GITLAB_LABELS, "unrefined"), { add_labels: "Unrefined", remove_labels: "Refined,Implementing,Implemented" });
-  assert.deepEqual(relabelBody(GITLAB_LABELS, "refined"), { add_labels: "Refined", remove_labels: "Unrefined,Implementing,Implemented" });
-  assert.deepEqual(relabelBody(GITLAB_LABELS, "implementing"), { add_labels: "Implementing", remove_labels: "Unrefined,Refined,Implemented" });
-  assert.deepEqual(relabelBody(GITLAB_LABELS, "implemented"), { add_labels: "Implemented", remove_labels: "Unrefined,Refined,Implementing" });
+  assert.deepEqual(relabelBody(GITLAB_LABELS, "unrefined"), Result.succeed({ add_labels: "Unrefined", remove_labels: "Refined,Implementing,Implemented" }));
+  assert.deepEqual(relabelBody(GITLAB_LABELS, "refined"), Result.succeed({ add_labels: "Refined", remove_labels: "Unrefined,Implementing,Implemented" }));
+  assert.deepEqual(relabelBody(GITLAB_LABELS, "implementing"), Result.succeed({ add_labels: "Implementing", remove_labels: "Unrefined,Refined,Implemented" }));
+  assert.deepEqual(relabelBody(GITLAB_LABELS, "implemented"), Result.succeed({ add_labels: "Implemented", remove_labels: "Unrefined,Refined,Implementing" }));
 });
 
 test("the close body closes the issue and names no label", () => {

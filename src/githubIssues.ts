@@ -1,8 +1,7 @@
 // What the GitHub adapter decides without I/O (issue #120, part 1): an issue's state from its labels, the label set of
 // a state change, the next page of a listing and an id's issue number. Pure; the edge is src/github.ts.
 import { Option, Result, Schema } from "effect";
-import type { GithubLabels } from "./schema.ts";
-import { ITEM_STATES, type ItemComment, type ItemId, itemUrlFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { ITEM_STATES, type ItemComment, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, type ItemId, itemUrlFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 /**
  * The fields of GitHub's issue object the adapter reads; the many others are ignored. A label is an object with a
@@ -40,19 +39,19 @@ export const isPullRequest = (issue: GithubIssue): boolean => "pull_request" in 
  * An issue's state: its one stage label's; none makes an open issue unrefined (requirements, Q1) and a closed one
  * stateless; two or more are ambiguous (Q3). Labels outside the mapping are ignored.
  */
-export const stateOf = (labels: GithubLabels, issue: Readonly<{ open: boolean; labelNames: readonly string[] }>): Result.Result<ItemState, NoState | Ambiguous> => {
+export const stateOf = (labels: StageLabels, issue: Readonly<{ open: boolean; labelNames: readonly string[] }>): Result.Result<ItemState, NoState | Ambiguous> => {
   const stages = stageLabelsOf(labels, issue.labelNames);
   if (stages.length > 1) return Result.fail({ _tag: "Ambiguous", labels: stages });
-  const state = ITEM_STATES.find((s) => labels[s] === stages[0]);
+  const state = stages.length === 1 ? ITEM_STATES.find((s) => labels[s] === stages[0]) : undefined;
   if (state !== undefined) return Result.succeed(state);
   return issue.open ? Result.succeed("unrefined") : Result.fail({ _tag: "NoState" });
 };
 
 /** The stage labels among an issue's labels, in the issue's order. */
-export const stageLabelsOf = (labels: GithubLabels, labelNames: readonly string[]): readonly string[] => labelNames.filter((name) => ITEM_STATES.some((state) => labels[state] === name));
+export const stageLabelsOf = (labels: StageLabels, labelNames: readonly string[]): readonly string[] => labelNames.filter((name) => stageLabelValues(labels).includes(name));
 
 /** The item of an issue: its id the issue's number in decimal, a null body the empty string, its address its html_url. */
-export const itemOf = (labels: GithubLabels, issue: GithubIssue): Result.Result<TrackerItem, NoState | Ambiguous> =>
+export const itemOf = (labels: StageLabels, issue: GithubIssue): Result.Result<TrackerItem, NoState | Ambiguous> =>
   Result.map(stateOf(labels, { open: issue.state === "open", labelNames: labelNamesOf(issue) }), (state) => ({
     // An integer's decimal text is never blank, which is all itemIdOf requires.
     id: String(issue.number) as ItemId,
@@ -77,7 +76,7 @@ export const nextPage = (link: string | undefined): Option.Option<string> =>
 export const issueNumberOf = (id: ItemId): Option.Option<number> => positiveDecimalOf(id);
 
 /** The full label set of a state change: every stage label removed, the new state's added, the others kept in order. */
-export const relabeled = (current: readonly string[], labels: GithubLabels, to: ItemState): readonly string[] => {
-  const stage = new Set(ITEM_STATES.map((state) => labels[state]));
-  return [...current.filter((name) => !stage.has(name)), labels[to]];
+export const relabeled = (current: readonly string[], labels: StageLabels, to: ItemState): Result.Result<readonly string[], NoObsoleteLabel> => {
+  const stage = new Set(stageLabelValues(labels));
+  return Result.map(targetLabelOf(labels, to), (label) => [...current.filter((name) => !stage.has(name)), label]);
 };

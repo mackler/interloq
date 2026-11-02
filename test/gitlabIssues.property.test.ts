@@ -24,7 +24,7 @@ const applied = (labels: readonly string[], body: Readonly<{ add_labels: string;
 
 test("an open issue with any labels, relabeled to a state, reads as that state with its other labels unchanged", () => {
   fc.assert(fc.property(arbLabels, arbTarget, (labels, target) => {
-    const after = applied(labels, relabelBody(GITLAB_LABELS, target));
+    const after = applied(labels, Result.getOrThrow(relabelBody(GITLAB_LABELS, target)));
     const read = stateOfIssue(GITLAB_LABELS, { state: "opened", labels: after });
     const others = (ls: readonly string[]) => JSON.stringify(ls.filter((l) => !stateLabels.includes(l)));
     return Result.isSuccess(read) && read.success === target && others(after) === others(labels);

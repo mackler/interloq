@@ -61,9 +61,9 @@ test("issueNumberOf: a positive decimal without leading zeros, else none", () =>
 });
 
 test("relabeled removes every stage label, adds the new state's, and keeps the others in order", () => {
-  assert.deepEqual(relabeled(["bug", "stage: implementing", "ui"], LABELS, "refined"), ["bug", "ui", "stage: refined"]);
-  assert.deepEqual(relabeled([], LABELS, "implementing"), ["stage: implementing"]);
-  assert.deepEqual(relabeled(["stage: implementing", "stage: refined"], LABELS, "refined"), ["stage: refined"]);
+  assert.deepEqual(relabeled(["bug", "stage: implementing", "ui"], LABELS, "refined"), Result.succeed(["bug", "ui", "stage: refined"]));
+  assert.deepEqual(relabeled([], LABELS, "implementing"), Result.succeed(["stage: implementing"]));
+  assert.deepEqual(relabeled(["stage: implementing", "stage: refined"], LABELS, "refined"), Result.succeed(["stage: refined"]));
 });
 
 // Issue #131: every comment carries its id, so Interloq can delete its own.

@@ -1,7 +1,7 @@
 // What the GitLab adapter decides without I/O: an issue's id, its state and its item, the bodies of a state change and
 // of a close, and the texts of its refusals. Pure; the edge is src/gitlab.ts.
 //
-// An open issue carries exactly one of the four state labels (GITLAB_LABELED_STATES), and a closed issue is deployed
+// An open issue carries exactly one of the four state labels (GITLAB_LABELED_STATES) or the optional obsolete label (issue #216), and a closed issue is deployed
 // (the developer's decision of 9 Oct 2026). GitLab Free has no scoped labels, so nothing in GitLab enforces the one
 // label: an open issue with none or with several is a typed failure naming its labels, never a guess.
 import { Option, Result, Schema } from "effect";
@@ -9,8 +9,7 @@ import { TrackerAuthRefused, TrackerItemNotFound, TrackerRequestRefused, Tracker
 import { type Refinement, type SectionMalformed, withRefinement } from "./refinement.ts";
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
-import { GITLAB_LABELED_STATES, type GitlabLabeledState, type GitlabLabels } from "./schema.ts";
-import { type ItemComment, type ItemId, type ItemState, itemUrlFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { ITEM_STATES, type ItemComment, type ItemId, type ItemState, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, itemUrlFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 const TRACKER = "GitLab";
 
@@ -35,26 +34,27 @@ export type Ambiguous = Readonly<{ _tag: "Ambiguous"; labels: readonly string[] 
 export const iidOf = (id: ItemId): Option.Option<number> => positiveDecimalOf(id);
 
 /** The state labels among an issue's labels, in the issue's order. */
-export const stateLabelsOf = (labels: GitlabLabels, names: readonly string[]): readonly string[] => names.filter((name) => GITLAB_LABELED_STATES.some((state) => labels[state] === name));
+export const stateLabelsOf = (labels: StageLabels, names: readonly string[]): readonly string[] => names.filter((name) => stageLabelValues(labels).includes(name));
 
 /** An issue's state: a closed issue is deployed whatever its labels; an open one is its one state label's. */
-export const stateOfIssue = (labels: GitlabLabels, issue: Pick<GitlabIssue, "state" | "labels">): Result.Result<ItemState, NoStateLabel | Ambiguous> => {
+export const stateOfIssue = (labels: StageLabels, issue: Pick<GitlabIssue, "state" | "labels">): Result.Result<ItemState, NoStateLabel | Ambiguous> => {
   if (issue.state === "closed") return Result.succeed("deployed");
   const found = stateLabelsOf(labels, issue.labels);
   if (found.length > 1) return Result.fail({ _tag: "Ambiguous", labels: found });
-  const state = GITLAB_LABELED_STATES.find((s) => labels[s] === found[0]);
+  const state = found.length === 1 ? ITEM_STATES.find((s) => labels[s] === found[0]) : undefined;
   return state === undefined ? Result.fail({ _tag: "NoStateLabel", labels: issue.labels }) : Result.succeed(state);
 };
 
 /** The item of an issue: its id the issue's number in decimal, a null description the empty string, its address its web_url. */
-export const itemOfIssue = (labels: GitlabLabels, issue: GitlabIssue): Result.Result<TrackerItem, NoStateLabel | Ambiguous> =>
+export const itemOfIssue = (labels: StageLabels, issue: GitlabIssue): Result.Result<TrackerItem, NoStateLabel | Ambiguous> =>
   Result.map(stateOfIssue(labels, issue), (state) => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", state, url: itemUrlFrom(issue.web_url) }));
 
 /** The body of a state change: the target's label added and every other state label removed, in one request. */
-export const relabelBody = (labels: GitlabLabels, to: GitlabLabeledState): Readonly<{ add_labels: string; remove_labels: string }> => ({
-  add_labels: labels[to],
-  remove_labels: GITLAB_LABELED_STATES.filter((state) => state !== to).map((state) => labels[state]).join(","),
-});
+export const relabelBody = (labels: StageLabels, to: Exclude<ItemState, "deployed">): Result.Result<Readonly<{ add_labels: string; remove_labels: string }>, NoObsoleteLabel> =>
+  Result.map(targetLabelOf(labels, to), (label) => ({
+    add_labels: label,
+    remove_labels: stageLabelValues(labels).filter((l) => l !== label).join(","),
+  }));
 
 /** The body that makes an item deployed: the issue closed, its labels left as they are. */
 export const CLOSE_BODY = { state_event: "close" } as const;

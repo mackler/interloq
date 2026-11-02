@@ -6,9 +6,9 @@ import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
 import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
 import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
-import type { GithubTrackerConfig } from "./schema.ts";
+import { type GithubTrackerConfig, stageLabelsOfConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import { type CommentId, type ItemComment, type ItemId, type ItemState, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CommentId, type ItemComment, type ItemId, type ItemState, NO_OBSOLETE_LABEL_TEXT, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
 import { OPENING_LINE, type Refinement, withRefinement } from "./refinement.ts";
 
@@ -63,6 +63,9 @@ type Answer = Readonly<{ json: unknown; link: string | undefined }>;
 export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): Effect.Effect<TrackerShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
+    // Issue #216: the label of each state the configuration labels, obsolete only where its label is set.
+    const stages = stageLabelsOfConfig(config);
+    const noObsoleteLabel = (id: ItemId): TrackerBodyInvalid => new TrackerBodyInvalid({ id, message: NO_OBSOLETE_LABEL_TEXT });
     const issuesUrl = `${API}/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/issues`;
     const authorized = (request: HttpClientRequest.HttpClientRequest): HttpClientRequest.HttpClientRequest =>
       request.pipe(
@@ -98,7 +101,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
 
     /** An issue as an item; a pull request is none, and an issue with no state or two is its typed failure. */
     const itemOfIssue = (issue: GithubIssue, id: string): Result.Result<TrackerItem, TrackerError> =>
-      Result.mapError(itemOf(config.labels, issue), (failure) =>
+      Result.mapError(itemOf(stages, issue), (failure) =>
         failure._tag === "Ambiguous" ? new TrackerStateAmbiguous({ id, labels: failure.labels }) : new TrackerBodyInvalid({ id, message: "the issue is closed and carries no stage label, so it is in no state" }),
       );
 
@@ -115,11 +118,12 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
       });
     };
     // An open issue with no stage label is unrefined (requirements, Q1), so only the whole open list finds those.
-    const stateLabels = (state: ItemState): readonly string[] => (state === "unrefined" ? [] : [config.labels[state]]);
-    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => listed(state, stateLabels(state), {}, `the ${state} issues`);
+    const stateLabels = (state: ItemState): readonly string[] => (state === "unrefined" ? [] : [stages[state] ?? ""]);
+    // Obsolete with no label configured is no listable state: none, and no request (issue #216).
+    const list = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> => (stages[state] === undefined ? Effect.succeed([]) : listed(state, stateLabels(state), {}, `the ${state} issues`));
     /** Issue #131: the marked issues in a state, newest first by GitHub's own sort; none, and no request, with no mark configured. */
     const listMarked = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> =>
-      config.prepareLabel === null ? Effect.succeed([]) : listed(state, [...stateLabels(state), config.prepareLabel], { sort: "created", direction: "desc" }, `the marked ${state} issues`);
+      config.prepareLabel === null || stages[state] === undefined ? Effect.succeed([]) : listed(state, [...stateLabels(state), config.prepareLabel], { sort: "created", direction: "desc" }, `the marked ${state} issues`);
 
     /** The issue an id names; an id outside GitHub's format and a pull request are items that do not exist. */
     const issueOf = (id: ItemId): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> =>
@@ -157,7 +161,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
      * as unrefined. A label added on GitHub between the read and the PATCH is overwritten.
      */
     const setState = (id: ItemId, state: ItemState): Effect.Effect<void, TrackerError> =>
-      Effect.flatMap(itemIssueOf(id), ({ issue }) => patch(issue.url, id, { labels: relabeled(labelNamesOf(issue), config.labels, state) }));
+      Effect.flatMap(itemIssueOf(id), ({ issue }) => Result.match(relabeled(labelNamesOf(issue), stages, state), { onFailure: () => Effect.fail(noObsoleteLabel(id)), onSuccess: (labels) => patch(issue.url, id, { labels }) }));
 
     /** Issue #186: one POST of the comment, after the issue is read, so that it refuses what read refuses; the answer's JSON is not used. */
     const comment = (id: ItemId, text: string): Effect.Effect<void, TrackerError> =>

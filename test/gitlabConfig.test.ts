@@ -12,7 +12,7 @@ const GITLAB = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
 test("a GitLab tracker with its project and four distinct labels decodes", () => {
   const decoded = decode(GITLAB);
   assert.ok(Result.isSuccess(decoded));
-  assert.deepEqual(decoded.success, { ...GITLAB, prepareLabel: null });
+  assert.deepEqual(decoded.success, { ...GITLAB, prepareLabel: null, obsoleteLabel: null });
 });
 
 test("labels with spaces and a project in a subgroup are accepted", () => {

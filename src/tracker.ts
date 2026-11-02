@@ -2,10 +2,27 @@
 // tracker. Pure; the port is `Tracker` in src/services.ts, the GitHub adapter src/github.ts.
 import { type Brand, Option, Result, Schema } from "effect";
 
-/** Interloq's own vocabulary of states, in their order (developer's decision, issue #120; refining removed by his decision of 9 Oct 2026: an item is refined or unrefined). The config maps each to a tracker's own. */
-export const ITEM_STATES = ["unrefined", "refined", "implementing", "implemented", "deployed"] as const;
+/** Interloq's own vocabulary of states, in their order; obsolete (issue #216, Q1) is an issue found already built or replaced, listed in neither tab (developer's decision, issue #120; refining removed by his decision of 9 Oct 2026: an item is refined or unrefined). The config maps each to a tracker's own. */
+export const ITEM_STATES = ["unrefined", "refined", "implementing", "implemented", "deployed", "obsolete"] as const;
 export const ItemState = Schema.Literals(ITEM_STATES);
 export type ItemState = typeof ItemState.Type;
+
+/**
+ * The label of each state a tracker's configuration labels (issue #216): every configured state's, obsolete only where
+ * its optional label is set, deployed absent on GitLab. The one source the adapters' issue functions read.
+ */
+export type StageLabels = Readonly<Partial<Record<ItemState, string>>>;
+/** A relabeling to a state with no label configured: only obsolete, whose label is optional. */
+export type NoObsoleteLabel = Readonly<{ _tag: "NoObsoleteLabel"; state: ItemState }>;
+/** The label a state change adds, or the refusal where the configuration labels no such state. */
+export const targetLabelOf = (labels: StageLabels, to: ItemState): Result.Result<string, NoObsoleteLabel> => {
+  const label = labels[to];
+  return label === undefined ? Result.fail({ _tag: "NoObsoleteLabel", state: to }) : Result.succeed(label);
+};
+/** Why an item was not labeled obsolete: the tracker's configuration names no obsoleteLabel. */
+export const NO_OBSOLETE_LABEL_TEXT = "the tracker's configuration sets no obsoleteLabel, so the item was not labeled obsolete";
+/** Every configured stage label. */
+export const stageLabelValues = (labels: StageLabels): readonly string[] => ITEM_STATES.flatMap((s) => (labels[s] === undefined ? [] : [labels[s]]));
 
 /**
  * An item's id in its tracker: a text with a character other than whitespace, built by itemIdOf alone. The port's id is

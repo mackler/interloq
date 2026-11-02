@@ -144,7 +144,7 @@ test("the tracker key defaults to null and accepts a GitHub tracker with its fiv
   assert.equal(defaultConfig.tracker, null);
   const decoded = decodeConfigText("/p/config.json", trackerText(GITHUB));
   assert.ok(Result.isSuccess(decoded));
-  assert.deepEqual(decoded.success.tracker, { ...GITHUB, prepareLabel: null });
+  assert.deepEqual(decoded.success.tracker, { ...GITHUB, prepareLabel: null, obsoleteLabel: null });
 });
 
 test("a tracker with a missing or blank coordinate, an unknown state, a missing state or a shared label is ConfigInvalid", () => {
@@ -182,7 +182,7 @@ test("the project's tracker replaces the shared one whole", async () => {
   const { project, shared, projectFile } = setup();
   fs.writeFileSync(shared, trackerText(GITHUB));
   fs.writeFileSync(projectFile, trackerText({ ...GITHUB, owner: "someone", repo: "else" }));
-  assert.deepEqual((await load(project, shared)).tracker, { ...GITHUB, owner: "someone", repo: "else", prepareLabel: null });
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITHUB, owner: "someone", repo: "else", prepareLabel: null, obsoleteLabel: null });
 });
 
 // The GitLab tracker: the project's path and four state labels, deployed being a closed issue; refused before any call
@@ -192,7 +192,7 @@ const GITLAB = { kind: "gitlab", project: PROJECT, labels: GITLAB_LABELS };
 test("a configuration file with a GitLab tracker loads", async () => {
   const { project, shared, projectFile } = setup();
   fs.writeFileSync(projectFile, trackerText(GITLAB));
-  assert.deepEqual((await load(project, shared)).tracker, { ...GITLAB, prepareLabel: null });
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITLAB, prepareLabel: null, obsoleteLabel: null });
 });
 
 test("a GitLab tracker with a bad project, a missing state, a deployed label, a bad or shared label or a token is ConfigInvalid under tracker", () => {
@@ -219,7 +219,7 @@ test("the project's GitLab tracker replaces a shared GitHub one whole", async ()
   const { project, shared, projectFile } = setup();
   fs.writeFileSync(shared, trackerText(GITHUB));
   fs.writeFileSync(projectFile, trackerText(GITLAB));
-  assert.deepEqual((await load(project, shared)).tracker, { ...GITLAB, prepareLabel: null });
+  assert.deepEqual((await load(project, shared)).tracker, { ...GITLAB, prepareLabel: null, obsoleteLabel: null });
 });
 
 // Issue #122: the amount above which one Claude Code request's cost is warned about, validated under behavior 9.
