@@ -1974,10 +1974,10 @@ const bashResult = (id: string, text: string): SDKMessage =>
 
 test("issue #49: an execution call's command and background task reach the live panel, the task's tail from its output file", async () => {
   const fake = await planner([messages(init(), bashUse("t1", "git status"), bashResult("t1", "clean\n"), bashUse("t2", "npm test", true), started("b1"), notification("b1", "completed", "/tmp/b1.out"), success(report))]);
-  fake.sdk.outputFiles.set("/tmp/b1.out", "\u001b[32mall 12 passed\u001b[0m\n");
+  fake.sdk.outputFiles.set("/tmp/b1.out", "\u001b[2K\u001b[32mall 12 passed\u001b[0m\n");
   await run(fake.planner.executing("implement the plan", noReporter));
   const brief = fake.ui.outputs.map((e) => (e._tag === "Printed" ? `Printed ${e.key} ${e.text}` : e._tag === "Finished" ? `Finished ${e.key} ${e.status._tag}` : e._tag === "Touched" ? `Touched ${e.name}` : `${e._tag} ${e.key}`));
-  assert.deepEqual(brief, ["Started claude:t1", "Printed claude:t1 clean\n", "Finished claude:t1 Succeeded", "Started task:b1", "Printed task:b1 all 12 passed\n", "Finished task:b1 Succeeded"]);
+  assert.deepEqual(brief, ["Started claude:t1", "Printed claude:t1 clean\n", "Finished claude:t1 Succeeded", "Started task:b1", "Printed task:b1 \u001b[32mall 12 passed\u001b[0m\n", "Finished task:b1 Succeeded"]);
 });
 
 test("issue #49: an interrupted execution call ends its open command Unknown on the live panel", async () => {
