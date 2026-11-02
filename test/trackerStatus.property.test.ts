@@ -25,3 +25,13 @@ test("every status of GitHub's answer maps to its class", () => {
 test("every status of GitLab's answer maps to its class", () => {
   fc.assert(fc.property(fc.integer({ min: 100, max: 599 }), fc.constantFrom<GitlabTarget>(item, listing), (status, target) => classOf(status, gitlabStatusFailure(status, "GET", target))), { numRuns: 500 });
 });
+
+// Issue #216 (W6-R1-1): the two adapters agree on the statuses that mean an item is not found: a 404 or a 410 on an
+// item, and never on a listing.
+const notFoundExactly = (status: number, target: Target, failure: TrackerError | null): boolean =>
+  (failure?._tag === "TrackerItemNotFound") === (target.kind === "item" && (status === 404 || status === 410));
+
+test("GitHub's and GitLab's answers mean an item not found exactly for a 404 or a 410 on an item", () => {
+  fc.assert(fc.property(fc.integer({ min: 100, max: 599 }), fc.constantFrom<Target>(item, listing), (status, target) =>
+    notFoundExactly(status, target, statusFailure(status, "GET", target)) && notFoundExactly(status, target, gitlabStatusFailure(status, "GET", target))), { numRuns: 500 });
+});

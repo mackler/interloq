@@ -103,8 +103,10 @@ test("the status of GitLab's answer maps to the tracker's errors", () => {
   assert.equal(gitlabStatusFailure(204, "PUT", item), null);
   for (const status of [401, 403]) assert.deepEqual(gitlabStatusFailure(status, "GET", item), new TrackerAuthRefused({ tracker: "GitLab", status }));
   assert.deepEqual(gitlabStatusFailure(404, "GET", item), new TrackerItemNotFound({ id: "42" }));
+  // Issue #216 (W6-R1-1): a 410 on an item is not found too, as GitHub's adapter maps it.
+  assert.deepEqual(gitlabStatusFailure(410, "GET", item), new TrackerItemNotFound({ id: "42" }));
   // Issue #171: any other 4xx is refused for good; anything else is unreachable with its status.
-  for (const [status, target] of [[404, listing], [410, item], [422, item], [429, listing]] as const) {
+  for (const [status, target] of [[404, listing], [410, listing], [422, item], [429, listing]] as const) {
     const failure = gitlabStatusFailure(status, "GET", target);
     assert.equal(failure?._tag, "TrackerRequestRefused", String(status));
     assert.equal(failure?._tag === "TrackerRequestRefused" && failure.status, status);

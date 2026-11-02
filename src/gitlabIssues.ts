@@ -123,16 +123,18 @@ export const gitlabTargetName = (target: GitlabTarget): string => (target.kind =
 
 /**
  * What a status of GitLab's answer means, or null for a 2xx: the one mapping, never built from a client error object,
- * whose request carries the token. A 401 or 403 is the token refused, a refusal by its Planner role included. A 404 on
- * a listing is a project path that does not exist, a fault of the configuration, not a missing item: like any other 4xx
+ * whose request carries the token. A 401 or 403 is the token refused, a refusal by its Planner role included. A 404 or
+ * a 410 on an item is the item not found. A 404 on a listing is a project path that does not exist, a fault of the configuration, not a missing item: like any other 4xx
  * it is TrackerRequestRefused, never repeated (issue #171), and a status outside 2xx and 4xx is TrackerUnreachable.
  */
 export const gitlabStatusFailure = (status: number, method: string, target: GitlabTarget): TrackerError | null => {
   if (status >= 200 && status <= 299) return null;
   if (status === 401 || status === 403) return new TrackerAuthRefused({ tracker: TRACKER, status });
-  if (status === 404 && target.kind === "item") return new TrackerItemNotFound({ id: target.id });
+  // Issue #216 (W6-R1-1): a 404 or a 410 on an item is not found, as GitHub's adapter maps it: a 410 means the issue is
+  // gone. A listing keeps its mapping below.
+  if ((status === 404 || status === 410) && target.kind === "item") return new TrackerItemNotFound({ id: target.id });
   const message = `GitLab answered ${method} ${gitlabTargetName(target)} with status ${status}`;
-  // Issue #171: any other 4xx, a 404 on a listing (a wrong project) included, is permanent; anything else, a 5xx in
+  // Issue #171: any other 4xx, a 404 or 410 on a listing (a wrong project) included, is permanent; anything else, a 5xx in
   // practice, is unreachable with its status.
   if (status >= 400 && status <= 499) return new TrackerRequestRefused({ tracker: TRACKER, status, message });
   return new TrackerUnreachable({ tracker: TRACKER, message, status });

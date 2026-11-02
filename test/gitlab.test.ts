@@ -113,6 +113,14 @@ test("read of an id outside GitLab's format sends nothing and is TrackerItemNotF
   assert.equal(stub.sent().length, 1);
 });
 
+// Issue #216 (W6-R1-1): a cited issue that is gone (410) is not found, as on GitHub, not a refused request.
+test("readCited of an issue GitLab answers 410 is TrackerItemNotFound after one request", async () => {
+  const stub = makeStub(route({ [`GET ${ISSUES}/12`]: json({ message: "410 Gone" }, 410) }));
+  const error = await failure(stub, (t) => t.readCited(id("12")));
+  assert.deepEqual(error._tag === "TrackerItemNotFound" && error.id, "12");
+  assert.equal(stub.sent().length, 1);
+});
+
 test("a 401 and a 403 are TrackerAuthRefused, not an empty list", async () => {
   for (const filtered of [false, true]) for (const status of [401, 403]) {
     const error = await failure(makeStub(() => json({ message: "401 Unauthorized" }, status), { filtered }), (t) => t.list("unrefined"));
