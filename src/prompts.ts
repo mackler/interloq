@@ -4119,19 +4119,22 @@ export const sendBackIncompleteText = (item: string, ending: "sentBack" | "stopp
 // Issue #49: the live panel of the dashboard, which shows what running processes print.
 /** The panel's region name. */
 export const LIVE_OUTPUT_NAME = "Output of the running process";
-/** The note under the panel's header: what it holds and that Interloq does not compose it. */
-export const LIVE_OUTPUT_NOTE = "What running processes print, as they print it, since this tab connected. Interloq does not write or check this text.";
 /** The panel's header before anything printed. */
 export const LIVE_OUTPUT_EMPTY = "Nothing has printed since this tab connected.";
-/** The panel's header once no process runs and lines remain. */
-export const OUTPUT_FINISHED_HEADER = "No process is running; the lines below are from processes that have ended.";
 /** The prefix of the suite's lines. */
 export const SUITE_OUTPUT_NAME = "suite";
 /** The prefix of Codex's reasoning summaries. */
 export const CODEX_REASONING_NAME = "Codex reasoning";
-/** The panel's header while processes run: each named, with its elapsed time where known. */
-export const outputRunningHeader = (running: readonly Readonly<{ name: string; seconds: number | null }>[]): string =>
-  `Still running: ${running.map((p) => (p.seconds === null ? p.name : `${p.name} (${durationText(p.seconds * 1000)})`)).join(", ")}`;
+/** Issue #221: a running process's icon's accessible name, with its time where known. */
+export const outputRunningName = (name: string, seconds: number | null): string => `${name}: running${seconds === null ? "" : ` for ${durationText(seconds * 1000)}`}`;
+/** Issue #221: the short text the panel shows after an ended process's icon; its accessible name is `outputEndedLine`. */
+export const outputEndedDetail = (status: ProcessStatus): string =>
+  status._tag === "Exited" ? `exit ${status.code}` : status._tag === "Signaled" ? status.signal : "";
+/** Issue #221: the name of the panel's list of the processes running. */
+export const LIVE_PROCESSES_NAME = "Processes running";
+/** Issue #221: the name of the handle on the panel's upper edge, and its value in words. */
+export const LIVE_OUTPUT_RESIZE_LABEL = "Height of the output panel";
+export const panelHeightText = (lines: number): string => `${lines} lines`;
 /** The line the panel adds when a process ends: its name and how it ended, where known. */
 export const outputEndedLine = (name: string, status: ProcessStatus): string => {
   switch (status._tag) {

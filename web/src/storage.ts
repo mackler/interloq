@@ -3,6 +3,8 @@
 // is a typed result. Issue #120 removed the remembered project directory: the project is the server's directory.
 
 import { defaultPreferences, type Preferences, type Toggle } from "./notify.ts";
+import { DEFAULT_PANEL_LINES, type PanelLines, panelLinesOf } from "./panelHeight.ts";
+import { Result } from "effect";
 
 /** The part of the browser's Storage this module uses. */
 export type StorageLike = { getItem: (key: string) => string | null; setItem: (key: string, value: string) => void };
@@ -41,5 +43,25 @@ const guarded = <A>(acquire: AcquireStorage, use: (storage: StorageLike) => A): 
     return storage === undefined ? { ok: false } : { ok: true, value: use(storage) };
   } catch {
     return { ok: false };
+  }
+};
+
+/** Issue #221: the live panel's dragged height, per browser. */
+const PANEL_KEY = "interloq.livePanel";
+/** The full live panel's remembered height; the default where nothing or something unreadable is stored. */
+export const readPanelLines = (acquire: AcquireStorage = browserStorage): Stored<PanelLines> => guarded(acquire, (s) => decodePanelLines(s.getItem(PANEL_KEY)));
+/** Remembers the full live panel's height; `{ ok: false }` when it could not be remembered. */
+export const writePanelLines = (lines: PanelLines, acquire: AcquireStorage = browserStorage): Stored<void> =>
+  guarded(acquire, (s) => s.setItem(PANEL_KEY, JSON.stringify({ lines })));
+
+const decodePanelLines = (text: string | null): PanelLines => {
+  if (text === null) return DEFAULT_PANEL_LINES;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return DEFAULT_PANEL_LINES;
+    const { lines } = value as Record<string, unknown>;
+    return typeof lines === "number" ? Result.getOrElse(panelLinesOf(lines), () => DEFAULT_PANEL_LINES) : DEFAULT_PANEL_LINES;
+  } catch {
+    return DEFAULT_PANEL_LINES;
   }
 };

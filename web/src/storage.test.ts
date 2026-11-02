@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { defaultPreferences } from "./notify.ts";
-import { readPreferences, type StorageLike, writePreferences } from "./storage.ts";
+import { readPanelLines, readPreferences, type StorageLike, writePanelLines, writePreferences } from "./storage.ts";
+import { PANEL_LINES } from "./livePanel.ts";
+import { panelLinesOf } from "./panelHeight.ts";
+import { Result } from "effect";
 
 // Finding 3 of docs/gui-review.md: the storage edge returns typed results; nothing it does can throw.
 const memory = (): StorageLike & { items: Map<string, string> } => {
@@ -58,5 +61,33 @@ describe("storage", () => {
       expect(readPreferences(acquire)).toEqual({ ok: false });
       expect(writePreferences(defaultPreferences, acquire)).toEqual({ ok: false });
     }
+  });
+});
+
+// Issue #221: the live panel's dragged height, remembered per browser.
+describe("the panel's remembered height", () => {
+  const lines = (n: number) => Result.getOrThrow(panelLinesOf(n));
+  test("a height written is read back, under its own key", () => {
+    const m = memory();
+    expect(writePanelLines(lines(20), () => m)).toEqual({ ok: true, value: undefined });
+    expect(m.items.get("interloq.livePanel")).toBe(JSON.stringify({ lines: 20 }));
+    expect(readPanelLines(() => m)).toEqual({ ok: true, value: 20 });
+  });
+
+  test("nothing stored, garbage and a height out of range read as the default", () => {
+    const m = memory();
+    expect(readPanelLines(() => m)).toEqual({ ok: true, value: PANEL_LINES });
+    for (const text of ["{", "[]", "null", JSON.stringify({ lines: 100 }), JSON.stringify({ lines: "12" }), JSON.stringify({ lines: 2.5 })]) {
+      m.items.set("interloq.livePanel", text);
+      expect(readPanelLines(() => m)).toEqual({ ok: true, value: PANEL_LINES });
+    }
+  });
+
+  test("a throwing storage is a failure, not an exception", () => {
+    const throwing = () => {
+      throw securityError();
+    };
+    expect(readPanelLines(throwing)).toEqual({ ok: false });
+    expect(writePanelLines(lines(12), throwing)).toEqual({ ok: false });
   });
 });

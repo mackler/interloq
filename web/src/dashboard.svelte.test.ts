@@ -142,22 +142,22 @@ describe("the live panel in the dashboard", () => {
 
   test("a line with markup is shown as its characters, never as markup", () => {
     const panel = applyOutput(EMPTY_PANEL, { _tag: "Printed", key: K, name: "cat", text: "<b>x</b> `y`\n" });
-    const target = mountWith(panel);
-    const pre = region(target)?.querySelector("pre");
-    expect(pre?.textContent).toContain("<b>x</b> `y`");
-    expect(pre?.querySelector("b")).toBe(null);
-    expect(pre?.querySelector("code")).toBe(null);
+    const screen = region(mountWith(panel))?.querySelector("[data-live-screen]");
+    expect(screen?.textContent).toContain("<b>x</b> `y`");
+    expect(screen?.querySelector("b")).toBe(null);
+    expect(screen?.querySelector("code")).toBe(null);
   });
 
-  test("the empty, running and finished headers, and the note", () => {
+  // Issue #221: icons in place of the sentence headers, and no note.
+  test("the empty header, a running process's icon, and neither the note nor the old headers", () => {
     expect(region(mountWith(EMPTY_PANEL))?.textContent).toContain(prompts.LIVE_OUTPUT_EMPTY);
-    expect(region(mountWith(EMPTY_PANEL))?.textContent).toContain(prompts.LIVE_OUTPUT_NOTE);
     const running = applyOutput(EMPTY_PANEL, { _tag: "Started", key: K, name: "npm test" });
-    expect(region(mountWith(running))?.textContent).toContain(prompts.outputRunningHeader([{ name: "npm test", seconds: null }]));
+    const r = region(mountWith(running));
+    expect(r?.querySelector(`[role="img"][aria-label="${prompts.outputRunningName("npm test", null)}"]`)).not.toBe(null);
     const ended = applyOutput(applyOutput(running, { _tag: "Printed", key: K, name: "npm test", text: "ok\n" }), { _tag: "Finished", key: K, name: "npm test", status: { _tag: "Exited", code: 0 } });
-    const target = mountWith(ended);
-    expect(region(target)?.textContent).toContain(prompts.OUTPUT_FINISHED_HEADER);
-    expect(region(target)?.querySelector("pre")?.textContent).toContain("npm test | ok");
+    const text = region(mountWith(ended))?.textContent ?? "";
+    expect(text).toContain("ok");
+    for (const old of ["Interloq does not write or check this text", "Still running", "No process is running"]) expect(text).not.toContain(old);
   });
 
   // Issue #200, requirements Q2: the compact panel is present only while a process runs, a silent one included.
@@ -167,11 +167,11 @@ describe("the live panel in the dashboard", () => {
   );
   const finished = applyOutput(eightLines, { _tag: "Finished", key: K, name: "ls", status: { _tag: "Succeeded" } });
 
-  test("the compact dashboard's panel shows four lines while a process runs", () => {
-    const pre = region(mountWith(eightLines, true))?.querySelector("pre");
-    const lines = pre?.textContent?.split("\n").filter((l) => l !== "") ?? [];
-    expect(lines.length).toBe(COMPACT_PANEL_LINES);
-    expect(lines.at(-1)).toContain("line 7");
+  test("the compact dashboard's panel is four lines high while a process runs, and keeps every line", () => {
+    const r = region(mountWith(eightLines, true));
+    expect((r?.querySelector("[data-live-screen]") as HTMLElement | null)?.style.getPropertyValue("--shown")).toBe(String(COMPACT_PANEL_LINES));
+    expect(r?.querySelectorAll("[data-live-line]").length).toBe(9);
+    expect(r?.querySelector("[data-live-resize]")).toBe(null);
   });
 
   test("the compact dashboard's panel is absent once no process runs, though finished lines exist", () => {
@@ -184,7 +184,7 @@ describe("the live panel in the dashboard", () => {
 
   test("the compact dashboard's panel shows a silent running process with the running header", () => {
     const silent = applyOutput(EMPTY_PANEL, { _tag: "Started", key: K, name: "npm test" });
-    expect(region(mountWith(silent, true))?.textContent).toContain(prompts.outputRunningHeader([{ name: "npm test", seconds: null }]));
+    expect(region(mountWith(silent, true))?.querySelector(`[aria-label="${prompts.outputRunningName("npm test", null)}"]`)).not.toBe(null);
   });
 
   test("the full dashboard's panel stays with nothing running", () => {
