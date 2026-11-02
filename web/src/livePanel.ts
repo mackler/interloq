@@ -86,7 +86,7 @@ const printed = (panel: LivePanel, key: string, name: string, raw: string): Live
   const info = before.processes.get(key);
   if (info === undefined) return before;
   const text = info.afterCr && raw.startsWith("\n") ? raw.slice(1) : raw;
-  if (text === "") return withProcess(before, key, (p) => ({ ...p, afterCr: raw === "" ? p.afterCr : false }));
+  if (text === "") return kept(withProcess(before, key, (p) => ({ ...p, afterCr: raw === "" ? p.afterCr : false })));
   const [head = "", ...rest] = text.split(/\r\n|\r|\n/u);
   let style = info.style;
   const styled = (t: string): readonly StyledRun[] => {

@@ -31,6 +31,14 @@ describe("applySgr", () => {
     expect(fg(applySgr(DEFAULT_STYLE, "38:5:21"))).toEqual(rgb(0, 0, 255));
   });
 
+  test("a colon group other than 38 or 48 applies each of its fields as its own code (W1-R1-1)", () => {
+    const both = applySgr(DEFAULT_STYLE, "31:44");
+    expect(both).toEqual({ fg: rgb(224, 85, 97), bg: rgb(74, 165, 240) });
+    const green = applySgr(DEFAULT_STYLE, "42");
+    expect(applySgr(green, "0:31")).toEqual({ fg: rgb(224, 85, 97), bg: null });
+    expect(fg(applySgr(DEFAULT_STYLE, "1:31"))).toEqual(rgb(224, 85, 97));
+  });
+
   test("every other code, and a color out of range or incomplete, changes nothing", () => {
     expect(applySgr(DEFAULT_STYLE, "1")).toEqual(DEFAULT_STYLE);
     expect(applySgr(DEFAULT_STYLE, "4;7")).toEqual(DEFAULT_STYLE);

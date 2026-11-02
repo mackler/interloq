@@ -1285,7 +1285,7 @@ test.describe("the tests of the refinementTabs server, in order", () => {
 
 // Issue #221: the live panel's bottom edge is its column's bottom whatever is above it; its handle moves it by mouse and
 // keyboard, the content above scrolling; it keeps 1,000 lines, following new output at its end and staying put while
-// scrolled up, the oldest line evicted under it; its colors are shown and no line is cut. One run, three sizes.
+// scrolled up, the oldest line evicted under it; its colors are shown and no line is cut. One test per size.
 const LIVE = (page: Page) => page.locator(".left .chat [data-live-output]");
 const LIVE_SECTION = (page: Page) => page.locator('.left .chat section[aria-label="You and Interloq"]');
 const bottomOf = async (l: Locator) => {
@@ -1307,50 +1307,53 @@ const atEnd = (screen: Locator) => screen.evaluate((s) => s.scrollHeight - s.scr
 test.describe("the tests of the liveOutput server, in order", () => {
   test.describe.configure({ mode: "default" });
 
-  test("(L36) the live panel anchored, resized, scrolled and colored at 1280 × 800, 640 × 400 and 390 × 844", async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await startTask(page, layoutUrl("liveOutput"));
-    const live = LIVE(page);
-    await expect(live.locator("[data-live-processes]")).toContainText(LIVE_LONG_NAME, { timeout: 60_000 });
-    const screen = live.locator("[data-live-screen]");
-    const handle = live.locator("[data-live-resize]");
-    const above = LIVE_SECTION(page).locator("[data-dashboard-above]");
-    await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
-
-    // The colors and the long line, before the ticks evict them.
-    const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).first();
-    expect(await red.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(224, 85, 97)");
-    expect(await screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).first().evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
-
-    // Following: at its end, the screen stays at its end as ticks arrive.
-    const tick = await lastTick(screen);
-    await expect.poll(() => lastTick(screen)).toBeGreaterThan(tick);
-    expect(await atEnd(screen)).toBe(true);
-
-    // Staying put across eviction: scrolled halfway, the first line in view keeps its id and its place.
-    await screen.evaluate((s) => { s.scrollTop = (s.scrollHeight - s.clientHeight) / 2; });
-    const before = await firstInView(screen);
-    const from = await lastTick(screen);
-    await expect.poll(() => lastTick(screen)).toBeGreaterThanOrEqual(from + 2);
-    const after = await firstInView(screen);
-    expect(after.id).toBe(before.id);
-    expect(Math.abs(after.offset - before.offset)).toBeLessThanOrEqual(2);
-
-    // The anchor evicted: at the top, the oldest line goes and the screen stays at its top, showing a later line.
-    await screen.evaluate((s) => { s.scrollTop = 0; });
-    const oldest = await firstInView(screen);
-    const at = await lastTick(screen);
-    await expect.poll(() => lastTick(screen)).toBeGreaterThan(at);
-    expect(await screen.evaluate((s) => s.scrollTop)).toBe(0);
-    expect((await firstInView(screen)).id).toBeGreaterThan(oldest.id);
-    await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });
-
-    let last = 0;
-    for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+  // One test per size (W1-R1-3), so that one size can be run alone; each starts its own run, the run of the test
+  // before it stopped, so that its panel holds the scenario's 1,000 lines from its start.
+  const SIZES = [[1280, 800], [640, 400], [390, 844]] as const;
+  for (const [width, height] of SIZES) {
+    const lastSize = width === SIZES[SIZES.length - 1]?.[0];
+    test(`(L36) ${width}×${height}: the live panel anchored, resized, scrolled and colored`, async ({ page }) => {
       const size = `${width} × ${height}`;
       await page.setViewportSize({ width, height });
-      await live.scrollIntoViewIfNeeded();
+      await startTask(page, layoutUrl("liveOutput"));
+      const live = LIVE(page);
+      await expect(live.locator("[data-live-processes]")).toContainText(LIVE_LONG_NAME, { timeout: 60_000 });
+      const screen = live.locator("[data-live-screen]");
+      const handle = live.locator("[data-live-resize]");
       const section = LIVE_SECTION(page);
+      const above = section.locator("[data-dashboard-above]");
+      await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
+      await live.scrollIntoViewIfNeeded();
+
+      // The colors and the long line, before the ticks evict them.
+      const red = screen.locator(".text > span", { hasText: LIVE_RED_TEXT }).first();
+      expect(await red.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(224, 85, 97)");
+      expect(await screen.locator("[data-live-line]", { hasText: "w".repeat(50) }).first().evaluate((el) => (/w+/u.exec(el.textContent ?? "")?.[0] ?? "").length)).toBe(LIVE_LONG_LINE);
+
+      // Following: at its end, the screen stays at its end as ticks arrive.
+      await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });
+      const tick = await lastTick(screen);
+      await expect.poll(() => lastTick(screen)).toBeGreaterThan(tick);
+      expect(await atEnd(screen), `the screen follows the end at ${size}`).toBe(true);
+
+      // Staying put across eviction: scrolled halfway, the first line in view keeps its id and its place.
+      await screen.evaluate((s) => { s.scrollTop = (s.scrollHeight - s.clientHeight) / 2; });
+      const before = await firstInView(screen);
+      const from = await lastTick(screen);
+      await expect.poll(() => lastTick(screen)).toBeGreaterThanOrEqual(from + 2);
+      const after = await firstInView(screen);
+      expect(after.id, `the first line in view kept at ${size}`).toBe(before.id);
+      expect(Math.abs(after.offset - before.offset), `the first line's place kept at ${size}`).toBeLessThanOrEqual(2);
+
+      // The anchor evicted: at the top, the oldest line goes and the screen stays at its top, showing a later line.
+      await screen.evaluate((s) => { s.scrollTop = 0; });
+      const oldest = await firstInView(screen);
+      const at = await lastTick(screen);
+      await expect.poll(() => lastTick(screen)).toBeGreaterThan(at);
+      expect(await screen.evaluate((s) => s.scrollTop), `the screen stays at its top at ${size}`).toBe(0);
+      expect((await firstInView(screen)).id, `a later line at the top at ${size}`).toBeGreaterThan(oldest.id);
+      await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });
+
       const placed = async (what: string) => {
         expect(Math.abs((await bottomOf(live)) - (await contentBottom(section))), `${what}: the panel's bottom at the section's at ${size}`).toBeLessThanOrEqual(1);
         expect((await box(live)).y, `${what}: the panel's top below the section's at ${size}`).toBeGreaterThan((await box(section)).y);
@@ -1389,14 +1392,15 @@ test.describe("the tests of the liveOutput server, in order", () => {
       await expect(handle).toHaveAttribute("aria-valuenow", String(max));
       expect(await above.evaluate((el) => el.scrollHeight > el.clientHeight), `the content above scrolls at ${size}`).toBe(true);
       await placed("at the most lines");
-      last = max;
       await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
-    }
 
-    // The height is remembered across a reload.
-    await page.reload();
-    await expect(handle).toHaveAttribute("aria-valuenow", String(last), { timeout: 60_000 });
-  });
+      // The height is remembered across a reload.
+      if (lastSize) {
+        await page.reload();
+        await expect(handle).toHaveAttribute("aria-valuenow", String(max), { timeout: 60_000 });
+      }
+    });
+  }
 });
 
 // Issue #221: the compact panel under a question, anchored at the compact dashboard's bottom while a process runs,

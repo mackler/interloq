@@ -103,7 +103,7 @@ const KEYS = ["a", "b", "c"];
 const arbText = fc.array(fc.constantFrom("x", "y", " ", "\n", "\r", "\r\n", `${ESC}[31m`, `${ESC}[0m`), { maxLength: 12 }).map((cs) => cs.join(""));
 const arbEvent: fc.Arbitrary<OutputEvent> = fc.oneof(
   fc.constantFrom(...KEYS).map((k) => started(k)),
-  fc.tuple(fc.constantFrom(...KEYS), arbText).map(([k, t]) => print(k, t)),
+  fc.tuple(fc.constantFrom(...KEYS), fc.oneof(fc.constant(""), arbText)).map(([k, t]) => print(k, t)),
   fc.tuple(fc.constantFrom(...KEYS), fc.nat(99)).map(([k, s]): OutputEvent => ({ _tag: "Progress", key: K(k), name: k, seconds: s })),
   fc.constantFrom(...KEYS).map((k) => done(k)),
   fc.constant<OutputEvent>({ _tag: "Touched", name: "Read a.txt" }),
@@ -115,6 +115,12 @@ describe("the live panel's invariants", () => {
     expect(many.lines.length).toBe(SCROLLBACK_LINES);
     expect(outputTexts(many).at(0)).toBe("line 200");
     expect(outputTexts(many).at(-1)).toBe(`line ${SCROLLBACK_LINES + 199}`);
+    // W1-R1-2: an empty text of a process never seen still trims the panel to the bound.
+    const full = fold(Array.from({ length: SCROLLBACK_LINES }, (_, i) => ({ _tag: "Touched", name: `t${i}` }) as OutputEvent));
+    const after = applyOutput(full, print("new", ""));
+    expect(after.lines.length).toBe(SCROLLBACK_LINES);
+    expect(after.lines[0]).toMatchObject({ _tag: "Touched", text: "t1" });
+    expect(after.lines.at(-1)).toMatchObject({ _tag: "Begun", key: "new" });
     fc.assert(
       fc.property(fc.array(arbEvent, { maxLength: 60 }), fc.integer({ min: 0, max: SCROLLBACK_LINES }), (events, filler) => {
         let p = fold(Array.from({ length: filler }, () => ({ _tag: "Touched", name: "f" }) as OutputEvent));

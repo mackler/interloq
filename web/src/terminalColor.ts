@@ -73,8 +73,19 @@ const withExtended = (style: TermStyle, code: number, color: Rgb | null): TermSt
   color === null ? style : code === 38 ? { ...style, fg: color } : { ...style, bg: color };
 
 /** The style after one SGR sequence's parameters (`31`, `38;5;196`, `48:2::1:2:3`, `` for a reset). */
+/**
+ * A `;`-separated group as the codes it holds: a colon group headed by 38 or 48 kept whole, an extended color; any other
+ * colon group split into its fields, each its own code, as if its colons were semicolons (W1-R1-1).
+ */
+const colonGroup = (group: string): readonly string[] => {
+  if (!group.includes(":")) return [group];
+  const fields = group.split(":");
+  const code = codeOf(fields[0] ?? "");
+  return code === 38 || code === 48 ? [group] : fields;
+};
+
 export const applySgr = (style: TermStyle, params: string): TermStyle => {
-  const groups = params.split(";");
+  const groups = params.split(";").flatMap(colonGroup);
   let s = style;
   let i = 0;
   while (i < groups.length) {
@@ -83,7 +94,6 @@ export const applySgr = (style: TermStyle, params: string): TermStyle => {
       const [head = "", ...rest] = group.split(":");
       const code = codeOf(head);
       if (code === 38 || code === 48) s = withExtended(s, code, extended(rest, true)[0]);
-      else if (code !== null) s = withCode(s, code);
       i += 1;
       continue;
     }
