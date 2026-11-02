@@ -330,9 +330,11 @@ test.describe("the tests of the emptyQuestions server, in order", () => {
     await item.locator("button[name=start]").click();
     await toHaveEnded(page, 0);
     await expect(pane(page)).toHaveCount(0);
-    // The rail holds Gather Requirements alone, done, and no entry not reached, which would mean a halt.
-    await expect(rail(page).locator("li.entry")).toHaveCount(1);
-    await expect(rail(page).locator("li.entry")).toHaveAttribute("data-state", "done");
+    // The rail holds Bring Up to Date then Gather Requirements (issue #216), both done, and no entry not reached, which would mean a halt.
+    await expect(rail(page).locator("li.entry")).toHaveCount(2);
+    await expect(rail(page).locator("li.entry").nth(0).locator("[data-label]")).toHaveText("Bring Up to Date");
+    await expect(rail(page).locator("li.entry").nth(1).locator("[data-label]")).toHaveText("Gather Requirements");
+    for (const n of [0, 1]) await expect(rail(page).locator("li.entry").nth(n)).toHaveAttribute("data-state", "done");
     await expect(rail(page).locator("li.entry[data-state=notReached]")).toHaveCount(0);
     // The item is refined: it has left the Refinement tab's list and is in the Implementation tab's.
     await page.locator("button[name=new]").click();
