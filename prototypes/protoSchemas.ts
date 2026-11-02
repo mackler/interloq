@@ -79,6 +79,8 @@ const DecisionAnalysis = Schema.Struct({
 // Issue #6 (28 Sep 2026): the plan as data. Every call that creates or changes the plan returns it whole.
 const PlanStep = Schema.Struct({ id: Str, number: Schema.Int, label: Str, text: Str });
 const Plan = Schema.Struct({ stages: Schema.Array(Schema.Struct({ number: Schema.Int, title: Str, steps: Schema.Array(PlanStep) })) });
+const IssueText = Schema.Struct({ title: Str, text: Str });
+const UpdateOutcome = Schema.Union([Schema.Struct({ kind: Schema.Literal("current") }), Schema.Struct({ kind: Schema.Literal("obsolete"), reason: Str })]);
 /** The recursive schemas: their strict variant cannot exist (a cycle of $ref cannot be inlined), so only raw is sent. */
 export const RECURSIVE = new Set(["decisionAnalysis", "decisionResponse", "decisionApplied"]);
 
@@ -115,6 +117,9 @@ export const protoSchemas: Record<string, Schema.Top> = {
   // S17: the explanations of the agreed questions' terms, each question divided into pieces (issue #36, decision Q1).
   termsWrite: Schema.Struct({ entries: Schema.Array(TermsEntry) }),
   termsResponse: Schema.Struct({ ...markedFields, entries: Schema.Array(TermsEntry) }),
+  // Issue #216: Claude Code's response to a check of the issue in Bring Up to Date, and the application of the developer's answers.
+  updateResponse: Schema.Struct({ ...markedFields, issue: IssueText, outcome: UpdateOutcome, developer_passages: Strings }),
+  updateWrite: Schema.Struct({ issue: IssueText, outcome: UpdateOutcome, developer_passages: Strings, decided: Schema.Array(Schema.Struct({ before: Str, after: Str })), questions_for_user: Schema.Array(UserQuestion) }),
 };
 
 export type Json = Record<string, any>;

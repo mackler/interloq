@@ -10,7 +10,7 @@ import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts"
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { TrackerError } from "./services.ts";
-import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText } from "./prompts.ts";
+import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -144,6 +144,11 @@ export class QuestionInvalid extends Data.TaggedError("QuestionInvalid")<{ reado
  * the validation repair turn of behaviour 10, then a halt.
  */
 export class SkipConditionInvalid extends Data.TaggedError("SkipConditionInvalid")<{ readonly problems: readonly SkipProblem[] }> {}
+/**
+ * Issue #216: Claude Code's issue brought up to date that dropped or altered a passage of the developer's, or that the
+ * program otherwise refused, twice (the validation repair turn of behavior 10 first).
+ */
+export class PassageMissing extends Data.TaggedError("PassageMissing")<{ readonly problems: readonly IssueTextProblem[] }> {}
 /** An interview turn that asks a skipped question or one before its premise, or omits a skipped one from its summary (issue #99). */
 export class InterviewTurnInvalid extends Data.TaggedError("InterviewTurnInvalid")<{ readonly problems: readonly TurnProblem[] }> {}
 /** A report of report_step that names no step of the plan (Q3): an error for Claude Code, not a halt. */
@@ -267,6 +272,7 @@ export type RunError =
   | CorrectionInvalid
   | QuestionInvalid
   | SkipConditionInvalid
+  | PassageMissing
   | InterviewTurnInvalid
   | AgentUnreachable
   | TrackerStepFailed
@@ -352,6 +358,8 @@ export const describe = (error: RunErrorFields): string => {
       return questionInvalidText(error.questions);
     case "SkipConditionInvalid":
       return skipConditionInvalidText(error.problems);
+    case "PassageMissing":
+      return passageMissingText(error.problems);
     case "InterviewTurnInvalid":
       return interviewTurnInvalidText(error.problems);
     case "TrackerStepFailed":
@@ -434,6 +442,7 @@ const RunErrorData = Schema.Union([
     questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(QUESTION_PROBLEM_KINDS), subject: Schema.String })) })),
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
+  Schema.Struct({ _tag: Schema.Literal("PassageMissing"), problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(ISSUE_TEXT_PROBLEM_KINDS), subject: Schema.String })) }),
   Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),

@@ -13,8 +13,10 @@ import { type Brand, Option, Result } from "effect";
 import { LINE_BREAK } from "./pieces.ts";
 import type { TrackerItem } from "./tracker.ts";
 
-export const OPENING_LINE = "## Refined using Interloq";
-export const CLOSING_LINE = "_End of the section Refined using Interloq._";
+// The marker lines are declared in src/prompts.ts, whose prompts of issue #216 name them, since src/prompts.ts cannot
+// import this module (src/pieces.ts imports src/prompts.ts).
+export { CLOSING_LINE, OPENING_LINE } from "./prompts.ts";
+import { CLOSING_LINE, OPENING_LINE } from "./prompts.ts";
 /** What stands between a non-empty body and the section's opening line, so that the opening line begins a line. */
 export const SEPARATOR = "\n\n";
 

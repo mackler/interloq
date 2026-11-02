@@ -4247,3 +4247,119 @@ export const documentLabel = (subject: SubjectId): string =>
             : "decision" in subject
               ? "Draft analysis"
               : "Verdict";
+
+// ---- Bring Up to Date (issue #216) ----------------------------------------------------------------------------------
+
+/** The marker lines of the section `Refined using Interloq` (src/refinement.ts re-exports them). */
+export const OPENING_LINE = "## Refined using Interloq";
+export const CLOSING_LINE = "_End of the section Refined using Interloq._";
+
+/** The phase's name on the rail, on the page and in the records (requirements "Name"). Codex's pass in it is a check. */
+export const UPDATE_PHASE = "Bring Up to Date";
+/** The id prefix of the check's points: U-R<n>-<i>. */
+export const UPDATE_ID_PREFIX = "U";
+/** Records of the phase, named in its prompts. */
+export const ISSUE_FILE = "issue.json";
+export const ISSUE_BEFORE_FILE = "issue-before.json";
+export const CITED_FILE = "cited-issues.md";
+export const UPDATE_LOG_FILE = "update-log.json";
+export const UPDATE_DIR = "update-check";
+/**
+ * A sentence every check prompt of the phase contains, which test/helpers.ts's scripted reviewer recognizes (S8), so a
+ * scenario scripts the phase's checks apart from its other reviews.
+ */
+export const UPDATE_MARKER = "This check brings the issue up to date with the project as it is now.";
+/** The proceed choice of the phase's round limit: nothing is written and Gather Requirements uses the issue as filed. */
+export const PROCEED_WITHOUT_UPDATE = "Go on to Gather Requirements with the issue as filed; nothing is written to it.";
+
+/**
+ * The phase's texts to Codex say check, never review (requirements "Name"): the shared log rules, written for every
+ * reviewed file, are reworded word by word; the field value 'review' of a log entry's source is kept as it is.
+ */
+const asCheck = (text: string): string =>
+  text.replace(/(?<!')\b([Rr])eview(s|ed)?\b(?!')/gu, (_m, r: string, suffix: string | undefined) => `${r === "R" ? "C" : "c"}heck${suffix === "s" ? "s" : suffix === "ed" ? "ed" : ""}`);
+
+/**
+ * Issue #216 (Q4): the counterpart of WORDING_DISPUTES for the phase. A disagreement about a fact of the code is
+ * settled by the agents; one Claude Code marks as about what the developer asked for goes to him if Codex raises it again.
+ */
+export const FACT_DISPUTES = `In this check a disagreement between Codex and Claude Code about a fact of the code (what a file holds, where a reference points, whether something is built) is not put to the developer: both can read the project, and settling it is what this check is for. Claude Code's disposition stands, its rationale goes back to Codex in the next round, and Codex accepts it or argues again with the evidence. A disagreement about what the developer asked for or decided is not about a fact: Claude Code marks it on its disposition (${TASK_DISPUTE_FIELD}), and if Codex raises it again the developer is asked, with both readings as his options.`;
+
+const issueRecords = (root: RunRoot): string =>
+  `${runDir(root)}/${ISSUE_FILE} holds the issue's title and text as they now stand (title, text), the outcome (outcome: current, or obsolete with its reason), the passages of the developer's that Claude Code declared (developer_passages), and protected: every passage of the developer's the title or text must keep verbatim. ${runDir(root)}/${ISSUE_BEFORE_FILE} holds the title and text as the issue was read when the run began. ${runDir(root)}/${CITED_FILE} holds the current title, text and open or closed state of every issue the item cites, and of every issue those cite.`;
+
+/** Codex's check of the issue (issue #216): statements of fact against the project as it is now. */
+export function updateCheckPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
+  const log = UPDATE_LOG_FILE;
+  return asCheck(
+    `${UPDATE_MARKER}\n` +
+      byThread(round, thread, log, root, () => `${laterRound(root, ISSUE_FILE, log, UPDATE_ID_PREFIX, round)}\n${FACT_DISPUTES}`, () => `${issueRecords(root)}
+An issue states facts as they were when it was filed; other changes have since altered the project. Examine the title and text of ${ISSUE_FILE} against the codebase, CLAUDE.md, the project's documentation and ${CITED_FILE}. Do not modify any file.
+Raise a point for: each statement that is no longer true; each reference (a file, a line, an identifier, an issue, a decided behavior, an issue said to be open or closed) that no longer points where it says; each instruction an earlier change has already carried out or made obsolete. Give the evidence: the file and line, or the cited issue, that shows it.
+A passage of the developer's own (an instruction, a decision, a quotation of his) is his to decide: where it no longer fits the project, raise it as a point for him to decide, never as text to rewrite.
+Raise a point where developer_passages omits such a passage or does not quote it exactly.
+Where the whole issue is already built or replaced, raise that as one point, with the evidence; where outcome is obsolete, check that claim.
+Raise nothing about style, wording or scope: only what is no longer true of the project.
+Put the passage's first words, or 'title', in the location field.
+${logRules(root, log, UPDATE_ID_PREFIX, round)}
+${FACT_DISPUTES}`),
+  );
+}
+
+const PASSAGE_RULE = `Keep every instruction, decision and quotation of the developer's verbatim, in the title as in the text, every passage of protected included, and list each in developer_passages exactly as it stands in your title or text. Where an instruction of his itself no longer fits the project (it asks for something already built, or a later decision of his overruled it), change nothing of it: put the point to the developer in questions_for_user, under the rule on whether to ask below, which decides whether it is asked now or left to the questions that follow this phase.`;
+const ISSUE_FIELDS_RULE = `Return in issue the whole title (one line, not blank) and the whole text after your corrections, including what did not change. The text is the developer's text alone: never include the section that begins with the line "${OPENING_LINE}" and ends with the line "${CLOSING_LINE}", nor either line. Correct only statements of fact; change nothing else. Set outcome to { kind: "obsolete", reason } only where the whole issue is already built or replaced, the reason stating what built or replaced it; otherwise { kind: "current" }. The program writes ${ISSUE_FILE}.`;
+
+/** Claude Code's response to a check (issue #216). */
+export function updateRespondPrompt(root: RunRoot, round: number): string {
+  return `${runDir(root)}/${UPDATE_DIR}/review-${round}.json contains Codex's check of the issue in ${runDir(root)}/${ISSUE_FILE}.
+${issueRecords(root)}
+${respondRules(root, "you correct the title or text for it")}
+${FACT_DISPUTES}
+${TASK_DISPUTE_RULE}
+${ISSUE_FIELDS_RULE}
+${PASSAGE_RULE}
+Do not modify any file.`;
+}
+
+/** The application of the developer's answers to the issue (issue #216). */
+export const updateApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
+${issueRecords(root)}
+Apply the developer's answers to the title and text of ${runDir(root)}/${ISSUE_FILE}. Change a passage of his only as his answer decides, and list each such change in decided, with before the passage exactly as it stood and after the passage as his answer has it ("" where his answer removes it).
+${ISSUE_FIELDS_RULE}
+${PASSAGE_RULE}
+Do not modify any file.`;
+
+/** What the program refuses in a reply of the phase (issue #216): each with the passage or the reason it concerns. */
+export const ISSUE_TEXT_PROBLEM_KINDS = ["invalidText", "blankReason", "blankPassage", "passageNotInReply", "notTheDevelopers", "protectedMissing", "decidedBeforeMissing", "decidedAfterMissing"] as const;
+export type IssueTextProblem = Readonly<{ kind: (typeof ISSUE_TEXT_PROBLEM_KINDS)[number]; subject: string }>;
+const INVALID_TEXT_WORDS: Readonly<Record<string, string>> = {
+  blankTitle: "the title is blank",
+  multiLineTitle: "the title holds a line break",
+  markerLine: `the text holds the line "${OPENING_LINE}" or "${CLOSING_LINE}"`,
+};
+const issueTextProblemText = (p: IssueTextProblem): string => {
+  switch (p.kind) {
+    case "invalidText":
+      return INVALID_TEXT_WORDS[p.subject] ?? p.subject;
+    case "blankReason":
+      return "the outcome is obsolete with a blank reason";
+    case "blankPassage":
+      return "developer_passages holds a blank entry";
+    case "passageNotInReply":
+      return `developer_passages names a passage that is in neither the title nor the text: ${p.subject}`;
+    case "notTheDevelopers":
+      return `developer_passages names a passage that was not the developer's (it is in neither the issue as read nor protected, and no answer of his gave it): ${p.subject}`;
+    case "protectedMissing":
+      return `a passage of the developer's is no longer in the title or the text verbatim: ${p.subject}`;
+    case "decidedBeforeMissing":
+      return `decided names, as before, a passage that is not in the title or text as they stood: ${p.subject}`;
+    case "decidedAfterMissing":
+      return `decided names, as after, a passage that is in neither the title nor the text returned: ${p.subject}`;
+  }
+};
+/** The halt after a second refused reply (PassageMissing). */
+export const passageMissingText = (problems: readonly IssueTextProblem[]): string =>
+  `Claude Code's issue brought up to date was refused twice: ${problems.map(issueTextProblemText).join("; ")}.`;
+/** The validation repair turn of the phase, built from the failure. */
+export const passageRepairPrompt = (problems: readonly IssueTextProblem[]): string =>
+  validationRepairPrompt(problems.map(issueTextProblemText), [PASSAGE_RULE, `Every passage of protected in ${ISSUE_FILE} must stand verbatim in your title or text.`]);

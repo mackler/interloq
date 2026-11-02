@@ -164,6 +164,36 @@ const markedResponseFields = { ...plannerResponseFields, dispositions: Schema.Ar
 
 export const PlanWriteResult = Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) });
 
+// ---- Bring Up to Date (issue #216) ------------------------------------------------------------------
+
+/** The developer's title and text as Claude Code returns them, its section left out; plain strings, as Codex's strict mode wants. */
+export const IssueTextReply = Schema.Struct({ title: Schema.String, text: Schema.String });
+/** Whether the issue still asks for work (current), or the whole of it is already built or replaced (obsolete, requirements Q1), with the reason. */
+export const UpdateOutcomeReply = Schema.Union([Schema.Struct({ kind: Schema.Literal("current") }), Schema.Struct({ kind: Schema.Literal("obsolete"), reason: Schema.String })]);
+export type UpdateOutcomeReply = typeof UpdateOutcomeReply.Type;
+/**
+ * Claude Code's response to a check of the issue: its dispositions carry the mark of issue #156 (Q4), and it returns the
+ * whole title and text, the outcome, and each passage of the developer's it kept verbatim (`developer_passages`).
+ */
+export const UpdateResponse = Schema.Struct({ ...markedResponseFields, issue: IssueTextReply, outcome: UpdateOutcomeReply, developer_passages: Schema.Array(Schema.String) });
+export type UpdateResponse = typeof UpdateResponse.Type;
+/** A passage of the developer's that one of his answers in this phase changed: as it stood, and as his answer has it ("" where it removes it). */
+export const DecidedChange = Schema.Struct({ before: Schema.String, after: Schema.String });
+export type DecidedChange = typeof DecidedChange.Type;
+/** The application of the developer's answers to the issue, with each passage of his his answers changed. */
+export const UpdateWrite = Schema.Struct({ issue: IssueTextReply, outcome: UpdateOutcomeReply, developer_passages: Schema.Array(Schema.String), decided: Schema.Array(DecidedChange), questions_for_user: Schema.Array(UserQuestion) });
+export type UpdateWrite = typeof UpdateWrite.Type;
+/**
+ * issue.json, the reviewed file of Bring Up to Date: the title and text as they stand, the outcome, the passages Claude
+ * Code declared, and `protected`, every passage of the developer's that the title or text must keep verbatim at this
+ * point of the loop: the quotations of the issue as read, advanced only by the program (src/issueUpdate.ts).
+ */
+export const IssueFile = Schema.Struct({ version: Schema.Literal(2), title: Schema.String, text: Schema.String, outcome: UpdateOutcomeReply, developer_passages: Schema.Array(Schema.String), protected: Schema.Array(Schema.String) });
+export type IssueFile = typeof IssueFile.Type;
+/** issue-before.json: the title and text as read when the run began. */
+export const IssueBeforeFile = Schema.Struct({ version: Schema.Literal(2), title: Schema.String, text: Schema.String });
+export type IssueBeforeFile = typeof IssueBeforeFile.Type;
+
 // ---- the plan as data (issue #6, decisions Q1 and F1) ------------------------------------------------
 
 /**
