@@ -5,12 +5,12 @@
 import { Effect, Layer, Option, Result, Schema } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpClientResponse } from "effect/http";
 import { type TrackerCredentialMissing, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable } from "./errors.ts";
-import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
+import { commentOf, GithubComment, type GithubIssue, GithubIssue as GithubIssueSchema, citedOfIssue, isPullRequest, issueNumberOf, itemOf, labelNamesOf, nextPage, relabeled } from "./githubIssues.ts";
 import { type GithubTrackerConfig, stageLabelsOfConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import { type CommentId, type ItemComment, type ItemId, type ItemState, NO_OBSOLETE_LABEL_TEXT, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CitedItem, type CommentId, type ItemComment, type ItemId, type ItemState, NO_OBSOLETE_LABEL_TEXT, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GithubToken, githubCredential } from "./trackerConfig.ts";
-import { OPENING_LINE, type Refinement, withRefinement } from "./refinement.ts";
+import { type ItemText, OPENING_LINE, type Refinement, withDeveloperText, withRefinement } from "./refinement.ts";
 
 const TRACKER = "GitHub";
 const API = "https://api.github.com";
@@ -125,8 +125,8 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
     const listMarked = (state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError> =>
       config.prepareLabel === null || stages[state] === undefined ? Effect.succeed([]) : listed(state, [...stateLabels(state), config.prepareLabel], { sort: "created", direction: "desc" }, `the marked ${state} issues`);
 
-    /** The issue an id names; an id outside GitHub's format and a pull request are items that do not exist. */
-    const issueOf = (id: ItemId): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> =>
+    /** The issue or pull request an id names; an id outside GitHub's format is one that does not exist. */
+    const fetched = (id: ItemId): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> =>
       Option.match(issueNumberOf(id), {
         onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
         onSome: (number) => {
@@ -134,10 +134,15 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
           return Effect.flatMap(send(HttpClientRequest.get(url), { kind: "item", id }), ({ json }): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> => {
             const issue = decodeIssue(json);
             if (Result.isFailure(issue)) return Effect.fail(new TrackerBodyInvalid({ id, message: `GitHub's answer is not an issue: ${issue.failure.message}` }));
-            return isPullRequest(issue.success) ? Effect.fail(new TrackerItemNotFound({ id })) : Effect.succeed({ ...issue.success, url });
+            return Effect.succeed({ ...issue.success, url });
           });
         },
       });
+    /** The issue an id names; an id outside GitHub's format and a pull request are items that do not exist. */
+    const issueOf = (id: ItemId): Effect.Effect<GithubIssue & Readonly<{ url: string }>, TrackerError> =>
+      Effect.flatMap(fetched(id), (issue) => (isPullRequest(issue) ? Effect.fail(new TrackerItemNotFound({ id })) : Effect.succeed(issue)));
+    /** Issue #216: a cited issue, with no check of its labels. */
+    const readCited = (id: ItemId): Effect.Effect<CitedItem, TrackerError> => Effect.map(fetched(id), citedOfIssue);
 
     /** The issue an id names with the item it is: an issue read refuses (no state, or two) is refused here too, so that no write reaches it. */
     const itemIssueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GithubIssue & Readonly<{ url: string }>; item: TrackerItem }>, TrackerError> =>
@@ -153,6 +158,13 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
       Effect.flatMap(itemIssueOf(id), ({ issue }) => {
         const body = withRefinement(issue.body ?? "", refinement);
         return Result.isFailure(body) ? Effect.fail(new TrackerBodyInvalid({ id, message: `the issue's section "${OPENING_LINE}" is malformed: ${body.failure.reason}` })) : patch(issue.url, id, { body: body.success });
+      });
+
+    /** Issue #216: one PATCH of the title and the body, the developer's text replaced around the section, which is kept byte for byte. */
+    const writeText = (id: ItemId, text: ItemText): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemIssueOf(id), ({ issue }) => {
+        const body = withDeveloperText(issue.body ?? "", text);
+        return Result.isFailure(body) ? Effect.fail(new TrackerBodyInvalid({ id, message: `the issue's section "${OPENING_LINE}" is malformed: ${body.failure.reason}` })) : patch(issue.url, id, { title: text.title, body: body.success });
       });
 
     /**
@@ -199,7 +211,7 @@ export const githubTracker = (config: GithubTrackerConfig, token: GithubToken): 
           );
         },
       });
-    const tracker: TrackerShape = { list, listMarked, read, writeRefinement, setState, comment, comments, deleteComment };
+    const tracker: TrackerShape = { list, listMarked, read, readCited, writeText, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

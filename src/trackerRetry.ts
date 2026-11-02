@@ -9,12 +9,12 @@ import { askOffering, byLine, askUnoffered, programContext, type QuestionDraft, 
 import { plainPieces } from "./pieces.ts";
 import * as prompts from "./prompts.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
-import { type Refinement, readRefinement } from "./refinement.ts";
+import { type ItemText, type Refinement, readRefinement, withoutRefinement } from "./refinement.ts";
 import { backoffDelays } from "./retry.ts";
 import type { Config } from "./schema.ts";
 import { type Decider, RunConfig, Store, type TrackerError, type TrackerShape, Ui, type UiShape } from "./services.ts";
 import { keyOf } from "./itemComments.ts";
-import type { CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { CitedItem, CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
 
 /** A write of a run to its item: the requirements written back, or the item's state set. */
 export type TrackerWrite =
@@ -23,10 +23,12 @@ export type TrackerWrite =
   /** Issue #186: a comment Interloq writes, its `key` the unique key its marker line carries (src/itemComments.ts). */
   | Readonly<{ kind: "comment"; item: ItemId; text: string; key: string }>
   /** Issue #131: the deletion of one of Interloq's own comments, idempotent, since a comment already gone counts as deleted. */
-  | Readonly<{ kind: "deleteComment"; item: ItemId; comment: CommentId }>;
+  | Readonly<{ kind: "deleteComment"; item: ItemId; comment: CommentId }>
+  /** Issue #216: the developer's title and text brought up to date, written around the section in one request. */
+  | Readonly<{ kind: "writeText"; item: ItemId; text: ItemText }>;
 
 /** A request of a run to its tracker: the first read of its item, the read of its comments (issue #186), or one of its writes. */
-export type TrackerOperation = Readonly<{ kind: "read"; item: ItemId }> | Readonly<{ kind: "comments"; item: ItemId }> | TrackerWrite;
+export type TrackerOperation = Readonly<{ kind: "read"; item: ItemId }> | Readonly<{ kind: "comments"; item: ItemId }> | Readonly<{ kind: "readCited"; item: ItemId }> | TrackerWrite;
 
 export type TrackerRetrySettings = Pick<Config, "maxTrackerRetries" | "trackerRetryDelaySeconds">;
 
@@ -58,7 +60,7 @@ export const commentDeleted = (id: CommentId, comments: readonly ItemComment[]):
   comments.some((c) => c.id === id) ? Result.fail({ kind: "commentPresent" }) : Result.succeed(undefined);
 
 /** The writes whose outcome a read of the item shows. */
-type ItemWrite = Extract<TrackerWrite, { kind: "writeRefinement" | "setState" }>;
+type ItemWrite = Extract<TrackerWrite, { kind: "writeRefinement" | "setState" | "writeText" }>;
 /** The writes repeated as they are, read back after a server error: every write but a comment, which is reconciled by its key. */
 type RepeatableWrite = Exclude<TrackerWrite, { kind: "comment" }>;
 
@@ -73,6 +75,11 @@ export const landed = (write: ItemWrite, item: TrackerItem): Result.Result<void,
     }
     case "setState":
       return item.state === write.state ? Result.succeed(undefined) : Result.fail({ kind: "state", state: item.state });
+    case "writeText": {
+      // A malformed section is another text: the write's body would have kept a well-formed one.
+      const text = withoutRefinement(item.body);
+      return item.title === write.text.title && Result.isSuccess(text) && text.success === write.text.text ? Result.succeed(undefined) : Result.fail({ kind: "otherText" });
+    }
   }
 };
 
@@ -175,6 +182,10 @@ const readRetried = <A>(env: TrackerRetryEnv, op: TrackerOperation, read: Effect
 export const readWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<TrackerItem, TrackerError | RunError> =>
   readRetried(env, { kind: "read", item }, tracker.read(item));
 
+/** Issue #216: an issue the item cites, read whatever its labels, repeated as the first read is. */
+export const readCitedWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<CitedItem, TrackerError | RunError> =>
+  readRetried(env, { kind: "readCited", item }, tracker.readCited(item));
+
 /** Issue #186: the item's comments, repeated as the first read is. */
 export const readCommentsWithRetry = (tracker: TrackerShape, item: ItemId, env: TrackerRetryEnv): Effect.Effect<readonly ItemComment[], TrackerError | RunError> =>
   readRetried(env, { kind: "comments", item }, tracker.comments(item));
@@ -187,6 +198,8 @@ const sent = (tracker: TrackerShape, write: RepeatableWrite): Effect.Effect<void
       return tracker.setState(write.item, write.state);
     case "deleteComment":
       return tracker.deleteComment(write.item, write.comment);
+    case "writeText":
+      return tracker.writeText(write.item, write.text);
   }
 };
 

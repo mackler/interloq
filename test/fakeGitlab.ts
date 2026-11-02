@@ -93,6 +93,7 @@ export const gitlabServer = (initial: readonly ServerIssue[]): GitlabServer => {
       const next: ServerIssue = {
         ...issue,
         ...(typeof body.description === "string" ? { description: body.description } : {}),
+        ...(typeof body.title === "string" ? { title: body.title } : {}),
         labels: [...kept, ...names(body.add_labels).filter((l) => !kept.includes(l))],
         state: body.state_event === "close" ? "closed" : body.state_event === "reopen" ? "opened" : issue.state,
       };
@@ -141,6 +142,8 @@ export const fakeGitlabTracker = (issues: readonly ServerIssue[]): FakeGitlab =>
     list: (state) => Effect.andThen(scripted("list"), adapter.list(state)),
     listMarked: (state) => Effect.andThen(scripted("listMarked"), adapter.listMarked(state)),
     read: (id) => Effect.andThen(Ref.update(reads, (rs) => [...rs, id]), Effect.andThen(scripted("read"), adapter.read(id))),
+    readCited: (id) => Effect.andThen(scripted("readCited"), adapter.readCited(id)),
+    writeText: (id, text) => Effect.andThen(scripted("writeText"), Effect.andThen(adapter.writeText(id, text), after("writeText"))),
     writeRefinement: (id, refinement) => Effect.andThen(scripted("writeRefinement"), Effect.andThen(adapter.writeRefinement(id, refinement), after("writeRefinement"))),
     setState: (id, state) => Effect.andThen(scripted("setState"), Effect.andThen(adapter.setState(id, state), after("setState"))),
     comment: (id, text) => Effect.andThen(scripted("comment"), Effect.andThen(adapter.comment(id, text), after("comment"))),

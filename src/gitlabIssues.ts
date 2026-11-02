@@ -6,10 +6,10 @@
 // label: an open issue with none or with several is a typed failure naming its labels, never a guess.
 import { Option, Result, Schema } from "effect";
 import { TrackerAuthRefused, TrackerItemNotFound, TrackerRequestRefused, TrackerUnreachable } from "./errors.ts";
-import { type Refinement, type SectionMalformed, withRefinement } from "./refinement.ts";
+import { type ItemText, type Refinement, type SectionMalformed, withDeveloperText, withRefinement } from "./refinement.ts";
 import type { TrackerError } from "./services.ts";
 import { errorCode } from "./transport.ts";
-import { ITEM_STATES, type ItemComment, type ItemId, type ItemState, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, itemUrlFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CitedItem, ITEM_STATES, type ItemComment, type ItemId, type ItemState, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, itemUrlFrom, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 const TRACKER = "GitLab";
 
@@ -105,8 +105,17 @@ export const refinedDescription = (description: string, refinement: Refinement):
     text.length > GITLAB_DESCRIPTION_LIMIT ? Result.fail({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: text.length }) : Result.succeed(text),
   );
 
+/** Issue #216: the issue's description with the developer's text replaced around its section, refused over the limit. */
+export const textDescription = (description: string, text: ItemText): Result.Result<string, SectionMalformed | DescriptionTooLong> =>
+  Result.flatMap(withDeveloperText(description, text), (written): Result.Result<string, DescriptionTooLong> =>
+    written.length > GITLAB_DESCRIPTION_LIMIT ? Result.fail({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: written.length }) : Result.succeed(written),
+  );
+
+/** Issue #216: a cited issue whatever its labels; open exactly when GitLab says opened. */
+export const citedOfGitlabIssue = (issue: GitlabIssue): CitedItem => ({ id: String(issue.iid) as ItemId, title: issue.title, body: issue.description ?? "", open: issue.state === "opened" });
+
 export const descriptionTooLongText = (failure: DescriptionTooLong): string =>
-  `the refinement would make the issue's description ${failure.length} characters long, more than GitLab's limit of ${failure.limit}`;
+  `the write would make the issue's description ${failure.length} characters long, more than GitLab's limit of ${failure.limit}`;
 
 /** What a request is for, which decides what a 404 means and what a body that does not decode names. */
 export type GitlabTarget = Readonly<{ kind: "listing"; what: string }> | Readonly<{ kind: "item"; id: ItemId }>;

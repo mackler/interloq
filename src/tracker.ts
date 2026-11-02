@@ -57,6 +57,12 @@ export const itemUrlFrom = (text: string | undefined): Option.Option<ItemUrl> =>
 export type TrackerItem = Readonly<{ id: ItemId; title: string; body: string; state: ItemState; url: Option.Option<ItemUrl> }>;
 
 /**
+ * An issue an item cites (issue #216, requirements Q6): its title, its whole body and its tracker's own open or closed
+ * state, whatever its labels, since a cited issue is usually not one of Interloq's items.
+ */
+export type CitedItem = Readonly<{ id: ItemId; title: string; body: string; open: boolean }>;
+
+/**
  * A comment on an item (issue #186, requirements Q3): its id (issue #131), its text as the tracker holds it and `created`, the ISO-8601
  * instant the tracker reports. Interloq writes its own send-backs and refinement records as comments (src/itemComments.ts).
  */

@@ -34,11 +34,13 @@ import {
   noStateLabelText,
   refinedDescription,
   relabelBody,
+  textDescription,
+  citedOfGitlabIssue,
 } from "./gitlabIssues.ts";
-import { OPENING_LINE, type Refinement } from "./refinement.ts";
+import { type ItemText, OPENING_LINE, type Refinement } from "./refinement.ts";
 import { type GitlabTrackerConfig, stageLabelsOfConfig } from "./schema.ts";
 import { Tracker, type TrackerError, type TrackerShape } from "./services.ts";
-import { type CommentId, type ItemComment, type ItemId, type ItemState, NO_OBSOLETE_LABEL_TEXT, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CitedItem, type CommentId, type ItemComment, type ItemId, type ItemState, NO_OBSOLETE_LABEL_TEXT, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 import { type Environment, type GitlabToken, gitlabCredential } from "./trackerConfig.ts";
 
 const TRACKER = "GitLab";
@@ -138,18 +140,22 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
       config.prepareLabel === null ? Effect.succeed([]) : listed(state, [config.prepareLabel], { order_by: "created_at", sort: "desc" }, `the marked ${state} issues`);
 
     /** The issue an id names, with its URL and its item: an id outside GitLab's format is an item that does not exist, and no request is sent. */
-    const itemIssueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string; item: TrackerItem }>, TrackerError> =>
+    const issueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string }>, TrackerError> =>
       Option.match(iidOf(id), {
         onNone: () => Effect.fail(new TrackerItemNotFound({ id })),
         onSome: (iid) => {
           const url = `${issuesUrl}/${iid}`;
-          return Effect.flatMap(send(HttpClientRequest.get(url), { kind: "item", id }), ({ json }): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string; item: TrackerItem }>, TrackerError> => {
+          return Effect.flatMap(send(HttpClientRequest.get(url), { kind: "item", id }), ({ json }): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string }>, TrackerError> => {
             const issue = decodeIssue(json);
-            if (Result.isFailure(issue)) return Effect.fail(new TrackerBodyInvalid({ id, message: `GitLab's answer is not an issue: ${issue.failure.message}` }));
-            return Effect.map(Effect.fromResult(itemOf(issue.success)), (item) => ({ issue: issue.success, url, item }));
+            return Result.isFailure(issue) ? Effect.fail(new TrackerBodyInvalid({ id, message: `GitLab's answer is not an issue: ${issue.failure.message}` })) : Effect.succeed({ issue: issue.success, url });
           });
         },
       });
+    const itemIssueOf = (id: ItemId): Effect.Effect<Readonly<{ issue: GitlabIssue; url: string; item: TrackerItem }>, TrackerError> =>
+      Effect.flatMap(issueOf(id), ({ issue, url }) => Effect.map(Effect.fromResult(itemOf(issue)), (item) => ({ issue, url, item })));
+
+    /** Issue #216: a cited issue, with no check of its labels. */
+    const readCited = (id: ItemId): Effect.Effect<CitedItem, TrackerError> => Effect.map(issueOf(id), ({ issue }) => citedOfGitlabIssue(issue));
 
     const read = (id: ItemId): Effect.Effect<TrackerItem, TrackerError> => Effect.map(itemIssueOf(id), ({ item }) => item);
 
@@ -166,6 +172,16 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
         if (issue.state === "closed") return closedRefusal(id, issue, "the refinement was not written");
         const description = refinedDescription(issue.description ?? "", refinement);
         if (Result.isSuccess(description)) return put(url, id, { description: description.success });
+        const failure = description.failure;
+        return Effect.fail(new TrackerBodyInvalid({ id, message: failure._tag === "DescriptionTooLong" ? descriptionTooLongText(failure) : `the issue's section "${OPENING_LINE}" is malformed: ${failure.reason}` }));
+      });
+
+    /** Issue #216: one PUT of the title and the description with the developer's text replaced around the section; a closed issue and the limit refused with no PUT. */
+    const writeText = (id: ItemId, text: ItemText): Effect.Effect<void, TrackerError> =>
+      Effect.flatMap(itemIssueOf(id), ({ issue, url }) => {
+        if (issue.state === "closed") return closedRefusal(id, issue, "the title and text were not written");
+        const description = textDescription(issue.description ?? "", text);
+        if (Result.isSuccess(description)) return put(url, id, { title: text.title, description: description.success });
         const failure = description.failure;
         return Effect.fail(new TrackerBodyInvalid({ id, message: failure._tag === "DescriptionTooLong" ? descriptionTooLongText(failure) : `the issue's section "${OPENING_LINE}" is malformed: ${failure.reason}` }));
       });
@@ -231,7 +247,7 @@ export const gitlabTracker = (config: GitlabTrackerConfig, token: GitlabToken): 
           );
         },
       });
-    const tracker: TrackerShape = { list, listMarked, read, writeRefinement, setState, comment, comments, deleteComment };
+    const tracker: TrackerShape = { list, listMarked, read, readCited, writeText, writeRefinement, setState, comment, comments, deleteComment };
     return tracker;
   });
 

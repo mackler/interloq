@@ -2,7 +2,7 @@
 // states directly, so GitHub's label cases (no stage label, several) belong to the adapter's tests, not to it.
 import { Effect, Ref, Result } from "effect";
 import { TrackerBodyInvalid, TrackerItemNotFound } from "../src/errors.ts";
-import { withRefinement } from "../src/refinement.ts";
+import { withDeveloperText, withRefinement } from "../src/refinement.ts";
 import type { TrackerError, TrackerShape } from "../src/services.ts";
 import { type CommentId, commentIdOf, type ItemComment, type ItemId, type ItemState, type TrackerItem } from "../src/tracker.ts";
 
@@ -22,7 +22,7 @@ export type FakeTracker = Readonly<{
   /** The next call of `operation` fails with `error`, once; with `state`, only a `setState` to that state matches. */
   failNext: (operation: TrackerOperation, error: TrackerError, state?: ItemState) => Effect.Effect<void>;
   /** Issue #171: the next call of the write `operation` applies its change, then fails with `error`, once (a 500 that applied); with `state`, only a `setState` to that state matches (W1-R1-1). */
-  failAfterNext: (operation: "writeRefinement" | "setState" | "comment" | "deleteComment", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
+  failAfterNext: (operation: "writeRefinement" | "setState" | "comment" | "deleteComment" | "writeText", error: TrackerError, state?: ItemState) => Effect.Effect<void>;
   /** Issue #131: the developer edits the item in the tracker (its title or text). */
   edit: (id: ItemId, change: (item: FakeItem) => FakeItem) => Effect.Effect<void>;
 }>;
@@ -58,6 +58,17 @@ export const makeFakeTracker = (initial: readonly FakeItem[]): Effect.Effect<Fak
       // Issue #131: newest first is the reverse of the order the items were given to makeFakeTracker.
       listMarked: (state) => Effect.andThen(scripted("listMarked"), Effect.map(Ref.get(ref), (s) => s.items.filter((i) => i.open && i.marked === true && i.state === state).map(shown).reverse())),
       read: (id) => Effect.andThen(Ref.update(ref, (s) => ({ ...s, reads: [...s.reads, id] })), Effect.andThen(scripted("read"), Effect.map(find(id), shown))),
+      // Issue #216: a cited item read whatever its state, open as the fake holds it.
+      readCited: (id) => Effect.andThen(scripted("readCited"), Effect.map(find(id), (item) => ({ id: item.id, title: item.title, body: item.body, open: item.open }))),
+      writeText: (id, text) =>
+        Effect.gen(function* () {
+          yield* scripted("writeText");
+          const item = yield* find(id);
+          const body = withDeveloperText(item.body, text);
+          if (Result.isFailure(body)) return yield* Effect.fail(new TrackerBodyInvalid({ id, message: body.failure.reason }));
+          yield* replace({ ...item, title: text.title, body: body.success });
+          yield* after("writeText");
+        }),
       writeRefinement: (id, refinement) =>
         Effect.gen(function* () {
           yield* scripted("writeRefinement");

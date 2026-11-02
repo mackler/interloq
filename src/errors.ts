@@ -211,6 +211,8 @@ export const HeldStateSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("noComment") }),
   // Issue #131: the item still held the comment a deletion was to remove.
   Schema.Struct({ kind: Schema.Literal("commentPresent") }),
+  // Issue #216: the item held a title or text other than the one written.
+  Schema.Struct({ kind: Schema.Literal("otherText") }),
 ]);
 export type HeldState = typeof HeldStateSchema.Type;
 /** Issue #171 (requirements Q2): what a halt says about the item after the last write: what it held, or that it could not be checked. */

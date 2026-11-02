@@ -20,8 +20,8 @@ import type { ContextRequest } from "./prompts.ts";
 import type { ContextWritten } from "./question.ts";
 import type { LimitWait, LimitWaitBegan, CallFailure, RateLimitNotice, UsageLine, UsageLines } from "./usage.ts";
 import type { AgentSdk } from "./sdk.ts";
-import type { CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
-import type { Refinement } from "./refinement.ts";
+import type { CitedItem, CommentId, ItemComment, ItemId, ItemState, TrackerItem } from "./tracker.ts";
+import type { ItemText, Refinement } from "./refinement.ts";
 import type { OwnWrite, RecordsSnapshot, Snapshot } from "./snapshot.ts";
 import type { OutputEvent } from "./liveOutput.ts";
 import type { WaitHandle } from "./waits.ts";
@@ -168,6 +168,17 @@ export interface TrackerShape {
    */
   listMarked(state: ItemState): Effect.Effect<readonly TrackerItem[], TrackerError>;
   read(id: ItemId): Effect.Effect<TrackerItem, TrackerError>;
+  /**
+   * Issue #216: an issue the item cites, by its id, with its native open or closed state and no check of its labels;
+   * an id outside the tracker's format, or an issue it does not have, is TrackerItemNotFound.
+   */
+  readCited(id: ItemId): Effect.Effect<CitedItem, TrackerError>;
+  /**
+   * Issue #216: writes the developer's title and text in one request, the body being withDeveloperText of the issue's
+   * current body, so its section and labels are untouched. The only operation that changes the developer's title or
+   * text, used by the phase Bring Up to Date alone, after its loop ends in agreement.
+   */
+  writeText(id: ItemId, text: ItemText): Effect.Effect<void, TrackerError>;
   /** Writes the item's `Refined using Interloq` section: appended once, replaced later; the rest of the body is kept. */
   writeRefinement(id: ItemId, refinement: Refinement): Effect.Effect<void, TrackerError>;
   setState(id: ItemId, state: ItemState): Effect.Effect<void, TrackerError>;

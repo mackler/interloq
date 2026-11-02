@@ -1564,7 +1564,7 @@ export const TRACKER_FAILURE_TEXTS = {
   ambiguous: (id: string, labels: readonly string[]) => `item ${id} of the issue tracker carries more than one stage label: ${labels.join(", ")}`,
 } as const;
 /** The tracker steps at the end or the start of a run (TrackerStepFailed), as a halt names them. */
-export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "recordRefinement", "setRefined", "setImplemented", "readComments", "commentSendBack", "setUnrefined"] as const;
+export const TRACKER_STEPS = ["setImplementing", "writeRefinement", "recordRefinement", "setRefined", "setImplemented", "readComments", "commentSendBack", "setUnrefined", "writeText", "setObsolete"] as const;
 export type TrackerStep = (typeof TRACKER_STEPS)[number];
 /** A tracker step that failed: what was not done, the cause, and that the records stand (behavior 11). */
 export function trackerStepFailedText(item: string, step: TrackerStep, cause: string, done: string | null, check: WriteCheck | null): string {
@@ -1578,6 +1578,8 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
     readComments: `the comments of item ${item} could not be read, so it was neither sent back nor parked, and it stays implementing`,
     commentSendBack: `the comment saying what item ${item}'s requirements left out could not be added, and its label was not changed`,
     setUnrefined: `the comment was added to item ${item}, but it could not be set to unrefined and stays implementing`,
+    writeText: `the title and text brought up to date could not be written to item ${item}, so no question was asked`,
+    setObsolete: `item ${item} was found already built or replaced, but it could not be set to obsolete and stays unrefined`,
   };
   /** A write was attempted (W1-R1-1): the lead asserts nothing of its outcome, which the check alone states. */
   const attempted: Record<TrackerStep, string> = {
@@ -1589,6 +1591,8 @@ export function trackerStepFailedText(item: string, step: TrackerStep, cause: st
     readComments: `reading the comments of item ${item} could not be completed, so it was neither sent back nor parked`,
     commentSendBack: `adding the comment saying what item ${item}'s requirements left out could not be completed, and its label was not changed`,
     setUnrefined: `the comment was added to item ${item}, but setting it to unrefined could not be completed`,
+    writeText: `writing the title and text brought up to date to item ${item} could not be completed, so no question was asked`,
+    setObsolete: `item ${item} was found already built or replaced, but setting it to obsolete could not be completed`,
   };
   return `${(check === null ? unsent : attempted)[step]}: ${cause}.${done === null ? "" : ` ${done}`}${check === null ? "" : ` ${writeCheckText(item, check)}`} The records of the run are kept.`;
 }
@@ -1623,6 +1627,8 @@ export function writeCheckText(item: string, check: WriteCheck): string {
       return `After the last attempt, item ${item} held no comment of the run's.`;
     case "commentPresent":
       return `After the last attempt, item ${item} still held the comment that was to be deleted.`;
+    case "otherText":
+      return `After the last attempt, item ${item} held a title or text other than the one written.`;
   }
 }
 
@@ -1643,6 +1649,10 @@ export function trackerOperationText(op: TrackerOperation): string {
       return `reading the comments of item ${op.item}`;
     case "deleteComment":
       return `deleting Interloq's comment ${op.comment} on item ${op.item}`;
+    case "writeText":
+      return `writing the brought-up-to-date title and text to item ${op.item}`;
+    case "readCited":
+      return `reading the cited issue ${op.item}`;
   }
 }
 /** A repeat of a failed tracker request, as the page and conversation.md show it. */

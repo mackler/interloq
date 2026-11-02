@@ -1,7 +1,7 @@
 // What the GitHub adapter decides without I/O (issue #120, part 1): an issue's state from its labels, the label set of
 // a state change, the next page of a listing and an id's issue number. Pure; the edge is src/github.ts.
 import { Option, Result, Schema } from "effect";
-import { ITEM_STATES, type ItemComment, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, type ItemId, itemUrlFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
+import { type CitedItem, ITEM_STATES, type ItemComment, type NoObsoleteLabel, type StageLabels, stageLabelValues, targetLabelOf, type ItemId, itemUrlFrom, type ItemState, numericCommentId, positiveDecimalOf, type TrackerItem } from "./tracker.ts";
 
 /**
  * The fields of GitHub's issue object the adapter reads; the many others are ignored. A label is an object with a
@@ -60,6 +60,9 @@ export const itemOf = (labels: StageLabels, issue: GithubIssue): Result.Result<T
     state,
     url: itemUrlFrom(issue.html_url),
   }));
+
+/** Issue #216: a cited issue whatever its labels (a pull request too, since a cited number may name one); open from GitHub's own state. */
+export const citedOfIssue = (issue: GithubIssue): CitedItem => ({ id: String(issue.number) as ItemId, title: issue.title, body: issue.body ?? "", open: issue.state === "open" });
 
 const LINK_ENTRY = /<([^>]*)>((?:\s*;\s*[^;,]*)*)/gu;
 const NEXT_REL = /;\s*rel\s*=\s*"?([^";,]*)"?/u;
