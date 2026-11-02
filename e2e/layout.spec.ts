@@ -1214,7 +1214,7 @@ test.describe("the tests of the longHistory server, in order", () => {
       const last = compact.locator("[data-answer]").last();
       await last.scrollIntoViewIfNeeded();
       await expect(last, `the last earlier answer at ${width} × ${height}`).toBeInViewport();
-      expect(await compact.evaluate((el) => el.scrollTop), `the compact dashboard scrolled at ${width} × ${height}`).toBeGreaterThan(0);
+      expect(await compact.locator("[data-dashboard-above]").evaluate((el) => el.scrollTop), `the compact dashboard scrolled at ${width} × ${height}`).toBeGreaterThan(0);
       // Beside the rail (840 px and wider) the dashboard is under the question in one column, so reading the earlier
       // answers leaves the question in view; in the compact layout at 450 px the dashboard is below the window, under the
       // pane's 12.5rem, and the run scrolls as a whole to reach it.

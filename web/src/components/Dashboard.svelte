@@ -28,9 +28,26 @@
 
   const NAME = "You and Interloq";
   // Issue #49: `output`, the run's live panel as this tab received it; shown in the full form always and in the compact
-  // form only while `hasRunning` (issue #200, requirements Q2).
-  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; documentOpen?: boolean; onDocument?: (open: boolean) => void; compact?: boolean; output?: LivePanel; onEndWait?: (wait: number) => void; endWaitSent?: (wait: number) => boolean };
-  let { run, answersOpen, onAnswers, documentOpen = false, onDocument = () => {}, compact = false, output = EMPTY_PANEL, onEndWait = () => {}, endWaitSent = () => false }: Props = $props();
+  // form only while `hasRunning` (issue #200, requirements Q2). Issue #221: the panel is the section's last child, its
+  // bottom edge the column's bottom, and everything above it is one region that scrolls where it does not fit, so the
+  // panel never moves with that content; `panelLines` and `onPanelLines` are the full panel's height, which App remembers.
+  type Props = { run: RunView; answersOpen: boolean; onAnswers: (open: boolean) => void; documentOpen?: boolean; onDocument?: (open: boolean) => void; compact?: boolean; output?: LivePanel; onEndWait?: (wait: number) => void; endWaitSent?: (wait: number) => boolean; panelLines?: number; onPanelLines?: (lines: number) => void };
+  let { run, answersOpen, onAnswers, documentOpen = false, onDocument = () => {}, compact = false, output = EMPTY_PANEL, onEndWait = () => {}, endWaitSent = () => false, panelLines = PANEL_LINES, onPanelLines = () => {} }: Props = $props();
+  // The section's content height, from which the panel's handle takes its maximum; measured where the browser can observe it.
+  let section = $state<HTMLElement | undefined>(undefined);
+  let available = $state<number | null>(null);
+  $effect(() => {
+    const el = section;
+    if (el === undefined || typeof ResizeObserver === "undefined") return;
+    const measure = (): void => {
+      const style = getComputedStyle(el);
+      available = el.clientHeight - (Number.parseFloat(style.paddingTop) || 0) - (Number.parseFloat(style.paddingBottom) || 0);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  });
   const d = $derived(run.dashboard);
   const last = $derived(lastAnswer(d));
   const listId = $derived(`dashboard-answers-${run.id}-${compact ? "compact" : "full"}`);
@@ -48,7 +65,8 @@
   <div class="you m3-font-body-medium"><span class="who m3-font-label-medium">{YOU_LABEL}</span><div class="markdown" data-your-answer>{@html render(entry.answer)}</div></div>
 {/snippet}
 
-<section class="dashboard" class:compact aria-label={compact ? DASHBOARD_COMPACT_NAME : NAME}>
+<section class="dashboard" class:compact aria-label={compact ? DASHBOARD_COMPACT_NAME : NAME} bind:this={section}>
+  <div class="above" data-dashboard-above>
   {#if !compact}
     <h2 class="header">{run.item === null ? NAME : itemHeadline(run.item.id, run.item.title)}</h2>
     {#if d.models.claude !== null || d.models.codex !== null}
@@ -56,7 +74,6 @@
     {/if}
   {/if}
   <StatusLine status={d.status} retry={run.retry?.wait ?? null} wait={run.limitWait} {compact} {onEndWait} {endWaitSent} />
-  {#if compact && hasRunning(output)}<LiveOutput panel={output} lines={COMPACT_PANEL_LINES} />{/if}
   <div class="regions">
     {#if !compact}
       {#if d.interviewHelp !== null}<p class="help m3-font-body-small" data-interview-help>{d.interviewHelp}</p>{/if}
@@ -92,7 +109,12 @@
       </div>
     {/if}
   </div>
-  {#if !compact}<LiveOutput panel={output} lines={PANEL_LINES} />{/if}
+  </div>
+  {#if compact}
+    {#if hasRunning(output)}<LiveOutput panel={output} lines={COMPACT_PANEL_LINES} compact />{/if}
+  {:else}
+    <LiveOutput panel={output} lines={panelLines} resize={{ available, onLines: onPanelLines }} />
+  {/if}
 </section>
 
 <style>
@@ -101,8 +123,10 @@
   /* M3's title-large for the header, small type for the models, set here since the m3-font-* classes are absent. */
   .header { margin: 0; font-size: 1.375rem; line-height: 1.75rem; font-weight: 400; }
   .models { margin: 0; display: flex; flex-wrap: wrap; gap: 0 1rem; font-size: 0.75rem; line-height: 1rem; color: var(--m3c-on-surface-variant); }
-  .regions { display: flex; flex-direction: column; gap: 0.75rem; min-height: 0; overflow-y: auto; }
-  .compact .regions { overflow: visible; }
+  /* Issue #221: everything above the live panel scrolls as one region, so the panel's bottom stays the column's bottom. */
+  .above { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .compact .above { gap: 0.25rem; }
+  .regions { display: flex; flex-direction: column; gap: 0.75rem; }
   .help { margin: 0; white-space: pre-wrap; color: var(--m3c-on-surface-variant); }
   .surface { padding: 0.5rem 0.875rem; border-radius: var(--m3-shape-large); margin: 0; }
   .claude { background: var(--m3c-secondary-container); color: var(--m3c-on-secondary-container); }

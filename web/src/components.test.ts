@@ -709,9 +709,9 @@ describe("App and the draft", () => {
     const { root, ws } = await openPage();
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
     ws.receive({ type: "output", run: 1, event: { _tag: "Printed", key: "suite:1", name: "suite", text: "ok 1 the parser\n" } });
-    expect(one(root, "[data-live-output] pre").textContent).toContain("suite | ok 1 the parser");
+    expect(one(root, "[data-live-output] [data-live-screen]").textContent).toContain("ok 1 the parser");
     ws.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" });
-    expect(one(root, "[data-live-output] pre").textContent).not.toContain("ok 1 the parser");
+    expect(one(root, "[data-live-output] [data-live-screen]").textContent).not.toContain("ok 1 the parser");
     expect(one(root, "[data-live-output]").textContent).toContain(prompts.LIVE_OUTPUT_EMPTY);
   });
 
@@ -727,6 +727,35 @@ describe("App and the draft", () => {
     expect(compactPanel()?.textContent).toContain("ok 1");
     ws.receive({ type: "output", run: 1, event: { _tag: "Finished", key: "suite:1", name: "suite", status: { _tag: "Exited", code: 0 } } });
     expect(compactPanel()).toBe(null);
+  });
+
+  // Issue #221: the panel is the dashboard's last child in both forms, the rest above it in one scrolling region.
+  test("the live panel is the last child of the full and the compact dashboard, under the region holding the status line", async () => {
+    const { root, ws } = await openPage();
+    ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+    const full = one(root, '.left .chat section[aria-label="You and Interloq"]');
+    expect(full.lastElementChild?.hasAttribute("data-live-output")).toBe(true);
+    expect(one(full, "[data-dashboard-above] [data-status]")).not.toBe(null);
+    expect(one(full, "[data-live-output]").querySelector("[role=separator]")).not.toBe(null);
+    const second = await openPage();
+    second.ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
+    second.ws.receive({ type: "output", run: 1, event: { _tag: "Started", key: "suite:1", name: "suite" } });
+    flushSync();
+    const compact = one(second.root, `.dashboard-compact section[aria-label="${prompts.DASHBOARD_COMPACT_NAME}"]`);
+    expect(compact.lastElementChild?.hasAttribute("data-live-output")).toBe(true);
+    expect(one(compact, "[data-dashboard-above] [data-status]")).not.toBe(null);
+    expect(one(compact, "[data-live-output]").querySelector("[role=separator]")).toBe(null);
+  });
+
+  test("the full panel's height is the one the browser remembers", async () => {
+    localStorage.setItem("interloq.livePanel", JSON.stringify({ lines: 20 }));
+    try {
+      const { root, ws } = await openPage();
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started]) }] });
+      expect(one(root, ".left .chat [data-live-resize]").getAttribute("aria-valuenow")).toBe("20");
+    } finally {
+      localStorage.removeItem("interloq.livePanel");
+    }
   });
 
   // Issue #200: under a question the compact dashboard's limit follows whether a process runs (class `running`).

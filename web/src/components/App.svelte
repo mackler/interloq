@@ -36,7 +36,9 @@
   import { type Closer, currentPermission, playChime, requestDesktopPermission, schemeColors, setFavicon, showDesktop } from "../alerts.ts";
   import { faviconHref } from "../favicon.ts";
   import { combinedMark, type Decision, decide, defaultPreferences, initialNotifyState, type Mark, markOf, type NotifyState, type Observation, type Permission, type Preferences, unseenEnds } from "../notify.ts";
-  import { readPreferences, writePreferences } from "../storage.ts";
+  import { readPanelLines, readPreferences, writePanelLines, writePreferences } from "../storage.ts";
+  import { DEFAULT_PANEL_LINES, type PanelLines, panelLinesOf } from "../panelHeight.ts";
+  import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
   import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
@@ -281,6 +283,24 @@
   const runOutput = $derived(run === null ? EMPTY_PANEL : (outputs.get(run.id) ?? EMPTY_PANEL));
   /** The run area (issue #133, W1-R1-1): the decision page measures its room from it, and it scrolls in a low window. */
   let runArea = $state<HTMLElement | null>(null);
+  // Issue #221: the full live panel's height, remembered per browser; a failure of the storage leaves the default.
+  let panelLines = $state<PanelLines>(((r) => (r.ok ? r.value : DEFAULT_PANEL_LINES))(readPanelLines()));
+  const onPanelLines = (n: number): void => {
+    const lines = Result.getOrElse(panelLinesOf(n), () => panelLines);
+    panelLines = lines;
+    writePanelLines(lines);
+  };
+  // Issue #221: the run area's height, so that in the compact layout the full dashboard is one screen tall and its
+  // panel's bottom is the screen's bottom; measured where the browser can observe it.
+  let runHeight = $state(0);
+  $effect(() => {
+    const el = runArea;
+    if (el === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => (runHeight = el.clientHeight));
+    observer.observe(el);
+    runHeight = el.clientHeight;
+    return () => observer.disconnect();
+  });
   // The decision page appears with the run at its top, so that the question and its choices are in view.
   let topFor: string | null = null;
   $effect(() => {
@@ -423,7 +443,7 @@
   {:else if run !== null}
     <!-- One tree for both layouts (W2-R1-3): the columns stay mounted, and CSS alone shows or hides them, so a switch
          of panels or a resize across 840 px keeps each panel's reading position [user control and freedom]. -->
-    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} bind:this={runArea}>
+    <main class="run" class:compact class:deciding class:paused={analysis !== null && !deciding} bind:this={runArea} style:--run-height="{runHeight}px">
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
@@ -477,7 +497,7 @@
       <div class="left" class:hidden={!deciding && !shown("dashboard")}>
         <!-- S27 (Q10): a pending prompt's question takes the column; the conversation is one click away and back. -->
         <div class="chat" class:hidden={deciding || asking}>
-          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} onEndWait={(w) => { if (run !== null) endWait(run, w); }} endWaitSent={(w) => run !== null && endWaitsSent.has(endWaitKey(run, w))} />
+          <Dashboard {run} answersOpen={isOpen(run.ui, DASHBOARD_ANSWERS)} onAnswers={toggleAnswers} documentOpen={isOpen(run.ui, DASHBOARD_DOCUMENT)} onDocument={toggleDocument} output={runOutput} {panelLines} {onPanelLines} onEndWait={(w) => { if (run !== null) endWait(run, w); }} endWaitSent={(w) => run !== null && endWaitsSent.has(endWaitKey(run, w))} />
         </div>
         {#if run.pending !== null && !asking}
           <div class="back-to-question">
@@ -555,6 +575,8 @@
   .back-to-question { padding: 0.5rem 0.75rem 0; }
   /* The shown column fills the window; its panel scrolls inside it and keeps at least 12.5rem, below which the page scrolls. */
   .run.compact .left, .run.compact .right { flex: 1 0 0; }
+  /* Issue #221: in the compact layout the full dashboard is one screen tall, so its live panel's bottom is the screen's. */
+  .run.compact .chat { flex: none; height: calc(var(--run-height) - 1.5rem); }
   .run.compact .left :global(.panel), .run.compact .right :global(.panel), .run.compact .left :global(.pane:not(.answers-only)) { min-height: 12.5rem; }
   /* W4-R1-1; issue #133: while the analysis is shown, only the decision area flexes, at least its content and filling
      the window otherwise, and the run scrolls where it cannot hold it (the developer's decision of 12 Oct 2026); the
@@ -574,13 +596,14 @@
      runs it takes at most a fifth (20vh): issue #191's second row of tabs (48 px) shortened the column to about 416 px at
      1280 × 600, and a fifth (about 83 px) still holds the closed compact form (66 px there) while returning the question
      its room (L34). */
-  .dashboard-compact { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
+  /* Issue #221: the compact dashboard clips nothing of its own; its region above the panel scrolls, the panel at its bottom. */
+  .dashboard-compact { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
   .run.compact .dashboard-compact { flex: none; }
   .dashboard-compact.running { max-height: 25%; }
   .run.compact .dashboard-compact.running { max-height: 25vh; }
   .dashboard-compact:not(.running) { max-height: 20%; }
   .run.compact .dashboard-compact:not(.running) { max-height: 20vh; }
-  .dashboard-compact :global(.dashboard.compact) { min-height: 0; }
+  .dashboard-compact :global(.dashboard.compact) { flex: 1 1 auto; min-height: 0; }
   .dashboard-compact :global(.answers) { max-height: none; overflow: visible; }
   .progress { border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
   .rail-column { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
