@@ -2330,10 +2330,14 @@ export const PLAN_LIST_LABEL = "The steps of the plan";
  * The steps of Gather Requirements in the progress rail (issue #21, Q5 and Q7; issue #33, renamed "Creating Questions" on 11 Oct 2026). Issue #51:
  * a follow-up clarification is part of the clarification's step. Issue #113: that step is "User Decisions", the name of
  * the heading above the conversation, and the terms step is "Define terms"; the records keep "clarification".
+ * Issue #205: the first step is "Searching for Unanswered Questions", since a search may find none, and a search that
+ * ended with an empty agreed list is labeled `NO_UNANSWERED_QUESTIONS`; the records keep "formulate".
  */
 export function stepLabel(kind: "formulate" | "terms" | "clarification"): string {
-  return kind === "formulate" ? "Creating Questions" : kind === "terms" ? "Define terms" : USER_DECISIONS;
+  return kind === "formulate" ? "Searching for Unanswered Questions" : kind === "terms" ? "Define terms" : USER_DECISIONS;
 }
+/** The label of the search step that ended with an empty agreed list (issue #205). */
+export const NO_UNANSWERED_QUESTIONS = "No Unanswered Questions Found";
 /** A clarification's count (issue #21, Q6): the total grows with the follow-ups Claude asks. */
 export function clarificationProgress(answered: number, total: number): string {
   return `${answered} of ${total} answered`;

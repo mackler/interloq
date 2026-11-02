@@ -197,7 +197,10 @@ test("a finished loop's line reads n issues resolved in m cycles", () => {
 
 // Issue #33: the first step of Gather Requirements identifies the choices; the other steps keep their names.
 test("the steps of Gather Requirements", () => {
-  assert.equal(prompts.stepLabel("formulate"), "Creating Questions");
+  assert.equal(prompts.stepLabel("formulate"), "Searching for Unanswered Questions");
+  // Issue #205: a search that ended with an empty agreed list says so.
+  assert.equal(prompts.NO_UNANSWERED_QUESTIONS, "No Unanswered Questions Found");
+  assert.notEqual(prompts.NO_UNANSWERED_QUESTIONS, prompts.stepLabel("formulate"));
   assert.equal(prompts.stepLabel("clarification"), prompts.USER_DECISIONS);
   assert.equal(prompts.stepLabel("terms"), "Define terms");
 });
