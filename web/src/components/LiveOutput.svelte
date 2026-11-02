@@ -163,7 +163,8 @@
 
 <style>
   /* The panel may shrink below its height in lines where the column is smaller than its smallest height, so its bottom
-     stays the column's bottom; its screen keeps two lines at the least. */
+     stays the column's bottom; its screen keeps two lines at the least. In the full dashboard the content above shrinks
+     first (Dashboard's .above), so the full panel keeps its chosen height while that content scrolls (W3-R2-1). */
   .live { display: flex; flex-direction: column; gap: 0.25rem; flex: 0 1 auto; min-height: 0; font-family: var(--m3-font-mono); font-size: 0.75rem; line-height: 1.125rem; }
   .handle { height: 0.5rem; flex: none; cursor: row-resize; border-radius: var(--m3-shape-full); background: var(--m3c-outline-variant); touch-action: none; }
   .handle:focus-visible { outline: 2px solid var(--m3c-primary); outline-offset: 2px; }

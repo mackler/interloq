@@ -124,8 +124,11 @@
   .header { margin: 0; font-size: 1.375rem; line-height: 1.75rem; font-weight: 400; }
   .models { margin: 0; display: flex; flex-wrap: wrap; gap: 0 1rem; font-size: 0.75rem; line-height: 1rem; color: var(--m3c-on-surface-variant); }
   /* Issue #221: everything above the live panel scrolls as one region, so the panel's bottom stays the column's bottom. */
-  .above { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-  .compact .above { gap: 0.25rem; }
+  /* Its shrink factor, far above the live panel's 1, makes it give up its room before the panel does, so the full panel
+     keeps its chosen height while this region scrolls; the panel shrinks only once this region has none left (W3-R2-1).
+     The compact panel shares the compact dashboard's limit with it as before (issue #200). */
+  .above { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1000 auto; min-height: 0; overflow-y: auto; }
+  .compact .above { gap: 0.25rem; flex-shrink: 1; }
   .regions { display: flex; flex-direction: column; gap: 0.75rem; }
   .help { margin: 0; white-space: pre-wrap; color: var(--m3c-on-surface-variant); }
   .surface { padding: 0.5rem 0.875rem; border-radius: var(--m3-shape-large); margin: 0; }

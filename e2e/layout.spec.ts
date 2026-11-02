@@ -4,6 +4,7 @@ import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDAT
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
+import { MIN_PANEL_LINES } from "../web/src/panelHeight.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both columns are side by side; below it, one column at a time, chosen by its title, and a prompt selects "You and
@@ -1386,10 +1387,31 @@ test.describe("the tests of the liveOutput server, in order", () => {
       await expect(handle).toHaveAttribute("aria-valuenow", String(Math.min(low + 3, max)));
       expect(Math.abs((await bottomOf(live)) - bottom)).toBeLessThanOrEqual(1);
 
+      // The content above grows: the panel keeps its chosen height and its place, and the content above scrolls
+      // (W3-R2-1).
+      const valueBefore = await handle.getAttribute("aria-valuenow");
+      const chosen = (await box(screen)).height;
+      // Where the room exceeds the panel's smallest height, its chosen lines fit whole (maxPanelLines).
+      if (max > MIN_PANEL_LINES) expect(Math.abs(chosen - (Number(valueBefore) * line + 16)), `the screen as tall as its lines at ${size}`).toBeLessThanOrEqual(1);
+      await above.evaluate((el) => {
+        const filler = document.createElement("div");
+        filler.dataset.testFiller = "";
+        filler.style.height = "2000px";
+        filler.style.flex = "none";
+        el.append(filler);
+      });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve(null))));
+      expect(Math.abs((await box(screen)).height - chosen), `the screen's height kept as the content above grows at ${size}`).toBeLessThanOrEqual(1);
+      await expect(handle).toHaveAttribute("aria-valuenow", valueBefore ?? "");
+      await placed("the content above grown");
+      expect(await above.evaluate((el) => el.scrollHeight > el.clientHeight), `the grown content above scrolls at ${size}`).toBe(true);
+      await above.evaluate((el) => el.querySelector("[data-test-filler]")?.remove());
+
       // End: the panel takes what the room allows, and the content above scrolls.
       await handle.focus();
       await page.keyboard.press("End");
       await expect(handle).toHaveAttribute("aria-valuenow", String(max));
+      if (max > MIN_PANEL_LINES) expect(Math.abs((await box(screen)).height - (max * line + 16)), `the screen as tall as its most lines at ${size}`).toBeLessThanOrEqual(1);
       expect(await above.evaluate((el) => el.scrollHeight > el.clientHeight), `the content above scrolls at ${size}`).toBe(true);
       await placed("at the most lines");
       await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
