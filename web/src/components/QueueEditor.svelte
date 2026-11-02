@@ -48,11 +48,13 @@
   const dropBefore = (entry: QueueEntry): boolean =>
     dragging !== null && target !== null && entry.item !== dragging.item && queue.entries.filter((e) => e.item !== dragging?.item).findIndex((e) => e.item === entry.item) === target;
   const dropAtEnd = $derived(dragging !== null && target !== null && target === queue.entries.length - 1);
+  /** Ends a drag with nothing sent: Escape, or a drag the browser cancels (a touch turned into a scroll, a lost capture). */
+  const cancelDrag = (): void => {
+    dragging = null;
+    target = null;
+  };
   const cancel = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && dragging !== null) {
-      dragging = null;
-      target = null;
-    }
+    if (e.key === "Escape" && dragging !== null) cancelDrag();
   };
 </script>
 
@@ -65,7 +67,7 @@
     <ol bind:this={list} class:drop-end={dropAtEnd}>
       {#each queue.entries as entry, i (entry.item)}
         <li data-queued={entry.item} class:dragging={dragging?.item === entry.item} class:drop-before={dropBefore(entry)}>
-          <button type="button" tabindex="-1" class="handle" data-handle aria-label={queueHandleName(labelOf(entry))} onpointerdown={down(entry)} onpointermove={move} onpointerup={up} onpointercancel={up} onkeydown={cancel}>⠿</button>
+          <button type="button" tabindex="-1" class="handle" data-handle aria-label={queueHandleName(labelOf(entry))} onpointerdown={down(entry)} onpointermove={move} onpointerup={up} onpointercancel={cancelDrag} onkeydown={cancel}>⠿</button>
           <span class="position">{i + 1}</span>
           <div class="body">
             <p class="headline">{labelOf(entry)}</p>

@@ -70,6 +70,20 @@ describe("QueueEditor", () => {
     expect(changes.length).toBe(1);
   });
 
+  test("a drag the browser cancels sends nothing and leaves no row dragged or marked as the drop", () => {
+    const { root, changes } = editor();
+    layOut(root);
+    const handle = rows(root)[0]!.querySelector<HTMLElement>("[data-handle]")!;
+    pointer(handle, "pointerdown", 20);
+    pointer(handle, "pointermove", 100);
+    flushSync();
+    expect(root.querySelector("ol.drop-end")).not.toBeNull();
+    pointer(handle, "pointercancel", 100);
+    flushSync();
+    expect(changes.length).toBe(0);
+    expect(root.querySelector("li.dragging, li.drop-before, ol.drop-end")).toBeNull();
+  });
+
   test("the stale note shows only for an item absent from a loaded listing", () => {
     expect(editor().root.textContent).not.toContain(prompts.QUEUE_STALE);
     const { root } = editor({ listed: ["5", "8"] });

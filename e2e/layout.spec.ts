@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -1132,7 +1132,7 @@ test.describe("the tests of the planSteps server, in order", () => {
   for (const width of [1280, 1000, 840] as const) {
     test(`(L41) the chain's control at ${width} × 800: every part inside the rail's column`, async ({ page }) => {
       await page.setViewportSize({ width, height: 800 });
-      await startTask(page, layoutUrl("planSteps"));
+      const item = await startTask(page, layoutUrl("planSteps"));
       await expect(railSeparator(page)).toHaveAttribute("aria-valuenow", "14");
       await expect(page.locator("div.rail-column .chain")).toBeVisible();
       const runs = page.locator('div.rail-column input[name="chain-runs"]');
@@ -1153,7 +1153,28 @@ test.describe("the tests of the planSteps server, in order", () => {
       await expect(page.locator("div.rail-column .chain .active-ripple")).toHaveCount(0);
       await settled(page);
       await chainInside(page);
-      await sources.getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
+      // W1-R1-2: a populated queue, its entry the long title, lies inside the column too. It is added from the
+      // Implementation tab's list while the run goes on (issue #144), never through toTheList, which stops the run.
+      await listTabOf(page, "implementation").click();
+      const add = listOf(page).locator('button[name=queue-add][data-item="41"]');
+      await expect(add).toBeVisible();
+      await add.click();
+      const editor = page.getByRole("region", { name: QUEUE_HEADING });
+      await expect(editor.locator("li[data-queued]")).toHaveCount(1);
+      await runTabOf(page, item, "implementation").click();
+      const entry = page.locator("div.rail-column .chain li[data-queued]");
+      await expect(entry).toHaveCount(1);
+      await expect(entry).toContainText(LONG_ITEM_TITLE);
+      await expect(page.locator("div.rail-column .chain").getByText(QUEUE_EMPTY)).toHaveCount(0);
+      await expect(page.locator("div.rail-column .chain .active-ripple")).toHaveCount(0);
+      await settled(page);
+      await chainInside(page);
+      // The server's chain.json is shared by the describe's later tests: the entry removed and the backlog restored.
+      await listTabOf(page, "implementation").click();
+      await editor.getByRole("button", { name: queueRemoveName(`#41 ${LONG_ITEM_TITLE}`) }).click();
+      await expect(editor.getByText(QUEUE_EMPTY)).toBeVisible();
+      await page.getByRole("region", { name: CHAIN_SWITCH_LABEL }).getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
+      await expect(editor).toHaveCount(0);
       await noSidewaysScroll(page);
     });
   }

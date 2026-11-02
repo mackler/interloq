@@ -4,6 +4,9 @@ import * as prompts from "../../src/prompts.ts";
 import type { ClientMessage, ServerMessage } from "../../src/protocol.ts";
 import { backoff, connect, type Environment, type SocketLike } from "./socket.ts";
 import { helloChain } from "./testChain.ts";
+import { newEdit } from "./queuePending.ts";
+import { queueFrame } from "./tabs.ts";
+import type { ItemId } from "../../src/tracker.ts";
 
 // Plan step 4.3: reconnection with backoff, replay on reconnect, and the queue of actions while disconnected.
 class FakeSocket implements SocketLike {
@@ -409,5 +412,37 @@ describe("socket delivery", () => {
     expect(h.states).toContain("failed");
     expect(c.send(frame)).toBe("unsent");
     expect(h.unsent).toEqual([frame]);
+  });
+  // Issue #196 (W1-R1-3): a queue frame, like a chain frame, carries no incarnation and passes through unchanged, once.
+  const queued: ClientMessage = queueFrame(newEdit("page", 1, { _tag: "Add", item: "41" as ItemId, title: "title 41" }));
+  const onWire = (s: FakeSocket) => s.sent.map((t) => JSON.parse(t) as unknown);
+  test("delivery: a queue frame sent after the hello is sent once, unchanged", () => {
+    const c = connect("ws://x/ws", wire(handlers()), env());
+    sockets[0].receive(hello);
+    expect(c.send(queued)).toBe("sent");
+    expect(onWire(sockets[0])).toEqual([queued]);
+  });
+  test("delivery: a queue frame sent before the hello is queued, sent once at the hello, and not again after a reconnection", () => {
+    const c = connect("ws://x/ws", wire(handlers()), env());
+    expect(c.send(queued)).toBe("queued");
+    expect(sockets[0].sent).toHaveLength(0);
+    sockets[0].receive(hello);
+    expect(onWire(sockets[0])).toEqual([queued]);
+    sockets[0].drop();
+    vi.advanceTimersByTime(1000);
+    expect(sockets.length).toBe(2);
+    sockets[1].receive(hello);
+    expect(onWire(sockets[1])).toEqual([]);
+    expect(onWire(sockets[0])).toEqual([queued]);
+  });
+  test("delivery: a queue frame sent after the page failed is unsent and handed back", () => {
+    const h = handlers();
+    const c = connect("ws://x/ws", wire(h), env());
+    for (let i = 0; i < 3; i++) {
+      sockets[i].receiveRaw("not json");
+      vi.advanceTimersByTime(30_000);
+    }
+    expect(c.send(queued)).toBe("unsent");
+    expect(h.unsent).toEqual([queued]);
   });
 });
