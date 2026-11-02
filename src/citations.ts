@@ -6,7 +6,9 @@ import type { TrackerConfig } from "./schema.ts";
 import { type CitedItem, type ItemId, positiveDecimalOf } from "./tracker.ts";
 
 /** How the item's own project's issue URLs are written, built from the tracker's configuration. */
-export type CitationForm = Readonly<{ url: string }>;
+export type CitationForm = Readonly<{ url: string | null }>;
+/** Where no tracker is configured: `#<n>` alone. */
+export const NO_URL_FORM: CitationForm = { url: null };
 
 const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&");
 
@@ -26,7 +28,7 @@ export const citationFormOf = (config: TrackerConfig): CitationForm => {
  * of first occurrence, without the ids excluded.
  */
 export const citedIdsOf = (text: string, form: CitationForm, exclude: readonly ItemId[]): readonly ItemId[] => {
-  const pattern = new RegExp(`(?<![\\p{L}\\p{N}/&#])#(\\d+)(?!\\d)|${escaped(form.url)}(\\d+)(?!\\d)`, "gu");
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}/&#])#(\\d+)(?!\\d)${form.url === null ? "" : `|${escaped(form.url)}(\\d+)(?!\\d)`}`, "gu");
   const found = [...text.matchAll(pattern)].flatMap((m) => Option.match(positiveDecimalOf(m[1] ?? m[2] ?? ""), { onNone: () => [], onSome: (n) => [String(n) as ItemId] }));
   return [...new Set(found)].filter((id) => !exclude.includes(id));
 };

@@ -343,10 +343,12 @@ test("a skip condition is checked at a response to the review and at the applica
   const { questionSubject } = await import("../src/subjects.ts");
   const subject = questionSubject("task");
   const wrong = { ...respond([]), questions: [q("Q1"), dependent("Q2", "Q9", "A")] };
-  const responded = subject.respond.validate!(wrong);
+  // Issue #216: a subject's validation is a source; the question list's is a plain validation.
+  const fixed = <T>(v: unknown): ((output: T) => ReturnType<NonNullable<Extract<typeof subject.respond.validate, Function>>>) => v as never;
+  const responded = fixed<typeof wrong>(subject.respond.validate)(wrong);
   assert.ok(responded._tag === "Failure");
   assert.equal(responded.failure.repair, prompts.skipConditionRepairPrompt([{ kind: "unknownQuestion", id: "Q2", names: "Q9" }]));
-  const applied = subject.applyDecisions.validate!({ questions: wrong.questions });
+  const applied = fixed<{ questions: typeof wrong.questions }>(subject.applyDecisions.validate)({ questions: wrong.questions });
   assert.ok(applied._tag === "Failure");
   assert.equal(applied.failure.error._tag, "SkipConditionInvalid");
 });

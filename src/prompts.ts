@@ -1392,8 +1392,8 @@ export const termsRequestedHeading = (question: number): string => `Explanations
 /** The "p" choice at the cycle limit of a decision loop (D10 of the decision-support plan). */
 export const PROCEED_TO_CHOICE = "proceed to your choice with the analysis as it is";
 /** The review loop's lines: a cycle's review and response. */
-export function cycleReviewLine(heading: string, n: number): string {
-  return `\n${cycleHeading(heading, n)}: Codex review ...`;
+export function cycleReviewLine(heading: string, n: number, noun: "check" | "review" = "review"): string {
+  return `\n${cycleHeading(heading, n)}: Codex ${noun} ...`;
 }
 export function cycleResponseLine(heading: string, n: number): string {
   return `${cycleHeading(heading, n)}: Claude Code response ...`;
@@ -3692,8 +3692,10 @@ export function relayedFacts(root: RunRoot, plan: string | null): string {
  * The block a review loop writes to conversation.md when Codex's review has no counted issue, and only then: the one
  * record that a loop ended with the agents' agreement, which src/earlierPlan.ts reads in an earlier run's records (issue #180).
  */
-export const reviewConvergedMarkdown = (heading: string, round: number, fileLabel: string): string =>
-  `## ${heading}, round ${round}\n\n### Codex\n\nNo counted issue. The review of ${fileLabel} has converged.\n\n`;
+export const reviewConvergedMarkdown = (heading: string, round: number, fileLabel: string, noun: "check" | "review" = "review"): string =>
+  noun === "review"
+    ? `## ${heading}, round ${round}\n\n### Codex\n\nNo counted issue. The review of ${fileLabel} has converged.\n\n`
+    : `## ${heading}, round ${round}\n\n### Codex\n\nNo counted point. The check of ${fileLabel} found nothing more to correct.\n\n`;
 /** The plan subject's reviewed file as its loop names it (`fileLabel`), shared with src/earlierPlan.ts (issue #180). */
 export const PLAN_FILE_LABEL = "plan.json";
 
@@ -4369,3 +4371,16 @@ export const passageMissingText = (problems: readonly IssueTextProblem[]): strin
 /** The validation repair turn of the phase, built from the failure. */
 export const passageRepairPrompt = (problems: readonly IssueTextProblem[]): string =>
   validationRepairPrompt(problems.map(issueTextProblemText), [PASSAGE_RULE, `Every passage of protected in ${ISSUE_FILE} must stand verbatim in your title or text.`]);
+
+/** Issue #216: the phase's lines, said on the page and written to conversation.md. */
+export const updateBeganLine = (item: string): string => `${UPDATE_PHASE}: Codex checks item ${item}'s title and text against the project as it is now, before any question is asked.`;
+export const citedUnreadableLine = (id: string, reason: string): string => `${UPDATE_PHASE}: the cited issue ${id} could not be read (${reason}); the check goes on without it.`;
+export const UPDATE_UNCHANGED_LINE = `${UPDATE_PHASE}: the issue's title and text are up to date; nothing is written to the item.`;
+export const updateAmendedLine = (added: number, removed: number): string => `${UPDATE_PHASE}: Codex and Claude Code agreed on corrections to the issue (${added} ${added === 1 ? "line" : "lines"} added, ${removed} removed).`;
+export const updateObsoleteLine = (reason: string): string => `${UPDATE_PHASE}: Codex and Claude Code agreed that the whole issue is already built or replaced: ${reason}`;
+export const UPDATE_NOT_AGREED_LINE = `${UPDATE_PHASE}: the check ended without agreement, so nothing is written to the item and the questions are asked of the issue as filed.`;
+/** Issue #216: the line after Interloq wrote the corrected title and text to the item. */
+export const issueUpdatedLine = (item: string): string => `${UPDATE_PHASE}: Interloq wrote the corrected title and text to item ${item}; its section "${OPENING_LINE}" and its labels are unchanged.`;
+/** Issue #216 (Q1): the end of a refinement that found the issue already built or replaced. */
+export const issueObsoleteLine = (item: string, reason: string, labeled: boolean): string =>
+  `Item ${item} is already built or replaced (${reason}), so no question is asked. ${labeled ? "Interloq labeled it obsolete; it is in neither tab's list." : "No obsoleteLabel is configured, so it stays unrefined."} Interloq never closes an issue: close it yourself if it should be closed.`;

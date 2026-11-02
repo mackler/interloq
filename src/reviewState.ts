@@ -296,7 +296,7 @@ const startRound = (s: ReviewState): Transition => {
   }
   return {
     state: { ...s, round: n, step: { name: "awaitingReview" }, current: { ...freshRound, startText: s.lastText, startLog: s.log }, unexplained: null },
-    commands: [notify({ _tag: "RoundBegan", subject: s.setup.subject, round: n, limit: s.limit }), status(prompts.cycleReviewLine(heading, n)), { kind: "CallReviewer", round: n, unexplained: s.unexplained }],
+    commands: [notify({ _tag: "RoundBegan", subject: s.setup.subject, round: n, limit: s.limit }), status(prompts.cycleReviewLine(heading, n, prompts.passNoun(s.setup.subject))), { kind: "CallReviewer", round: n, unexplained: s.unexplained }],
   };
 };
 
@@ -417,7 +417,7 @@ const onReviewDecoded = (s: ReviewState, review: Review, validated: ValidatedRev
     status(`Issues: ${review.issues.length} total, ${counted} counted toward convergence.`),
   ];
   if (counted === 0) {
-    return done(state, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: prompts.reviewConvergedMarkdown(heading, n, fileLabel) }, checkpoint(state, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
+    return done(state, { kind: "Finish", result: "converged" }, [...before, { kind: "Converse", markdown: prompts.reviewConvergedMarkdown(heading, n, fileLabel, prompts.passNoun(s.setup.subject)) }, checkpoint(state, "reviewed"), notify({ _tag: "LoopFinished", subject: s.setup.subject, result: "converged" })]);
   }
   const reraised: Ask[] = log.reraisedIds(s.log, review).map((id) => {
     const taskDispute = markedEntry(s.log, id);

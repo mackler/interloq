@@ -23,6 +23,7 @@ import { normalizeQuestionList } from "./schemaNormalize.ts";
 import { Store, Ui } from "./services.ts";
 import type { VerdictRecord } from "./records.ts";
 import { verdictResponseValidation, verdictValidation } from "./verdictValidation.ts";
+import { issueApplyValidation, issueUpdateValidation, protectionAfterDecisions, protectionAfterResponse } from "./issueUpdate.ts";
 
 /** Records the list as questions.json after normalisation: an invalid list halts, and a dropped default is noted in the conversation. */
 export const writeQuestions = (task: string, list: QuestionList): Effect.Effect<void, RunError, Store> =>
@@ -76,6 +77,60 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
     reviewSchema: S.Review,
     prepare: null,
     document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file) })),
+  };
+}
+
+/**
+ * Issue #216: the issue brought up to date. Codex checks issue.json against the project; Claude Code returns the whole
+ * title and text with every response, and the program validates them against the protection baseline as the records
+ * hold it at that call (a loaded validation) and writes issue.json with the baseline advanced.
+ */
+export function updateSubject(): Subject<S.UpdateResponse, S.UpdateWrite> {
+  const id = "update" as const;
+  const protection = Effect.gen(function* () {
+    const store = yield* Store;
+    const before = yield* store.loadIssueBefore();
+    const file = yield* store.loadIssue();
+    return { protection: { before, protected: file.protected }, file };
+  });
+  const save = (output: Readonly<{ issue: S.UpdateResponse["issue"]; outcome: S.UpdateResponse["outcome"]; developer_passages: readonly string[] }>, protectedNow: readonly string[]) =>
+    Effect.flatMap(Store, (store) => store.saveIssue({ version: 2, title: output.issue.title, text: output.issue.text, outcome: output.outcome, developer_passages: [...output.developer_passages], protected: [...protectedNow] }));
+  return {
+    id,
+    phase: phaseOf(id),
+    heading: subjectHeading(id),
+    fileLabel: "issue.json",
+    reviewPrompt: prompts.updateCheckPrompt,
+    respond: {
+      prompt: prompts.updateRespondPrompt,
+      schema: S.UpdateResponse,
+      after: (output) => Effect.flatMap(protection, ({ protection: p }) => save(output, protectionAfterResponse(p, output))),
+      capability: "records",
+      validate: { _tag: "Loaded", load: Effect.map(protection, ({ protection: p }) => issueUpdateValidation(p)) },
+    },
+    applyDecisions: {
+      prompt: prompts.updateApplyDecisionsPrompt,
+      schema: S.UpdateWrite,
+      after: (output) => Effect.flatMap(protection, ({ protection: p }) => save(output, protectionAfterDecisions(p, output))),
+      validate: { _tag: "Loaded", load: Effect.map(protection, ({ protection: p, file }) => issueApplyValidation(p, file)) },
+    },
+    amend: null,
+    proceed: prompts.PROCEED_WITHOUT_UPDATE,
+    leaveOnAcceptance: false,
+    leaveOnDecision: false,
+    onUnchanged: "corrective",
+    // Q4: a disagreement about a fact of the code is settled by the agents; one Claude Code marks as about what the
+    // developer asked for is his if Codex raises it again (issue #156).
+    disputesSettledBy: "agents",
+    reviewSchema: S.Review,
+    prepare: null,
+    document: Effect.gen(function* () {
+      const store = yield* Store;
+      const file = yield* store.loadIssue();
+      const accepted = (yield* store.loadLog(id)).filter((e) => e.source === "review" && !e.superseded && (e.action === "accepted" || e.action === "partially_accepted"));
+      const why = accepted.length === 0 ? "" : `\n\n## Corrections\n\n${accepted.map((e) => `- **${e.id}:** ${e.problem} — ${e.rationale}`).join("\n")}`;
+      return { _tag: "Markdown", text: `# ${file.title}\n\n${file.text}${why}` } satisfies ShownDocument;
+    }),
   };
 }
 

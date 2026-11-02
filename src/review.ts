@@ -38,7 +38,7 @@ export type Operation<T> = Readonly<{
   /** What the call may do (finding 1 of docs/gui-review.md): "readOnly" for a work response, "records" otherwise. */
   capability: PlanningCapability;
   /** The validation beyond the schema, with its repair turn (issue #37); null when there is none. */
-  validate: Validation<T> | null;
+  validate: ValidationSource<T>;
 }>;
 
 /** What the review procedure is applied to. `R` is the response to a review, `D` the output of applying decisions (finding 12). */
@@ -57,7 +57,7 @@ export type Subject<R extends PlannerResponse = PlannerResponse, D = unknown> = 
   /** Claude Code's response to a review. */
   respond: Operation<R>;
   /** The call that applies the user's decisions; its prompt does not depend on the round. */
-  applyDecisions: Readonly<{ prompt: (root: RunRoot) => string; schema: Schema.Decoder<D>; after: ((output: D) => Effect.Effect<void, RunError, Store | Ui>) | null; validate: Validation<D> | null }>;
+  applyDecisions: Readonly<{ prompt: (root: RunRoot) => string; schema: Schema.Decoder<D>; after: ((output: D) => Effect.Effect<void, RunError, Store | Ui>) | null; validate: ValidationSource<D> }>;
   /** After the response of a round, an amendment that requires the user (the requirements); null otherwise. */
   amend: ((review: Review, response: R, round: number) => Effect.Effect<void, RunError, Services>) | null;
   /** Text of the "p" choice at the round limit; null: no such choice (the work review, Q13). */
@@ -213,6 +213,15 @@ export type OnReply = (raw: unknown) => Effect.Effect<void, StoreError>;
  * to record in conversation.md, or the error that ends the run and the prompt of the repair turn.
  */
 export type Validation<T> = (output: T) => Result.Result<Readonly<{ value: T; notes: readonly string[] }>, Readonly<{ error: RunError; repair: string }>>;
+/**
+ * Where a subject's validation comes from (issue #216, review P1-R1-1 and P1-R1-2): a validation fixed when the subject
+ * is built, none, or one built from the records as they stand at each call (`Loaded`), which the interpreter resolves
+ * immediately before each response, corrective turn and application of decisions.
+ */
+export type ValidationSource<T> = Validation<T> | null | Readonly<{ _tag: "Loaded"; load: Effect.Effect<Validation<T>, RunError, Services> }>;
+/** The validation of a source at this call. */
+export const resolveValidation = <T>(source: ValidationSource<T>): Effect.Effect<Validation<T> | null, RunError, Services> =>
+  source === null || typeof source === "function" ? Effect.succeed(source) : source.load;
 
 /** The decoded output of a planning call, the free text and cost of the call that produced it, and whether a repair turn was needed. */
 export type PlanningCall<Out> = Readonly<{ output: Out; reply: unknown; resultText: string; costUsd: number | null; repaired: boolean }>;
@@ -303,7 +312,7 @@ export const bothValidations =
 
 export const applyDecisions = <R extends PlannerResponse, D>(subject: Subject<R, D>): Effect.Effect<void, RunError, Services> =>
   Effect.gen(function* () {
-    const call = yield* planningCall(subject.applyDecisions.prompt((yield* Store).root), subject.applyDecisions.schema, "planning", "records", subject.applyDecisions.validate);
+    const call = yield* planningCall(subject.applyDecisions.prompt((yield* Store).root), subject.applyDecisions.schema, "planning", "records", yield* resolveValidation(subject.applyDecisions.validate));
     if (subject.applyDecisions.after !== null) yield* subject.applyDecisions.after(call.output);
   });
 
@@ -518,7 +527,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
                 : null;
             const context: RespondContext = { review: state.current.review!, log: state.log, records };
             const round = roundOf(state);
-            const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, round.after(subject.respond.validate), rawSave(command.round, "response"));
+            const call = yield* planningCall(subject.respond.prompt(store.root, command.round, context), subject.respond.schema, "planning", subject.respond.capability, round.after(yield* resolveValidation(subject.respond.validate)), rawSave(command.round, "response"));
             return { kind: "ResponseDecoded", response: call.output, round: yield* round.of(call.output), resultText: call.resultText, costUsd: call.costUsd };
           }
           case "CallCorrective": {
@@ -527,7 +536,7 @@ export const reviewLoop = <R extends PlannerResponse, D>(subject: Subject<R, D>)
             const previous = state.current.response!;
             const acceptedIds = state.current.round!.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
             const round = roundOf(state);
-            const validate = round.after(bothValidations(correctiveValidation<R>(previous, acceptedIds), subject.respond.validate));
+            const validate = round.after(bothValidations(correctiveValidation<R>(previous, acceptedIds), yield* resolveValidation(subject.respond.validate)));
             const repair: Repair = { kind: "corrective", prompt: correctivePrompt(store.root, fileLabel, command.round, acceptedIds) };
             const call = yield* repairTurn(repair, subject.respond.schema, subject.respond.capability, validate, rawSave(command.round, { corrective: command.attempt }));
             yield* store.saveCorrection(id, command.round, command.attempt, call.reply);
