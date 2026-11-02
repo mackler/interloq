@@ -13,7 +13,7 @@ import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
 import { EARLIER_ROOT, tempRepo, TEST_ROOT } from "./helpers.ts";
 
-const checks: S.StepChecks = Result.getOrThrow(S.stepChecksOf({ checkCommands: [], suiteCommand: "npm test" }));
+const checks: S.StepChecks = Result.getOrThrow(S.stepChecksOf({ checkCommands: [], suiteCommand: "npm test", endToEndCommand: null }));
 const suite = checks.suite;
 const paths: readonly [string, ...string[]] = ["b.txt", "lib/c.ts"];
 

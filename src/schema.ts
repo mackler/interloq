@@ -598,6 +598,8 @@ export const Config = Schema.Struct({
   checkCommands: Schema.Unknown,
   /** Issue #162: the command Interloq runs as the whole suite after the review of the work finds nothing left to correct, or null. Decoded like checkCommands. */
   suiteCommand: Schema.Unknown,
+  /** Issue #199: the end-to-end command Interloq runs after the suite command passes, or null. Decoded like suiteCommand. */
+  endToEndCommand: Schema.Unknown,
 });
 
 /** Issue #162: a command of one line with a character other than whitespace and no NUL character (which spawn refuses; W2-R1-2), built by commandLineOf alone. */
@@ -614,21 +616,30 @@ const ChangeKindSchema = Schema.String.check(Schema.makeFilter((text: string) =>
 /** One entry of checkCommands: a kind of change and the command that checks it. */
 export const CheckCommand = Schema.Struct({ change: ChangeKindSchema, command: CommandLineSchema });
 export type CheckCommand = typeof CheckCommand.Type;
-/** The two settings decoded: the project's check commands and its suite command (issue #162). */
-export type StepChecks = Readonly<{ commands: ReadonlyArray<CheckCommand>; suite: CommandLine | null }>;
-/** No commands and no suite: a project without either setting. */
-export const NO_STEP_CHECKS: StepChecks = { commands: [], suite: null };
+/** The settings decoded: the project's check commands, its suite command (issue #162) and its end-to-end command (issue #199). */
+export type StepChecks = Readonly<{ commands: ReadonlyArray<CheckCommand>; suite: CommandLine | null; endToEnd: CommandLine | null }>;
+/** No commands, no suite and no end-to-end command: a project without any of the settings. */
+export const NO_STEP_CHECKS: StepChecks = { commands: [], suite: null, endToEnd: null };
+/** Issue #199: one command Interloq runs at the end of an implementation run, with the key that names it. */
+export type FinalCommand = Readonly<{ key: "suiteCommand" | "endToEndCommand"; command: CommandLine }>;
+/** Issue #199: the final commands configured, in the order they run: the suite command, then the end-to-end command. */
+export const finalCommandsOf = (checks: StepChecks): ReadonlyArray<FinalCommand> => [
+  ...(checks.suite === null ? [] : [{ key: "suiteCommand" as const, command: checks.suite }]),
+  ...(checks.endToEnd === null ? [] : [{ key: "endToEndCommand" as const, command: checks.endToEnd }]),
+];
 /** Why the settings do not decode: the key, the path inside its value ("" at its root) and the message. */
-export type StepChecksInvalid = Readonly<{ key: "checkCommands" | "suiteCommand"; path: string; message: string }>;
+export type StepChecksInvalid = Readonly<{ key: "checkCommands" | FinalCommand["key"]; path: string; message: string }>;
 const decodeCheckCommands = Schema.decodeUnknownResult(Schema.Array(CheckCommand), { onExcessProperty: "error" });
 const decodeSuiteCommand = Schema.decodeUnknownResult(Schema.NullOr(CommandLineSchema), { onExcessProperty: "error" });
 /** Issue #162: decodes the two settings, which the configuration holds undecoded; called only when an implementation run starts. */
-export const stepChecksOf = (raw: Readonly<{ checkCommands: unknown; suiteCommand: unknown }>): Result.Result<StepChecks, StepChecksInvalid> => {
+export const stepChecksOf = (raw: Readonly<{ checkCommands: unknown; suiteCommand: unknown; endToEndCommand: unknown }>): Result.Result<StepChecks, StepChecksInvalid> => {
   const commands = decodeCheckCommands(raw.checkCommands);
   if (Result.isFailure(commands)) return Result.fail({ key: "checkCommands", ...firstIssue(commands.failure) });
   const suite = decodeSuiteCommand(raw.suiteCommand);
   if (Result.isFailure(suite)) return Result.fail({ key: "suiteCommand", ...firstIssue(suite.failure) });
-  return Result.succeed({ commands: commands.success, suite: suite.success });
+  const endToEnd = decodeSuiteCommand(raw.endToEndCommand);
+  if (Result.isFailure(endToEnd)) return Result.fail({ key: "endToEndCommand", ...firstIssue(endToEnd.failure) });
+  return Result.succeed({ commands: commands.success, suite: suite.success, endToEnd: endToEnd.success });
 };
 
 /** A config file: any subset of the keys of Config. Unknown keys are rejected where it is decoded. */
@@ -845,4 +856,5 @@ export const defaultConfig: Config = {
   terms: "unchecked",
   checkCommands: [],
   suiteCommand: null,
+  endToEndCommand: null,
 };

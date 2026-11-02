@@ -346,7 +346,7 @@ const planProducing = () => [
 // each step names its check, the check runs only the touched tests within STEP_CHECK_LIMIT_MS, and no step runs the
 // whole suite; the project's own commands are quoted where it lists them.
 const listedChecks = (): S.StepChecks =>
-  Result.getOrThrow(S.stepChecksOf({ checkCommands: [{ change: "the program's modules", command: "npm run test:unit" }, { change: "one end-to-end scenario", command: "E2E_SCENARIOS=tabs npx playwright test e2e/run.spec.ts -g '\\(7\\)'" }], suiteCommand: "npm test" }));
+  Result.getOrThrow(S.stepChecksOf({ checkCommands: [{ change: "the program's modules", command: "npm run test:unit" }, { change: "one end-to-end scenario", command: "E2E_SCENARIOS=tabs npx playwright test e2e/run.spec.ts -g '\\(7\\)'" }], suiteCommand: "npm test", endToEndCommand: null }));
 const planProducingWith = (checks: S.StepChecks) => [
   prompts.initialPlanPrompt(TEST_ROOT, "t", false, checks),
   prompts.revisePlanAfterExecutionPrompt(TEST_ROOT, "t", false, 1, { _tag: "ExecutionEnded", stop: { _tag: "Answered" }, workReview: "converged" }, checks),

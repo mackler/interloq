@@ -1,7 +1,7 @@
 // Issue #162: the check of a project's listed commands against its package.json (pure). A command that names an npm
 // script must name one the manifest has, so a renamed script refuses the run at its start instead of failing a step.
 import { Option, Schema } from "effect";
-import type { CommandLine, StepChecks } from "./schema.ts";
+import { finalCommandsOf, type CommandLine, type StepChecks } from "./schema.ts";
 
 /**
  * A command whose npm script the manifest lacks, or an npm script command in a project with no top-level package.json.
@@ -64,10 +64,10 @@ export const scriptOf = (command: CommandLine): Option.Option<string> => {
   return scriptAfterRun(words.slice(2));
 };
 
-/** Every listed command: the check commands in their order, then the suite command where one is set. */
+/** Every listed command: the check commands in their order, then the final commands (issue #199: the suite command, then the end-to-end command). */
 export const listedCommands = (checks: StepChecks): ReadonlyArray<CommandLine> => [
   ...checks.commands.map((entry) => entry.command),
-  ...(checks.suite === null ? [] : [checks.suite]),
+  ...finalCommandsOf(checks).map((final) => final.command),
 ];
 
 /** The problems of the listed commands against the manifest's scripts; none for the manifest means no package.json. */

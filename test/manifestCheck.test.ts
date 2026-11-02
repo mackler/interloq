@@ -112,8 +112,15 @@ test("manifestProblems: a missing script, no manifest, and commands that are not
 });
 
 test("listedCommands: the check commands, then the suite", () => {
-  const checks = Result.getOrThrow(stepChecksOf({ checkCommands: [{ change: "a", command: "npm run a" }, { change: "b", command: "npm run b" }], suiteCommand: "npm test" }));
+  const checks = Result.getOrThrow(stepChecksOf({ checkCommands: [{ change: "a", command: "npm run a" }, { change: "b", command: "npm run b" }], suiteCommand: "npm test", endToEndCommand: null }));
   assert.deepEqual(listedCommands(checks), ["npm run a", "npm run b", "npm test"]);
+});
+
+// Issue #199: the end-to-end command is listed after the suite command and checked like it.
+test("listedCommands: the end-to-end command last, and a missing script in it is a problem", () => {
+  const checks = Result.getOrThrow(stepChecksOf({ checkCommands: [{ change: "a", command: "npm run a" }], suiteCommand: "npm test", endToEndCommand: "npm run test:e2e" }));
+  assert.deepEqual(listedCommands(checks), ["npm run a", "npm test", "npm run test:e2e"]);
+  assert.deepEqual(manifestProblems(listedCommands(checks), Option.some({ a: "x", test: "y" })), [{ _tag: "MissingScript", command: "npm run test:e2e", script: "test:e2e" }]);
 });
 
 test("manifestScriptsOf: a package.json's scripts, none for anything else", () => {

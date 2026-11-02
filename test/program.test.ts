@@ -558,6 +558,17 @@ test("issue #162: a listed npm command naming a script package.json lacks halts 
   assert.equal(await heldState(tracker), scriptedItem.state, "the item was moved");
 });
 
+test("issue #199: an end-to-end command naming a script package.json lacks halts an implementation run with 1 before any agent call", async () => {
+  const tracker = fakeTrackerOf([scriptedItem]);
+  const { wiring, probe } = testWiring(tempRepo(), { ...converging, tracker, config: { suiteCommand: "npm test", endToEndCommand: "npm run test:e2e" } });
+  writeManifest(probe.project, { test: "node --test" });
+  assert.equal(await runProgram(probe, wiring), 1);
+  assert.ok(said(probe).includes(checkCommandInvalidText([{ _tag: "MissingScript", command: "npm run test:e2e" as CommandLine, script: "test:e2e" }])), said(probe));
+  assert.deepEqual(probe.planner.prompts, []);
+  assertHaltedBeforeRecords(probe);
+  assert.equal(await heldState(tracker), scriptedItem.state, "the item was moved");
+});
+
 test("issue #162: the same configuration does not refuse a refinement run", async () => {
   const tracker = fakeTrackerOf([{ ...scriptedItem, state: "unrefined" }]);
   const { wiring, probe } = testWiring(tempRepo(), { steps: [{ output: { questions: [] } }], reviews: [{ issues: [] }], tracker, mode: "refinement", config: { checkCommands: [{ change: "unit", command: "npm run test:missing" }] } });

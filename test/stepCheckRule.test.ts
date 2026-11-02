@@ -10,7 +10,7 @@ import * as S from "../src/schema.ts";
 import { TEST_ROOT } from "./helpers.ts";
 
 const checks: S.StepChecks = Result.getOrThrow(
-  S.stepChecksOf({ checkCommands: [{ change: "the program's modules", command: "npm run test:unit" }, { change: "the page", command: "npm run test:web" }], suiteCommand: "npm test" }),
+  S.stepChecksOf({ checkCommands: [{ change: "the program's modules", command: "npm run test:unit" }, { change: "the page", command: "npm run test:web" }], suiteCommand: "npm test", endToEndCommand: null }),
 );
 
 test("the plan writer's rule and the plan review's first round carry the same criteria, commands and suite", () => {

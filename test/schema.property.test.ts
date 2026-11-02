@@ -38,6 +38,7 @@ const arbConfig = record<S.Config>({
   terms: fc.constantFrom(...S.TERMS_MODES),
   checkCommands: fc.constant([]),
   suiteCommand: fc.option(nonBlank, { nil: null }),
+  endToEndCommand: fc.option(nonBlank, { nil: null }),
 });
 const arbIssueId = nonEmpty.map((s) => s as S.IssueId);
 const arbWorkEffect: fc.Arbitrary<S.WorkEffect> = fc.oneof(
