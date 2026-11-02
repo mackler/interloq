@@ -70,6 +70,8 @@ export type UiEvent =
    * reviewed or not; never notified for one question's terms written on request.
    */
   | Readonly<{ _tag: "TermsBegan" }>
+  /** Issue #205: the agreed question list is known, with `count` questions; notified once per question phase, before any terms or question. */
+  | Readonly<{ _tag: "QuestionsAgreed"; count: number }>
   /** The interview begins; each interface renders its own help (finding 8 of docs/gui-review.md). */
   | Readonly<{ _tag: "InterviewOpened"; heading: string; stage: InterviewStage; total: number }>
   /** Claude Code's prose during an execution call, attributed as data (issue #5); the page shows it as Claude's message. */
@@ -190,6 +192,8 @@ export const describeEvent = (event: UiEvent): string => {
       return `${event.answered} of ${event.total} answered`;
     case "TermsBegan":
       return "explanations of terms begun";
+    case "QuestionsAgreed":
+      return `agreed question list: ${plural(event.count, "question")}`;
     case "InterviewOpened":
       return `${event.heading} opened, ${plural(event.total, "question")}`;
     case "ClaudeSaid":

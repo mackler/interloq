@@ -45,6 +45,8 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   InterviewTurn: [{ _tag: "InterviewTurn", heading, message: "Hello", summary: null, answered: 1, total: 3 }, headed(" \\(1 of 3 answered\\): Hello")],
   InterviewCounted: [{ _tag: "InterviewCounted", answered: 2, total: 3 }, /^2 of 3 answered$/],
   TermsBegan: [{ _tag: "TermsBegan" }, /^explanations of terms begun$/],
+  // Issue #205: the agreed question list is known.
+  QuestionsAgreed: [{ _tag: "QuestionsAgreed", count: 2 }, /^agreed question list: 2 questions$/],
   InterviewOpened: [{ _tag: "InterviewOpened", heading, stage: "clarification", total: 3 }, headed(" opened, 3 questions")],
   ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done" }, /Claude Code said: done/],
   QuestionPresented: [

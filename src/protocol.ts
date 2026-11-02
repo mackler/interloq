@@ -270,6 +270,8 @@ export const UiEventSchema = Schema.Union([
   tagged("InterviewTurn", { heading: Str, message: Str, summary: Schema.NullOr(Str), answered: Int, total: Int }),
   tagged("InterviewCounted", { answered: Int, total: Int }),
   tagged("TermsBegan", {}),
+  // Issue #205: the agreed question list known, with its count.
+  tagged("QuestionsAgreed", { count: Int }),
   tagged("InterviewOpened", { heading: Str, stage: Schema.Literals(["clarification", "followUp"]), total: Int }),
   tagged("ClaudeSaid", { text: Str }),
   tagged("QuestionPresented", { question: PresentedQuestionSchema }),

@@ -114,6 +114,8 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("InterviewTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
   fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const), total: nat }),
   fc.record({ _tag: fc.constant("ClaudeSaid" as const), text }),
+  // Issue #205: the agreed question list known, with its count.
+  fc.record({ _tag: fc.constant("QuestionsAgreed" as const), count: nat }),
   // The dashboard's model lines: an agent's model as data, not a line of text.
   fc.oneof(
     fc.record({ _tag: fc.constant("ModelNamed" as const), model: fc.record({ agent: fc.constant("claude" as const), name: text }) }),

@@ -811,6 +811,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
         ? { ...explained, analysis: { ...run.explaining, event: { ...run.explaining.event, presented: event.question }, prompt: null }, explaining: null }
         : explained;
     }
+    case "QuestionsAgreed":
+      return run;
     case "TermsBegan":
       // Issue #142: terms written before the first question open their step, whether or not a review follows.
       return { ...run, timeline: inQuestionPhase(run.timeline, termsStep) };
