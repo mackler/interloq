@@ -568,6 +568,88 @@ describe("the steps of Gather Requirements", () => {
     expect(runOf(replayed(events), "implementation")?.timeline).toEqual(runOf(s, "implementation")?.timeline);
   });
 
+  // Issue #205: You Decide appears only once the agreed list is known and not empty; the search ends then, labeled as
+  // finding none where the list is empty.
+  const agreed = (count: number) => notified({ _tag: "QuestionsAgreed", count });
+  const kindsAndStates = (s: ViewState) => runOf(s, "implementation")?.timeline[0].steps.map((st) => [st.kind, st.label, st.state]);
+
+  test("before the agreed list is known, no step is You Decide", () => {
+    for (const s of [fold(live(through.slice(0, 4))), fold(live([started, notified({ _tag: "PhasesForeseen", phases: [q] })]))]) {
+      expect(runOf(s, "implementation")?.timeline[0].steps.some((st) => st.label === prompts.USER_DECISIONS)).toBe(false);
+    }
+  });
+
+  test("QuestionsAgreed with questions ends the search and adds You Decide ahead", () => {
+    const events = [started, notified({ _tag: "PhaseBegan", phase: q }), round("questions", 1), finished("questions"), agreed(2)];
+    for (const s of [fold(live(events)), replayed(events)]) {
+      expect(kindsAndStates(s)).toEqual([
+        ["formulate", prompts.stepLabel("formulate"), "done"],
+        ["clarification", prompts.stepLabel("clarification"), "ahead"],
+      ]);
+    }
+  });
+
+  test("QuestionsAgreed then TermsBegan: the terms stand between the search and You Decide, which the interview opens", () => {
+    const events = [started, notified({ _tag: "PhaseBegan", phase: q }), agreed(1), notified({ _tag: "TermsBegan" })];
+    expect(kindsAndStates(fold(live(events)))).toEqual([
+      ["formulate", prompts.stepLabel("formulate"), "done"],
+      ["terms", prompts.stepLabel("terms"), "active"],
+      ["clarification", prompts.stepLabel("clarification"), "ahead"],
+    ]);
+    const s = fold(live([...events, opened("clarification", 1)]));
+    expect(steps(s)?.map((st) => [st[0], st[1], st[2]])).toEqual([
+      [prompts.stepLabel("formulate"), "done", null],
+      [prompts.stepLabel("terms"), "done", null],
+      [prompts.stepLabel("clarification"), "active", "0/1"],
+    ]);
+  });
+
+  test("a prepared run: the search done and You Decide active once the interview opens", () => {
+    const events = [started, notified({ _tag: "PhaseBegan", phase: q }), agreed(1), opened("clarification", 1)];
+    expect(kindsAndStates(fold(live(events)))).toEqual([
+      ["formulate", prompts.stepLabel("formulate"), "done"],
+      ["clarification", prompts.stepLabel("clarification"), "active"],
+    ]);
+  });
+
+  test("QuestionsAgreed 0 then the phase's end: no You Decide, and the search labeled as finding none", () => {
+    const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: q }), agreed(0), notified({ _tag: "PhaseEnded", phase: q, result: "no conversation" })]));
+    expect(kindsAndStates(s)).toEqual([["formulate", prompts.NO_UNANSWERED_QUESTIONS, "done"]]);
+  });
+
+  test("property: for any agreed count, with or without terms, the live and replayed rails agree and show You Decide exactly when there are questions", () => {
+    fc.assert(
+      fc.property(fc.nat({ max: 50 }), fc.boolean(), (count, withTerms) => {
+        const events: RunEvent[] = [
+          started,
+          notified({ _tag: "PhasesForeseen", phases: [q] }),
+          notified({ _tag: "PhaseBegan", phase: q }),
+          agreed(count),
+          ...(count > 0 ? [...(withTerms ? [notified({ _tag: "TermsBegan" })] : []), opened("clarification", count)] : [notified({ _tag: "PhaseEnded", phase: q, result: "no conversation" })]),
+        ];
+        const all = [fold(live(events)), replayed(events)].map((s) => runOf(s, "implementation")?.timeline[0].steps ?? []);
+        expect(all[0]).toEqual(all[1]);
+        const list = all[0];
+        const search = list.find((st) => st.kind === "formulate");
+        expect(search?.state).toBe("done");
+        const clarifications = list.filter((st) => st.kind === "clarification");
+        if (count === 0) {
+          expect(search?.label).toBe(prompts.NO_UNANSWERED_QUESTIONS);
+          expect(clarifications).toEqual([]);
+          expect(list.some((st) => st.label === prompts.USER_DECISIONS)).toBe(false);
+        } else {
+          expect(search?.label).toBe(prompts.stepLabel("formulate"));
+          expect(clarifications.length).toBe(1);
+          expect(list[list.length - 1].kind).toBe("clarification");
+          expect(list[list.length - 1].state).toBe("active");
+          expect(list[list.length - 1].count?.total).toBe(count);
+          expect(list.findIndex((st) => st.kind === "terms") === list.length - 2).toBe(withTerms);
+        }
+      }),
+      { numRuns: 50 },
+    );
+  });
+
   test("the other phases have no steps", () => {
     const s = fold(live([started, notified({ _tag: "PhaseBegan", phase: { kind: "planning", n: 1 } })]));
     expect(runOf(s, "implementation")?.timeline[0].steps).toEqual([]);
@@ -1183,7 +1265,7 @@ describe("the whole run in the timeline", () => {
   test("the entries foreseen at the start, with and without the question phase", () => {
     const withQuestions = fold(live([started, foreseen(true, 1)]));
     expect(entries(withQuestions)).toEqual([["Gather Requirements", "ahead"], ["Planning", "ahead"], ["Implementation", "ahead"], ["Code review", "ahead"]]);
-    expect(runOf(withQuestions, "implementation")?.timeline[0].steps.map((st) => [st.label, st.state])).toEqual([[prompts.stepLabel("formulate"), "ahead"], [prompts.stepLabel("clarification"), "ahead"]]);
+    expect(runOf(withQuestions, "implementation")?.timeline[0].steps.map((st) => [st.label, st.state])).toEqual([[prompts.stepLabel("formulate"), "ahead"]]);
     expect(entries(fold(live([started, foreseen(false, 1)])))).toEqual([["Planning", "ahead"], ["Implementation", "ahead"], ["Code review", "ahead"]]);
   });
 
@@ -1212,21 +1294,26 @@ describe("the whole run in the timeline", () => {
   const q = { kind: "questions" as const };
   const phaseDone = (phase: Parameters<typeof phaseName>[0]): RunEvent[] => [began(phase), notified({ _tag: "PhaseEnded", phase, result: "converged" })];
 
-  test("an empty agreed question list without a conversation: Clarification is retired when Gather Requirements ends, and no step is ahead after the run", () => {
+  // Issue #205: an empty agreed list never shows You Decide, and its search says that it found no question.
+  test("an empty agreed question list without a conversation: no You Decide, the search labeled as finding none, and no step ahead after the run", () => {
     const questionPhase: RunEvent[] = [
       started,
       foreseen(true, 1),
       began(q),
       notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }),
       notified({ _tag: "LoopFinished", subject: "questions", result: "converged" }),
+      notified({ _tag: "QuestionsAgreed", count: 0 }),
       notified({ _tag: "PhaseEnded", phase: q, result: "no conversation" }),
     ];
+    const labels = (s: ViewState) => runOf(s, "implementation")?.timeline[0].steps.map((st) => st.label);
     const afterPhase = fold(live(questionPhase));
-    expect(stepStates(afterPhase)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
+    expect(stepStates(afterPhase)[0]).toEqual([["formulate", "done"]]);
+    expect(labels(afterPhase)).toEqual([prompts.NO_UNANSWERED_QUESTIONS]);
     const events: RunEvent[] = [...questionPhase, ...phaseDone({ kind: "planning", n: 1 }), ...phaseDone({ kind: "execution", n: 1 }), ...phaseDone({ kind: "work", n: 1 }), { _tag: "Ended", code: 0 }];
     for (const s of [fold(live(events)), replayed(events)]) {
       expect(noStepAhead(s)).toBe(true);
-      expect(stepStates(s)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
+      expect(stepStates(s)[0]).toEqual([["formulate", "done"]]);
+      expect(labels(s)).toEqual([prompts.NO_UNANSWERED_QUESTIONS]);
     }
   });
 
@@ -1234,13 +1321,13 @@ describe("the whole run in the timeline", () => {
     const prefix: RunEvent[] = [started, foreseen(true, 1), began(q)];
     const ended = fold(live([...prefix, notified({ _tag: "PhaseEnded", phase: q, result: "converged" })]));
     expect(runOf(ended, "implementation")?.timeline[0].steps.every((st) => (st.state as string) !== "ahead")).toBe(true);
-    expect(stepStates(ended)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
+    expect(stepStates(ended)[0]).toEqual([["formulate", "done"]]);
     const finished = fold(live([...prefix, { _tag: "Ended", code: 0 }]));
-    expect(stepStates(finished)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
+    expect(stepStates(finished)[0]).toEqual([["formulate", "done"]]);
     const halted = fold(live([...prefix, { _tag: "Ended", code: 1 }]));
-    expect(stepStates(halted)[0]).toEqual([["formulate", "stopped"], ["clarification", "notReached"]]);
+    expect(stepStates(halted)[0]).toEqual([["formulate", "stopped"]]);
     const skippedThenHalted = fold(live([...prefix, notified({ _tag: "PhaseEnded", phase: q, result: "converged" }), { _tag: "Ended", code: 1 }]));
-    expect(stepStates(skippedThenHalted)[0]).toEqual([["formulate", "done"], ["clarification", "skipped"]]);
+    expect(stepStates(skippedThenHalted)[0]).toEqual([["formulate", "done"]]);
   });
 
   // Issue #120, S6: a refinement run foresees Gather Requirements alone, so a finished refinement run leaves no phase not
@@ -1853,7 +1940,9 @@ describe("the rail as a tree that collapses", () => {
   test("a step of Gather Requirements opens when it begins", () => {
     const s = fold(live([started, foreseen(true, 1), began({ kind: "questions" }), notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 })]));
     expect(branch(s, { kind: "questions" }, "step:formulate")?.open).toBe(true);
-    expect(rawBranch(s, { kind: "questions" }, "step:clarification")).toEqual(PLAIN);
+    // Issue #205: You Decide is on the rail once the agreed list is known and not empty, and is plain until it begins.
+    const agreed = fold(live([started, foreseen(true, 1), began({ kind: "questions" }), notified({ _tag: "RoundBegan", subject: "questions", round: 1, limit: 5 }), notified({ _tag: "QuestionsAgreed", count: 1 })]));
+    expect(rawBranch(agreed, { kind: "questions" }, "step:clarification")).toEqual(PLAIN);
   });
 
   test("a phase the user closed stays closed when it begins; one he opened stays open; one he never touched follows the run", () => {

@@ -9,7 +9,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, NO_UNANSWERED_QUESTIONS, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -608,7 +608,8 @@ const newEntry = (phase: Phase, state: TimelineState): TimelineEntry => ({
   phase,
   label: "",
   groups: [],
-  steps: phase.kind === "questions" ? [newStep("formulate", null, state), ...(state === "ahead" ? [newStep("clarification", null, "ahead")] : [])] : [],
+  // Issue #205: the search alone; You Decide is added only once the agreed list is known and not empty (QuestionsAgreed).
+  steps: phase.kind === "questions" ? [newStep("formulate", null, state)] : [],
   state,
   plan: null,
   began: null,
@@ -757,6 +758,16 @@ const termsStep = (steps: readonly TimelineStep[]): readonly TimelineStep[] => {
   const step = newStep("terms", null);
   return at < 0 ? [...ended, step] : [...ended.slice(0, at), step, ...ended.slice(at)];
 };
+/**
+ * The steps once the agreed list of `count` questions is known (issue #205): the search ends, labeled as finding no
+ * question where the list is empty, and where it is not, You Decide is added ahead.
+ */
+const agreedSteps =
+  (count: number) =>
+  (steps: readonly TimelineStep[]): readonly TimelineStep[] => {
+    const searched = steps.map((st) => (st.kind === "formulate" && st.state === "active" ? { ...st, state: "done" as const, label: count === 0 ? NO_UNANSWERED_QUESTIONS : st.label } : st));
+    return count > 0 && !searched.some((st) => st.kind === "clarification") ? [...searched, newStep("clarification", null, "ahead")] : searched;
+  };
 const plus = (a: StepCount, b: StepCount): StepCount => ({ answered: a.answered + b.answered, total: a.total + b.total });
 /**
  * An entry when the run ends with `code`: the active one done or stopped; after a halt, what is ahead not reached (issue #6);
@@ -812,7 +823,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
         : explained;
     }
     case "QuestionsAgreed":
-      return run;
+      return { ...run, timeline: inQuestionPhase(run.timeline, agreedSteps(event.count)) };
     case "TermsBegan":
       // Issue #142: terms written before the first question open their step, whether or not a review follows.
       return { ...run, timeline: inQuestionPhase(run.timeline, termsStep) };
