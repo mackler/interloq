@@ -963,6 +963,44 @@ describe("App and the draft", () => {
       expect(sentOf(ws).at(-1)).toEqual(startFrame({ mode: "refinement", item: fixture, terms: "onRequest" }));
     });
 
+    // Issue #163: the buttons follow TERMS_MODES, least work first, On request leading.
+    test("the choice of terms lists On request first, in the order of TERMS_MODES", async () => {
+      const { root, ws } = await begin();
+      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      flushSync();
+      const choice = one(root, `[role=radiogroup][aria-label="${prompts.TERMS_CHOICE_LABEL}"]`);
+      const values = [...choice.querySelectorAll("input[type=radio]")].map((r) => (r as HTMLInputElement).value);
+      expect(values).toEqual([...TERMS_MODES]);
+      expect(values[0]).toBe("onRequest");
+    });
+
+    // Issue #163 (decision Q1): a line under the choice says how a question explains its terms, while On request is
+    // selected, whether the listing or a click selected it.
+    test("the terms-on-request note follows the selected choice", async () => {
+      const note = (root: HTMLElement) => root.querySelector("[data-terms-note]");
+      const { root, ws } = await begin();
+      ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "onRequest" } });
+      flushSync();
+      expect(note(root)?.textContent?.trim()).toBe(prompts.TERMS_ON_REQUEST_NOTE);
+      const radio = (m: string) => one(root, `[role=radiogroup] input[type=radio][value=${m}]`) as HTMLInputElement;
+      radio("checked").click();
+      flushSync();
+      expect(note(root)).toBe(null);
+      radio("unchecked").click();
+      flushSync();
+      expect(note(root)).toBe(null);
+      radio("onRequest").click();
+      flushSync();
+      expect(note(root)?.textContent?.trim()).toBe(prompts.TERMS_ON_REQUEST_NOTE);
+      const second = await begin();
+      second.ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "checked" } });
+      flushSync();
+      expect(note(second.root)).toBe(null);
+      second.ws.receive({ type: "items", mode: "refinement", result: { _tag: "Listed", items: [fixture], terms: "onRequest" } });
+      flushSync();
+      expect(note(second.root)?.textContent?.trim()).toBe(prompts.TERMS_ON_REQUEST_NOTE);
+    });
+
     // Issue #147 (S13): the chain's control is on the Implementation tab and not on the Refinement tab.
     test("the Implementation tab shows the chain's control, and the Refinement tab does not", async () => {
       const { root, ws } = await begin();

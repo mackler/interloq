@@ -540,8 +540,12 @@ export type TrackerConfig = typeof TrackerConfig.Type;
 /** The configured label of each state (issue #216): the state labels, and obsolete's where it is set. */
 export const stageLabelsOfConfig = (config: TrackerConfig): StageLabels => ({ ...config.labels, ...(config.obsoleteLabel === null ? {} : { obsolete: config.obsoleteLabel }) });
 
-/** Issue #142: the three ways a refinement run may explain the agreed questions' terms. */
-export const TERMS_MODES = ["checked", "unchecked", "onRequest"] as const;
+/**
+ * Issue #142: the three ways a refinement run may explain the agreed questions' terms. Issue #163 (the developer's
+ * instruction of 14 Oct 2026): ordered least work to most work before the first question (none, one Claude Code call,
+ * that call and Codex's review loop), which is the order of the Refinement tab's buttons.
+ */
+export const TERMS_MODES = ["onRequest", "unchecked", "checked"] as const;
 /**
  * Issue #181 (requirements Q3, Q4): the largest final-suite limit in whole minutes. The runner passes the limit in
  * milliseconds to Node's setTimeout, which replaces a delay above 2^31-1 ms with 1 ms, so a larger setting would stop
@@ -860,7 +864,7 @@ export const defaultConfig: Config = {
   claudeModel: null,
   codexModel: null,
   tracker: null,
-  terms: "unchecked",
+  terms: "onRequest",
   checkCommands: [],
   suiteCommand: null,
   endToEndCommand: null,

@@ -311,7 +311,7 @@ test("a start in a project that does not exist is refused with the reason and it
     const a = await connect(port);
     a.send(itemsFrame("refinement"));
     await until("the items", () => a.messages.some((m) => m.type === "items"));
-    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null })), terms: "unchecked" } });
+    assert.deepEqual(a.messages.find((m) => m.type === "items"), { type: "items", mode: "refinement", result: { _tag: "Listed", items: MANAGER_ITEMS.filter((i) => i.state === "unrefined").map((i) => ({ id: i.id, title: i.title, excerpt: "", url: Option.getOrNull(i.url), sentBack: 0, preparation: null })), terms: "onRequest" } });
     a.close();
   });
 });

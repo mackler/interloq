@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -550,6 +550,39 @@ test.describe("the tests of the tabs server, in order", () => {
       await expect(queued).toHaveCount(0);
       await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
       await expect(editor).toHaveCount(0);
+    });
+  }
+
+  // Issue #163 (decision Q1): the line under the choice of terms, while On request is selected, stands under the
+  // buttons and above the first item, inside the list, and the page never scrolls sideways.
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L43) the terms-on-request note at ${width} × ${height}: under the choice, inside the list, nothing overflowing`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await page.goto(URL);
+      await expect(page.getByText("connected", { exact: true })).toBeVisible();
+      await toTheList(page, "refinement");
+      const choice = page.getByRole("radiogroup", { name: TERMS_CHOICE_LABEL });
+      // The server's shared configuration names unchecked (e2e/server.ts), so the note shows only after this click.
+      await choice.getByText(TERMS_CHOICE_TEXTS.onRequest, { exact: true }).click();
+      const note = page.getByText(TERMS_ON_REQUEST_NOTE, { exact: true });
+      await expect(note).toBeVisible();
+      const TOLERANCE = 0.5;
+      const box = async (l: Locator) => {
+        const b = await l.boundingBox();
+        if (b === null) throw new Error("no bounding box");
+        return b;
+      };
+      const n = await box(note);
+      const c = await box(choice);
+      const list = await box(listOf(page));
+      const row = await box(listOf(page).locator("ul > li").first());
+      expect(n.y).toBeGreaterThanOrEqual(c.y + c.height - TOLERANCE);
+      expect(n.x).toBeGreaterThanOrEqual(list.x - TOLERANCE);
+      expect(n.x + n.width).toBeLessThanOrEqual(list.x + list.width + TOLERANCE);
+      expect(n.y + n.height).toBeLessThanOrEqual(row.y + TOLERANCE);
+      await noSidewaysScroll(page);
+      await choice.getByText(TERMS_CHOICE_TEXTS.checked, { exact: true }).click();
+      await expect(note).toHaveCount(0);
     });
   }
 

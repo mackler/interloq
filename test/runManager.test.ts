@@ -603,7 +603,7 @@ test("listItems lists a mode's items with their excerpts, and a tracker that fai
     // Issue #125: the listing carries each item's address, null where the tracker gave none, and both occur.
     assert.deepEqual(new Set(items.map((i) => i.url === null)), new Set([true, false]));
     // Issue #142: the Refinement tab's listing carries the configured choice of terms, which its control starts at.
-    assert.deepEqual(listed, mode === "refinement" ? { mode, result: { _tag: "Listed", items, terms: "unchecked" } } : { mode, result: { _tag: "Listed", items } });
+    assert.deepEqual(listed, mode === "refinement" ? { mode, result: { _tag: "Listed", items, terms: "onRequest" } } : { mode, result: { _tag: "Listed", items } });
   }
   await run(h.tracker.failNext("list", new TrackerUnreachable({ tracker: "GitHub", message: "connection reset", status: null })));
   assert.deepEqual(await run(h.manager.listItems("refinement")), { mode: "refinement", result: { _tag: "Unavailable", notice: "the GitHub issue tracker could not be reached: connection reset" } });
@@ -642,7 +642,7 @@ test("the Refinement listing carries the configured choice of terms; an unknown 
     const listed = await run(h.manager.listItems("refinement"));
     return listed.mode === "refinement" && listed.result._tag === "Listed" ? listed.result.terms : listed.result;
   };
-  assert.equal(await terms(), "unchecked");
+  assert.equal(await terms(), "onRequest");
   fs.mkdirSync(path.join(repo, "plan-review"), { recursive: true });
   fs.writeFileSync(path.join(repo, "plan-review", "config.json"), JSON.stringify({ terms: "checked" }));
   assert.equal(await terms(), "checked");

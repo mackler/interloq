@@ -275,14 +275,15 @@ test("terms accepts checked, unchecked and onRequest, and refuses any other valu
   }
 });
 
-test("terms defaults to unchecked, and the project's file replaces the shared one's", async () => {
-  assert.equal(mergeConfig({}, {}).terms, "unchecked");
+// Issue #163: the default is onRequest (the developer's instruction of 14 Oct 2026, reversing decision Q7 of issue #142).
+test("terms defaults to onRequest, and the project's file replaces the shared one's", async () => {
+  assert.equal(mergeConfig({}, {}).terms, "onRequest");
   const { project, shared, projectFile } = setup();
-  assert.equal((await load(project, shared)).terms, "unchecked");
+  assert.equal((await load(project, shared)).terms, "onRequest");
   fs.writeFileSync(shared, JSON.stringify({ terms: "checked" }));
   assert.equal((await load(project, shared)).terms, "checked");
-  fs.writeFileSync(projectFile, JSON.stringify({ terms: "onRequest" }));
-  assert.equal((await load(project, shared)).terms, "onRequest");
+  fs.writeFileSync(projectFile, JSON.stringify({ terms: "unchecked" }));
+  assert.equal((await load(project, shared)).terms, "unchecked");
 });
 
 // Issue #131 (requirements Q3, F2): the label that marks an item for preparation, null where absent.

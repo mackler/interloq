@@ -919,10 +919,11 @@ function managerItemUrl(n: number): Option.Option<ItemUrl> {
   return n % 2 === 1 ? Option.some(Result.getOrThrow(itemUrlOf(`https://tracker.example/items/${n}`))) : Option.none();
 }
 /** How a run manager under test reaches its tracker: an empty shared config and the fake. */
-export const trackerAccessOf = (tracker: FakeTracker) => {
-  const shared = path.join(tempDir("pr-shared-"), "config.json");
-  fs.writeFileSync(shared, "{}");
-  return { sharedConfig: shared, tracker: () => Result.succeed(Layer.succeed(Tracker, tracker.tracker)) };
+/** `shared` is the shared configuration's contents (issue #163: the end-to-end servers name `terms`). */
+export const trackerAccessOf = (tracker: FakeTracker, shared: Readonly<Record<string, unknown>> = {}) => {
+  const sharedConfig = path.join(tempDir("pr-shared-"), "config.json");
+  fs.writeFileSync(sharedConfig, JSON.stringify(shared));
+  return { sharedConfig, tracker: () => Result.succeed(Layer.succeed(Tracker, tracker.tracker)) };
 };
 /** A fake tracker over items, built at once (its state is a Ref, made synchronously). */
 export const fakeTrackerOf = (items: readonly FakeItem[]): FakeTracker => Effect.runSync(makeFakeTracker(items));

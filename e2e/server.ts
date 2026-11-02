@@ -433,7 +433,10 @@ const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
  * ones for the refinement runs, enough for every test of a server, since each run moves its item on.
  */
 const tracker = fakeTrackerOf(name === "prepare" ? [...E2E_ITEMS, PREPARED_ITEM] : E2E_ITEMS);
-const access = name === "noTracker" ? { ...trackerAccessOf(tracker), tracker: () => Result.fail(new NoTracker()) } : trackerAccessOf(tracker);
+// Issue #163 made onRequest the default choice of terms; the refinement scenarios and their layouts were written under
+// unchecked, so the servers' shared configuration keeps it (test (38) chooses On request itself).
+const shared = { terms: "unchecked" };
+const access = name === "noTracker" ? { ...trackerAccessOf(tracker, shared), tracker: () => Result.fail(new NoTracker()) } : trackerAccessOf(tracker, shared);
 
 const main = Effect.gen(function* () {
   const manager = yield* makeRunManager((ui, mode) => ({ ...testWiring(repo, { ...scenarioOf(mode), tracker }).wiring, ui: Effect.succeed(ui) }), repo, [], `e2e-${name}`, access, name === "chain" || name === "chainQueue" ? DEFAULT_SETTINGS : OFF_SETTINGS);

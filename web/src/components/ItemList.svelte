@@ -9,6 +9,8 @@
   // explained, M3's connected button group with one choice among three (radio inputs, which m3-svelte's buttons show
   // as toggles): it starts at the configured value and applies to the next refinement [user control and freedom;
   // visibility of system status]. The Implementation tab has none, since an implementation run asks no questions.
+  // Issue #163 (decision Q1): while On request is selected, a line under the choice says that each question will offer
+  // the Explain the terms button [recognition rather than recall; help and documentation].
   // Issue #125: each row is laid out by hand after M3's list item, not m3-svelte's ListItem, which fixes a row's height
   // from its line count and so drew a wrapped title's text over the next row. The row keeps M3's list item metrics
   // (padding, gap, the trailing action, the headline's and supporting text's type and colors) and grows with its
@@ -24,7 +26,7 @@
   import type { RunMode } from "../../../src/runMode.ts";
   import { TERMS_MODES, type TermsMode } from "../../../src/schema.ts";
   import type { PreparationMark } from "../../../src/preparationSwitch.ts";
-  import { QUEUE_ADD, queuedMarkText, PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS } from "../../../src/prompts.ts";
+  import { QUEUE_ADD, queuedMarkText, PREPARED_TERMS_NOTE, PREPARING_MARK, preparedMarkText, setAsideMarkText, ABANDONED_IN_CHAIN, ITEM_IN_PROGRESS, ITEMS_LOADING, sentBackCountText, ITEMS_REFRESH, ITEMS_RETRY, itemHeadline, TAB_TEXTS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE } from "../../../src/prompts.ts";
   import type { ItemsView, StartableItems } from "../state.ts";
 
   // Issue #185: `abandoned`, the items whose run in the current chain stopped waiting for an answer, which carry a mark,
@@ -58,6 +60,7 @@
           </Button>
         {/each}
       </ConnectedButtons>
+      {#if terms === "onRequest"}<p class="supporting terms-note" data-terms-note>{TERMS_ON_REQUEST_NOTE}</p>{/if}
     </div>
   {/if}
   {#if items._tag === "Unasked" || items._tag === "Loading"}
@@ -104,6 +107,7 @@
   .head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
   h2 { margin: 0; }
   .terms { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+  .terms-note { flex-basis: 100%; }
   ul { list-style: none; margin: 0; padding: 0; border-radius: var(--m3-shape-medium); background: var(--m3c-surface-container-low); }
   /* M3's list item, by hand (issue #125): its padding and gap, its one-line and two-line heights as a minimum only. */
   li { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 1.5rem 0.5rem 1rem; min-height: 3.5rem; box-sizing: border-box; }

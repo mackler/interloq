@@ -1139,3 +1139,9 @@ test("endMarkOf: a finished run is marked ✓ and every other end ✕", async ()
   assert.equal(marks.size, 3);
   for (const code of [0, 1, 2, 130]) assert.equal(prompts.endedTabName("x", code), `${prompts.endMarkOf(code)} x`);
 });
+
+// Issue #163 (decision Q1): the line under the choice of terms names the button the question page shows.
+test("the terms-on-request note names EXPLAIN_TERMS", () => {
+  assert.ok(prompts.TERMS_ON_REQUEST_NOTE.includes(prompts.EXPLAIN_TERMS));
+  assert.equal(prompts.TERMS_ON_REQUEST_NOTE, "Each question will offer an Explain the terms button.");
+});

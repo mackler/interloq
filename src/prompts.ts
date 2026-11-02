@@ -1510,9 +1510,13 @@ export const waitingTabName = (name: string): string => `${TITLE_WAITING_MARK} $
 /** Issue #209: a run tab whose end has not been seen: its end's mark in front of the name, as `waitingTabName` puts ●. */
 export const endedTabName = (name: string, code: number): string => `${endMarkOf(code)} ${name}`;
 export const ITEMS_REFRESH = "Refresh";
+/** Issue #142: the label of the request for the explanations of the terms of the question on the screen. */
+export const EXPLAIN_TERMS = "Explain the terms";
 /** Issue #142: the name of the Refinement tab's control of the choice of terms, and the words of its three values. */
 export const TERMS_CHOICE_LABEL = "Explanations of terms";
 export const TERMS_CHOICE_TEXTS: Readonly<Record<TermsMode, string>> = { checked: "Written and checked", unchecked: "Written, not checked", onRequest: "On request" };
+/** Issue #163 (decision Q1): the line under the choice of terms while On request is selected, naming the button the question page shows. */
+export const TERMS_ON_REQUEST_NOTE: string = `Each question will offer an ${EXPLAIN_TERMS} button.`;
 export const ITEMS_RETRY = "Try again";
 export const ITEMS_LOADING = "Asking the issue tracker for the items …";
 /** The way back from a tab's ended run to its list. */
@@ -2539,8 +2543,6 @@ export const HELP_ME_DECIDE = "Help me decide";
 export const OFFER_LINE = `/decide = ${HELP_ME_DECIDE}: work out the arguments for and against each option before you choose`;
 /** A prompt with the offer: the offer line, then the prompt. */
 export const withOffer = (prompt: string): string => `${OFFER_LINE}\n${prompt}`;
-/** Issue #142: the label of the request for the explanations of the terms of the question on the screen. */
-export const EXPLAIN_TERMS = "Explain the terms";
 /** The line that carries the request for a question's terms in a prompt text: the page turns it into a button. */
 export const TERMS_OFFER_LINE = `/terms = ${EXPLAIN_TERMS}: Claude Code explains the words of this question that you may not know`;
 /** A prompt with the request for its question's terms, put outermost, over the offer of decision support. */
