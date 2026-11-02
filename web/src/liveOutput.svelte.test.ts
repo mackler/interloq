@@ -120,14 +120,21 @@ describe("the live panel", () => {
 // run yet (the race L36 met at 1280 × 800 under the suite's load). jsdom lays nothing out, so the screen is given its
 // geometry here: 100 px shown of 1,000.
 describe("the live panel following its end", () => {
-  const geometry = (target: HTMLElement): { screen: HTMLElement; top: () => number; set: (n: number) => void } => {
+  const geometry = (target: HTMLElement): { screen: HTMLElement; top: () => number; set: (n: number) => void; grow: (h: number) => void } => {
     const screen = target.querySelector<HTMLElement>("[data-live-screen]");
     if (screen === null) throw new Error("no screen");
     let top = 0;
+    let height = 1000;
     Object.defineProperty(screen, "clientHeight", { configurable: true, get: () => 100 });
-    Object.defineProperty(screen, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(screen, "scrollHeight", { configurable: true, get: () => height });
     Object.defineProperty(screen, "scrollTop", { configurable: true, get: () => top, set: (n: number) => void (top = n) });
-    return { screen, top: () => top, set: (n) => void (top = n) };
+    return { screen, top: () => top, set: (n) => void (top = n), grow: (h) => void (height = h) };
+  };
+  /** The screen read at its end by a scroll event: the pinned baseline a developer's scroll up starts from. */
+  const pinnedAtEnd = (g: { screen: HTMLElement; set: (n: number) => void }): void => {
+    g.set(900);
+    g.screen.dispatchEvent(new Event("scroll"));
+    flushSync();
   };
   const lines = (n: number): LivePanel => Array.from({ length: n }, (_, i) => print(`line ${i}\n`)).reduce(applyOutput, EMPTY_PANEL);
   const mountLive = (panel: LivePanel) => {
@@ -142,10 +149,21 @@ describe("the live panel following its end", () => {
   test("a screen scrolled up with no scroll event yet is not pinned to its end by new output (following its end)", () => {
     const { target, props } = mountLive(lines(50));
     const g = geometry(target);
+    pinnedAtEnd(g);
     g.set(400);
     props.panel = lines(60);
     flushSync();
     expect(g.top()).not.toBe(1000);
+  });
+
+  test("a reflow that grows the content of a screen following its end leaves it following on new output (following its end)", () => {
+    const { target, props } = mountLive(lines(50));
+    const g = geometry(target);
+    pinnedAtEnd(g);
+    g.grow(1500);
+    props.panel = lines(51);
+    flushSync();
+    expect(g.top()).toBe(1500);
   });
 
   test("a screen at its end with no scroll event yet stays at its end on new output (following its end)", () => {
@@ -171,6 +189,7 @@ describe("the live panel following its end", () => {
     try {
       const { target } = mountLive(lines(50));
       const g = geometry(target);
+      pinnedAtEnd(g);
       g.set(400);
       g.screen.dispatchEvent(new Event("scroll"));
       flushSync();

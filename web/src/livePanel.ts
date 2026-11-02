@@ -218,3 +218,23 @@ export const lineText = (line: LineView): string => {
 
 /** Whether a scrolled screen is at its end, within 4 px, so it follows new output. */
 export const followsEnd = (scrollTop: number, clientHeight: number, scrollHeight: number): boolean => scrollHeight - scrollTop - clientHeight <= 4;
+
+/**
+ * Whether the screen follows its end: following, with the scrollTop it had when last pinned or read at its end, or away.
+ * A screen following its end leaves that state only when its scrollTop moved up, which only the developer's scroll does:
+ * a reflow that grows the content (a resize that rewraps the lines) leaves scrollTop where it was, and one that shrinks
+ * it clamps scrollTop to the end. So output that arrives before the ResizeObserver re-pins the end is never taken for a
+ * scroll up (the end-to-end failure of L37 in the run of issue #233).
+ */
+export type Follow = Readonly<{ _tag: "Following"; top: number }> | Readonly<{ _tag: "Away" }>;
+
+/** Following, at the scrollTop just set by pinning the screen to its end, or read there. */
+export const pinnedAt = (scrollTop: number): Follow => ({ _tag: "Following", top: scrollTop });
+
+/** The follow state after reading the screen's geometry; one pixel of slack for subpixel rounding. */
+export const followAfter = (prev: Follow, scrollTop: number, clientHeight: number, scrollHeight: number): Follow =>
+  followsEnd(scrollTop, clientHeight, scrollHeight)
+    ? pinnedAt(scrollTop)
+    : prev._tag === "Following" && scrollTop >= prev.top - 1
+      ? prev
+      : { _tag: "Away" };

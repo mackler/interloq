@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { type OutputEvent, type ProcessKey, SCROLLBACK_LINES, sanitizedOutput } from "../../src/liveOutput.ts";
 import { outputEndedDetail, outputEndedLine, outputRunningName } from "../../src/prompts.ts";
 import {
-  applyOutput, EMPTY_OUTPUTS, EMPTY_PANEL, endedMarkOf, followsEnd, hasRunning, type LivePanel, lineText, outputsAfter, PROCESS_MARK, panelView,
+  applyOutput, EMPTY_OUTPUTS, EMPTY_PANEL, endedMarkOf, type Follow, followAfter, followsEnd, hasRunning, type LivePanel, lineText, outputsAfter, PROCESS_MARK, panelView, pinnedAt,
 } from "./livePanel.ts";
 import { applySgr, DEFAULT_STYLE } from "./terminalColor.ts";
 
@@ -96,6 +96,39 @@ describe("the live panel", () => {
     expect(followsEnd(96, 100, 200)).toBe(true);
     expect(followsEnd(95, 100, 200)).toBe(false);
     expect(followsEnd(0, 100, 50)).toBe(true);
+  });
+
+  test("a rewrap that grows the content of a screen following its end leaves it following (the failure of L37, issue #233's run)", () => {
+    expect(followAfter(pinnedAt(500), 500, 100, 900)._tag).toBe("Following");
+  });
+});
+
+// A screen following its end stops only when its scrollTop moved up; a reflow leaves scrollTop where it was.
+describe("following the end", () => {
+  const geometryOf = fc.record({ client: fc.integer({ min: 1, max: 2000 }), extra: fc.integer({ min: 0, max: 100_000 }) });
+  test("a reflow never stops a screen that follows its end", () => {
+    fc.assert(fc.property(fc.nat(50_000), fc.nat(50_000), geometryOf, (pinned, up, g) => {
+      const top = pinned + up;
+      expect(followAfter(pinnedAt(pinned), top, g.client, top + g.client + g.extra)._tag).toBe("Following");
+    }));
+  });
+  test("at its end the screen follows, whatever it did before", () => {
+    const prev: fc.Arbitrary<Follow> = fc.oneof(fc.nat(50_000).map(pinnedAt), fc.constant<Follow>({ _tag: "Away" }));
+    fc.assert(fc.property(prev, fc.nat(50_000), fc.integer({ min: 1, max: 2000 }), fc.nat(4), (p, top, client, slack) => {
+      expect(followAfter(p, top, client, top + client + slack)).toEqual(pinnedAt(top));
+    }));
+  });
+  test("a scroll up away from the end stops following", () => {
+    fc.assert(fc.property(fc.integer({ min: 2, max: 50_000 }), fc.integer({ min: 2, max: 50_000 }), fc.integer({ min: 1, max: 2000 }), fc.integer({ min: 5, max: 100_000 }), (pinned, up, client, extra) => {
+      const top = Math.max(0, pinned - up);
+      fc.pre(top < pinned - 1);
+      expect(followAfter(pinnedAt(pinned), top, client, top + client + extra)._tag).toBe("Away");
+    }));
+  });
+  test("away from the end, a screen not at its end stays away", () => {
+    fc.assert(fc.property(fc.nat(50_000), fc.integer({ min: 1, max: 2000 }), fc.integer({ min: 5, max: 100_000 }), (top, client, extra) => {
+      expect(followAfter({ _tag: "Away" }, top, client, top + client + extra)._tag).toBe("Away");
+    }));
   });
 });
 

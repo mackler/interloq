@@ -9,7 +9,7 @@
   // and never the Markdown renderer, and a color is set from integers alone, so nothing a process prints becomes markup.
   // The compact dashboard mounts it only while a process runs (issue #200, requirements Q2), with no handle.
   import { LIVE_OUTPUT_EMPTY, LIVE_OUTPUT_NAME, LIVE_OUTPUT_RESIZE_LABEL, LIVE_PROCESSES_NAME, panelHeightText } from "../../../src/prompts.ts";
-  import { followsEnd, type LivePanel, PROCESS_MARK, panelView } from "../livePanel.ts";
+  import { type Follow, followAfter, type LivePanel, PROCESS_MARK, panelView, pinnedAt } from "../livePanel.ts";
   import { afterDrag, afterKey, LINE_REM, linePx, MAX_PANEL_LINES, maxPanelLines, minPanelLines, panelBudgetPx, runningListLines, shownLines } from "../panelHeight.ts";
   import { cssColor, PALETTE_16, TERMINAL_BACKGROUND, TERMINAL_DIM, TERMINAL_FOREGROUND } from "../terminalColor.ts";
 
@@ -33,7 +33,7 @@
       sectionHeight = sec.clientHeight;
       screenHeight = scr.clientHeight;
       // A screen resized while it follows its end (the column shrinking or growing) stays at its end.
-      if (following) scr.scrollTop = scr.scrollHeight;
+      if (follow._tag === "Following") pin(scr);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(sec);
@@ -79,11 +79,18 @@
   let anchor: { atEnd: true } | { atEnd: false; id: string | null; offset: number } = { atEnd: true };
   /**
    * Whether the screen follows its end, read from the screen's own geometry on every scroll and again before every
-   * update, since a scroll's event may not have run when output arrives in the same frame.
+   * update, since a scroll's event may not have run when output arrives in the same frame. A reflow never stops it
+   * (followAfter): only a scrollTop that moved up does, so output arriving after a resize and before the ResizeObserver
+   * re-pins the end is not taken for the developer's scroll.
    */
-  let following = true;
+  let follow: Follow = pinnedAt(0);
   const readFollowing = (s: HTMLElement): void => {
-    following = followsEnd(s.scrollTop, s.clientHeight, s.scrollHeight);
+    follow = followAfter(follow, s.scrollTop, s.clientHeight, s.scrollHeight);
+  };
+  /** The screen at its end, and the position it was pinned at recorded. */
+  const pin = (s: HTMLElement): void => {
+    s.scrollTop = s.scrollHeight;
+    follow = pinnedAt(s.scrollTop);
   };
   const onScroll = (): void => {
     if (screen !== undefined) readFollowing(screen);
@@ -95,7 +102,7 @@
     const s = screen;
     if (s === undefined) return;
     readFollowing(s);
-    if (following) {
+    if (follow._tag === "Following") {
       anchor = { atEnd: true };
       return;
     }
@@ -109,7 +116,7 @@
     const s = screen;
     if (s === undefined) return;
     if (anchor.atEnd) {
-      s.scrollTop = s.scrollHeight;
+      pin(s);
       return;
     }
     const el = anchor.id === null ? null : lineEl(s, anchor.id);
