@@ -62,6 +62,8 @@ const preparedPhase = (task: string, prepared: UsedPreparation): Effect.Effect<v
     yield* store.saveQuestions(task, prepared.questions);
     if (prepared.questions.length > 0) yield* store.saveTerms(prepared.terms);
     yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: prepared.questions })}\n`);
+    // Issue #205: the list was searched in advance, and is known now.
+    yield* ui.notify({ _tag: "QuestionsAgreed", count: prepared.questions.length });
     yield* askAgreed(task, prepared.questions, { kind: "never" });
   });
 

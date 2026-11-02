@@ -62,6 +62,8 @@ export const prepareQuestionList = (task: string, terms: TermsMode): Effect.Effe
 
     const agreed = (yield* store.loadQuestions()).questions;
     yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: agreed })}\n`);
+    // Issue #205: the agreed list is known, before any terms, so the rail shows "You Decide" only where it is not empty.
+    yield* ui.notify({ _tag: "QuestionsAgreed", count: agreed.length });
     // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.
     if (agreed.length > 0) yield* termsBeforeInterview(task, agreed, terms);
     return agreed;
