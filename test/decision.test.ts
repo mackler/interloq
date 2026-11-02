@@ -300,7 +300,7 @@ test("a disputed pause offers Help me decide; the analysis runs in the phase, an
       { output: noQuestions, plan: "v1" },
       { output: respond([["P1-R1-1", "rejected"]]) },
       // Issue #159: the columns are headed by the outcome labels the user was shown.
-      { output: twoColumns(prompts.positionLabels("reraised").reviewer, prompts.positionLabels("reraised").planner) },
+      { output: twoColumns(prompts.positionLabels("reraised", "review").reviewer, prompts.positionLabels("reraised", "review").planner) },
       { output: respond([["P1-R1-1", "accepted"]]), plan: "v2" },
     ],
     reviews: [{ issues: [issue("P1-R1-1")] }, { issues: [issue("P1-R1-1")] }, { issues: [] }, { issues: [] }, { issues: [] }],
@@ -315,7 +315,7 @@ test("a disputed pause offers Help me decide; the analysis runs in the phase, an
   // Issue #183: in the plan review the option names what each agent states would differ in the work and what it costs.
   const scripted = { kind: "differs", difference: "scripted" } as unknown as import("../src/schema.ts").WorkEffect;
   const described = `p e ${prompts.followCodexChanges({ reviewer: scripted, planner: scripted })} ${prompts.followCodexCost(false)}`;
-  assert.deepEqual(presented[0].options[0], { label: plain(prompts.positionLabels("reraised").reviewer), description: plain(described), answer: { token: "1" } });
+  assert.deepEqual(presented[0].options[0], { label: plain(prompts.positionLabels("reraised", "review").reviewer), description: plain(described), answer: { token: "1" } });
   assert.deepEqual(json(probe.dir, "decision-1/question.json").phase, { kind: "planning", n: 1 });
   assert.equal(json(probe.dir, "decision-1/chosen.json").option, prompts.REVIEWER_POSITION);
   assert.match(fs.readFileSync(path.join(probe.dir, "user-decisions.md"), "utf8"), new RegExp(`Decision: ${prompts.REVIEWER_POSITION.replace(/[()]/g, "\\$&")}: p e`));
@@ -331,7 +331,7 @@ test("a decision inside a decision: a pause of decision 1 opens decision 2 in th
       { output: { questions_for_user: [questionOf({ context: "c", question: "Which database?", terms: [], options: question.options })] }, plan: "v1" },
       { output: analysis() },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
-      { output: twoColumns(prompts.positionLabels("reraised").reviewer, prompts.positionLabels("reraised").planner) },
+      { output: twoColumns(prompts.positionLabels("reraised", "review").reviewer, prompts.positionLabels("reraised", "review").planner) },
       { output: decisionResponse([["D1-R1-1", "rejected"]], analysis()) },
       { output: noQuestions },
     ],

@@ -17,6 +17,7 @@ import {
   preparedComments,
   questionCommentText,
 } from "../src/preparedComments.ts";
+import { preparationCauseText } from "../src/prompts.ts";
 import type { StoredQuestion, TermsEntry } from "../src/schema.ts";
 import { type ItemComment, type ItemId, type TrackerItem } from "../src/tracker.ts";
 import { seededId } from "./fakeTracker.ts";
@@ -95,7 +96,7 @@ test("a changed title or text makes a preparation Stale; the Refined using Inter
 });
 
 test("a set-aside reads back SetAside at its generation, Released at another, and Stale after an edit", () => {
-  const record: PreparationRecord = { _tag: "SetAside", key: KEY, digest: digestOf(ITEM), generation: 3, date: "2026-10-30", cause: { _tag: "Paused", question: "Raise the round limit?" } };
+  const record: PreparationRecord = { _tag: "SetAside", key: KEY, digest: digestOf(ITEM), generation: 3, date: "2026-10-30", cause: { _tag: "Paused", phase: "questions", question: "Raise the round limit?" } };
   const comments = asComments([preparationCommentText(record)]);
   const found = preparationOf(comments, ITEM, 3);
   assert.equal(found._tag, "SetAside");
@@ -131,4 +132,32 @@ test("a question whose text holds comment closers and escapes round-trips exactl
   if (found._tag === "Prepared") assert.deepEqual(found.questions[0]!.question, plain(text));
   const first = questionCommentText(KEY, 1, 1, pq("Q1", text));
   assert.ok(Result.isSuccess(first));
+});
+
+// Work review 4 of issue #216 (W1-R1-2): a pause carries the phase it stopped in.
+const pausedRecord = (phase: "update" | "questions"): PreparationRecord => ({ _tag: "SetAside", key: KEY, digest: digestOf(ITEM), generation: 1, date: "2026-11-02", cause: { _tag: "Paused", phase, question: "Raise the round limit?" } });
+const TODAY_PAUSED = "its question review stopped for a decision of the developer's: Raise the round limit?";
+
+test("a pause with either phase reads back with its phase", () => {
+  for (const phase of ["update", "questions"] as const) {
+    const found = preparationOf(asComments([preparationCommentText(pausedRecord(phase))]), ITEM, 1);
+    assert.ok(found._tag === "SetAside" && found.cause._tag === "Paused");
+    assert.equal(found.cause.phase, phase);
+  }
+});
+
+test("a pause written before the phase existed reads back as the question list's, with today's text", () => {
+  const text = preparationCommentText(pausedRecord("questions"));
+  const legacy = text.replace(/,?"phase":"questions"/u, "");
+  assert.notEqual(legacy, text);
+  const found = preparationOf(asComments([legacy]), ITEM, 1);
+  assert.ok(found._tag === "SetAside" && found.cause._tag === "Paused");
+  assert.equal(found.cause.phase, "questions");
+  assert.equal(preparationCauseText(found.cause), TODAY_PAUSED);
+});
+
+test("a pause in Bring Up to Date names its check, never a review", () => {
+  const cause = { _tag: "Paused", phase: "update", question: "Keep the instruction?" } as const;
+  assert.doesNotMatch(preparationCauseText(cause), /\breview/iu);
+  assert.match(preparationCauseText(cause), /check in Bring Up to Date/u);
 });

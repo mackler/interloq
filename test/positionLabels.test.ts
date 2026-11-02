@@ -17,16 +17,16 @@ const pauseOf = (pause: prompts.DisputedPauseKind): PauseOrigin => {
 
 test("the program's own labels of every disputed pause are distinct outcomes naming no agent", () => {
   for (const kind of prompts.DISPUTED_PAUSE_KINDS) {
-    const { reviewer, planner } = prompts.positionLabels(kind);
+    const { reviewer, planner } = prompts.positionLabels(kind, "review");
     for (const label of [reviewer, planner]) {
       assert.notEqual(label.trim(), "", kind);
       assert.equal(prompts.namesAgent(label), false, `${kind}: ${label}`);
     }
     assert.notEqual(reviewer, planner, kind);
   }
-  assert.deepEqual(prompts.positionLabels("reraised"), { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now" });
-  assert.deepEqual(prompts.positionLabels("secondClarification"), { reviewer: "Make the change the point asks for", planner: "Wait for the requested explanation before making a change" });
-  assert.deepEqual(prompts.positionLabels("disputedSelfCorrection"), { reviewer: "Keep the correction", planner: "Withdraw the correction" });
+  assert.deepEqual(prompts.positionLabels("reraised", "review"), { reviewer: "Make the change the point asks for", planner: "Keep the file under review as it is now" });
+  assert.deepEqual(prompts.positionLabels("secondClarification", "review"), { reviewer: "Make the change the point asks for", planner: "Wait for the requested explanation before making a change" });
+  assert.deepEqual(prompts.positionLabels("disputedSelfCorrection", "review"), { reviewer: "Keep the correction", planner: "Withdraw the correction" });
 });
 
 test("namesAgent finds an agent's name as a whole word in any case", () => {

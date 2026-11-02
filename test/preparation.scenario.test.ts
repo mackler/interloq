@@ -60,6 +60,7 @@ test("a question review that reaches its idle limit sets the item aside with one
   const outcome = await Effect.runPromise(s.prepare());
   assert.equal(outcome._tag, "SetAside");
   assert.equal(outcome._tag === "SetAside" && outcome.cause._tag, "Paused");
+  assert.equal(outcome._tag === "SetAside" && outcome.cause._tag === "Paused" && outcome.cause.phase, "questions");
   const after = await s.held();
   assert.equal((after.comments ?? []).length, 1);
   assert.equal(preparationOf(after.comments ?? [], after, 1)._tag, "SetAside");
@@ -156,6 +157,7 @@ test("(b) a marked dispute raised again sets the item aside as Paused and writes
   const outcome = await Effect.runPromise(s.prepare());
   assert.equal(outcome._tag, "SetAside");
   assert.ok(outcome._tag === "SetAside" && outcome.cause._tag === "Paused");
+  assert.equal(outcome.cause.phase, "update");
   assert.equal((await s.held()).body, ITEM.body);
 });
 

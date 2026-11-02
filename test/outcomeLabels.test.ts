@@ -21,7 +21,7 @@ const requestOf = (origin: QuestionOrigin, question: string): prompts.ContextReq
   origin,
   decision: null,
   question: plainPieces(question),
-  options: positionOptions("reraised", positions).map((o) => o.shown),
+  options: positionOptions("reraised", positions, "review").map((o) => o.shown),
   details: [],
   explanations: [],
   facts: "",
@@ -44,7 +44,7 @@ test("the context prompt of a disputed pause carries the outcome-label rule, and
   assert.ok(!prompts.contextPrompt("t", identical).includes(rule));
   const reply = scriptedContextReply(prompts.contextPrompt("t", disputed));
   const validate = contextValidation(disputed);
-  const { reviewer, planner } = prompts.positionLabels("reraised");
+  const { reviewer, planner } = prompts.positionLabels("reraised", "review");
   assert.ok(Result.isSuccess(validate(withLabels(reply, [reviewer, planner]))));
   const named = validate(withLabels(reply, [prompts.REVIEWER_POSITION, planner]));
   assert.ok(Result.isFailure(named));
@@ -154,7 +154,7 @@ test("two refused context replies fall back to the program's outcome labels, and
     execs: [finishedExec],
   });
   assert.equal(finished, 1);
-  const { reviewer, planner } = prompts.positionLabels("reraised");
+  const { reviewer, planner } = prompts.positionLabels("reraised", "review");
   assert.deepEqual(pauseQuestions(probe)[0].options.map((o) => piecesText(o.label)), [reviewer, planner]);
   assert.match(read(probe.dir, "conversation.md"), /\*\*Context written by Interloq:\*\*/);
   assert.match(read(probe.dir, "user-decisions.md"), new RegExp(`Decision: ${escaped(prompts.PLANNER_POSITION)}`));

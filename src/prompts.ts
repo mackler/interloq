@@ -2918,12 +2918,12 @@ export const isDisputedPause = (origin: QuestionOrigin): boolean => origin.kind 
 export type PositionLabels = Readonly<{ reviewer: string; planner: string }>;
 const MAKE_THE_CHANGE = "Make the change the point asks for";
 /** The program's own outcome labels of a disputed pause, shown where the context call cannot write its own. */
-export function positionLabels(pause: DisputedPauseKind): PositionLabels {
+export function positionLabels(pause: DisputedPauseKind, pass: PassNoun): PositionLabels {
   switch (pause) {
     case "reraised":
     case "repeatedUnderNewId":
     case "reversal":
-      return { reviewer: MAKE_THE_CHANGE, planner: "Keep the file under review as it is now" };
+      return { reviewer: MAKE_THE_CHANGE, planner: `Keep ${fileUnder(pass)} as it is now` };
     case "secondClarification":
       return { reviewer: MAKE_THE_CHANGE, planner: "Wait for the requested explanation before making a change" };
     case "disputedSelfCorrection":
@@ -3240,9 +3240,9 @@ export function agentUnreachableText(agent: "claude" | "codex", attempts: number
 export function transportWhat(purpose: "planning" | "interview" | "context"): string {
   return purpose === "interview" ? "an interview turn" : purpose === "context" ? "the explanation of a question" : "a planning call";
 }
-/** What a retried Codex turn is, as the exhaustion pause names it. */
-export function transportReviewWhat(heading: string): string {
-  return `the review in ${heading}`;
+/** What a retried Codex turn is, as the exhaustion pause names it: its pass, check or review (work review 4 of issue #216). */
+export function transportReviewWhat(heading: string, pass: PassNoun): string {
+  return `the ${pass} in ${heading}`;
 }
 
 /** What a retried execution call is, as the exhaustion pause names it. */
@@ -4188,7 +4188,7 @@ export const preparationPreparedText = (date: string, count: number): string =>
 export const preparationCauseText = (cause: PreparationCause): string => {
   switch (cause._tag) {
     case "Paused":
-      return `its question review stopped for a decision of the developer's: ${cause.question}`;
+      return `${cause.phase === "update" ? "its check in Bring Up to Date" : "its question review"} stopped for a decision of the developer's: ${cause.question}`;
     case "Failed":
       return `the preparation failed: ${cause.reason}`;
     case "TooLong":

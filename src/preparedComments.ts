@@ -4,7 +4,7 @@
 // write. Each comment is legible Markdown for a person reading the issue, then one hidden data line, then the marker
 // line of src/itemComments.ts.
 import { createHash } from "node:crypto";
-import { Result, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import { type CommentKey, parseComment, preparationMarkerLine, runCommentKey } from "./itemComments.ts";
 import { blocksMarkdown } from "./pieces.ts";
@@ -29,9 +29,15 @@ export const digestOf = (item: Pick<TrackerItem, "title" | "body">): string => {
 export type PreparedQuestion = Readonly<{ entry: StoredQuestion; terms: TermsEntry | null }>;
 const PreparedQuestionSchema = Schema.Struct({ entry: StoredQuestion, terms: Schema.NullOr(TermsEntry) });
 
+/**
+ * The phase a preparation paused in (work review 4 of issue #216): Bring Up to Date's check or the question list's review.
+ * A comment written before the field paused in the question list, since Bring Up to Date did not exist, so it decodes so.
+ */
+export const PausedPhaseSchema = Schema.Literals(["update", "questions"]);
+export type PausedPhase = typeof PausedPhaseSchema.Type;
 /** Why an item was set aside: its review stopped for the developer, the preparation failed, or a question's comment would be too long. */
 export const PreparationCauseSchema = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("Paused"), question: Schema.String }),
+  Schema.Struct({ _tag: Schema.Literal("Paused"), phase: PausedPhaseSchema.pipe(Schema.withDecodingDefaultKey(Effect.succeed("questions" as const))), question: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("Failed"), reason: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TooLong"), question: Schema.String }),
   // Issue #216 (Q3): Bring Up to Date found the whole issue already built or replaced; never labeled obsolete unattended.

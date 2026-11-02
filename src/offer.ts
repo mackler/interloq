@@ -93,8 +93,8 @@ export const numberedOptions = (options: readonly (Readonly<{ label: string; des
  * `PLANNER_POSITION`), by which it is chosen and recorded, and is shown with the outcome label of `positionLabels`,
  * matched by its record label, not its position. It is chosen by its number, its record label or its shown label.
  */
-export const positionOptions = (pause: prompts.DisputedPauseKind, options: readonly Readonly<{ label: string; description: string }>[]): readonly OfferedOption[] => {
-  const outcomes = prompts.positionLabels(pause);
+export const positionOptions = (pause: prompts.DisputedPauseKind, options: readonly Readonly<{ label: string; description: string }>[], pass: prompts.PassNoun): readonly OfferedOption[] => {
+  const outcomes = prompts.positionLabels(pause, pass);
   const outcomeOf = (label: string): string => (label === prompts.REVIEWER_POSITION ? outcomes.reviewer : label === prompts.PLANNER_POSITION ? outcomes.planner : label);
   return options.map((o, i) => {
     const outcome = outcomeOf(o.label);

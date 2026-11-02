@@ -81,7 +81,7 @@ test("an item whose title or text changed reads its preparation as Stale", () =>
 
 test("a set-aside reads back SetAside at its generation and Released at any other", () => {
   fc.assert(fc.property(item, fc.integer({ min: 0, max: 50 }), fc.integer({ min: 0, max: 50 }), text, (i, generation, other, question) => {
-    const r: PreparationRecord = { _tag: "SetAside", key: KEY, digest: digestOf(i), generation, date: "2026-10-30", cause: { _tag: "Paused", question } };
+    const r: PreparationRecord = { _tag: "SetAside", key: KEY, digest: digestOf(i), generation, date: "2026-10-30", cause: { _tag: "Paused", phase: "questions", question } };
     const comments = asComments(Result.getOrThrow(preparedComments(KEY, [], r)).map((c) => c.text));
     assert.equal(preparationOf(comments, i, generation)._tag, "SetAside");
     assert.equal(preparationOf(comments, i, other)._tag, other === generation ? "SetAside" : "Released");
@@ -95,5 +95,16 @@ test("a set-aside for an issue found already built reads back with its cause and
     const found = preparationOf(asComments(Result.getOrThrow(preparedComments(KEY, [], r)).map((c) => c.text)), i, 1);
     assert.ok(found._tag === "SetAside");
     assert.deepEqual(found.cause, { _tag: "Obsolete", reason });
+  }), RUNS);
+});
+
+// Work review 4 of issue #216 (W1-R1-2): a pause's phase crosses the comment's data line.
+test("a pause reads back with its phase and question", () => {
+  fc.assert(fc.property(item, fc.constantFrom("update" as const, "questions" as const), text, (i, phase, question) => {
+    const cause = { _tag: "Paused", phase, question } as const;
+    const r: PreparationRecord = { _tag: "SetAside", key: KEY, digest: digestOf(i), generation: 1, date: "2026-11-02", cause };
+    const found = preparationOf(asComments(Result.getOrThrow(preparedComments(KEY, [], r)).map((c) => c.text)), i, 1);
+    assert.ok(found._tag === "SetAside");
+    assert.deepEqual(found.cause, cause);
   }), RUNS);
 });

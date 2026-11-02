@@ -185,7 +185,7 @@ test("decisionDraft asks a marked disagreement as a reading of the task, and an 
   // Issue #159: both keep the record labels and show the outcome labels.
   for (const draft of [markedDraft, plainDraft]) {
     assert.deepEqual(draft.options.map((o) => o.label), [prompts.REVIEWER_POSITION, prompts.PLANNER_POSITION]);
-    const { reviewer, planner } = prompts.positionLabels("reraised");
+    const { reviewer, planner } = prompts.positionLabels("reraised", "review");
     assert.deepEqual(draft.options.map((o) => piecesText(o.shown.label)), [reviewer, planner]);
   }
   assert.ok(blocksText(markedDraft.context.blocks).join("").includes("Question review"));
@@ -218,7 +218,7 @@ test("decisionDraft shows the outcome labels of every disputed pause, naming no 
     const presented = presentedQuestion(draft, 1);
     assert.ok(Result.isSuccess(presented));
     const labels = presented.success.options.map((o) => piecesText(o.label));
-    const { reviewer, planner } = prompts.positionLabels(kind);
+    const { reviewer, planner } = prompts.positionLabels(kind, "review");
     assert.deepEqual(labels, [reviewer, planner], kind);
     for (const label of labels) assert.equal(prompts.namesAgent(label), false, `${kind}: ${label}`);
   }
@@ -230,7 +230,7 @@ test("a context-written label of a disputed pause chooses its position, and a pe
   const { positionOptions, withContext, decisionAnswerOf, permissionOptions, programContext } = await import("../src/offer.ts");
   const { plainOption } = await import("../src/pieces.ts");
   const { optionText } = await import("../src/input.ts");
-  const options = positionOptions("reraised", [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }]);
+  const options = positionOptions("reraised", [{ label: prompts.REVIEWER_POSITION, description: "Drop Q1." }, { label: prompts.PLANNER_POSITION, description: "Keep Q1." }], "review");
   const origin = { kind: "pause" as const, heading: "Planning 1", pass: "review" as const, pause: "reraised" as const, id: "P1-R1-1" };
   const draft = { origin, context: programContext(origin), history: [], explanations: [], question: [], options, decision: null };
   const written = { context: programContext(origin), history: [], explanations: [], options: [plainOption("Accept the review's point", "Drop Q1."), plainOption("Leave the plan as it is now", "Keep Q1.")] };
@@ -239,7 +239,7 @@ test("a context-written label of a disputed pause chooses its position, and a pe
   assert.equal(rephrased[1].matches("Leave the plan as it is now"), true);
   assert.equal(rephrased[0].matches("Leave the plan as it is now"), false);
   assert.equal(decisionAnswerOf("Leave the plan as it is now", rephrased), prompts.PLANNER_POSITION);
-  assert.equal(decisionAnswerOf(prompts.positionLabels("reraised").reviewer, rephrased), prompts.REVIEWER_POSITION);
+  assert.equal(decisionAnswerOf(prompts.positionLabels("reraised", "review").reviewer, rephrased), prompts.REVIEWER_POSITION);
   assert.equal(decisionAnswerOf("2", rephrased), optionText(rephrased[1]));
   assert.equal(decisionAnswerOf("something else", rephrased), "something else");
   const permOrigin = { kind: "permission" as const, tool: "Bash", input: "ls" };
@@ -300,7 +300,7 @@ test("a work review's issue keeps Codex's statement of its effect on the work in
 
 // Issue #183 (seam): the answer "2" and the planner's label, through askDecisionQuestion and decisionDraft, keep the work
 // review going instead of leaving for a planning phase.
-for (const answer of ["2", prompts.PLANNER_POSITION, prompts.positionLabels("reraised").planner]) {
+for (const answer of ["2", prompts.PLANNER_POSITION, prompts.positionLabels("reraised", "review").planner]) {
   test(`a work-review dispute answered ${JSON.stringify(answer)} stays in the review`, async () => {
     const noQuestions = { questions_for_user: [] };
     const none = { kind: "none" };

@@ -5,15 +5,15 @@
 // loop ends in agreement on a correction it writes the item's title and text; it never changes the item's state or
 // labels, and asks no one anything.
 import * as path from "node:path";
-import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
+import { Cause, Clock, Data, Effect, Exit, FileSystem, Layer, Option, Ref, Result, type Scope } from "effect";
 import { runRootOf } from "./artifacts.ts";
 import { loadConfig } from "./config.ts";
 import { deciderLayer } from "./decision.ts";
-import { describe, isTrackerError, trackerFailureText } from "./errors.ts";
+import { describe, isTrackerError, type NoAnswer, trackerFailureText } from "./errors.ts";
 import { prepareQuestionList } from "./interview.ts";
 import { commentDateOf, keyOf, parseComment, runCommentKey } from "./itemComments.ts";
 import { rootName } from "./park.ts";
-import { type PreparationCause, type PreparationRecord, digestOf, preparationOf, type PreparedQuestion, preparedComments } from "./preparedComments.ts";
+import { type PausedPhase, type PreparationCause, type PreparationRecord, digestOf, preparationOf, type PreparedQuestion, preparedComments } from "./preparedComments.ts";
 import { unattendedUi } from "./preparationUi.ts";
 import { DECISION_FORMAT, defectMessage, refinementTextOf, taskTextOf, type Wiring } from "./program.ts";
 import { bringUpToDate } from "./bringUpToDate.ts";
@@ -30,6 +30,12 @@ export type PreparationOutcome =
   | Readonly<{ _tag: "Prepared"; count: number }>
   | Readonly<{ _tag: "SetAside"; cause: PreparationCause }>
   | Readonly<{ _tag: "NotWritten"; reason: string }>;
+/**
+ * A pause of the unattended Ui (NoAnswer) with the phase it arose in (work review 4 of issue #216), built where the phase
+ * is known: around Bring Up to Date's check, or around the question list's review.
+ */
+class PreparationPaused extends Data.TaggedError("PreparationPaused")<{ readonly phase: PausedPhase; readonly question: string }> {}
+const pausedIn = (phase: PausedPhase) => (e: NoAnswer) => Effect.fail(new PreparationPaused({ phase, question: e.question?.text ?? e.where }));
 export type PreparationInput = Readonly<{ project: string; item: TrackerItem; comments: readonly ItemComment[]; generation: number }>;
 
 const notWritten = (reason: string): PreparationOutcome => ({ _tag: "NotWritten", reason });
@@ -118,7 +124,7 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
       const written = yield* Ref.make<TrackerItem>(item);
       const phase = yield* Effect.exit(
         Effect.gen(function* () {
-          const updated = yield* bringUpToDate(item.id, before.success, env).pipe(Effect.provide(trackerLayer.success));
+          const updated = yield* bringUpToDate(item.id, before.success, env).pipe(Effect.catchTag("NoAnswer", pausedIn("update")), Effect.provide(trackerLayer.success));
           // Q3: an issue found already built or replaced is set aside; the obsolete label is never applied unattended.
           if (updated._tag === "Obsolete") return { _tag: "Obsolete", reason: updated.reason } as const;
           const preparedTask = updated._tag === "Amended" ? refinementTaskText(updated.text, input.comments) : task.success;
@@ -128,7 +134,7 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
             yield* Ref.set(written, { ...item, title: updated.text.title, body: Result.getOrElse(withDeveloperText(item.body, updated.text), () => updated.text.text) });
           }
           const decider = yield* Decider;
-          yield* prepareQuestionList(preparedTask, "checked").pipe(Effect.provideService(Decider, decider.withTask(preparedTask)));
+          yield* prepareQuestionList(preparedTask, "checked").pipe(Effect.catchTag("NoAnswer", pausedIn("questions")), Effect.provideService(Decider, decider.withTask(preparedTask)));
           const agreed = (yield* store.loadQuestions()).questions;
           const terms = agreed.length === 0 ? [] : yield* store.loadTerms();
           return { _tag: "Questions", questions: agreed.map((entry): PreparedQuestion => ({ entry, terms: terms.find((t) => t.id === entry.id) ?? null })) } as const;
@@ -149,7 +155,7 @@ export const prepareItem = (input: PreparationInput, wiring: Wiring): Effect.Eff
             record: setAside(
               Option.match(Cause.findErrorOption(phase.cause), {
                 onNone: () => ({ _tag: "Failed", reason: defectMessage(Cause.squash(phase.cause)) }),
-                onSome: (error): PreparationCause => (error._tag === "NoAnswer" ? { _tag: "Paused", question: error.question?.text ?? error.where } : { _tag: "Failed", reason: describe(error) }),
+                onSome: (error): PreparationCause => (error._tag === "PreparationPaused" ? { _tag: "Paused", phase: error.phase, question: error.question } : { _tag: "Failed", reason: describe(error) }),
               }),
             ),
             questions: [],

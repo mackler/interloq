@@ -926,7 +926,7 @@ test("the Refinement items frame carries each item's mark as the comments give i
   const repo = tempRepo();
   const target = MANAGER_ITEMS.find((i) => i.state === "unrefined")!;
   const key = runCommentKey("2026-10-01T00-00-00-000Z-preparation-x");
-  const texts = Result.getOrThrow(preparedComments(key, [], { _tag: "SetAside", key, digest: digestOf(target), generation: 0, date: "d", cause: { _tag: "Paused", question: "Raise the limit?" } }));
+  const texts = Result.getOrThrow(preparedComments(key, [], { _tag: "SetAside", key, digest: digestOf(target), generation: 0, date: "d", cause: { _tag: "Paused", phase: "questions", question: "Raise the limit?" } }));
   const comments = texts.map((c, i) => ({ id: seededId(`s-${i}`), body: c.text, created: "t" }));
   const tracker = fakeTrackerOf(MANAGER_ITEMS.map((i) => (i.id === target.id ? { ...i, comments } : i)));
   await serve(await managerOf(repo, [], [], tracker), dist(), async (port) => {
