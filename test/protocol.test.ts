@@ -13,9 +13,9 @@ import { ON_EXPIRIES, chainSettingsOf, type ClientMessage, currentIds, listedIte
 import type { ProcessKey } from "../src/liveOutput.ts";
 import type { SubjectId } from "../src/artifacts.ts";
 import type { Subject } from "../src/review.ts";
-import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, WorkResponse } from "../src/schema.ts";
+import type { DecisionResponse, PlannerResponse, PlanResponse, QuestionListResponse, UpdateResponse, VerdictResponse, WorkResponse } from "../src/schema.ts";
 import { TERMS_MODES } from "../src/schema.ts";
-import { decisionSubject, planSubject, questionSubject, requirementsSubject, workSubject } from "../src/subjects.ts";
+import { decisionSubject, planSubject, questionSubject, requirementsSubject, updateSubject, verdictSubject, workSubject } from "../src/subjects.ts";
 import type { UiEvent } from "../src/uiEvents.ts";
 import { DECISION_SECTIONS, type RunUiState, type UiScope } from "../src/uiState.ts";
 import { promptOf } from "../src/userPrompts.ts";
@@ -381,6 +381,10 @@ test("every subject's response, as its own schema decodes it, survives the round
     { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS).respond.schema, example: effectResponse },
     // W2-R1-1: a decision's response carries the amended analysis.
     { subject: { decision: 1 }, schema: decisionResponseSchema, example: { ...plannerResponse, analysis: decisionAnalysis } },
+    // Issue #216: Bring Up to Date's response carries the issue brought up to date; the page stopped on it, 2 Nov 2026.
+    { subject: "update" as const, schema: updateSubject().respond.schema, example: { ...questionListResponse, questions: undefined, issue: { title: "t", text: "x" }, outcome: { kind: "current" }, developer_passages: [] } },
+    // Issue #186: the verdict's response carries what the requirements leave out.
+    { subject: { verdict: 1 }, schema: verdictSubject(1, 1, { kind: "planning", n: 1 }, { _tag: "FirstPlan" }, true).respond.schema, example: { ...plannerResponse, missing: "m" } },
   ];
   for (const { subject, schema, example } of subjects) {
     const response = Schema.decodeUnknownSync(schema)(example);
@@ -395,7 +399,7 @@ test("every subject's response, as its own schema decodes it, survives the round
 // A subject added to src/subjects.ts is covered once it is added to this list.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type RespondOf<T> = T extends Subject<infer R, infer _D> ? R : never;
-type Carried<R> = Same<R, PlannerResponse> extends true ? true : Same<R, QuestionListResponse> extends true ? true : Same<R, PlanResponse> extends true ? true : Same<R, WorkResponse> extends true ? true : Same<R, DecisionResponse>;
+type Carried<R> = Same<R, PlannerResponse> extends true ? true : Same<R, QuestionListResponse> extends true ? true : Same<R, PlanResponse> extends true ? true : Same<R, WorkResponse> extends true ? true : Same<R, UpdateResponse> extends true ? true : Same<R, VerdictResponse> extends true ? true : Same<R, DecisionResponse>;
 const holds = <_T extends true>(): void => undefined;
 const fails = <_T extends false>(): void => undefined;
 type Responses = [RespondOf<ReturnType<typeof questionSubject>>, RespondOf<ReturnType<typeof requirementsSubject>>, RespondOf<ReturnType<typeof planSubject>>, RespondOf<ReturnType<typeof workSubject>>, RespondOf<ReturnType<typeof decisionSubject>>];
@@ -409,6 +413,9 @@ holds<Carried<Responses[2]>>();
 holds<Carried<Responses[3]>>();
 fails<Same<Responses[4], never>>();
 holds<Carried<Responses[4]>>();
+type MoreResponses = [RespondOf<ReturnType<typeof updateSubject>>, RespondOf<ReturnType<typeof verdictSubject>>];
+holds<Carried<MoreResponses[0]>>();
+holds<Carried<MoreResponses[1]>>();
 // The check itself refuses a response with a field the event does not carry.
 fails<Carried<PlannerResponse & { extra: string }>>();
 
