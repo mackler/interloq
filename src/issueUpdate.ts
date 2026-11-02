@@ -6,6 +6,7 @@ import { Result } from "effect";
 import { PassageMissing } from "./errors.ts";
 import { passageRepairPrompt, type IssueTextProblem } from "./prompts.ts";
 import { itemTextOf, type ItemText } from "./refinement.ts";
+import { lineEdits } from "./lineChange.ts";
 import { bothValidations, userQuestionsValidation, type Validation } from "./review.ts";
 import type { IssueFile, UpdateResponse, UpdateWrite } from "./schema.ts";
 
@@ -103,31 +104,25 @@ export const updateOutcomeOf = (before: TitleAndText, file: IssueFile, ended: "a
   return Result.isSuccess(text) ? { _tag: "Amended", text: text.success } : { _tag: "NotAgreed" };
 };
 
+/** A version as the change report shows it: the line `# <title>`, then the text's lines, every line ending `\n`. */
+const reportText = (t: TitleAndText): string => [`# ${t.title}`, ...t.text.split(/\r\n|\r|\n/u)].join("\n");
+
 /**
  * The record of what changed (issue #216, "Visibility"): the title and text before and after, the lines removed and the
- * lines added (as multisets of lines, in their order), and each accepted point with its rationale.
+ * lines added (those of a shortest edit script, each in its version's order, so a reordering is reported), and each
+ * accepted point with its rationale.
  */
 export const changeMarkdown = (before: TitleAndText, after: TitleAndText, points: readonly Readonly<{ id: string; problem: string; rationale: string }>[]): string => {
-  const lines = (t: TitleAndText) => [`# ${t.title}`, ...t.text.split(/\r\n|\r|\n/u)];
-  const minus = (a: readonly string[], b: readonly string[]): readonly string[] =>
-    a.reduce<{ left: readonly string[]; out: readonly string[] }>(
-      (acc, line) => {
-        const i = acc.left.indexOf(line);
-        return i < 0 ? { left: acc.left, out: [...acc.out, line] } : { left: [...acc.left.slice(0, i), ...acc.left.slice(i + 1)], out: acc.out };
-      },
-      { left: b, out: [] },
-    ).out;
-  const removed = minus(lines(before), lines(after));
-  const added = minus(lines(after), lines(before));
+  const { removed, added } = lineEdits(reportText(before), reportText(after));
   const fence = (text: string) => {
     const f = "`".repeat(Math.max(3, 1 + Math.max(0, ...(text.match(/`+/gu) ?? []).map((r) => r.length))));
     return `${f}\n${text}\n${f}`;
   };
   return [
     "### Before",
-    fence(lines(before).join("\n")),
+    fence(reportText(before)),
     "### After",
-    fence(lines(after).join("\n")),
+    fence(reportText(after)),
     "### Lines removed",
     removed.length === 0 ? "None." : fence(removed.join("\n")),
     "### Lines added",
@@ -137,11 +132,8 @@ export const changeMarkdown = (before: TitleAndText, after: TitleAndText, points
   ].join("\n\n");
 };
 
-/** The lines added and removed between two versions, in counts. */
+/** The lines added and removed between two versions, in counts: those of the change report, so the two agree. */
 export const changeCounts = (before: TitleAndText, after: TitleAndText): Readonly<{ added: number; removed: number }> => {
-  const text = (t: TitleAndText) => `${t.title}\n${t.text}`;
-  const a = text(before).split("\n");
-  const b = text(after).split("\n");
-  const count = (x: readonly string[], y: readonly string[]) => x.filter((line, i) => x.slice(0, i + 1).filter((l) => l === line).length > y.filter((l) => l === line).length).length;
-  return { added: count(b, a), removed: count(a, b) };
+  const { removed, added } = lineEdits(reportText(before), reportText(after));
+  return { added: added.length, removed: removed.length };
 };

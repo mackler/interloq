@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import fc from "fast-check";
 import { Result } from "effect";
-import { initialProtection, issueUpdateValidation, protectionAfterDecisions, protectionAfterResponse, protectedPassagesOf, updateOutcomeOf } from "../src/issueUpdate.ts";
+import { changeCounts, initialProtection, issueUpdateValidation, protectionAfterDecisions, protectionAfterResponse, protectedPassagesOf, updateOutcomeOf } from "../src/issueUpdate.ts";
 import { itemTextOf, type ItemText } from "../src/refinement.ts";
 import type * as S from "../src/schema.ts";
+import { lineChange } from "../src/lineChange.ts";
 
 const RUNS = { numRuns: 200, seed: 20261102 };
 const word = fc.stringMatching(/^[a-z]{1,6}$/u);
@@ -48,4 +49,20 @@ test("updateOutcomeOf: agreed and equal is Unchanged, obsolete wins, not agreed 
     const same = before.title === after.title && before.text === after.text;
     return same ? out._tag === "Unchanged" : out._tag === "Amended" && out.text.title === after.title && out.text.text === after.text;
   }), RUNS);
+});
+
+// Issue #216 (W2-R1-1): the counts said on the page are lineChange's over the report's text.
+test("changeCounts is lineChange over the report text: '# <title>', then the text's lines", () => {
+  const line = fc.constantFrom("a", "b", "c", "");
+  const textArb = fc.array(line, { maxLength: 8 }).chain((ls) => fc.constantFrom(ls.join("\n"), ls.join("\r\n"), ls.join("\r")));
+  const version = fc.record({ title: fc.constantFrom("A", "B"), text: textArb });
+  const reportText = (t: { title: string; text: string }) => [`# ${t.title}`, ...t.text.split(/\r\n|\r|\n/u)].join("\n");
+  fc.assert(
+    fc.property(version, version, (before, after) => {
+      const c = lineChange(reportText(before), reportText(after));
+      const counts = changeCounts(before, after);
+      if (counts.added !== c.added || counts.removed !== c.removed) throw new Error(`${JSON.stringify(counts)} != ${JSON.stringify(c)}`);
+    }),
+    { numRuns: 300 },
+  );
 });

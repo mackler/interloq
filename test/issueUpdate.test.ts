@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Result } from "effect";
 import { RUN_ROOT_FOR_TESTS } from "./issueUpdateRoot.ts";
-import { initialProtection, issueApplyValidation, issueUpdateValidation, type Protection, protectionAfterDecisions, protectionAfterResponse, protectedPassagesOf } from "../src/issueUpdate.ts";
+import { changeCounts, changeMarkdown, initialProtection, issueApplyValidation, issueUpdateValidation, type Protection, protectionAfterDecisions, protectionAfterResponse, protectedPassagesOf } from "../src/issueUpdate.ts";
 import * as prompts from "../src/prompts.ts";
 import { CLOSING_LINE, itemTextOf, type ItemText, OPENING_LINE } from "../src/refinement.ts";
 import * as S from "../src/schema.ts";
@@ -96,4 +96,16 @@ test("the phase's texts to Codex and to the user say check, never review", () =>
   const texts = [prompts.updateCheckPrompt(RUN_ROOT_FOR_TESTS, 1, "continued"), prompts.updateCheckPrompt(RUN_ROOT_FOR_TESTS, 2, "continued"), prompts.updateCheckPrompt(RUN_ROOT_FOR_TESTS, 3, "new"), prompts.UPDATE_PHASE, prompts.PROCEED_WITHOUT_UPDATE];
   const prose = (t: string): string => t.replace(/\S*\/\S*|\S+\.(json|md|jsonl|diff|log)\b/gu, "").replace(/'review'/gu, "");
   for (const t of texts) assert.doesNotMatch(prose(t), /\breview(s|ed)?\b/iu, t.slice(0, 200));
+});
+
+// Issue #216 (W2-R1-1): the change report's lines are those of a shortest edit script, so a reordering is reported.
+test("changeCounts and changeMarkdown report a reordering and a title change", () => {
+  const before = { title: "T", text: "First\nSecond" };
+  const after = { title: "T", text: "Second\nFirst" };
+  assert.deepEqual(changeCounts(before, after), { added: 1, removed: 1 });
+  const md = changeMarkdown(before, after, []);
+  const section = (heading: string) => md.split(`### ${heading}`)[1]!.split("###")[0]!.trim();
+  assert.notEqual(section("Lines removed"), "None.");
+  assert.notEqual(section("Lines added"), "None.");
+  assert.deepEqual(changeCounts({ title: "Old", text: "x" }, { title: "New", text: "x" }), { added: 1, removed: 1 });
 });
