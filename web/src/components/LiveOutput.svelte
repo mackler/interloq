@@ -77,10 +77,16 @@
   // and where; after it, the screen at its end again, or that line back where it was, or the top where it was evicted.
   // Every position is measured against the screen itself (getBoundingClientRect), never an offset parent.
   let anchor: { atEnd: true } | { atEnd: false; id: string | null; offset: number } = { atEnd: true };
-  /** Whether the screen follows its end: true until a scroll leaves it, again once a scroll reaches it. */
+  /**
+   * Whether the screen follows its end, read from the screen's own geometry on every scroll and again before every
+   * update, since a scroll's event may not have run when output arrives in the same frame.
+   */
   let following = true;
+  const readFollowing = (s: HTMLElement): void => {
+    following = followsEnd(s.scrollTop, s.clientHeight, s.scrollHeight);
+  };
   const onScroll = (): void => {
-    if (screen !== undefined) following = followsEnd(screen.scrollTop, screen.clientHeight, screen.scrollHeight);
+    if (screen !== undefined) readFollowing(screen);
   };
   const lineEl = (s: HTMLElement, id: string): HTMLElement | null => s.querySelector(`[data-line-id="${id}"]`);
   $effect.pre(() => {
@@ -88,6 +94,7 @@
     void shown;
     const s = screen;
     if (s === undefined) return;
+    readFollowing(s);
     if (following) {
       anchor = { atEnd: true };
       return;

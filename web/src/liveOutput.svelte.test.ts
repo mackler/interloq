@@ -115,3 +115,69 @@ describe("the live panel", () => {
     expect(mountPanel(panel).target.querySelectorAll("[data-live-line]").length).toBe(SCROLLBACK_LINES);
   });
 });
+
+// The screen's own geometry decides whether it follows its end before each update, not a scroll event that may not have
+// run yet (the race L36 met at 1280 × 800 under the suite's load). jsdom lays nothing out, so the screen is given its
+// geometry here: 100 px shown of 1,000.
+describe("the live panel following its end", () => {
+  const geometry = (target: HTMLElement): { screen: HTMLElement; top: () => number; set: (n: number) => void } => {
+    const screen = target.querySelector<HTMLElement>("[data-live-screen]");
+    if (screen === null) throw new Error("no screen");
+    let top = 0;
+    Object.defineProperty(screen, "clientHeight", { configurable: true, get: () => 100 });
+    Object.defineProperty(screen, "scrollHeight", { configurable: true, get: () => 1000 });
+    Object.defineProperty(screen, "scrollTop", { configurable: true, get: () => top, set: (n: number) => void (top = n) });
+    return { screen, top: () => top, set: (n) => void (top = n) };
+  };
+  const lines = (n: number): LivePanel => Array.from({ length: n }, (_, i) => print(`line ${i}\n`)).reduce(applyOutput, EMPTY_PANEL);
+  const mountLive = (panel: LivePanel) => {
+    const target = document.createElement("div");
+    document.body.appendChild(target);
+    const props = $state({ panel, lines: PANEL_LINES });
+    mounted.push(mount(LiveOutput, { target, props }));
+    flushSync();
+    return { target, props };
+  };
+
+  test("a screen scrolled up with no scroll event yet is not pinned to its end by new output (following its end)", () => {
+    const { target, props } = mountLive(lines(50));
+    const g = geometry(target);
+    g.set(400);
+    props.panel = lines(60);
+    flushSync();
+    expect(g.top()).not.toBe(1000);
+  });
+
+  test("a screen at its end with no scroll event yet stays at its end on new output (following its end)", () => {
+    const { target, props } = mountLive(lines(50));
+    const g = geometry(target);
+    g.set(900);
+    props.panel = lines(60);
+    flushSync();
+    expect(g.top()).toBe(1000);
+  });
+
+  test("a resize after a scroll up, with no new output, leaves the screen where it was (following its end)", () => {
+    const callbacks: (() => void)[] = [];
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: () => void) {
+        callbacks.push(callback);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      const { target } = mountLive(lines(50));
+      const g = geometry(target);
+      g.set(400);
+      g.screen.dispatchEvent(new Event("scroll"));
+      flushSync();
+      for (const callback of callbacks) callback();
+      expect(g.top()).toBe(400);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
+  });
+});

@@ -480,6 +480,16 @@ test.describe("the tests of the tabs server, in order", () => {
     await other.close();
   });
 
+  /** Removes every entry of the queue editor's queue, one at a time, by its Remove button. */
+  async function emptyQueue(editor: Locator): Promise<void> {
+    const queued = editor.locator("li[data-queued]");
+    for (let left = await queued.count(); left > 0; left = await queued.count()) {
+      const label = (await queued.first().locator(".headline").textContent())?.trim() ?? "";
+      await queued.first().getByRole("button", { name: queueRemoveName(label), exact: true }).click();
+      await expect(queued).toHaveCount(left - 1, { timeout: 10_000 });
+    }
+  }
+
   // Issue #196: the queue editor in the Implementation tab's list view: its rows hold their text and buttons, none drawn
   // over the next, the long title whole and wrapped, and the page never scrolls sideways.
   for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
@@ -492,11 +502,18 @@ test.describe("the tests of the tabs server, in order", () => {
       await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.queue, { exact: true }).click();
       const editor = page.getByRole("region", { name: QUEUE_HEADING });
       await expect(editor).toBeVisible();
-      for (const item of ["41", "1", "2"]) {
-        const add = listOf(page).locator(`button[name=queue-add][data-item="${item}"]`);
-        if ((await add.count()) > 0) await add.click();
+      const queued = editor.locator("li[data-queued]");
+      // The server is shared by the describe's tests, whose runs leave items implementing and whose queues stay in its
+      // chain.json: the queue is emptied first, and the items queued are those the list offers now.
+      await emptyQueue(editor);
+      await expect(listOf(page).locator('button[name=queue-add][data-item="41"]')).toBeVisible();
+      const others = await listOf(page).locator("button[name=queue-add]:enabled").evaluateAll((buttons) =>
+        buttons.map((b) => b.getAttribute("data-item")).filter((item): item is string => item !== null && item !== "41").slice(0, 2));
+      for (const [i, item] of ["41", ...others].entries()) {
+        await listOf(page).locator(`button[name=queue-add][data-item="${item}"]`).click();
+        await expect(queued).toHaveCount(i + 1, { timeout: 10_000 });
       }
-      await expect(editor.locator("li[data-queued]")).toHaveCount(3);
+      await expect(queued).toHaveCount(3, { timeout: 10_000 });
       const problems = await editor.evaluate((section, title) => {
         const out: string[] = [];
         const TOLERANCE = 0.5;
@@ -527,7 +544,10 @@ test.describe("the tests of the tabs server, in order", () => {
       }, LONG_ITEM_TITLE);
       expect(problems).toEqual([]);
       await noSidewaysScroll(page);
-      // The server is shared by the file's other tests: its source goes back to the backlog, which hides the editor.
+      // The server is shared by the file's other tests: the queue is left empty and its source goes back to the backlog,
+      // which hides the editor.
+      await emptyQueue(editor);
+      await expect(queued).toHaveCount(0);
       await control.getByRole("radiogroup", { name: CHAIN_SOURCE_LABEL }).getByText(CHAIN_SOURCE_TEXTS.backlog, { exact: true }).click();
       await expect(editor).toHaveCount(0);
     });
