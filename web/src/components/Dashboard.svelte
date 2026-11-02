@@ -41,7 +41,8 @@
     if (el === undefined || typeof ResizeObserver === "undefined") return;
     const measure = (): void => {
       const style = getComputedStyle(el);
-      available = el.clientHeight - (Number.parseFloat(style.paddingTop) || 0) - (Number.parseFloat(style.paddingBottom) || 0);
+      // The content height less the row gap between the content above and the panel, which the panel's budget leaves.
+      available = el.clientHeight - (Number.parseFloat(style.paddingTop) || 0) - (Number.parseFloat(style.paddingBottom) || 0) - (Number.parseFloat(style.rowGap) || 0);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(el);
@@ -124,11 +125,14 @@
   .header { margin: 0; font-size: 1.375rem; line-height: 1.75rem; font-weight: 400; }
   .models { margin: 0; display: flex; flex-wrap: wrap; gap: 0 1rem; font-size: 0.75rem; line-height: 1rem; color: var(--m3c-on-surface-variant); }
   /* Issue #221: everything above the live panel scrolls as one region, so the panel's bottom stays the column's bottom. */
-  /* Its shrink factor, far above the live panel's 1, makes it give up its room before the panel does, so the full panel
-     keeps its chosen height while this region scrolls; the panel shrinks only once this region has none left (W3-R2-1).
-     The compact panel shares the compact dashboard's limit with it as before (issue #200). */
-  .above { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1000 auto; min-height: 0; overflow-y: auto; }
-  .compact .above { gap: 0.25rem; flex-shrink: 1; }
+  /* The full section never scrolls: the content above keeps 2rem at the least and scrolls inside itself, and the full
+     panel, flex: none and bounded by its budget, gives way below that (LiveOutput); so the panel's bottom stays the
+     column's bottom at every height (W3-R2-1, P5-R1-1). The compact panel shares the compact dashboard's limit with it
+     as before (issue #200). */
+  .above { display: flex; flex-direction: column; gap: 0.75rem; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .dashboard:not(.compact) { overflow: hidden; }
+  .dashboard:not(.compact) .above { min-height: 2rem; }
+  .compact .above { gap: 0.25rem; }
   .regions { display: flex; flex-direction: column; gap: 0.75rem; }
   .help { margin: 0; white-space: pre-wrap; color: var(--m3c-on-surface-variant); }
   .surface { padding: 0.5rem 0.875rem; border-radius: var(--m3-shape-large); margin: 0; }

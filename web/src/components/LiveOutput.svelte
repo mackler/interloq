@@ -10,7 +10,7 @@
   // The compact dashboard mounts it only while a process runs (issue #200, requirements Q2), with no handle.
   import { LIVE_OUTPUT_EMPTY, LIVE_OUTPUT_NAME, LIVE_OUTPUT_RESIZE_LABEL, LIVE_PROCESSES_NAME, panelHeightText } from "../../../src/prompts.ts";
   import { followsEnd, type LivePanel, PROCESS_MARK, panelView } from "../livePanel.ts";
-  import { afterDrag, afterKey, LINE_REM, linePx, MAX_PANEL_LINES, maxPanelLines, MIN_PANEL_LINES, shownLines } from "../panelHeight.ts";
+  import { afterDrag, afterKey, LINE_REM, linePx, MAX_PANEL_LINES, maxPanelLines, minPanelLines, panelBudgetPx, runningListLines, shownLines } from "../panelHeight.ts";
   import { cssColor, PALETTE_16, TERMINAL_BACKGROUND, TERMINAL_DIM, TERMINAL_FOREGROUND } from "../terminalColor.ts";
 
   type Resize = Readonly<{ available: number | null; onLines: (n: number) => void }>;
@@ -48,6 +48,9 @@
   const chromePx = $derived(sectionHeight - screenHeight + rootPx);
   const max = $derived(resize === undefined ? MAX_PANEL_LINES : maxPanelLines(resize.available, chromePx, rootPx));
   const shown = $derived(resize === undefined ? lines : shownLines(dragLines ?? lines, max));
+  // The full panel's bound and its running list's lines, from the room the dashboard measured.
+  const budget = $derived(resize === undefined ? null : panelBudgetPx(resize.available, rootPx));
+  const short = $derived(resize !== undefined && runningListLines(resize.available, rootPx) === 1);
 
   const onKey = (event: KeyboardEvent): void => {
     const next = afterKey(shown, event.key, max);
@@ -113,6 +116,8 @@
 <section
   class="live"
   class:compact
+  class:short
+  style:max-height={budget === null ? undefined : `${budget}px`}
   aria-label={LIVE_OUTPUT_NAME}
   data-live-output
   bind:this={section}
@@ -130,7 +135,7 @@
       aria-orientation="horizontal"
       tabindex="0"
       aria-label={LIVE_OUTPUT_RESIZE_LABEL}
-      aria-valuemin={MIN_PANEL_LINES}
+      aria-valuemin={minPanelLines(max)}
       aria-valuemax={max}
       aria-valuenow={shown}
       aria-valuetext={panelHeightText(shown)}
@@ -152,28 +157,38 @@
     </ul>
   {/if}
   <div class="screen" bind:this={screen} style:--shown={shown} data-live-screen aria-live="off" onscroll={onScroll}>
+    <div class="lines">
     {#each view.lines as line (line.id)}
       <div class="line" data-live-line data-line-id={line.id}>
         <span class="tag">{line._tag === "Touched" ? "" : line.tag}</span>
         <span class="text">{#if line._tag === "Output"}{#each line.runs as run, i (i)}<span style:color={color(run.style.fg)} style:background-color={color(run.style.bg)}>{run.text}</span>{/each}{:else if line._tag === "Begun"}<span class="mark" role="img" aria-label={line.label} data-mark={line.mark}>{PROCESS_MARK[line.mark]}</span> {line.name}{:else if line._tag === "Ended"}<span class="mark" role="img" aria-label={line.label} data-mark={line.mark}>{PROCESS_MARK[line.mark]}</span>{line.detail === "" ? "" : ` ${line.detail}`}{:else}<span class="dim">{line.text}</span>{/if}</span>
       </div>
     {/each}
+    </div>
   </div>
 </section>
 
 <style>
-  /* The panel may shrink below its height in lines where the column is smaller than its smallest height, so its bottom
-     stays the column's bottom; its screen keeps two lines at the least. In the full dashboard the content above shrinks
-     first (Dashboard's .above), so the full panel keeps its chosen height while that content scrolls (W3-R2-1). */
-  .live { display: flex; flex-direction: column; gap: 0.25rem; flex: 0 1 auto; min-height: 0; font-family: var(--m3-font-mono); font-size: 0.75rem; line-height: 1.125rem; }
+  /* The compact panel may shrink below its height in lines where the compact dashboard is smaller than its smallest
+     height, so its bottom stays the column's bottom; its screen keeps two lines at the least (issue #200 bounds it). */
+  /* The full panel never shrinks against the content above (W3-R2-1): it is flex: none, bounded by its budget
+     (panelBudgetPx, an inline max-height), and gives way in a fixed order as the column gets shorter: below 20rem its
+     running list is bounded at one line (.short); with less room than three lines the screen shows fewer, down to one
+     (maxPanelLines); below one line the screen's box alone shrinks inside the budget, its padding and lines scrolling
+     within it, since nothing fixed is left in it (P5-R1-1). */
+  .live { display: flex; flex-direction: column; gap: 0.25rem; flex: none; min-height: 0; font-family: var(--m3-font-mono); font-size: 0.75rem; line-height: 1.125rem; }
+  .live.compact { flex: 0 1 auto; }
   .handle { height: 0.5rem; flex: none; cursor: row-resize; border-radius: var(--m3-shape-full); background: var(--m3c-outline-variant); touch-action: none; }
   .handle:focus-visible { outline: 2px solid var(--m3c-primary); outline-offset: 2px; }
   .header { margin: 0; color: var(--m3c-on-surface-variant); font-family: var(--m3-font); font-size: 0.875rem; line-height: 1.25rem; }
   .processes { margin: 0; padding: 0.25rem 0.75rem; list-style: none; flex: none; max-height: calc(3 * 1.125rem); overflow-y: auto; border-radius: var(--m3-shape-small); background: var(--term-bg); color: var(--term-fg); }
-  .compact .processes { max-height: calc(1.125rem); padding-block: 0; }
+  .compact .processes, .live.short .processes { max-height: calc(1.125rem); padding-block: 0; }
   .processes li { white-space: pre-wrap; overflow-wrap: anywhere; }
   /* The screen: a terminal's look, its height in lines, scrolling through its scrollback. */
-  .screen { position: relative; overflow-y: auto; overflow-anchor: none; height: calc(var(--shown) * 1.125rem + 1rem); box-sizing: border-box; padding: 0.5rem 0.75rem; border-radius: var(--m3-shape-medium); background: var(--term-bg); color: var(--term-fg); flex: 0 1 auto; min-height: calc(2 * 1.125rem + 1rem); }
+  .screen { position: relative; overflow-y: auto; overflow-anchor: none; height: calc(var(--shown) * 1.125rem + 1rem); box-sizing: border-box; padding-inline: 0.75rem; border-radius: var(--m3-shape-medium); background: var(--term-bg); color: var(--term-fg); flex: 0 1 auto; min-height: 0; }
+  /* The screen's vertical padding, inside its scrolled content, so the screen's box holds nothing fixed. */
+  .lines { padding-block: 0.5rem; }
+  .compact .screen { min-height: calc(2 * 1.125rem + 1rem); }
   .line { display: grid; grid-template-columns: max-content 1fr; column-gap: 0.5rem; }
   .text { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
   .tag, .dim { color: var(--term-dim); }

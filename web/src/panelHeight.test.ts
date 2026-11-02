@@ -3,7 +3,7 @@ import fc from "fast-check";
 import { Result } from "effect";
 import { describe, expect, test } from "vitest";
 import { PANEL_LINES } from "./livePanel.ts";
-import { afterDrag, afterKey, linePx, MAX_PANEL_LINES, maxPanelLines, MIN_PANEL_LINES, panelLinesOf, shownLines } from "./panelHeight.ts";
+import { ABOVE_MIN_REM, afterDrag, afterKey, FLOOR_PANEL_LINES, LINE_REM, linePx, MAX_PANEL_LINES, maxPanelLines, MIN_PANEL_LINES, minPanelLines, panelBudgetPx, panelLinesOf, runningListLines, SHORT_COLUMN_REM, shownLines } from "./panelHeight.ts";
 
 describe("panel height", () => {
   test("panelLinesOf admits whole numbers within the bounds alone", () => {
@@ -22,8 +22,13 @@ describe("panel height", () => {
   test("the most lines the room allows, the content above keeping its minimum", () => {
     expect(maxPanelLines(null, 100, 16)).toBe(MAX_PANEL_LINES);
     expect(maxPanelLines(0, 100, 16)).toBe(MAX_PANEL_LINES);
-    expect(maxPanelLines(800, 100, 16)).toBe(35);
-    expect(maxPanelLines(800, 2000, 16)).toBe(MIN_PANEL_LINES);
+    expect(ABOVE_MIN_REM).toBe(2);
+    const fits = (n: number): number => 100 + ABOVE_MIN_REM * 16 + n * LINE_REM * 16;
+    expect(maxPanelLines(800, 100, 16)).toBe(Math.floor((800 - 100 - ABOVE_MIN_REM * 16) / 18));
+    expect(maxPanelLines(800, 2000, 16)).toBe(FLOOR_PANEL_LINES);
+    expect(maxPanelLines(fits(1), 100, 16)).toBe(1);
+    expect(maxPanelLines(fits(2) + 5, 100, 16)).toBe(2);
+    expect(maxPanelLines(fits(1) - 1, 100, 16)).toBe(1);
     expect(maxPanelLines(5000, 0, 16)).toBe(MAX_PANEL_LINES);
     expect(shownLines(40, 35)).toBe(35);
     expect(shownLines(12, 35)).toBe(12);
@@ -41,14 +46,68 @@ describe("panel height", () => {
     expect(afterDrag(12, 500, 900, 18, 35)).toBe(MIN_PANEL_LINES);
   });
 
+  test("the running list's lines: one below 20rem of room, three otherwise or unmeasured", () => {
+    expect(SHORT_COLUMN_REM).toBe(20);
+    expect(runningListLines(null, 16)).toBe(3);
+    expect(runningListLines(156, 16)).toBe(1);
+    expect(runningListLines(319, 16)).toBe(1);
+    expect(runningListLines(320, 16)).toBe(3);
+    expect(runningListLines(700, 16)).toBe(3);
+    fc.assert(
+      fc.property(fc.option(fc.double({ min: 0, max: 5000, noNaN: true }), { nil: null }), fc.double({ min: 8, max: 40, noNaN: true }), (a, root) => {
+        expect(runningListLines(a, root) === 3).toBe(a === null || a >= 20 * root);
+      }),
+      { numRuns: 200, seed: 2213 },
+    );
+  });
+
+  test("the panel's budget: the room less the content above's minimum, never negative", () => {
+    expect(panelBudgetPx(null, 16)).toBeNull();
+    expect(panelBudgetPx(144, 16)).toBe(112);
+    expect(panelBudgetPx(78, 16)).toBe(46);
+    expect(panelBudgetPx(20, 16)).toBe(0);
+    fc.assert(
+      fc.property(fc.double({ min: 0, max: 5000, noNaN: true }), fc.double({ min: 8, max: 40, noNaN: true }), (a, root) => {
+        const b = panelBudgetPx(a, root) ?? -1;
+        expect(b).toBeGreaterThanOrEqual(0);
+        if (a - 2 * root >= 0) expect(b).toBeCloseTo(a - 2 * root, 9);
+      }),
+      { numRuns: 200, seed: 2214 },
+    );
+  });
+
+  test("below three lines of room the separator's minimum is the room's maximum", () => {
+    expect(minPanelLines(35)).toBe(MIN_PANEL_LINES);
+    expect(minPanelLines(2)).toBe(2);
+    expect(minPanelLines(1)).toBe(1);
+    expect(afterKey(12, "Home", 2)).toBe(2);
+    expect(afterKey(12, "Home", 1)).toBe(1);
+    expect(afterKey(1, "ArrowUp", 2)).toBe(2);
+    expect(afterKey(2, "ArrowDown", 2)).toBe(2);
+    expect(afterDrag(12, 500, 900, 18, 1)).toBe(1);
+    fc.assert(
+      fc.property(fc.integer({ min: -100, max: 200 }), fc.integer({ min: FLOOR_PANEL_LINES, max: MIN_PANEL_LINES - 1 }), fc.constantFrom("ArrowUp", "ArrowDown", "Home", "End"), fc.integer({ min: -2000, max: 2000 }), (n, m, key, dy) => {
+        for (const r of [afterKey(n, key, m) ?? m, afterDrag(n, 0, dy, 18, m)]) {
+          expect(r).toBeGreaterThanOrEqual(minPanelLines(m));
+          expect(r).toBeLessThanOrEqual(m);
+        }
+        expect(afterKey(n, "Home", m)).toBe(m);
+      }),
+      { numRuns: 200, seed: 2215 },
+    );
+  });
+
   const max = fc.integer({ min: MIN_PANEL_LINES, max: MAX_PANEL_LINES });
   test("every result lies within the minimum and the maximum", () => {
     fc.assert(
       fc.property(fc.integer({ min: -100, max: 200 }), max, fc.constantFrom("ArrowUp", "ArrowDown", "Home", "End"), fc.integer({ min: -2000, max: 2000 }), (n, m, key, dy) => {
-        for (const r of [afterKey(n, key, m) ?? MIN_PANEL_LINES, afterDrag(n, 0, dy, 18, m), maxPanelLines(dy + 1000, 50, 16)]) {
+        for (const r of [afterKey(n, key, m) ?? MIN_PANEL_LINES, afterDrag(n, 0, dy, 18, m)]) {
           expect(r).toBeGreaterThanOrEqual(MIN_PANEL_LINES);
           expect(r).toBeLessThanOrEqual(MAX_PANEL_LINES);
         }
+        const room = maxPanelLines(dy + 1000, 50, 16);
+        expect(room).toBeGreaterThanOrEqual(FLOOR_PANEL_LINES);
+        expect(room).toBeLessThanOrEqual(MAX_PANEL_LINES);
         expect(afterDrag(n, 0, dy, 18, m)).toBeLessThanOrEqual(m);
         expect(afterKey(n, key, m)).toBeLessThanOrEqual(m);
       }),

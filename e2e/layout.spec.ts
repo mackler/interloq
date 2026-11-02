@@ -4,7 +4,6 @@ import { attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDAT
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
-import { MIN_PANEL_LINES } from "../web/src/panelHeight.ts";
 
 // Finding 7 of docs/gui-review.md, decision Q3: the layout adapts. At M3's expanded width (840 px and wider) the rail
 // and both columns are side by side; below it, one column at a time, chosen by its title, and a prompt selects "You and
@@ -1355,14 +1354,31 @@ test.describe("the tests of the liveOutput server, in order", () => {
       expect((await firstInView(screen)).id, `a later line at the top at ${size}`).toBeGreaterThan(oldest.id);
       await screen.evaluate((s) => { s.scrollTop = s.scrollHeight; });
 
+      const rootPx = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
       const placed = async (what: string) => {
         expect(Math.abs((await bottomOf(live)) - (await contentBottom(section))), `${what}: the panel's bottom at the section's at ${size}`).toBeLessThanOrEqual(1);
         expect((await box(live)).y, `${what}: the panel's top below the section's at ${size}`).toBeGreaterThan((await box(section)).y);
+        // The section never scrolls: the content above scrolls inside itself and the panel gives way (P5-R1-1).
+        const scrolled = await section.evaluate((el) => ({ top: el.scrollTop, over: el.scrollHeight - el.clientHeight }));
+        expect(scrolled.top, `${what}: the section not scrolled at ${size}`).toBe(0);
+        expect(scrolled.over, `${what}: the section not overflowing at ${size}`).toBeLessThanOrEqual(1);
+        expect((await box(above)).height, `${what}: the content above keeps 2rem at ${size}`).toBeGreaterThanOrEqual(2 * rootPx - 1);
+        const panelBottom = await bottomOf(live);
+        const screenTall = (await box(screen)).height;
+        for (const to of ["max", "top"] as const) {
+          await above.evaluate((el, t) => { el.scrollTop = t === "max" ? el.scrollHeight : 0; }, to);
+          expect(Math.abs((await bottomOf(live)) - panelBottom), `${what}: the panel unmoved by the content above scrolled to its ${to} at ${size}`).toBeLessThanOrEqual(1);
+          expect(Math.abs((await box(screen)).height - screenTall), `${what}: the screen unchanged by the content above scrolled at ${size}`).toBeLessThanOrEqual(1);
+        }
       };
       await placed("placed");
       if (width >= 840) expect(Math.abs((await bottomOf(section)) - (await bottomOf(page.locator(".left"))))).toBeLessThanOrEqual(1);
       else expect((await box(section)).height).toBeLessThanOrEqual(await page.locator("main.run").evaluate((el) => el.clientHeight));
       expect(await live.locator("[data-live-processes]").evaluate((el) => el.scrollHeight > el.clientHeight), `the running list scrolls at ${size}`).toBe(true);
+      const listHeight = await live.locator("[data-live-processes]").evaluate((el) => el.clientHeight);
+      const oneLine = Math.ceil(1.125 * rootPx) + 1;
+      if (width === 640) expect(listHeight, `the running list one line high at ${size}`).toBeLessThanOrEqual(oneLine);
+      else expect(listHeight, `the running list more than one line high at ${size}`).toBeGreaterThan(oneLine);
 
       // The keyboard: five lines taller at most, the bottom unmoved.
       const bottom = await bottomOf(live);
@@ -1391,8 +1407,8 @@ test.describe("the tests of the liveOutput server, in order", () => {
       // (W3-R2-1).
       const valueBefore = await handle.getAttribute("aria-valuenow");
       const chosen = (await box(screen)).height;
-      // Where the room exceeds the panel's smallest height, its chosen lines fit whole (maxPanelLines).
-      if (max > MIN_PANEL_LINES) expect(Math.abs(chosen - (Number(valueBefore) * line + 16)), `the screen as tall as its lines at ${size}`).toBeLessThanOrEqual(1);
+      // Its chosen lines fit whole at every size (maxPanelLines).
+      expect(Math.abs(chosen - (Number(valueBefore) * line + 16)), `the screen as tall as its lines at ${size}`).toBeLessThanOrEqual(1);
       await above.evaluate((el) => {
         const filler = document.createElement("div");
         filler.dataset.testFiller = "";
@@ -1411,10 +1427,46 @@ test.describe("the tests of the liveOutput server, in order", () => {
       await handle.focus();
       await page.keyboard.press("End");
       await expect(handle).toHaveAttribute("aria-valuenow", String(max));
-      if (max > MIN_PANEL_LINES) expect(Math.abs((await box(screen)).height - (max * line + 16)), `the screen as tall as its most lines at ${size}`).toBeLessThanOrEqual(1);
+      expect(Math.abs((await box(screen)).height - (max * line + 16)), `the screen as tall as its most lines at ${size}`).toBeLessThanOrEqual(1);
       expect(await above.evaluate((el) => el.scrollHeight > el.clientHeight), `the content above scrolls at ${size}`).toBe(true);
       await placed("at the most lines");
       await expect(screen.locator("[data-live-line]")).toHaveCount(1000);
+
+      // Cramped columns, at 640 × 400 alone: the panel gives way in its fixed order and stays anchored.
+      if (width === 640) {
+        const frames = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))));
+        // The section's content height set to h, whatever its box-sizing.
+        const cramp = async (h: number) => {
+          await section.evaluate((el, content) => {
+            const st = getComputedStyle(el);
+            const padding = st.boxSizing === "border-box" ? (Number.parseFloat(st.paddingTop) || 0) + (Number.parseFloat(st.paddingBottom) || 0) : 0;
+            el.style.maxHeight = `${content + padding}px`;
+          }, h);
+          await frames();
+        };
+        await cramp(120);
+        await placed("cramped");
+        const crampedNow = Number(await handle.getAttribute("aria-valuenow"));
+        expect(crampedNow, "fewer than three lines in a cramped column").toBeLessThan(3);
+        expect(Number(await handle.getAttribute("aria-valuemin"))).toBeLessThanOrEqual(crampedNow);
+        expect(Math.abs((await box(screen)).height - (crampedNow * line + 16)), "the cramped screen as tall as its lines").toBeLessThanOrEqual(1);
+
+        await cramp(90);
+        await placed("below one line");
+        await expect(handle).toHaveAttribute("aria-valuenow", "1");
+        const tiny = (await box(screen)).height;
+        expect(tiny, "the screen's box above nothing").toBeGreaterThan(0);
+        expect(tiny, "the screen below one line").toBeLessThan(line + 16 - 1);
+        expect((await box(live)).height, "the panel within its budget").toBeLessThanOrEqual(90 - 12 - 2 * rootPx + 1);
+        expect(await screen.evaluate((el) => el.scrollHeight > el.clientHeight), "the shrunk screen still scrolls").toBe(true);
+        const tinyBottom = await bottomOf(live);
+        await screen.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+        expect(Math.abs((await bottomOf(live)) - tinyBottom)).toBeLessThanOrEqual(1);
+
+        await section.evaluate((el) => { el.style.maxHeight = ""; });
+        await frames();
+        await expect(handle).toHaveAttribute("aria-valuenow", String(max));
+      }
 
       // The height is remembered across a reload.
       if (lastSize) {
