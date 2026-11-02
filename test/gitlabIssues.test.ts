@@ -149,7 +149,7 @@ test("an aggregate carrying Node's own code ECONNREFUSED is judged by its errors
 });
 
 test("descriptionTooLongText names the length and the limit", () => {
-  assert.equal(descriptionTooLongText({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: 1_000_001 }), "the refinement would make the issue's description 1000001 characters long, more than GitLab's limit of 1000000");
+  assert.equal(descriptionTooLongText({ _tag: "DescriptionTooLong", limit: GITLAB_DESCRIPTION_LIMIT, length: 1_000_001 }), "the write would make the issue's description 1000001 characters long, more than GitLab's limit of 1000000");
 });
 
 // Issue #131: every comment carries its id, so Interloq can delete its own.

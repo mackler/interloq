@@ -47,7 +47,7 @@ test("question list is amended in review, the interview runs, the summary is wri
   assert.deepEqual(questions.questions.map((x: QuestionEntry) => x.id), ["Q1", "Q2"]);
   assert.match(read(probe.dir, "requirements.md"), /Q2: B because of X/);
   assert.equal((await probe.loadLog("questions"))[0].action, "accepted");
-  assert.equal(probe.reviewer.phases, 3); // question review, terms review (S17), requirements review: a refinement plans nothing
+  assert.equal(probe.reviewer.phases, 4); // Bring Up to Date's check (issue #216), question review, terms review (S17), requirements review: a refinement plans nothing
   assert.ok(probe.planner.clarificationPrompts.some((p) => p.includes("The user answers agreed question Q2 in writing:\nB, because of X")), probe.planner.clarificationPrompts.join("\n---\n"));
   assert.ok(!probe.planner.prompts.some((p) => /Produce an implementation plan/.test(p)), "a plan was asked for");
   const conversation = read(probe.dir, "conversation.md");
@@ -75,7 +75,7 @@ test("an empty agreed list asks nothing: requirements.md is written, the phase e
   assert.deepEqual(probe.ui.notified[ended], { _tag: "PhaseEnded", phase: { kind: "questions" }, result: "no conversation" });
   assert.ok(tags.indexOf("InterviewOpened") === -1, "an interview was opened");
   assert.ok(!probe.ui.notified.slice(ended).some((e) => e._tag === "PhaseBegan"), "a phase began after the question phase");
-  assert.equal(probe.reviewer.phases, 1); // the question review: no requirements review without a conversation
+  assert.equal(probe.reviewer.phases, 2); // Bring Up to Date's check (issue #216) and the question review: no requirements review without a conversation
 });
 
 test("a gap that Claude Code accepts produces a second interview whose summary is written to the requirements file with no prompt", async () => {
