@@ -1992,6 +1992,43 @@ test.describe("the tests of the narrationNote server, in order", () => {
         const over = await LIVE_SECTION(page).evaluate((el) => el.scrollHeight - el.clientHeight);
         expect(over, `the dashboard's section not overflowing at ${size}`).toBeLessThanOrEqual(1);
       }
+      // W1-R1-3: the note is of reduced emphasis through a color role, never an opacity (issue #109), and stays legible.
+      const colors = await note.evaluate((el) => {
+        const message = el.closest("[data-claude]") as HTMLElement;
+        const canvas = document.createElement("canvas");
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+        const srgb = (color: string): readonly number[] => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = color;
+          context.fillRect(0, 0, 1, 1);
+          return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+        };
+        const lead = el.querySelector("p") as HTMLElement;
+        return {
+          note: srgb(getComputedStyle(lead).color),
+          body: srgb(getComputedStyle(message).color),
+          surface: srgb(getComputedStyle(message).backgroundColor),
+          opacities: [el, lead, ...Array.from(el.querySelectorAll("li"))].map((node) => getComputedStyle(node).opacity),
+        };
+      });
+      expect(colors.note, `the note's color differs from the message's at ${size}`).not.toEqual(colors.body);
+      expect(colors.opacities.every((opacity) => opacity === "1"), `no opacity on the note at ${size}`).toBe(true);
+      expect(contrastRatio(colors.note, colors.surface), `the note's contrast on the message's surface at ${size}`).toBeGreaterThanOrEqual(4.5);
     });
   }
 });
+
+/** The WCAG contrast ratio of two sRGB colors given as 0–255 channels. */
+const contrastRatio = (a: readonly number[], b: readonly number[]): number => {
+  const luminance = (rgb: readonly number[]): number => {
+    const [r, g, bl] = rgb.map((channel) => {
+      const c = channel / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (light + 0.05) / (dark + 0.05);
+};

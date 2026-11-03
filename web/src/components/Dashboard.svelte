@@ -143,8 +143,9 @@
   .help { margin: 0; white-space: pre-wrap; color: var(--m3c-on-surface-variant); }
   .surface { padding: 0.5rem 0.875rem; border-radius: var(--m3-shape-large); margin: 0; }
   .claude { background: var(--m3c-secondary-container); color: var(--m3c-on-secondary-container); }
-  /* Issue #40: a statement of what the program observed, not an error; it wraps on its own, whatever its ancestors set. */
-  .running { margin-top: 0.375rem; font-size: 0.75rem; line-height: 1rem; overflow-wrap: anywhere; }
+  /* Issue #40: a statement of what the program observed, not an error; it wraps on its own, whatever its ancestors set.
+     Its reduced emphasis is a color role, never an opacity (issue #109; W1-R1-3). */
+  .running { margin-top: 0.375rem; font-size: 0.75rem; line-height: 1rem; overflow-wrap: anywhere; color: var(--m3c-on-surface-variant); }
   .running p { margin: 0; }
   .running ul { margin: 0.125rem 0 0; padding-left: 1.25rem; }
   .answer { background: var(--m3c-surface-container-high); color: var(--m3c-on-surface); }
