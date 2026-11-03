@@ -24,7 +24,7 @@ const question: PresentedQuestion = {
   history: [],
   explanations: [shownOf({ id: "z", term: "zod", senses: ["A library."] })],
   question: [{ text: "Which ", ref: "", code: false }, { text: "zod", ref: "z", code: false }, { text: "?", ref: "", code: false }],
-  options: [{ label: plainPieces("A"), description: plainPieces("a"), answer: { token: "1" } }],
+  options: [{ label: plainPieces("A"), description: plainPieces("a"), figure: null, answer: { token: "1" } }],
   attached: { kind: "request", blocks: [{ kind: "code", text: "npm i zod" }] },
   decision: null,
 };

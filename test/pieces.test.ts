@@ -13,7 +13,7 @@ test("the program's own words become plain pieces and paragraphs; the empty text
   assert.deepEqual(plainPieces("Which?"), [plain("Which?")]);
   assert.deepEqual(plainPieces(""), []);
   assert.deepEqual(plainBlocks("One.", " ", "Two."), [{ kind: "paragraph", pieces: [plain("One.")] }, { kind: "paragraph", pieces: [plain("Two.")] }]);
-  assert.deepEqual(plainOption("A", "a"), { label: [plain("A")], description: [plain("a")] });
+  assert.deepEqual(plainOption("A", "a"), { label: [plain("A")], description: [plain("a")], figure: null });
   assert.deepEqual(codePiece("ls"), { text: "ls", ref: "", code: true });
 });
 

@@ -19,6 +19,7 @@ import type { NamedEnd } from "./claudeEvents.ts";
 import type { NetworkCode, ProcessEnd } from "./transport.ts";
 import type { ManifestProblem } from "./manifestCheck.ts";
 import { checkTotals } from "./stepChecks.ts";
+import { FIGURE_SVG_LIMIT_BYTES } from "./figure.ts";
 import { type OutsideStop, SUITE_TAIL_LINES, type SuiteFailure, type SuiteOutcome, type SuiteStop, type WorkFailure } from "./suite.ts";
 import type { ProcessStatus } from "./liveOutput.ts";
 import type { ReviewThread } from "./reviewThread.ts";
@@ -258,6 +259,13 @@ export const QUESTION_RULES: readonly QuestionRule[] = [
     criterion: "an option states only what the program would do and not what choosing it changes for the reader (time, work that falls to someone later, a risk, money, or what the reader must do differently during a run); or, where the task names a concrete configuration (a window size, a file, a count, a version), an option describes its consequence in general terms or as a condition the reader must evaluate ('when X is taller than Y') instead of computing it for that configuration, without saying that it cannot be computed without building something; or an option states no time cost and does not say that its time cost cannot be measured.",
   },
   {
+    // Issue #98 (the developer's instruction of 6 Oct 2026, restated as a rule on 11 Oct 2026): a question whose answer
+    // requires visualizing something carries the picture, beside its prose.
+    id: "pictureForVisual",
+    rule: "Where the choice is about something the reader must see to judge (proportions, a layout, relative sizes, an arrangement before and after a change, any visual specification), give each option a picture of what it produces in its figure, beside its prose and never in place of it, so that the reader sees each outcome instead of constructing it from numbers. Where no picture can be made, state in the context what differs visually between the options and what that difference means to the reader. A question whose choices need no picture carries none: each figure is null.",
+    criterion: "a question about a visual specification (proportions, a layout, relative sizes, an arrangement before and after a change) has options that carry no picture, while its context does not state what differs visually between them and what that difference means to the reader; or a picture does not show what its option produces: it contradicts the option's description, or leaves out the difference the question turns on; or the prose leaves the reader to construct the picture himself.",
+  },
+  {
     // Issue #93 (5 Oct 2026): a conclusion states its warrant.
     id: "statedWarrant",
     rule: "Where a sentence draws a conclusion ('so', 'therefore', 'which means', 'hence', 'thus'), state its warrant: the general principle that carries the grounds to the claim, and with it any fact that principle rests on which the reader cannot be expected to know. A conclusion whose warrant does not fit in one sentence belongs to a decision taken elsewhere: state that decision as the situation instead of arguing it.",
@@ -336,6 +344,14 @@ export const QUESTION_FORMAT: readonly FormatClause[] = [
     criterion: "",
   },
   {
+    // Issue #98: an option's picture; figureOf of src/figure.ts checks its alt text, its size and its root element, and
+    // the page alone sanitizes its markup.
+    id: "figure",
+    kind: "data",
+    text: "Each option has figure: null, or a picture of what that option produces, with svg and alt. svg is the markup of one SVG image whose root element is svg, with a viewBox so that it scales to the width of its card, at most 64 KiB; it is drawn with shapes and text only: no script, foreignObject, image, style element or attribute, link, animation, or reference to anything outside the image. alt is a sentence, never blank, saying what the picture shows, which a screen reader reads and a viewer that cannot draw the picture shows.",
+    criterion: "",
+  },
+  {
     id: "refPiece",
     kind: "data",
     text: "A word or phrase that needs an explanation is a piece of its own whose ref is the id of that explanation and whose text is the words exactly as they stand in the sentence, never empty: \"execution calls\" and \"Execution call\" are two pieces that refer to one explanation.",
@@ -394,7 +410,11 @@ export const KEEP_LITERALS =
 export const KEEP_OPTIONS = "Keep every option, in its position: you may rephrase its label and description, but not add, remove or reorder options.";
 export const KEEP_SUPPLIED_REFS =
   "Keep every code piece that Interloq supplied with a ref (the name of a tool's setting that Interloq explains) exactly as supplied and in its place, with its ref and with an explanation of that id. No other piece carries that ref, in any part of the question: add no ref to any other code piece or code block, even one of the same text.";
-const BOUND_CLAUSES: Readonly<Record<string, string>> = { keepWording: KEEP_WORDING, keepLiterals: KEEP_LITERALS, keepOptions: KEEP_OPTIONS, keepSuppliedRefs: KEEP_SUPPLIED_REFS };
+/** Issue #98: a call that rephrases or divides a question keeps every option's picture. */
+/** An option's picture as the decision analysis reads it and a surface that cannot draw it shows it (issue #98). */
+export const pictureText = (alt: string): string => `Picture: ${alt}`;
+export const KEEP_FIGURES = "Keep every option's figure exactly as given, in its option's position, and null where it is null: add, change, remove or move none.";
+const BOUND_CLAUSES: Readonly<Record<string, string>> = { keepWording: KEEP_WORDING, keepLiterals: KEEP_LITERALS, keepOptions: KEEP_OPTIONS, keepSuppliedRefs: KEEP_SUPPLIED_REFS, keepFigures: KEEP_FIGURES };
 /** The text of a rule, a format clause or a bound clause, by its id. */
 const ruleTextOf = (id: string): string => QUESTION_RULES.find((r) => r.id === id)?.rule ?? QUESTION_FORMAT.find((c) => c.id === id)?.text ?? BOUND_CLAUSES[id] ?? "";
 
@@ -423,6 +443,10 @@ export const QUESTION_PROBLEM_KINDS = [
   "suppliedRefDropped",
   "entryCount",
   "agentInLabel",
+  "figureAltBlank",
+  "figureTooLarge",
+  "figureNotSvg",
+  "figureChanged",
 ] as const;
 export type QuestionProblemKind = (typeof QUESTION_PROBLEM_KINDS)[number];
 export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>> = {
@@ -446,9 +470,20 @@ export const QUESTION_PROBLEM_RULE: Readonly<Record<QuestionProblemKind, string>
   suppliedRefDropped: "keepSuppliedRefs",
   entryCount: "keepWording",
   agentInLabel: "determinateOptions",
+  figureAltBlank: "figure",
+  figureTooLarge: "figure",
+  figureNotSvg: "figure",
+  figureChanged: "keepFigures",
 };
-/** One problem of a question: its kind and what it concerns (an explanation, a field, the bare reference), or "". */
-export type QuestionProblem = Readonly<{ kind: QuestionProblemKind; subject: string }>;
+/** The kinds of problem that carry nothing beyond their subject: every kind but a picture too large. */
+export const SUBJECT_PROBLEM_KINDS = QUESTION_PROBLEM_KINDS.filter((k): k is Exclude<QuestionProblemKind, "figureTooLarge"> => k !== "figureTooLarge");
+/**
+ * One problem of a question: its kind and what it concerns (an explanation, a field, the bare reference, an option), or
+ * "". A picture too large also carries its size in UTF-8 bytes (issue #98).
+ */
+export type QuestionProblem =
+  | Readonly<{ kind: Exclude<QuestionProblemKind, "figureTooLarge">; subject: string }>
+  | Readonly<{ kind: "figureTooLarge"; subject: string; bytes: number }>;
 /** The problems of the questions of one reply, each question named by where it is ("questions_for_user 1", "Q3"). */
 export type QuestionProblems = readonly Readonly<{ where: string; problems: readonly QuestionProblem[] }>[];
 /** One problem in one sentence. */
@@ -495,6 +530,14 @@ export function questionProblemText(problem: QuestionProblem): string {
       return `the reply holds ${problem.subject} entries for this question; it must hold exactly one, for this question`;
     case "agentInLabel":
       return `the label ${subject} of an option names ${agentNamesText()}; write it as the outcome the reader gets, from that option's description`;
+    case "figureAltBlank":
+      return `the picture of ${problem.subject} has a blank alt text`;
+    case "figureTooLarge":
+      return `the picture of ${problem.subject} is ${problem.bytes} bytes of markup; at most ${FIGURE_SVG_LIMIT_BYTES} are allowed`;
+    case "figureNotSvg":
+      return `the picture of ${problem.subject} is not one SVG image whose root element is svg`;
+    case "figureChanged":
+      return `the picture of ${problem.subject} was added, changed, removed or moved`;
   }
 }
 const questionProblemLines = (questions: QuestionProblems): readonly string[] => questions.map((q) => `${q.where}: ${q.problems.map(questionProblemText).join("; ")}.`);
@@ -699,7 +742,7 @@ export function questionListPrompt(task: string): string {
   return `Do not write a plan yet. Read the task below and inspect the codebase without changing anything.
 ${TASK_INVESTIGATION}
 Return in 'questions' the questions the investigation reached that need the user, under the rule on whether to ask, below, which decides whether each one is asked.
-Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. history: what happened before that led to the question, apart from the context, as the rules below describe it, as blocks; an empty list when there is none. question: one decision per question, as pieces. reason: the evidence that this question needs the user, as blocks: which of the task's concerns it bears on and what the task's success depends on here; what you investigated that did not settle it, each source named (the passage of the task, the files of the codebase, the documentation, the convention the codebase follows, the practice you considered); and what would follow if the answer in default_answer were wrong, with the support that answer has, so that the cost of a wrong default can be compared with the cost of asking the user. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference; its support and the consequence of its being wrong go in the reason, where the review reads them.
+Each entry has these fields. id: ${AGREED_QUESTION_PREFIX}1, ${AGREED_QUESTION_PREFIX}2, and so on. context: the context paragraph that precedes the question, as the rules below describe it, as blocks. history: what happened before that led to the question, apart from the context, as the rules below describe it, as blocks; an empty list when there is none. question: one decision per question, as pieces. reason: the evidence that this question needs the user, as blocks: which of the task's concerns it bears on and what the task's success depends on here; what you investigated that did not settle it, each source named (the passage of the task, the files of the codebase, the documentation, the convention the codebase follows, the practice you considered); and what would follow if the answer in default_answer were wrong, with the support that answer has, so that the cost of a wrong default can be compared with the cost of asking the user. proposed_answers: two to four answers that are feasible in this codebase, each with a label and a description, as pieces, and its figure, a picture of what it produces or null, as the rules below describe it. default_answer: the words of the label of the proposed answer that you would assume if the user expressed no preference; its support and the consequence of its being wrong go in the reason, where the review reads them.
 ${SKIP_IF_FIELD}
 How the text of an entry is written:
 ${formatClauses(["blocks", "pieces", "code", "inline"])}
@@ -750,8 +793,8 @@ Task: ${task}`;
 }
 const agreedListSentence = (root: RunRoot): string => `${runDir(root)}/questions.json contains the task and the question list that Claude Code and Codex have agreed.`;
 const READ_ONLY_TERMS = "You may read the project to understand it; do not modify any file, and do not use the AskUserQuestion tool.";
-const TERMS_ENTRY_FIELDS = "its id; its explanations; and its context, history, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it.";
-const termsWritingRules = (): string => `${KEEP_WORDING}
+export const TERMS_ENTRY_FIELDS = "its id; its explanations; and its context, history, question, reason and proposed_answers as the list holds them, divided into pieces so that every piece whose words need an explanation refers to it, each proposed answer's figure kept exactly as the list holds it.";
+const termsWritingRules = (): string => `${KEEP_WORDING} ${KEEP_FIGURES}
 ${QUESTION_TEXT_FORMAT}
 ${questionWritingRules()}`;
 /**
@@ -785,11 +828,11 @@ ${WORDING_DISPUTES}
 ${TASK_DISPUTE_RULE}
 ${TWO_SENSES}
 Return in 'entries' the complete explanations after your amendments, including the entries that did not change, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
-${KEEP_WORDING}`;
+${KEEP_WORDING} ${KEEP_FIGURES}`;
 }
 export const termsApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
 Return in 'entries' the complete explanations of ${runDir(root)}/terms.json, amended where a decision requires it, each question divided into pieces with its wording unchanged; the program writes them. Do not modify any file.
-${KEEP_WORDING}`;
+${KEEP_WORDING} ${KEEP_FIGURES}`;
 
 export const questionApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file.
 Return in 'questions' the complete question list of ${runDir(root)}/questions.json, amended where a decision requires it. Do not modify any file.`;
@@ -1154,8 +1197,8 @@ export const RELAYED_EXAMPLE: RelayedParts = {
   ],
   explanations: [{ id: "t1", term: "<a term>", senses: ["<its explanation>"] }],
   options: [
-    { label: [{ text: "<the first option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }] },
-    { label: [{ text: "<the second option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }] },
+    { label: [{ text: "<the first option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }], figure: null },
+    { label: [{ text: "<the second option's label>", ref: "", code: false }], description: [{ text: "<its description>", ref: "", code: false }], figure: null },
   ],
 };
 /**
@@ -1165,7 +1208,7 @@ export const RELAYED_EXAMPLE: RelayedParts = {
  */
 export const RELAYED_SHAPE = `Write the text of each question you ask with the AskUserQuestion tool as one JSON object, and nothing else, with the fields context, history, question, explanations and options:
 ${QUESTION_TEXT_FORMAT}
-- options: the same options as the tool's options, in the same order, each with its label and description as pieces whose words, joined, are exactly the tool option's label and description.
+- options: the same options as the tool's options, in the same order, each with its label and description as pieces whose words, joined, are exactly the tool option's label and description, and its figure, a picture of what it produces or null.
 For example:
 ${relayedQuestionText(RELAYED_EXAMPLE)}`;
 /**
@@ -3716,7 +3759,7 @@ export function contextPrompt(task: string, request: ContextRequest): string {
   return `Interloq, the program that runs this task, is about to ask the user the question below. Write the context paragraph that the user reads before it, and return the whole question as pieces, with the explanations of the words a reader may not know. You may read the project to understand it; do not modify any file, do not use the AskUserQuestion tool, and do not answer the question.
 ${questionWritingRules()}
 ${QUESTION_TEXT_FORMAT}
-Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS}${isDisputedPause(request.origin) ? ` ${outcomeLabelsRule()}` : ""} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
+Return in context your paragraph, which places the reader before he is asked. Return in history what happened before that led to the question, apart from the context, as the rules describe it: keep what the history given below says, rephrased if you wish, and add only what led to the question that it lacks; the history may be empty, and is an empty list only where the history given is empty and nothing led to the question. Return in question, options and details the question, its options and what the user is shown with it: you may rephrase their prose and divide it into pieces that refer to explanations, but keep what they say. ${KEEP_OPTIONS} ${KEEP_FIGURES}${isDisputedPause(request.origin) ? ` ${outcomeLabelsRule()}` : ""} ${KEEP_LITERALS}${suppliesRefs(request) ? ` ${KEEP_SUPPLIED_REFS}` : ""} Return in explanations every explanation that a piece of your reply refers to.
 
 The task of the run: ${task}
 

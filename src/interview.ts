@@ -1,5 +1,6 @@
 // The question phase: question list, its review, the interview (src/conversation.ts), and the review of its result.
 
+import { saveOptionFigures } from "./offer.ts";
 import { Effect } from "effect";
 import type { RunError } from "./errors.ts";
 import { clarification, type TermsOffer } from "./conversation.ts";
@@ -26,7 +27,8 @@ const explainTerms = (task: string, agreed: QuestionsFile["questions"], reviewed
       yield* ui.say(prompts.termsLine);
       const written = yield* planningCall(prompts.termsPrompt(store.root, task), S.TermsWrite, "planning", "records", termsValidation<S.TermsWrite>(agreed));
       yield* saveTerms(written.output.entries);
-      yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${yield* Effect.fromResult(renderTerms(written.output.entries))}\n`);
+      yield* saveOptionFigures(written.output.entries.flatMap((e) => e.proposed_answers), "the terms");
+      yield* store.converse(`## Explanations of terms proposed by Claude Code\n\n${yield* Effect.fromResult(renderTerms(written.output.entries, "link"))}\n`);
       // Issue #86: reviewed terms are shown by their loop before its first review; unchecked ones when written.
       yield* reviewed ? reviewLoop(termsSubject(agreed)) : showDocument(termsSubject(agreed));
     }).pipe(Effect.provideService(Planner, planner));
@@ -56,12 +58,14 @@ export const prepareQuestionList = (task: string, terms: TermsMode): Effect.Effe
     yield* ui.say(prompts.questionListLine);
     const generated = yield* planningCall(prompts.questionListPrompt(task), S.QuestionList, "planning", "records", questionListValidation());
     yield* writeQuestions(task, generated.output);
-    yield* store.converse(`## Question list proposed by Claude Code\n\n${renderQuestions(generated.output)}\n`);
+    yield* saveOptionFigures(generated.output.questions.flatMap((q) => q.proposed_answers), "the question list");
+    yield* store.converse(`## Question list proposed by Claude Code\n\n${renderQuestions(generated.output, "link")}\n`);
 
     yield* reviewLoop(questionSubject(task));
 
     const agreed = (yield* store.loadQuestions()).questions;
-    yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: agreed })}\n`);
+    yield* saveOptionFigures(agreed.flatMap((q) => q.proposed_answers), "the agreed question list");
+    yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: agreed }, "link")}\n`);
     // Issue #205: the agreed list is known, before any terms, so the rail shows "You Decide" only where it is not empty.
     yield* ui.notify({ _tag: "QuestionsAgreed", count: agreed.length });
     // S17 (issue #36, Q8): the explanations of the terms, written against the converged list, reviewed in their own loop.

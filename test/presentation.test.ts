@@ -240,7 +240,7 @@ test("S5: a plan writer's question with a piece that refers to an explanation re
     context: [{ kind: "paragraph" as const, pieces: [...plain("The service keeps its "), term("Orders", "o"), ...plain(" in a database.")] }],
     question: [...plain("Where should the "), term("orders", "o"), ...plain(" be kept?")],
     explanations: [{ id: "o", term: "order", senses: ["What a customer buys."] }],
-    options: [{ label: plain("SQLite"), description: [...plain("one file per "), term("order", "o")] }, { label: plain("PostgreSQL"), description: plain("a server") }],
+    options: [{ label: plain("SQLite"), description: [...plain("one file per "), term("order", "o")], figure: null }, { label: plain("PostgreSQL"), description: plain("a server"), figure: null }],
   };
   const { layer, probe } = testLayer(tempRepo(), askedInPlanReview({
     answers: ["1"],
@@ -268,7 +268,7 @@ test("S37: a plain piece's backtick and trailing backslash reach conversation.md
     context: [{ kind: "paragraph" as const, pieces: plain("Claude Code, the planning agent, needs a command.") }],
     question: [...plain("Should the step run `"), code("ls"), ...plain(" or C:\\"), code("dir"), ...plain(" first?")],
     explanations: [],
-    options: [{ label: plain("The first"), description: plain("list the files") }, { label: plain("The second"), description: plain("list the directory") }],
+    options: [{ label: plain("The first"), description: plain("list the files"), figure: null }, { label: plain("The second"), description: plain("list the directory"), figure: null }],
   };
   const { layer, probe } = testLayer(tempRepo(), askedInPlanReview({
     answers: ["1"],

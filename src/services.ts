@@ -6,6 +6,7 @@ import type { Brand, Option, Schema, Scope } from "effect";
 import type { AgentUnreachable, CodexCallFailed, TrackerAuthRefused, TrackerBodyInvalid, TrackerItemNotFound, TrackerRequestRefused, TrackerStateAmbiguous, TrackerUnreachable, FileSystemError, GitError, RunError, StateFileInvalid, TransportFault, UsageLimited, UserStopped, NoAnswer } from "./errors.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { RunRoot, SubjectId } from "./artifacts.ts";
+import type { Figure } from "./figure.ts";
 import type { RunMode } from "./runMode.ts";
 import type { Baseline, CheckpointPoint, RoundRecord, VerdictRecord } from "./records.ts";
 import type { EarlierPlan } from "./earlierPlan.ts";
@@ -310,6 +311,11 @@ export interface StoreShape {
   writeRequirements(text: string): Effect.Effect<void, StoreError>;
   /** Issue #162: the whole output of suite run n, in suite-<n>.log. */
   saveSuiteLog(n: number, text: string): Effect.Effect<void, StoreError>;
+  /**
+   * Issue #98: each picture's markup, byte for byte, in figures/<sha256 of its markup>.svg, before the record that links
+   * it; journaled like every record. A picture written again changes no file, since its name is its content's hash.
+   */
+  saveFigures(figures: readonly Figure[]): Effect.Effect<void, StoreError>;
   /** Writes plan.json (issue #6, F1), then plan.md rendered from it (F2). */
   savePlan(plan: RecordedPlan): Effect.Effect<void, StoreError>;
   /** The plan of plan.json; none before the first plan is written. */

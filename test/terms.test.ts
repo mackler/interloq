@@ -35,7 +35,7 @@ const dividedEntry = (explanation = zod.senses[0]): S.TermsEntry => ({
   history: [],
   question: divide(entry.question),
   reason: entry.reason,
-  proposed_answers: entry.proposed_answers.map((a) => ({ label: a.label, description: divide(a.description) })),
+  proposed_answers: entry.proposed_answers.map((a) => ({ label: a.label, description: divide(a.description), figure: a.figure })),
 });
 const terms = (explanation = zod.senses[0]) => ({ entries: [dividedEntry(explanation)] });
 /** The first interview's closing reply, which proposes the summary (issue #184). */

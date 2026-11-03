@@ -38,7 +38,7 @@ const asked = (prompt: number, text: string): RunEvent => ({ _tag: "Asked", prom
 /** A question presented to the user (S5), with its options numbered as the run numbers them. */
 const presentedEvent = (question: string, options: readonly { label: string; description: string }[], origin: PresentedQuestion["origin"] = { kind: "relayed" }): UiEvent => ({
   _tag: "QuestionPresented",
-  question: { number: 1, origin, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), answer: { token: String(i + 1) } })), attached: null, decision: null },
+  question: { number: 1, origin, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces(question), options: options.map((o, i) => ({ label: plainPieces(o.label), description: plainPieces(o.description), figure: null, answer: { token: String(i + 1) } })), attached: null, decision: null },
 });
 const presentedOf = (event: UiEvent): PresentedQuestion => (event._tag === "QuestionPresented" ? event.question : (undefined as never));
 /** The time of publication of an event: by default one second per seq from 14:00:00 UTC; `times` gives it in seconds. */
@@ -178,7 +178,7 @@ describe("ordering and the panels", () => {
   });
 
   test("an answer that is a choice shows the choice's label", () => {
-    const permission: UiEvent = { _tag: "QuestionPresented", question: { ...presentedOf(presentedEvent("Allow?", [])), options: [{ label: plainPieces("Allow"), description: [], answer: { token: "y" } }, { label: plainPieces("Deny"), description: [], answer: { token: "n" } }] } };
+    const permission: UiEvent = { _tag: "QuestionPresented", question: { ...presentedOf(presentedEvent("Allow?", [])), options: [{ label: plainPieces("Allow"), description: [], figure: null, answer: { token: "y" } }, { label: plainPieces("Deny"), description: [], figure: null, answer: { token: "n" } }] } };
     const s = fold(live([started, notified(permission), asked(1, prompts.permissionPrompt), { _tag: "Answered", prompt: 1, text: "y" }]));
     expect(lastAnswerOf(s)?.answer).toBe("Allow");
   });
@@ -946,7 +946,7 @@ describe("a replay of a question phase", () => {
           self_corrections: [],
           reviewer_feedback: "",
           questions_for_user: [],
-          questions: [{ id: "Q1", context: plainBlocks("c"), history: [], question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p") }, { label: plainPieces("SQLite"), description: plainPieces("s") }], default_answer: "PostgreSQL", skip_if: null }],
+          questions: [{ id: "Q1", context: plainBlocks("c"), history: [], question: plainPieces("Which database?"), reason: plainBlocks("r"), proposed_answers: [{ label: plainPieces("PostgreSQL"), description: plainPieces("p"), figure: null }, { label: plainPieces("SQLite"), description: plainPieces("s"), figure: null }], default_answer: "PostgreSQL", skip_if: null }],
         },
         resultText: "",
       }),

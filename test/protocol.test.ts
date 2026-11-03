@@ -52,7 +52,7 @@ const limitBasis = fc.oneof(
 );
 const sense = text.filter((t) => t.trim() !== "").map((t) => t as Sense);
 const shownExplanation = fc.record({ id: text, term: text, senses: fc.tuple(sense, fc.array(sense, { maxLength: 1 })).map(([first, rest]): Senses => [first, ...rest]) });
-const pieceOption = fc.record({ label: pieces, description: pieces });
+const pieceOption = fc.record({ label: pieces, description: pieces, figure: fc.constant(null) });
 const userQuestion = fc.record({ context: fc.array(block, { maxLength: 2 }), history: fc.array(block, { maxLength: 2 }), question: pieces, explanations: fc.array(explanation, { maxLength: 2 }), options: fc.array(pieceOption, { maxLength: 2 }) });
 const disposition = fc.record({ id: text, action: fc.constantFrom("accepted" as const, "rejected" as const, "partially_accepted" as const, "no_change_needed" as const, "clarification_requested" as const), rationale: text, duplicate_of: text, reverses: text });
 const plannerResponse = fc.record({
@@ -97,7 +97,7 @@ const presentedQuestion = fc.record({
   // Issue #112: a presented explanation has one or more senses, none blank.
   explanations: fc.array(shownExplanation, { maxLength: 2 }),
   question: pieces,
-  options: fc.array(fc.record({ label: pieces, description: pieces, answer: fc.oneof(fc.record({ token: text }), fc.constant({ numeric: true as const })) }), { maxLength: 3 }),
+  options: fc.array(fc.record({ label: pieces, description: pieces, figure: fc.constant(null), answer: fc.oneof(fc.record({ token: text }), fc.constant({ numeric: true as const })) }), { maxLength: 3 }),
   attached: fc.option(fc.record({ kind: fc.constantFrom(...ATTACHED_KINDS), blocks: fc.tuple(shownBlock).chain((first) => fc.array(shownBlock, { maxLength: 1 }).map((rest) => [...first, ...rest] as const)) }), { nil: null }),
   decision: fc.option(nat, { nil: null }),
 });
@@ -480,6 +480,20 @@ test("a presented question's attached material decodes with each kind and as nul
   assert.deepEqual(Result.getOrThrow(decode(question(null))), question(null));
   assert.ok(Result.isFailure(decode(question({ kind: "reason", blocks: [] }))));
   assert.ok(Result.isFailure(decode({ ...question(null), attached: undefined, details: [] })));
+});
+
+// Issue #98: an option's picture crosses the wire; one the program would refuse does not decode in the page.
+test("a presented question's option figure round-trips through a frame; a figure whose root is not svg does not decode", () => {
+  const option = (figure: unknown) => ({ label: [{ text: "A", ref: "", code: false }], description: [], figure, answer: { token: "1" } });
+  const question = (figure: unknown) => ({ number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: [], options: [option(figure), option(null)], attached: null, decision: null });
+  const frame = (figure: unknown) => JSON.stringify({ type: "event", run: 1, seq: 1, time: "2026-11-03T00:00:00.000Z", event: { _tag: "Notified", event: { _tag: "QuestionPresented", question: question(figure) } } });
+  const decode = Schema.decodeUnknownResult(PresentedQuestionSchema);
+  const figure = { svg: '<svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>', alt: "A square." };
+  assert.deepEqual(Result.getOrThrow(decode(question(figure))), question(figure));
+  assert.ok(Result.isSuccess(decodeServer(frame(figure))));
+  assert.ok(Result.isFailure(decode(question({ svg: "<div></div>", alt: "x" }))));
+  assert.ok(Result.isFailure(decodeServer(frame({ svg: "<div></div>", alt: "x" }))));
+  assert.ok(Result.isFailure(decode(question({ svg: figure.svg, alt: " " }))));
 });
 
 // Issue #138: the confirmation of the summary is gone, so the page refuses a question of its origin or its material.

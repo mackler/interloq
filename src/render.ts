@@ -2,13 +2,14 @@
 // and the headings of the subjects (finding 27: the Store writes; it does not compose text).
 
 import type { SubjectId } from "./artifacts.ts";
+import { figureFileOf } from "./figure.ts";
 import { attachedHeading, CONTEXT_BY_PROGRAM, decisionAbandonedLine, originLine, QUESTION_HISTORY_HEADING, questionTitle, TERMS_HEADING } from "./prompts.ts";
 import { type Block, blocksMarkdown, type ShownBlock, type Piece, type PieceOption, LINE_BREAK, piecesMarkdown, piecesText, plainMarkdown } from "./pieces.ts";
 import { type Attached, numberedSenses, type PauseFacts, pauseOriginOf, type PresentedOption, taskDisputeOf, type PresentedQuestion, type QuestionOrigin, type ShownEntry, type ShownExplanation, shownExplanations } from "./question.ts";
 import { Result } from "effect";
 import type { QuestionInvalid } from "./errors.ts";
 import * as words from "./prompts.ts";
-import type { Disposition, Issue, TermsEntry } from "./schema.ts";
+import type { Disposition, FigureReply, Issue, TermsEntry } from "./schema.ts";
 import { type PlannerResponse, type Review, WORK_EFFECT_FIELD } from "./schema.ts";
 import { isEffectDisposition, isEffectIssue } from "./workEffect.ts";
 import type { DecisionEvent } from "./reviewState.ts";
@@ -70,12 +71,27 @@ const historyInItem = (history: readonly ShownBlock[], item: "continues" | "ends
   return lines === null ? "" : `\n\n${lines}${item === "continues" ? "\n" : ""}`;
 };
 
-export function renderQuestions(list: RenderableQuestions): string {
+/**
+ * Issue #98: how a surface shows an option's picture. conversation.md links the picture's file in the run's records
+ * directory (decision Q2), which a Markdown viewer draws as an image that runs no script; the dashboard's document and a
+ * tracker comment show its alt text, since neither can reach the run's files.
+ */
+export type FigureRendering = "link" | "alt";
+/** An alt text on one line: every line break of it a space. */
+const oneLineAlt = (alt: string): string => alt.replace(/\r\n|\r|\n/gu, " ");
+/** An alt text on one line, with nothing that closes or escapes the image link's brackets. */
+const linkAlt = (alt: string): string => oneLineAlt(alt.replace(/[\\[\]]/gu, (c) => `\\${c}`));
+/** The picture as a Markdown image link to its file, figures/<sha256 of its markup>.svg (decision G-R1-1). */
+export const figureMarkdown = (figure: FigureReply): string => `![${linkAlt(figure.alt)}](${figureFileOf(figure)})`;
+/** The picture as the surface shows it: its link, or "Picture: <alt>" as plain text. */
+export const figureLine = (figure: FigureReply, rendering: FigureRendering): string =>
+  rendering === "link" ? figureMarkdown(figure) : plainMarkdown([words.pictureText(oneLineAlt(figure.alt))], { lineStart: false, lineEnd: true, after: "" });
+export function renderQuestions(list: RenderableQuestions, figures: FigureRendering): string {
   if (list.questions.length === 0) return "The list is empty.\n";
   return (
     list.questions
       .map((q) => {
-        const answers = q.proposed_answers.map((a) => `  - ${piecesMarkdown(a.label)}: ${piecesMarkdown(a.description)}${piecesText(a.label) === q.default_answer ? " (default)" : ""}`).join("\n");
+        const answers = q.proposed_answers.map((a) => `  - ${piecesMarkdown(a.label)}: ${piecesMarkdown(a.description)}${piecesText(a.label) === q.default_answer ? " (default)" : ""}${a.figure === null ? "" : `\n    ${figureLine(a.figure, figures)}`}`).join("\n");
         const condition = q.skip_if === null ? "" : `\n  ${words.skipIfLine(q.skip_if)}`;
         return `- **[${q.id}]** ${piecesMarkdown(q.question)}${historyInItem(q.history, "continues")}\n  Reason: ${blocksMarkdown(q.reason).replace(/\n/g, "\n  ")}\n${answers}${condition}`;
       })
@@ -88,14 +104,18 @@ export function renderQuestions(list: RenderableQuestions): string {
  * nested under it (termItem; issue #112, W1-R1-2 of work review 1). It is written after termsValidation has passed, so a
  * failure of the senses is the program's own error, typed.
  */
-export const renderTerms = (entries: readonly TermsEntry[]): Result.Result<string, QuestionInvalid> =>
+export const renderTerms = (entries: readonly TermsEntry[], figures: FigureRendering): Result.Result<string, QuestionInvalid> =>
   Result.map(
     Result.all(entries.map((e) => shownExplanations(e.explanations, e.id))),
     (shown) =>
       shown
-        .map((terms, i) => `${terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n")}${historyInItem(entries[i].history, "ends")}`)
+        .map((terms, i) => `${terms.length === 0 ? `- **[${entries[i].id}]** no term` : [`- **[${entries[i].id}]**`, ...terms.map((t) => termItem(t, "  "))].join("\n")}${answerFigures(entries[i], figures)}${historyInItem(entries[i].history, "ends")}`)
         .join("\n") + "\n",
   );
+
+/** Issue #98: one item under a terms entry per proposed answer with a picture, after its terms; nothing where none has one. */
+const answerFigures = (entry: TermsEntry, figures: FigureRendering): string =>
+  entry.proposed_answers.flatMap((a) => (a.figure === null ? [] : [`\n  - ${piecesMarkdown(a.label)}: ${figureLine(a.figure, figures)}`])).join("");
 
 /** The lines said for an interview turn, in order; the page shows the turn once and absorbs these lines (plan 4.2). */
 export const interviewSays = (turn: TurnText): readonly string[] =>
@@ -188,7 +208,9 @@ export const renderQuestionRecord = (q: PresentedQuestion): string => {
   // S11 (issue #59): each option's label in bold on its own line, its description below it.
   const option = (o: PresentedOption): string => {
     const description = piecesMarkdown(o.description);
-    return `- ${"token" in o.answer ? `${o.answer.token}. ` : ""}**${piecesMarkdown(o.label)}**${description.trim() === "" ? "" : `  \n  ${description.replace(/\n/g, "\n  ")}`}`;
+    // Issue #98: its picture linked under it; the record is written only to conversation.md.
+    const figure = o.figure === null ? "" : `  \n  ${figureMarkdown(o.figure)}`;
+    return `- ${"token" in o.answer ? `${o.answer.token}. ` : ""}**${piecesMarkdown(o.label)}**${description.trim() === "" ? "" : `  \n  ${description.replace(/\n/g, "\n  ")}`}${figure}`;
   };
   const options = q.options.length === 0 ? "" : `${q.options.map(option).join("\n")}\n\n`;
   const contextText = blocksMarkdown(q.context.blocks);

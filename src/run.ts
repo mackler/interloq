@@ -23,7 +23,7 @@ import { recordPath, type RunRoot } from "./artifacts.ts";
 import type { Baseline } from "./records.ts";
 import { plainPieces } from "./pieces.ts";
 import { applyDecisions, askPlannerQuestion, bothValidations, planningCall, reviewLoop, userQuestionsValidation } from "./review.ts";
-import { askOffering, byLine, programContext, type QuestionDraft, suiteStoppedOptions } from "./offer.ts";
+import { askOffering, byLine, programContext, type QuestionDraft, saveOptionFigures, suiteStoppedOptions } from "./offer.ts";
 import { parseTransportAnswer } from "./input.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import * as S from "./schema.ts";
@@ -61,7 +61,8 @@ const preparedPhase = (task: string, prepared: UsedPreparation): Effect.Effect<v
     }
     yield* store.saveQuestions(task, prepared.questions);
     if (prepared.questions.length > 0) yield* store.saveTerms(prepared.terms);
-    yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: prepared.questions })}\n`);
+    yield* saveOptionFigures(prepared.questions.flatMap((q) => q.proposed_answers), "the prepared question list");
+    yield* store.converse(`## Agreed question list\n\n${renderQuestions({ questions: prepared.questions }, "link")}\n`);
     // Issue #205: the list was searched in advance, and is known now.
     yield* ui.notify({ _tag: "QuestionsAgreed", count: prepared.questions.length });
     yield* askAgreed(task, prepared.questions, { kind: "never" });

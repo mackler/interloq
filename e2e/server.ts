@@ -63,6 +63,13 @@ const DECIDE_ANALYSIS = {
   ],
   recommendation: { option: "", reason: "" },
 };
+/** Issue #98: a picture of a stacked division of a 400 × 300 rectangle whose shared id draws a square `size` wide. */
+const divisionFigure = (top: number, size: number, extra = "", script = "") => ({
+  svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"${extra}>${script}<defs><rect id="shape" width="${size}" height="${size}" fill="#4a6"/></defs><rect width="400" height="${top}" fill="#ccd"/><rect y="${top}" width="400" height="${300 - top}" fill="#eef"/><use href="#shape"/><text x="200" y="290" text-anchor="middle" font-size="20">${top} px above</text></svg>`,
+  alt: `The question takes ${top} of 300 pixels; a square ${size} pixels wide marks the picture.`,
+});
+const FIGURE_NARROW = divisionFigure(60, 40, ' onload="document.title=\'figure ran\'"', "<script>document.title='figure ran'</script>");
+const FIGURE_WIDE = divisionFigure(240, 320);
 /** A recommendation of twelve paragraphs, the last one marked so that a test can find it. */
 const LONG_RECOMMENDATION = [
   ...Array.from({ length: 11 }, (_, i) => `Paragraph ${i + 1}: the advantage that developers set up the service sooner outweighs, for every developer and from the first day, the disadvantage that operators maintain one more server, because the service has one operator and many developers.`),
@@ -180,6 +187,18 @@ export const SCENARIOS: Record<string, TestOptions> = {
   decide: askedInPlanReview({
     steps: [
       { output: { questions_for_user: [questionOf({ context: LONG_DECISION_CONTEXT, question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server" }, { label: "PostgreSQL", description: "a database server" }] })] }, plan: "1. [ ] the step\n" },
+      { output: { ...DECIDE_ANALYSIS, recommendation: { option: "SQLite", reason: "Developers set up the service sooner." } } },
+      { output: noQuestions },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }, { issues: [] }],
+    execs: [finished],
+  }),
+  // Issue #98: a plan writer's question whose two options each carry a picture of a different division of a rectangle.
+  // Both pictures define id="shape" and draw it with use, at 40 and at 320 pixels wide, so a picture that resolved the
+  // other's definition would show the wrong size; the first also carries a script and an onload, which the page drops.
+  figureChoices: askedInPlanReview({
+    steps: [
+      { output: { questions_for_user: [questionOf({ context: "The decision page divides its height between the question and the columns of arguments.", question: "Which database should the service use?", terms: [], options: [{ label: "SQLite", description: "one file, no server", figure: FIGURE_NARROW }, { label: "PostgreSQL", description: "a database server", figure: FIGURE_WIDE }] })] }, plan: "1. [ ] the step\n" },
       { output: { ...DECIDE_ANALYSIS, recommendation: { option: "SQLite", reason: "Developers set up the service sooner." } } },
       { output: noQuestions },
     ],

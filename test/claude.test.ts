@@ -547,7 +547,7 @@ test("a relayed question is notified with its options before the user is asked",
   const q = presented[0]._tag === "QuestionPresented" ? presented[0].question : null;
   assert.equal(q === null ? null : piecesText(q.question), "A or B?");
   assert.deepEqual(q?.origin, { kind: "relayed" });
-  assert.deepEqual(q?.options, [{ label: plain("A"), description: plain("a"), answer: { token: "1" } }, { label: plain("B"), description: plain("b"), answer: { token: "2" } }]);
+  assert.deepEqual(q?.options, [{ label: plain("A"), description: plain("a"), figure: null, answer: { token: "1" } }, { label: plain("B"), description: plain("b"), figure: null, answer: { token: "2" } }]);
 });
 
 // S8: a relayed question reaches the user as its QuestionPresented event, so the adapter says none of its lines.
@@ -956,7 +956,7 @@ test("a relayed question in the shape is presented from its own parts, with no c
     history: para("You kept the library out of package.json on 9 Oct 2026."),
     question: [...plain("Should "), term("zod", "z"), ...plain(" be declared as a dependency?")],
     explanations: [zod],
-    options: [{ label: plain("Declare it"), description: [...plain("add it to package.json")] }, { label: plain("Leave it"), description: plain("keep it the SDK's") }],
+    options: [{ label: plain("Declare it"), description: [...plain("add it to package.json")], figure: null }, { label: plain("Leave it"), description: plain("keep it the SDK's"), figure: null }],
   });
   const questions = [{ question: text, options }];
   const script: Script = (call) => (async function* () {

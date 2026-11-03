@@ -28,12 +28,13 @@ const selfCorrection: legacy.SelfCorrection = { id: "A", new_action: "plan_error
 type Piece = { text: string; ref: string; code: boolean };
 type Explanation = { id: string; term: string; senses: string[] };
 type Block = { kind: "paragraph"; pieces: Piece[] } | { kind: "list"; items: { level: number; pieces: Piece[] }[] } | { kind: "code"; text: string };
-type PieceOption = { label: Piece[]; description: Piece[] };
+/** Issue #98: an option carries its picture, null where it has none. */
+type PieceOption = { label: Piece[]; description: Piece[]; figure: { svg: string; alt: string } | null };
 type UserQuestion = { context: Block[]; history: Block[]; question: Piece[]; explanations: Explanation[]; options: PieceOption[] };
 type WithQuestions<T> = Omit<T, "questions_for_user"> & { questions_for_user: UserQuestion[] };
 const plain = (text: string): Piece[] => [{ text, ref: "", code: false }];
 const para = (text: string): Block[] => [{ kind: "paragraph", pieces: plain(text) }];
-const option = (label: string, description: string): PieceOption => ({ label: plain(label), description: plain(description) });
+const option = (label: string, description: string): PieceOption => ({ label: plain(label), description: plain(description), figure: null });
 const userQuestion: UserQuestion = {
   history: para("h"),
   context: [{ kind: "paragraph", pieces: plain("c") }, { kind: "list", items: [{ level: 0, pieces: plain("i") }, { level: 1, pieces: [{ text: "x", ref: "", code: true }] }] }, { kind: "code", text: "ls\n" }],

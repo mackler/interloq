@@ -50,7 +50,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   InterviewOpened: [{ _tag: "InterviewOpened", heading, stage: "clarification", total: 3 }, headed(" opened, 3 questions")],
   ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done" }, /Claude Code said: done/],
   QuestionPresented: [
-    { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], answer: { token: "1" } }, { label: plain("B"), description: [], answer: { token: "2" } }], attached: null, decision: null } },
+    { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], figure: null, answer: { token: "1" } }, { label: plain("B"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null } },
     /question 3: Which\? \(2 options\)/,
   ],
   QuestionExplained: [

@@ -76,7 +76,7 @@ export function questionSubject(task: string): Subject<QuestionListResponse, Que
     disputesSettledBy: "agents",
     reviewSchema: S.Review,
     prepare: null,
-    document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file) })),
+    document: Effect.map(Effect.flatMap(Store, (store) => store.loadQuestions()), (file): ShownDocument => ({ _tag: "Markdown", text: renderQuestions(file, "alt") })),
   };
 }
 
@@ -166,7 +166,7 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
     prepare: null,
     document: Effect.gen(function* () {
       const entries = yield* (yield* Store).loadTerms();
-      return { _tag: "Markdown", text: yield* Effect.fromResult(renderTerms(entries)) } satisfies ShownDocument;
+      return { _tag: "Markdown", text: yield* Effect.fromResult(renderTerms(entries, "alt")) } satisfies ShownDocument;
     }),
   };
 }

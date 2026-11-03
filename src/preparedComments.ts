@@ -11,7 +11,7 @@ import { blocksMarkdown } from "./pieces.ts";
 import { PREPARED_QUESTION_NOTE, PREPARED_TERMS_HEADING, preparationCauseText, preparationPreparedText, preparationSetAsideText, preparedQuestionHeading } from "./prompts.ts";
 import { withoutRefinement } from "./refinement.ts";
 import { renderQuestions, renderTerms } from "./render.ts";
-import { StoredQuestion, TermsEntry } from "./schema.ts";
+import { StoredQuestion, StoredTermsEntry, type TermsEntry } from "./schema.ts";
 import type { PreparationMark } from "./preparationSwitch.ts";
 import type { CommentId, ItemComment, TrackerItem } from "./tracker.ts";
 
@@ -27,7 +27,7 @@ export const digestOf = (item: Pick<TrackerItem, "title" | "body">): string => {
 
 /** One prepared question: its entry as questions.json records it and its explanations as terms.json does, or null where terms.json had none for it. */
 export type PreparedQuestion = Readonly<{ entry: StoredQuestion; terms: TermsEntry | null }>;
-const PreparedQuestionSchema = Schema.Struct({ entry: StoredQuestion, terms: Schema.NullOr(TermsEntry) });
+const PreparedQuestionSchema = Schema.Struct({ entry: StoredQuestion, terms: Schema.NullOr(StoredTermsEntry) });
 
 /**
  * The phase a preparation paused in (work review 4 of issue #216): Bring Up to Date's check or the question list's review.
@@ -79,11 +79,11 @@ const dataOf = <S extends Schema.Top>(schema: S & Schema.Decoder<S["Type"]>, bod
 
 /** Prepared question n of count: its heading, its context, the question as conversation.md renders it, its terms, the note, the data and the marker. */
 export const questionCommentText = (key: CommentKey, n: number, count: number, pq: PreparedQuestion): Result.Result<string, QuestionInvalid> =>
-  Result.map(pq.terms === null ? Result.succeed(null) : renderTerms([pq.terms]), (terms) =>
+  Result.map(pq.terms === null ? Result.succeed(null) : renderTerms([pq.terms], "alt"), (terms) =>
     [
       preparedQuestionHeading(n, count),
       blocksMarkdown(pq.entry.context),
-      renderQuestions({ questions: [pq.entry] }).trimEnd(),
+      renderQuestions({ questions: [pq.entry] }, "alt").trimEnd(),
       ...(terms === null ? [] : [`${PREPARED_TERMS_HEADING}\n\n${terms.trimEnd()}`]),
       PREPARED_QUESTION_NOTE,
       dataLine(pq),

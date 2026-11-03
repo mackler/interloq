@@ -1,6 +1,7 @@
 // The messages between the web page and the server (plan step 3.1), as Effect schemas so that both sides decode
 // the same way. Pure: no Node import (the browser imports this module).
 
+import { FigureSchema } from "./figure.ts";
 import { Effect, Option, Result, Schema } from "effect";
 import { type PreparationMark, PreparationMarkSchema, type PreparationView, PreparationViewSchema } from "./preparationSwitch.ts";
 import * as S from "./schema.ts";
@@ -232,7 +233,7 @@ export const PresentedQuestionSchema = Schema.Struct({
   history: Schema.Array(ShownBlockSchema),
   explanations: Schema.Array(ShownExplanationSchema),
   question: Schema.Array(S.Piece),
-  options: Schema.Array(Schema.Struct({ label: Schema.Array(S.Piece), description: Schema.Array(S.Piece), answer: Schema.Union([Schema.Struct({ token: Str }), Schema.Struct({ numeric: Schema.Literal(true) })]) })),
+  options: Schema.Array(Schema.Struct({ label: Schema.Array(S.Piece), description: Schema.Array(S.Piece), figure: Schema.NullOr(FigureSchema), answer: Schema.Union([Schema.Struct({ token: Str }), Schema.Struct({ numeric: Schema.Literal(true) })]) })),
   attached: Schema.NullOr(Schema.Struct({ kind: Schema.Literals(ATTACHED_KINDS), blocks: Schema.NonEmptyArray(ShownBlockSchema) })),
   decision: Schema.NullOr(Int),
 });

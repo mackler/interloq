@@ -4,6 +4,7 @@
   // (a permission's input is code whose whitespace the reader compares, so it is not hidden behind a heading), the
   // question and its options, each label on its own line (S14); the words that refer to an explanation still carry it
   // [recognition rather than recall].
+  import OptionFigure from "./OptionFigure.svelte";
   import QuestionText from "./QuestionText.svelte";
   import { attachedHeading, CONTEXT_BY_PROGRAM, originLine, questionTitle } from "../../../src/prompts.ts";
   import { piecesText } from "../../../src/pieces.ts";
@@ -25,6 +26,7 @@
         <li>
           <span class="option-label">{#if "token" in option.answer}{option.answer.token}. {/if}<strong><QuestionText class="markdown" pieces={option.label} explanations={q.explanations} /></strong></span>
           {#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={q.explanations} /></span>{/if}
+          {#if option.figure !== null}<OptionFigure figure={option.figure} />{/if}
         </li>
       {/each}
     </ul>

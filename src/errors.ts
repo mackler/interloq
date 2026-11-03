@@ -10,7 +10,7 @@ import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts"
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { TrackerError } from "./services.ts";
-import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, QUESTION_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText } from "./prompts.ts";
+import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -439,7 +439,7 @@ const RunErrorData = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("PlanInvalid"), duplicateIds: Strings, emptyIds: Schema.Number, removedDone: Strings, changedDone: Strings }),
   Schema.Struct({
     _tag: Schema.Literal("QuestionInvalid"),
-    questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(QUESTION_PROBLEM_KINDS), subject: Schema.String })) })),
+    questions: Schema.Array(Schema.Struct({ where: Schema.String, problems: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literals(SUBJECT_PROBLEM_KINDS), subject: Schema.String }), Schema.Struct({ kind: Schema.Literal("figureTooLarge"), subject: Schema.String, bytes: Schema.Int })])) })),
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("PassageMissing"), problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(ISSUE_TEXT_PROBLEM_KINDS), subject: Schema.String })) }),

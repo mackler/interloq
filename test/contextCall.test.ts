@@ -38,7 +38,7 @@ const good: QuestionContext = {
   history: [],
   context: [{ kind: "paragraph", pieces: [...plain("Claude Code, the coding agent, is carrying out the plan in this project. It wants to run a command that installs "), term("zod", "z"), ...plain(", a library, now, while the plan's work waits, so that it can check the input of a tool.")] }],
   question: request.question,
-  options: [{ label: plain("Allow"), description: [term("zod", "z"), ...plain(" is installed.")] }, request.options[1]],
+  options: [{ label: plain("Allow"), description: [term("zod", "z"), ...plain(" is installed.")], figure: null }, request.options[1]],
   details,
   explanations: [zod],
 };
@@ -423,8 +423,8 @@ test("W3-R1-1: a code block turned into a code piece of the same text is rejecte
 });
 
 test("W3-R1-1: a code piece with a line break is a problem in any question; one of a single line is not", () => {
-  const withLabel = (text: string): QuestionContext => ({ ...good, options: [{ label: [{ text, ref: "", code: true }], description: plain("Runs it.") }, good.options[1]] });
-  const oneLine = contextValidation({ ...request, options: [{ label: [{ text: "npm ci", ref: "", code: true }], description: plain("Runs it.") }, request.options[1]] });
+  const withLabel = (text: string): QuestionContext => ({ ...good, options: [{ label: [{ text, ref: "", code: true }], description: plain("Runs it."), figure: null }, good.options[1]] });
+  const oneLine = contextValidation({ ...request, options: [{ label: [{ text: "npm ci", ref: "", code: true }], description: plain("Runs it."), figure: null }, request.options[1]] });
   assert.ok(Result.isSuccess(oneLine(withLabel("npm ci"))));
   const problems = questionProblems({ context: good.context, history: [], question: good.question, explanations: good.explanations, options: withLabel("a\nb").options, details: good.details });
   assert.deepEqual(problems, [{ kind: "multiLineCode", subject: "a\nb" }]);
@@ -630,7 +630,7 @@ test("S32 scenario: a reply that drops one occurrence's reference twice leaves I
 
 const code = (text: string): Piece => ({ text, ref: "", code: true });
 const codeAdjacentClause = prompts.QUESTION_FORMAT.find((c) => c.id === "codeAdjacent");
-const withLabelPieces = (label: readonly Piece[]): QuestionContext => ({ ...good, options: [{ label, description: plain("Runs them.") }, good.options[1]] });
+const withLabelPieces = (label: readonly Piece[]): QuestionContext => ({ ...good, options: [{ label, description: plain("Runs them."), figure: null }, good.options[1]] });
 const problemKinds = (q: QuestionContext) => questionProblems({ context: q.context, history: [], question: q.question, explanations: q.explanations, options: q.options, details: q.details }).map((p) => p.kind);
 
 test("S33: two adjacent code pieces, or two with only an empty piece between them, are adjacentCode; a space or an empty code piece separates them", () => {
@@ -647,7 +647,7 @@ test("S33 seam: the clause is in the writer's format, and the repair prompt of a
   assert.equal(prompts.QUESTION_PROBLEM_RULE.adjacentCode, "codeAdjacent");
   assert.ok(prompts.QUESTION_TEXT_FORMAT.includes(codeAdjacentClause.text));
   const reply = withLabelPieces([code("a"), code("b")]);
-  const result = contextValidation({ ...request, options: [{ label: [code("a"), ...plain(" "), code("b")], description: plain("Runs them.") }, request.options[1]] })(reply);
+  const result = contextValidation({ ...request, options: [{ label: [code("a"), ...plain(" "), code("b")], description: plain("Runs them."), figure: null }, request.options[1]] })(reply);
   assert.ok(Result.isFailure(result));
   assert.ok(result.failure.repair.includes(codeAdjacentClause.text));
 });
@@ -680,7 +680,7 @@ test("W7-R1-1 scenario (P8-R1-1): a plan writer's option label with a code piece
     context: para("Interloq, the orchestrator, writes the list file now, so that its entries can be read apart."),
     question: plain("Which separator do you want between the entries?"),
     explanations: [],
-    options: [{ label: [...plain("Separate with "), { text: " ", ref: "", code: true }], description: plain("one character") }, opt("Separate with a comma", "one character")],
+    options: [{ label: [...plain("Separate with "), { text: " ", ref: "", code: true }], description: plain("one character"), figure: null }, opt("Separate with a comma", "one character")],
   };
   assert.deepEqual(questionProblems(asked), []);
   const { layer, probe } = testLayer(tempRepo(), askedInPlanReview({

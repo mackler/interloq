@@ -112,8 +112,23 @@ export const ListBlock = Schema.Struct({ kind: Schema.Literal("list"), items: Sc
 export const CodeBlock = Schema.Struct({ kind: Schema.Literal("code"), text: Schema.String });
 /** A block of a question's context or details (decision Q2): its kind is data, so the program reads no Markdown. */
 export const Block = Schema.Union([ParagraphBlock, ListBlock, CodeBlock]);
-/** An option of a question as an agent writes it: its short label and its description, both as pieces. */
-export const PieceOption = Schema.Struct({ label: Schema.Array(Piece), description: Schema.Array(Piece) });
+/**
+ * A picture of what an option produces, as an agent writes it (issue #98): one SVG image's markup and a sentence saying
+ * what it shows. Plain strings, as Codex's strict mode wants; figureOf in src/figure.ts refuses a blank alt text, markup
+ * over its size limit and markup whose root is not an svg element, and the page alone sanitizes the markup.
+ */
+export const FigureReply = Schema.Struct({ svg: Schema.String, alt: Schema.String });
+/**
+ * An option of a question as an agent writes it: its short label and its description, both as pieces, and its picture
+ * (issue #98): null, or a picture of what the option produces, drawn on its card. Required at the agent boundary, as
+ * Codex's strict mode wants, null being the explicit "no picture".
+ */
+export const PieceOption = Schema.Struct({ label: Schema.Array(Piece), description: Schema.Array(Piece), figure: Schema.NullOr(FigureReply) });
+/**
+ * An option as Interloq reads it back from its records or the tracker (issue #98): PieceOption whose figure may be absent,
+ * read as null, so a record or a prepared comment written before figures keeps its meaning. Its Type is PieceOption's.
+ */
+export const StoredOption = Schema.Struct({ ...PieceOption.fields, figure: Schema.NullOr(FigureReply).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))) });
 /** An option of a question with plain labels: the options of the AskUserQuestion tool, and an analysis's options. */
 export const QuestionOption = Schema.Struct({ label: Schema.String, description: Schema.String });
 /**
@@ -130,6 +145,8 @@ export const UserQuestion = Schema.Struct({
   explanations: Schema.Array(Explanation),
   options: Schema.Array(PieceOption),
 });
+/** A question for the user as an earlier run's round file holds it (issue #98): its options' figures may be absent. */
+export const StoredUserQuestion = Schema.Struct({ ...UserQuestion.fields, options: Schema.Array(StoredOption) });
 /**
  * The reply of a context call (S9, decisions G-R1-1 and F1): the whole question the program composed, as pieces: the
  * context it writes, and the question, the options and the details it may rephrase, their literal values kept exactly.
@@ -337,6 +354,8 @@ export const TermsEntry = Schema.Struct({
   reason: Schema.Array(Block),
   proposed_answers: Schema.Array(PieceOption),
 });
+/** A terms entry as a prepared comment holds it (issue #98): its answers' figures may be absent. */
+export const StoredTermsEntry = Schema.Struct({ ...TermsEntry.fields, proposed_answers: Schema.Array(StoredOption) });
 export const TermsWrite = Schema.Struct({ entries: Schema.Array(TermsEntry) });
 /** A response to a review of the explanations: the dispositions and the complete amended explanations. */
 export const TermsResponse = Schema.Struct({ ...markedResponseFields, entries: Schema.Array(TermsEntry) });
@@ -658,7 +677,7 @@ export const PartialConfig = Config.mapFields(Struct.map(Schema.optionalKey));
 
 /** plan-review/questions.json: the task and the agreed list. Unlike the agent schema, an entry's id must not be empty. */
 /** One agreed question as questions.json records it (issue #131: the entry a preparation's comment carries too). */
-export const StoredQuestion = Schema.Struct({ ...QuestionEntry.fields, id: Schema.NonEmptyString, default_answer: Schema.NullOr(Schema.String) });
+export const StoredQuestion = Schema.Struct({ ...QuestionEntry.fields, id: Schema.NonEmptyString, proposed_answers: Schema.Array(StoredOption), default_answer: Schema.NullOr(Schema.String) });
 export type StoredQuestion = typeof StoredQuestion.Type;
 export const QuestionsFile = Schema.Struct({
   version: Schema.Literal(2),
@@ -784,6 +803,7 @@ export type Explanation = typeof Explanation.Type;
 export type Block = typeof Block.Type;
 export type ListItem = typeof ListItem.Type;
 export type PieceOption = typeof PieceOption.Type;
+export type FigureReply = typeof FigureReply.Type;
 export type QuestionOption = typeof QuestionOption.Type;
 export type QuestionContext = typeof QuestionContext.Type;
 export type TermsEntry = typeof TermsEntry.Type;

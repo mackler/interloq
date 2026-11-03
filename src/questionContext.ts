@@ -7,7 +7,7 @@ import { QuestionInvalid, type RunError } from "./errors.ts";
 import { type ContextRequest, contextFallbackNote, contextPrompt, isDisputedPause, namesAgent, type QuestionProblem, questionRepairPrompt } from "./prompts.ts";
 import { describe } from "./errors.ts";
 import { piecesText, type ValueToken, valueTokensOf } from "./pieces.ts";
-import { type ContextWritten, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
+import { changedFigures, type ContextWritten, questionProblems, type SuppliedRef, suppliedOf } from "./question.ts";
 import { planningCall, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import { type Decider, Planner, type RunConfig, type RunKind, Store, type Ui } from "./services.ts";
@@ -48,6 +48,8 @@ export const contextValidation =
       // W1-R1-1: every value, code or phrase, kept in its kind and its order, none added; W4-R1-1: each code value's ref kept on its occurrence.
       ...(sameValues(valueTokensOf(request.details), valueTokensOf(reply.details)) ? [] : [{ kind: "literalChanged" as const, subject: "" }]),
       ...droppedRefs(supplied, shown),
+      // Issue #98: every option's picture kept exactly, in its position (KEEP_FIGURES).
+      ...changedFigures(request.options, reply.options),
       // Issue #159: a disputed pause's labels name the outcome, never an agent.
       ...(isDisputedPause(request.origin) ? reply.options.map((o) => piecesText(o.label)).filter(namesAgent).map((subject) => ({ kind: "agentInLabel" as const, subject })) : []),
     ];

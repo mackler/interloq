@@ -1,0 +1,87 @@
+// Issue #98 (requirements Q1): each option's picture is drawn inside its card, under its label and description, visible
+// at once; a screen reader reads its alt text; nothing unsanitized reaches the page; an option without one looks as before.
+import { flushSync, mount, unmount } from "svelte";
+import { afterEach, describe, expect, test } from "vitest";
+import type { Figure } from "../../src/figure.ts";
+import { plainPieces } from "../../src/pieces.ts";
+import * as prompts from "../../src/prompts.ts";
+import type { PresentedQuestion } from "../../src/question.ts";
+import { promptOf } from "../../src/userPrompts.ts";
+import AnsweredQuestion from "./components/AnsweredQuestion.svelte";
+import QuestionPane from "./components/QuestionPane.svelte";
+import type { Widget } from "./state.ts";
+
+let mounted: ReturnType<typeof mount>[] = [];
+afterEach(() => {
+  for (const m of mounted) unmount(m);
+  mounted = [];
+  document.body.innerHTML = "";
+});
+const target = () => document.body.appendChild(document.createElement("div"));
+
+const figure = (size: number, extra = ""): Figure =>
+  ({ svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"${extra}><defs><rect id="shape" width="${size}" height="${size}"/></defs><use href="#shape"/></svg>`, alt: `A square ${size} wide.` }) as Figure;
+const question = (figures: readonly (Figure | null)[]): PresentedQuestion => ({
+  number: 1,
+  origin: { kind: "relayed" },
+  context: { blocks: [{ kind: "paragraph", pieces: plainPieces("c") }], by: "agent" },
+  history: [],
+  explanations: [],
+  question: plainPieces("Which?"),
+  options: figures.map((f, i) => ({ label: plainPieces(`Option ${i + 1}`), description: plainPieces("d"), figure: f, answer: { token: String(i + 1) } })),
+  attached: null,
+  decision: null,
+});
+const widgetOf = (q: PresentedQuestion): Widget => {
+  const asked = { _tag: "Asked" as const, prompt: 1, ...promptOf(prompts.decisionPrompt), countdown: null, deciding: null };
+  return { asked, options: [], choices: asked.choices, question: q, presentedAt: null, hint: prompts.pagePromptText(asked.kind, prompts.decisionPrompt), countdown: null, held: true, decision: "none" };
+};
+const pane = (q: PresentedQuestion) => {
+  const root = target();
+  mounted.push(mount(QuestionPane, { target: root, props: { widget: widgetOf(q), identity: { incarnation: "A", run: 1, prompt: 1 }, text: "", onAnswer: () => undefined } }));
+  flushSync();
+  return root;
+};
+
+describe("a picture on each choice's card", () => {
+  test("each card holds its own picture, named by its alt text", () => {
+    const root = pane(question([figure(40), figure(320)]));
+    const cards = [...root.querySelectorAll(".options button")];
+    expect(cards).toHaveLength(2);
+    cards.forEach((card, i) => {
+      const shown = card.querySelectorAll("[data-option-figure]");
+      expect(shown).toHaveLength(1);
+      expect(shown[0]!.getAttribute("role")).toBe("img");
+      expect(shown[0]!.getAttribute("aria-label")).toBe(`A square ${i === 0 ? 40 : 320} wide.`);
+      expect(shown[0]!.querySelector("svg")).not.toBeNull();
+    });
+  });
+  test("two pictures that define the same id keep apart, each use naming its own picture's element", () => {
+    const root = pane(question([figure(40), figure(320)]));
+    const ids = [...root.querySelectorAll("[data-option-figure] [id]")].map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const shown of root.querySelectorAll("[data-option-figure]")) {
+      const use = shown.querySelector("use")!;
+      const ref = use.getAttribute("href")!.slice(1);
+      expect(shown.querySelector(`[id="${ref}"]`)).not.toBeNull();
+    }
+  });
+  test("a script and an event handler are not rendered", () => {
+    const bad = { svg: '<svg viewBox="0 0 1 1" onload="window.__hit = 1"><script>window.__hit = 2</script><rect width="1" height="1"/></svg>', alt: "A dot." } as Figure;
+    const root = pane(question([bad, null]));
+    expect(root.querySelector("[data-option-figure] script")).toBeNull();
+    expect(root.querySelector("[data-option-figure] [onload]")).toBeNull();
+    expect(root.querySelector("[data-option-figure] rect")).not.toBeNull();
+  });
+  test("an option without a picture renders none", () => {
+    const root = pane(question([null, null]));
+    expect(root.querySelector("[data-option-figure]")).toBeNull();
+  });
+  test("the transcript's answered question shows the pictures", () => {
+    const root = target();
+    mounted.push(mount(AnsweredQuestion, { target: root, props: { question: question([figure(40), null]) } }));
+    flushSync();
+    expect(root.querySelectorAll("[data-option-figure]")).toHaveLength(1);
+    expect(root.querySelector("[data-option-figure]")!.getAttribute("aria-label")).toBe("A square 40 wide.");
+  });
+});

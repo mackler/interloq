@@ -7,9 +7,10 @@ import type { RunError } from "./errors.ts";
 import { answerOf, chooseOption, isDecide, isTermsRequest, limitStops, parseExtraRounds, parseTransportAnswer, parseUnchangedAnswer } from "./input.ts";
 import * as prompts from "./prompts.ts";
 import { type Block, blocksMarkdown, blocksText, type Explanation, type Piece, type PieceOption, piecesText, plainBlocks, plainOption, plainPieces, type ShownBlock } from "./pieces.ts";
-import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, shownExplanations } from "./question.ts";
+import { type Attached, attachedOf, type ContextWritten, type OptionAnswer, type PresentedQuestion, type QuestionContextText, type QuestionOrigin, optionFigures, presentFigures, shownExplanations } from "./question.ts";
 import { Result } from "effect";
-import type { QuestionInvalid } from "./errors.ts";
+import { QuestionInvalid } from "./errors.ts";
+import type { Figure } from "./figure.ts";
 import { attachedMarkdown, renderChoice, renderDecisionAbandoned, renderQuestionRecord, termItem } from "./render.ts";
 import { type AskKind, Decider, Store, Ui, type UiShape } from "./services.ts";
 
@@ -66,17 +67,31 @@ export const decisionQuestionOf = (draft: QuestionDraft): string => (draft.origi
  * #112), which fails only for an explanation that bypassed every validation: the program's error, typed.
  */
 export const presentedQuestion = (draft: QuestionDraft, number: number): Result.Result<PresentedQuestion, QuestionInvalid> =>
-  Result.map(shownExplanations(draft.explanations), (explanations) => ({
-    number,
-    origin: draft.origin,
-    context: draft.context,
-    history: draft.history,
-    explanations,
-    question: draft.question,
-    options: draft.options.map((o) => ({ label: o.shown.label, description: o.shown.description, answer: o.answer })),
-    attached: draft.attached ?? null,
-    decision: draft.decision,
-  }));
+  Result.flatMap(shownExplanations(draft.explanations), (explanations) =>
+    Result.map(shownFigures(draft.options), (figures) => ({
+      number,
+      origin: draft.origin,
+      context: draft.context,
+      history: draft.history,
+      explanations,
+      question: draft.question,
+      options: draft.options.map((o, i) => ({ label: o.shown.label, description: o.shown.description, figure: figures[i] ?? null, answer: o.answer })),
+      attached: draft.attached ?? null,
+      decision: draft.decision,
+    })),
+  );
+/** The options' pictures as the user is shown them (issue #98), by position. */
+const shownFigures = (options: readonly OfferedOption[]): Result.Result<readonly (Figure | null)[], QuestionInvalid> =>
+  optionFigures(options.map((o) => o.shown), "the question shown");
+/**
+ * Issue #98: writes the pictures of the given options to their files before a record links them (Store.saveFigures);
+ * `where` names the question should a picture that bypassed every validation fail figureOf.
+ */
+export const saveOptionFigures = (options: readonly Pick<PieceOption, "figure">[], where: string): Effect.Effect<void, RunError, Store> =>
+  Effect.gen(function* () {
+    const figures = yield* Effect.fromResult(optionFigures(options, where));
+    yield* (yield* Store).saveFigures(presentFigures(figures));
+  });
 
 /**
  * Options chosen by their number or their exact label: the interview, a relayed question, a pause, a plan writer's
@@ -206,7 +221,9 @@ export const withContext = (draft: QuestionDraft, written: ContextWritten): Ques
 const rephrased = (o: OfferedOption, shown: PieceOption | undefined): OfferedOption => {
   if (shown === undefined) return o;
   const label = piecesText(shown.label);
-  return o.matchesShown === true ? { ...o, shown, matches: (a: string) => o.matches(a) || a.trim() === label } : { ...o, shown };
+  // Issue #98: the picture is the draft's, whatever the call returned (KEEP_FIGURES, which its validation enforces).
+  const kept = { ...shown, figure: o.shown.figure };
+  return o.matchesShown === true ? { ...o, shown: kept, matches: (a: string) => o.matches(a) || a.trim() === label } : { ...o, shown: kept };
 };
 /** Details the program gave a context call: blocks of its own words; a document is Markdown shown whole, never divided. */
 const requestDetails = (details: readonly ShownBlock[]): readonly Block[] => details.flatMap((b): readonly Block[] => (b.kind === "document" ? plainBlocks(b.markdown) : [b]));
@@ -303,6 +320,7 @@ export const askOffering = <E, R = never>(
     const frame = yield* ui.enterQuestion(question.number);
     const present = Effect.suspend(() => ui.notify({ _tag: "QuestionPresented", question }));
     yield* present;
+    yield* store.saveFigures(presentFigures(question.options.map((o) => o.figure)));
     yield* store.converse(renderQuestionRecord(question));
     // The page keeps a decision's analysis for the question asked again (W3-R1-1).
     const rejected = ui.notify({ _tag: "AnswerRejected" }).pipe(Effect.andThen(present));
@@ -357,7 +375,8 @@ export const askOffering = <E, R = never>(
     }
     const decider = yield* Decider;
     // S10: the analysis is of the question as the user was shown it, its options' words as displayed, paired by position.
-    const optionsShown = () => explained.options.map((o) => ({ label: piecesText(o.shown.label), description: piecesText(o.shown.description) }));
+    // Issue #98: an option's picture reaches the analysis as what it shows; the columns show no picture.
+    const optionsShown = () => explained.options.map((o) => ({ label: piecesText(o.shown.label), description: o.shown.figure === null ? piecesText(o.shown.description) : `${piecesText(o.shown.description)} ${prompts.pictureText(o.shown.figure.alt)}` }));
     const decisions: number[] = [];
     for (;;) {
       // Issue #133 (S6): the offer stands until a decision is made; the question asked beside its own analysis carries

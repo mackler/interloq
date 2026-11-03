@@ -23,7 +23,9 @@ const blocks = {
   },
 };
 const explanations = { type: "array", items: { type: "object", properties: { id: { type: "string" }, term: { type: "string" }, senses: { type: "array", items: { type: "string" } } } } };
-const options = { type: "array", items: { type: "object", properties: { label: pieces, description: pieces } } };
+/** Issue #98: an option's picture, null or its SVG markup and its alternative text. */
+const figure = { anyOf: [{ type: "object", properties: { svg: { type: "string" }, alt: { type: "string" } } }, { type: "null" }] };
+const options = { type: "array", items: { type: "object", properties: { label: pieces, description: pieces, figure } } };
 const userQuestions = {
   type: "array",
   items: {

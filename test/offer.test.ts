@@ -71,8 +71,8 @@ test("presentedQuestion numbers the draft and keeps each option's answer, not it
   const q = presented.success;
   assert.equal(q.number, 7);
   assert.deepEqual(q.options, [
-    { label: plain(prompts.PERMISSION_ALLOW), description: plain(prompts.PERMISSION_ALLOW_DESCRIPTION), answer: { token: "y" } },
-    { label: plain(prompts.PERMISSION_DENY), description: plain(prompts.PERMISSION_DENY_DESCRIPTION), answer: { token: "n" } },
+    { label: plain(prompts.PERMISSION_ALLOW), description: plain(prompts.PERMISSION_ALLOW_DESCRIPTION), figure: null, answer: { token: "y" } },
+    { label: plain(prompts.PERMISSION_DENY), description: plain(prompts.PERMISSION_DENY_DESCRIPTION), figure: null, answer: { token: "n" } },
   ]);
 });
 

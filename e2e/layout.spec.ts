@@ -1913,3 +1913,50 @@ test.describe("the tests of the tabStatesLayout server, in order", () => {
     });
   }
 });
+
+// Issue #98 (requirements Q1): each choice's card carries its own picture, visible at once, inside the card at every
+// width; two pictures that share an id each draw their own shape; nothing the agent wrote runs; the decision page's
+// cards keep the pictures and its columns show none.
+test.describe("the tests of the figureChoices server, in order", () => {
+  test.describe.configure({ mode: "default" });
+  const FIGURE_URL = layoutUrl("figureChoices");
+  /** Each card's picture: one svg inside the card, with a height, and its use drawn at its own picture's size. */
+  const picturesOnCards = async (page: Page) => {
+    const all = cards(page);
+    await expect(all).toHaveCount(2);
+    for (const [i, expected] of [[0, 40 / 400], [1, 320 / 400]] as const) {
+      const card = all.nth(i);
+      const svgs = card.locator("[data-option-figure] svg");
+      await expect(svgs).toHaveCount(1);
+      const [c, s, u] = [await box(card), await box(svgs.first()), await box(card.locator("[data-option-figure] use"))];
+      expect(s.height, `picture ${i + 1} has a height`).toBeGreaterThan(0);
+      expect(s.x, `picture ${i + 1} starts inside its card`).toBeGreaterThanOrEqual(c.x - 1);
+      expect(s.y).toBeGreaterThanOrEqual(c.y - 1);
+      expect(s.x + s.width, `picture ${i + 1} ends inside its card`).toBeLessThanOrEqual(c.x + c.width + 1);
+      expect(s.y + s.height).toBeLessThanOrEqual(c.y + c.height + 1);
+      expect(Math.abs(u.width / s.width - expected) / expected, `picture ${i + 1} draws its own shape`).toBeLessThanOrEqual(0.02);
+    }
+    expect(await page.locator("[data-option-figure] script").count()).toBe(0);
+    expect(await page.locator("[data-option-figure] [onload]").count()).toBe(0);
+    expect(await page.title()).not.toBe("figure ran");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page scrolls sideways").toBe(true);
+  };
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L45) the pictures on the choices' cards at ${width} × ${height}, and on the decision page`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startTask(page, FIGURE_URL);
+      await expect(cards(page)).toHaveCount(2);
+      await picturesOnCards(page);
+      if (width === 1280) {
+        const [a, b] = [await box(cards(page).nth(0)), await box(cards(page).nth(1))];
+        expect(Math.abs(a.y - b.y), "the cards stand side by side").toBeLessThanOrEqual(1);
+      }
+      await page.getByRole("button", { name: HELP_ME_DECIDE }).click();
+      const analysis = analysisOf(page);
+      await expect(analysis).toBeVisible();
+      await picturesOnCards(page);
+      expect(await analysis.locator(".column [data-option-figure]").count(), "the columns show no picture").toBe(0);
+      await answerDismisses(page, analysis);
+    });
+  }
+});

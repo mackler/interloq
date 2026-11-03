@@ -339,7 +339,7 @@ test("an interview's numbered answer sent through the manager reaches Claude Cod
   const presented = eventsOf(h, id).flatMap((e) => (e._tag === "Notified" && e.event._tag === "QuestionPresented" ? [e.event.question] : [])).at(-1);
   assert.deepEqual(presented?.origin, { kind: "followUp", id: "F1" });
   const choice = presented?.options[1];
-  assert.deepEqual(choice, { label: plain("SQLite"), description: plain("no server needed"), answer: { token: "2" } });
+  assert.deepEqual(choice, { label: plain("SQLite"), description: plain("no server needed"), figure: null, answer: { token: "2" } });
   await run(h.manager.answer(h.manager.incarnation, id, you.prompt, "token" in choice.answer ? choice.answer.token : ""));
   // Issue #138: the summary is written with no prompt, and the run ends.
   await ended(h, id);

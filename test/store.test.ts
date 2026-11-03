@@ -732,3 +732,21 @@ test("mergeParked: unmerged entries with no MERGE_HEAD are refused", async () =>
   await refusedWith(m.repo, { _tag: "Unmerged" });
   assert.notEqual(m.g("ls-files", "-u"), "");
 });
+
+// Issue #98 (G-R1-1): each picture is written to figures/<sha256 of its markup>.svg, byte for byte, before a record
+// links it; writing the same picture again leaves one file, and the write is journaled like every record's.
+test("saveFigures writes each picture's markup to its content-named file, once, and journals the write", async () => {
+  const { figureOf, figureFileOf } = await import("../src/figure.ts");
+  const figure = Result.getOrThrow(figureOf({ svg: '<svg viewBox="0 0 2 1">\n  <text>é</text>\n</svg>', alt: "A word." }));
+  const repo = tempRepo();
+  const store = await storeOf(repo);
+  await run(store.init("task"));
+  const mark = await run(store.journalMark);
+  await run(store.saveFigures([figure, figure]));
+  const file = path.join(store.dir, figureFileOf(figure));
+  assert.equal(fs.readFileSync(file, "utf8"), figure.svg);
+  assert.deepEqual(fs.readdirSync(path.join(store.dir, "figures")), [path.basename(file)]);
+  assert.ok((await run(store.ownWritesSince(mark))).some((w) => w.path.endsWith(figureFileOf(figure))), "the write is journaled");
+  await run(store.saveFigures([figure]));
+  assert.deepEqual(fs.readdirSync(path.join(store.dir, "figures")), [path.basename(file)]);
+});

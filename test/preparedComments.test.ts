@@ -31,7 +31,7 @@ const question = (id: string, text = `Question ${id}?`): StoredQuestion => ({
   history: [],
   question: plain(text),
   reason: [{ kind: "paragraph", pieces: plain("Why.") }],
-  proposed_answers: [{ label: plain("Yes"), description: plain("Do it.") }, { label: plain("No"), description: plain("Do not.") }],
+  proposed_answers: [{ label: plain("Yes"), description: plain("Do it."), figure: null }, { label: plain("No"), description: plain("Do not."), figure: null }],
   default_answer: "Yes",
   skip_if: null,
 });

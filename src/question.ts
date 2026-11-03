@@ -1,11 +1,12 @@
 // A question put to the user (S2 and following): its parts, and the mechanical part of the rules of QUESTION_RULES in
 // src/prompts.ts. Issue #36 (30 Sep 2026): a question's text is a sequence of pieces, and the explanations a list the
 // pieces refer to; the checks are on data alone, and nothing reads Markdown. Pure; also imported by the browser.
+import { type Figure, figureOf, figureProblems, sameFigure } from "./figure.ts";
 import { type Brand, Result, Schema } from "effect";
 import { QuestionInvalid } from "./errors.ts";
 import { blockPieces, blocksText, piecesText, plainRuns, type ShownBlock } from "./pieces.ts";
 import { type QuestionProblem, sensesNumbered } from "./prompts.ts";
-import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, type WorkEffects } from "./schema.ts";
+import { Block, type Disposition, Explanation, type Issue, type LogEntry, Piece, PieceOption, type QuestionOption, StoredOption, type WorkEffects } from "./schema.ts";
 
 export type { QuestionOption };
 export type { Explanation, Piece, PieceOption } from "./schema.ts";
@@ -177,8 +178,43 @@ export const questionProblems = (q: Question, supplied: readonly SuppliedRef[] =
       ...(refs.has(e.id) || ids.indexOf(e.id) < i ? [] : [{ kind: "unusedExplanation" as const, subject: e.term.trim() === "" ? e.id : e.term }]),
     ]),
     ...plainWords.flatMap(bareNumbers).map((subject) => ({ kind: "bareNumber" as const, subject })),
+    ...q.options.flatMap((o, i) => optionFigureProblems(o.figure, `option ${i + 1}`)),
   ];
 };
+
+/** Issue #98: an option's picture's problems, from figureProblems of src/figure.ts, named by the option. */
+export const optionFigureProblems = (figure: PieceOption["figure"], subject: string): readonly QuestionProblem[] =>
+  figure === null
+    ? []
+    : figureProblems(figure).map((p): QuestionProblem => {
+        switch (p.kind) {
+          case "altBlank":
+            return { kind: "figureAltBlank", subject };
+          case "tooLarge":
+            return { kind: "figureTooLarge", subject, bytes: p.bytes };
+          case "notSvg":
+            return { kind: "figureNotSvg", subject };
+        }
+      });
+
+/**
+ * Issue #98 (KEEP_FIGURES): the options whose picture a reply added, changed, removed or moved, by position against the
+ * options it was given. A change of the options' count is optionsChanged's or wordingChanged's to report.
+ */
+export const changedFigures = (given: readonly Pick<PieceOption, "figure">[], returned: readonly Pick<PieceOption, "figure">[]): readonly QuestionProblem[] =>
+  returned.flatMap((o, i) => (i < given.length && !sameFigure(given[i]!.figure, o.figure) ? [{ kind: "figureChanged" as const, subject: `option ${i + 1}` }] : []));
+
+/**
+ * Issue #98: the options' pictures, each built by figureOf, in the options' positions (null where an option has none).
+ * Every picture that reaches a record or a draft has passed questionProblems, so a failure is the program's error, typed.
+ */
+export const optionFigures = (options: readonly Pick<PieceOption, "figure">[], where: string): Result.Result<readonly (Figure | null)[], QuestionInvalid> => {
+  const problems = options.flatMap((o, i) => optionFigureProblems(o.figure, `option ${i + 1}`));
+  if (problems.length > 0) return Result.fail(new QuestionInvalid({ questions: [{ where, problems }] }));
+  return Result.succeed(options.map((o) => (o.figure === null ? null : Result.getOrNull(figureOf(o.figure)))));
+};
+/** The pictures among the options' positions. */
+export const presentFigures = (figures: readonly (Figure | null)[]): readonly Figure[] => figures.filter((f): f is Figure => f !== null);
 
 /** Validates one question; `where` names it in the error ("questions_for_user 1", "Q3"). */
 export const validateQuestion = (q: Question, where = "the question"): Result.Result<Question, QuestionInvalid> => {
@@ -307,7 +343,8 @@ export type QuestionOrigin =
 /** The exact text that chooses an option, or any whole number the user types (the more cycles at the cycle limit, S8). */
 export type OptionAnswer = Readonly<{ token: string }> | Readonly<{ numeric: true }>;
 /** An option as the user is shown it: its label and description as pieces, and the answer that chooses it. */
-export type PresentedOption = Readonly<{ label: readonly Piece[]; description: readonly Piece[]; answer: OptionAnswer }>;
+/** An option as the user is shown it; its picture (issue #98) built by figureOf, or null. */
+export type PresentedOption = Readonly<{ label: readonly Piece[]; description: readonly Piece[]; figure: Figure | null; answer: OptionAnswer }>;
 /** Who wrote the context paragraph (as blocks): an agent, or the program (a fixed paragraph, S7 and S10). */
 export type QuestionContextText = Readonly<{ blocks: readonly ShownBlock[]; by: "agent" | "program" }>;
 /**
@@ -369,7 +406,8 @@ export const RelayedQuestion = Schema.Struct({
   history: Schema.Array(Block),
   question: Schema.Array(Piece),
   explanations: Schema.Array(Explanation),
-  options: Schema.Array(PieceOption),
+  /** Issue #98: an option without figure has no picture. */
+  options: Schema.Array(StoredOption),
 });
 export type RelayedQuestion = typeof RelayedQuestion.Type;
 const decodeRelayed = Schema.decodeUnknownResult(Schema.fromJsonString(RelayedQuestion));

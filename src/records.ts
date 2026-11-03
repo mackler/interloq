@@ -56,7 +56,7 @@ export const ValidatedResponseRecord = Schema.Struct({
   dispositions: Schema.Array(DispositionRecord),
   selfCorrections: Schema.Array(SelfCorrectionRecord),
   reviewerFeedback: Schema.String,
-  questionsForUser: Schema.Array(S.UserQuestion),
+  questionsForUser: Schema.Array(S.StoredUserQuestion),
 });
 const ProblemsRecord = Schema.Struct({
   duplicateIssues: Strings,

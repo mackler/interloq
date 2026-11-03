@@ -674,7 +674,7 @@ describe("App and the draft", () => {
   // the field when the same question is asked again with its explanations, and the button is then gone.
   test("Explain the terms sends the request, and the typed text survives the question asked again", async () => {
     const { root, ws } = await openPage();
-    const question = { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Which database?"), options: [{ label: plainPieces("SQLite"), description: [], answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], answer: { token: "2" } }], attached: null, decision: null };
+    const question = { number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Which database?"), options: [{ label: plainPieces("SQLite"), description: [], figure: null, answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null };
     const explainedQuestion = { ...question, explanations: [{ id: "t", term: "database", senses: ["A program that keeps data."] }] };
     const first = { _tag: "Asked", prompt: 1, ...promptOf(prompts.withTermsOffer(prompts.withOffer(prompts.interviewMessagePrompt))), countdown: null };
     ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, { _tag: "Notified", event: { _tag: "QuestionPresented", question } }, first]) }] });
@@ -702,7 +702,7 @@ describe("App and the draft", () => {
   for (const then of ["abandon", "extend"] as const) {
     test(`a question beside its analysis that expires (${then}) shows the notice of its kind and no answer field`, async () => {
       const { root, ws } = await openPage();
-      const presented = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("A or B?"), options: [{ label: plainPieces("A"), description: [], answer: { token: "1" } }, { label: plainPieces("B"), description: [], answer: { token: "2" } }], attached: null, decision: null };
+      const presented = { number: 1, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("A or B?"), options: [{ label: plainPieces("A"), description: [], figure: null, answer: { token: "1" } }, { label: plainPieces("B"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null };
       const analysis = { decision: "d", columns: [], recommendation: { option: "", reason: "" } };
       const countdown = { fromMs: Date.now(), untilMs: Date.now() + 120_000, then };
       ws.receive({
@@ -2882,8 +2882,8 @@ describe("QuestionPane's order", () => {
     explanations: [shownOf({ id: "s", term: "service", senses: ["The program this task builds."] })],
     question: [...plainPieces("Which database should the "), ref("service", "s"), ...plainPieces(" use?")],
     options: [
-      { label: plainPieces("SQLite"), description: plainPieces("a file"), answer: { token: "1" } },
-      { label: plainPieces("More cycles"), description: plainPieces("go on"), answer: { numeric: true } },
+      { label: plainPieces("SQLite"), description: plainPieces("a file"), figure: null, answer: { token: "1" } },
+      { label: plainPieces("More cycles"), description: plainPieces("go on"), figure: null, answer: { numeric: true } },
     ],
     attached: { kind: "reviewFacts", blocks: plainBlocks("**The facts** of the case.") as [Block] },
     decision: null,
@@ -3003,7 +3003,7 @@ describe("QuestionPane's order", () => {
       context: { blocks: plainBlocks("The review has reached its limit."), by: "agent" },
       history: [],
       attached: null,
-      options: [{ label: [...plainPieces("More "), ref("cycles", "c")], description: [...plainPieces("let the "), ref("reviewer", "r"), ...plainPieces(" go on")], answer: { numeric: true } }],
+      options: [{ label: [...plainPieces("More "), ref("cycles", "c")], description: [...plainPieces("let the "), ref("reviewer", "r"), ...plainPieces(" go on")], figure: null, answer: { numeric: true } }],
     };
     const root = show(QuestionPane, { widget: withQuestion(limit), onAnswer: () => undefined });
     const numeric = one(root, ".numeric");
@@ -3022,7 +3022,7 @@ describe("QuestionPane's order", () => {
   // S44 (W3-R1-1): a term's tooltip is never inside the card it explains, so a click in it answers nothing.
   test("a click in the tooltip of a term in an option card sends nothing; the tooltip is in no button", () => {
     const sent: string[] = [];
-    const q: PresentedQuestion = { ...question, explanations: [shownOf({ id: "f", term: "file", senses: ["A file on the disk."] })], options: [{ label: plainPieces("SQLite"), description: [...plainPieces("one "), ref("file", "f")], answer: { token: "1" } }] };
+    const q: PresentedQuestion = { ...question, explanations: [shownOf({ id: "f", term: "file", senses: ["A file on the disk."] })], options: [{ label: plainPieces("SQLite"), description: [...plainPieces("one "), ref("file", "f")], figure: null, answer: { token: "1" } }] };
     const root = show(QuestionPane, { widget: withQuestion(q), onAnswer: (_p: number, t: string) => void sent.push(t) });
     const mark = one(root, ".options .term");
     mark.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -3137,7 +3137,7 @@ test("the question pane and the scripted Ui both take endingOf from src/input.ts
 // explanations; the dashboard shows the question whole, its options' labels on their own lines (S14; issue #22).
 test("an answered question on the dashboard marks its words; the question beside an analysis marks its words", async () => {
   const zod = [shownOf({ id: "z", term: "zod", senses: ["A library."] })];
-  const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, history: [], explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), answer: { token: "1" } }], attached: null, decision: null };
+  const asked: PresentedQuestion = { number: 2, origin: { kind: "relayed" }, context: { blocks: [{ kind: "paragraph", pieces: [ref("Zod", "z"), ...plainPieces(" checks data.")] }], by: "agent" }, history: [], explanations: zod, question: [...plainPieces("Use "), ref("zod", "z"), ...plainPieces("?")], options: [{ label: plainPieces("Yes"), description: plainPieces("declare it"), figure: null, answer: { token: "1" } }], attached: null, decision: null };
   const root = show(AnsweredQuestion, { question: asked });
   expect([...root.querySelectorAll(".term")].map((m) => m.textContent)).toEqual(["Zod", "zod"]);
   expect(one(root, ".option-label").textContent).toContain("Yes");
@@ -3225,7 +3225,7 @@ describe("a word that refers to an explanation beside inline formatting in the c
 
 // S14 (issue #59): an option's label is set apart from its text: in bold, on its own line, a separate element.
 test("each option card shows its label in bold as its own element and its description as another", () => {
-  const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Which?"), options: [{ label: plainPieces("SQLite"), description: plainPieces("one file, no server"), answer: { token: "1" } }, { label: plainPieces("More cycles"), description: plainPieces("go on"), answer: { numeric: true } }], attached: null, decision: null };
+  const presented: PresentedQuestion = { number: 1, origin: { kind: "relayed" }, context: { blocks: plainBlocks("c"), by: "agent" }, history: [], explanations: [], question: plainPieces("Which?"), options: [{ label: plainPieces("SQLite"), description: plainPieces("one file, no server"), figure: null, answer: { token: "1" } }, { label: plainPieces("More cycles"), description: plainPieces("go on"), figure: null, answer: { numeric: true } }], attached: null, decision: null };
   const root = show(QuestionPane, { widget: { ...widget(prompts.optionOrTextPrompt), question: presented, presentedAt: null }, onAnswer: () => undefined });
   for (const option of [one(root, ".options button"), one(root, ".numeric")]) {
     const label = one(option, ".option-label");

@@ -38,10 +38,10 @@ test("renderDecision gives the record line and the conversation line of one deci
 
 test("renderFeedback and renderQuestions", () => {
   assert.equal(renderFeedback("Planning phase 1", 2, "too strict"), "## Planning phase 1, round 2\ntoo strict\n\n");
-  assert.equal(renderQuestions({ questions: [] }), "The list is empty.\n");
+  assert.equal(renderQuestions({ questions: [] }, "link"), "The list is empty.\n");
   const list = { questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { default_answer: "B" })] };
-  assert.equal(renderQuestions(list), "- **[Q1]** A or B?\n  Reason: r\n  - A: a\n  - B: b (default)\n");
-  assert.match(renderQuestions({ questions: [{ ...list.questions[0], default_answer: null }] }), /- B: b\n$/);
+  assert.equal(renderQuestions(list, "link"), "- **[Q1]** A or B?\n  Reason: r\n  - A: a\n  - B: b (default)\n");
+  assert.match(renderQuestions({ questions: [{ ...list.questions[0], default_answer: null }] }, "link"), /- B: b\n$/);
 });
 
 // Plan step 1.5: the lines said for an interview turn, shared with the page's reducer (4.2).
@@ -81,8 +81,8 @@ test("renderQuestionRecord writes the heading, the origin, the context, the deta
     explanations: [shownOf({ id: "z", term: "zod", senses: ["a library that checks the shape of data"] })],
     question: [...plain("Should "), term("Zod's package", "z"), ...plain(" be declared as a dependency?")],
     options: [
-      { label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } },
-      { label: plain("More cycles"), description: [], answer: { numeric: true } },
+      { label: plain("Declare it"), description: plain("add it to package.json"), figure: null, answer: { token: "1" } },
+      { label: plain("More cycles"), description: [], figure: null, answer: { numeric: true } },
     ],
     attached: attachedOf("reviewFacts", para("Codex says: the migration is missing.")),
     decision: null,
@@ -111,7 +111,7 @@ test("conversation.md records a question under its displayed number with the rec
   const q: PresentedQuestion = { number: 3, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [], attached: null, decision: null };
   assert.match(renderQuestionRecord(q), /^### Question 3 \(Q1\)\n/);
   // S11 (issue #59): each option's label in bold on its own line, the description on the next.
-  const record = renderQuestionRecord({ ...q, explanations: [shownOf({ id: "t", term: "zod", senses: ["a library"] })], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), answer: { token: "1" } }] });
+  const record = renderQuestionRecord({ ...q, explanations: [shownOf({ id: "t", term: "zod", senses: ["a library"] })], question: [...plain("Use "), term("zod", "t"), ...plain("?")], options: [{ label: plain("Declare it"), description: plain("add it to package.json"), figure: null, answer: { token: "1" } }] });
   assert.ok(record.includes("- 1. **Declare it**  \n  add it to package.json"), record);
   assert.ok(record.includes("- zod: a library"), record);
   assert.match(renderQuestionRecord({ ...q, origin: { kind: "relayed" } }), /^### Question 3\n/);
@@ -217,7 +217,7 @@ test("W1-R1-1, P2-R1-1: a multiline sense stays whole inside its item in the Ter
 
 test("W1-R1-2: the terms list of conversation.md nests each term under its entry, multiline senses whole", () => {
   const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }, { id: "c", term: "zod", senses: [ONE_OF_TWO_PARAGRAPHS] }], context: para("c"), history: [], question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
-  const rendered = renderTerms([entry, { ...entry, id: "Q2", explanations: [] }]);
+  const rendered = renderTerms([entry, { ...entry, id: "Q2", explanations: [] }], "link");
   assert.ok(Result.isSuccess(rendered));
   const terms = readTerms(rendered.success);
   assert.deepEqual(terms.get("port"), MULTILINE.map(senseRead));
@@ -231,7 +231,7 @@ test("W1-R1-2: the Terms block and the terms list write a term as the same item"
   const explanation = shownOf({ id: "a", term: "port", senses: MULTILINE });
   const item = termItem(explanation, "");
   assert.ok(renderQuestionRecord({ ...multiline(), explanations: [explanation], question: [...plain("Use "), term("port", "a"), ...plain("?")] }).includes(`${item}\n`));
-  const rendered = renderTerms([{ id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }], context: para("c"), history: [], question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
+  const rendered = renderTerms([{ id: "Q1", explanations: [{ id: "a", term: "port", senses: MULTILINE }], context: para("c"), history: [], question: plain("q?"), reason: para("r"), proposed_answers: [] }], "link");
   assert.ok(Result.isSuccess(rendered));
   const nested = rendered.success.split("\n").slice(1).map((l) => l.replace(/^ {2}/u, "")).join("\n");
   assert.ok(nested.includes(item), nested);
@@ -271,7 +271,7 @@ const HISTORY_LINE = `**${prompts.QUESTION_HISTORY_HEADING}**`;
 
 test("W1-R1-2: renderQuestions writes an entry's history as a block quote under the history heading", () => {
   const withHistory = questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." });
-  const rendered = renderQuestions({ questions: [withHistory, questionEntry("Q2", "C?", [["C", "c"]])] });
+  const rendered = renderQuestions({ questions: [withHistory, questionEntry("Q2", "C?", [["C", "c"]])] }, "link");
   const [first, second] = rendered.split(/\n(?=- \*\*\[Q2\]\*\*)/u);
   assert.ok(first.includes(`  ${HISTORY_LINE}\n  \n  > You chose B on 9 Oct.`), first);
   assert.ok(!second.includes(HISTORY_LINE), second);
@@ -279,7 +279,7 @@ test("W1-R1-2: renderQuestions writes an entry's history as a block quote under 
 
 test("W1-R1-2: renderTerms writes an entry's history as a block quote under the history heading", () => {
   const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: ["A number."] }], context: para("c"), history: para("You chose B on 9 Oct."), question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
-  const rendered = renderTerms([entry, { ...entry, id: "Q2", history: [] }]);
+  const rendered = renderTerms([entry, { ...entry, id: "Q2", history: [] }], "link");
   assert.ok(Result.isSuccess(rendered));
   const [first, second] = rendered.success.split(/\n(?=- \*\*\[Q2\]\*\*)/u);
   assert.ok(first.includes(`  ${HISTORY_LINE}\n  \n  > You chose B on 9 Oct.`), first);
@@ -289,8 +289,8 @@ test("W1-R1-2: renderTerms writes an entry's history as a block quote under the 
 test("W1-R1-2: the three renderings write the same history heading line", () => {
   const history = para("You chose B on 9 Oct.");
   const record = recordOf({ number: 1, origin: { kind: "clarification", id: "Q1" }, context: { blocks: para("c"), by: "agent" }, history, explanations: [], question: plain("Which?"), options: [], attached: null, decision: null });
-  const list = renderQuestions({ questions: [questionEntry("Q1", "A?", [["A", "a"]], { history: "You chose B on 9 Oct." })] });
-  const terms = renderTerms([{ id: "Q1", explanations: [], context: para("c"), history, question: plain("q?"), reason: para("r"), proposed_answers: [] }]);
+  const list = renderQuestions({ questions: [questionEntry("Q1", "A?", [["A", "a"]], { history: "You chose B on 9 Oct." })] }, "link");
+  const terms = renderTerms([{ id: "Q1", explanations: [], context: para("c"), history, question: plain("q?"), reason: para("r"), proposed_answers: [] }], "link");
   assert.ok(Result.isSuccess(terms));
   for (const text of [record, list, terms.success]) assert.ok(text.split("\n").some((l) => l.trim() === HISTORY_LINE), text);
 });
@@ -299,7 +299,7 @@ test("W1-R1-2: the three renderings write the same history heading line", () => 
 const quoteOf = (html: string): string => html.slice(html.indexOf("<blockquote>"), html.indexOf("</blockquote>") + "</blockquote>".length);
 
 test("W2-R1-2: renderQuestions ends the history quote before the Reason line", () => {
-  const rendered = renderQuestions({ questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." })] });
+  const rendered = renderQuestions({ questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." })] }, "link");
   const html = marked.parse(rendered, { async: false });
   const quote = quoteOf(html);
   assert.ok(quote.includes("You chose B on 9 Oct."), html);
@@ -309,7 +309,7 @@ test("W2-R1-2: renderQuestions ends the history quote before the Reason line", (
 
 test("W2-R1-2: renderTerms keeps the next entry out of the first entry's history quote", () => {
   const entry = { id: "Q1", explanations: [{ id: "a", term: "port", senses: ["A number."] }], context: para("c"), history: para("You chose B on 9 Oct."), question: plain("Use the port?"), reason: para("r"), proposed_answers: [] };
-  const rendered = renderTerms([entry, { ...entry, id: "Q2", history: [] }]);
+  const rendered = renderTerms([entry, { ...entry, id: "Q2", history: [] }], "link");
   assert.ok(Result.isSuccess(rendered));
   const html = marked.parse(rendered.success, { async: false });
   assert.ok(quoteOf(html).includes("You chose B on 9 Oct."), html);
@@ -318,7 +318,7 @@ test("W2-R1-2: renderTerms keeps the next entry out of the first entry's history
 
 test("W2-R1-2: an entry with an empty history renders as before", () => {
   const list = { questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]])] };
-  assert.ok(renderQuestions(list).startsWith("- **[Q1]** A or B?\n  Reason: "), renderQuestions(list));
+  assert.ok(renderQuestions(list, "link").startsWith("- **[Q1]** A or B?\n  Reason: "), renderQuestions(list, "link"));
 });
 
 // Issue #133, W3-R1-1: the history heading starts a block of its own in the item, read back as Markdown.
@@ -330,7 +330,7 @@ const nestedListOf = (html: string): string => {
 const termsEntryWith = (senses: readonly string[]) => ({ id: "Q1", explanations: [{ id: "a", term: "service", senses }], context: para("c"), history: para("You chose B on 9 Oct."), question: plain("Use the service?"), reason: para("r"), proposed_answers: [] });
 
 test("W3-R1-1: renderTerms puts the history heading in no term item, before its quote", () => {
-  const rendered = renderTerms([termsEntryWith(["A program."])]);
+  const rendered = renderTerms([termsEntryWith(["A program."])], "link");
   assert.ok(Result.isSuccess(rendered));
   const html = marked.parse(rendered.success, { async: false });
   const nested = nestedListOf(html);
@@ -342,7 +342,7 @@ test("W3-R1-1: renderTerms puts the history heading in no term item, before its 
 });
 
 test("W3-R1-1: renderTerms puts the history heading in none of a term's numbered senses", () => {
-  const rendered = renderTerms([termsEntryWith(["A program.", "A favor done."])]);
+  const rendered = renderTerms([termsEntryWith(["A program.", "A favor done."])], "link");
   assert.ok(Result.isSuccess(rendered));
   const html = marked.parse(rendered.success, { async: false });
   const ol = html.slice(html.indexOf("<ol>"), html.indexOf("</ol>") + "</ol>".length);
@@ -352,7 +352,7 @@ test("W3-R1-1: renderTerms puts the history heading in none of a term's numbered
 });
 
 test("W3-R1-1: renderQuestions keeps the history heading out of the question's paragraph", () => {
-  const rendered = renderQuestions({ questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." })] });
+  const rendered = renderQuestions({ questions: [questionEntry("Q1", "A or B?", [["A", "a"], ["B", "b"]], { history: "You chose B on 9 Oct." })] }, "link");
   const html = marked.parse(rendered, { async: false });
   const question = html.slice(html.indexOf("[Q1]"), html.indexOf(STRONG_HISTORY));
   assert.ok(question.includes("</p>"), html);

@@ -49,7 +49,7 @@ const question = {
   history: [],
   explanations: [],
   question: plainPieces("Which database?"),
-  options: [{ label: plainPieces("SQLite"), description: [], answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], answer: { token: "2" } }],
+  options: [{ label: plainPieces("SQLite"), description: [], figure: null, answer: { token: "1" } }, { label: plainPieces("PostgreSQL"), description: [], figure: null, answer: { token: "2" } }],
   attached: null,
   decision: null,
 };

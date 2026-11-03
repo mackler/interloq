@@ -15,7 +15,7 @@ import * as S from "./schema.ts";
 import type { QuestionsFile, TermsEntry } from "./schema.ts";
 import { clarificationCount, normalizeTurn, type TurnVariant } from "./schemaNormalize.ts";
 import { Planner, type Services, Store, Ui } from "./services.ts";
-import { agentContext, askOffering, byMessage, numberedOptions, type QuestionDraft } from "./offer.ts";
+import { agentContext, askOffering, byMessage, numberedOptions, type QuestionDraft, saveOptionFigures } from "./offer.ts";
 import { blocksText, type Piece, piecesText, plainPieces } from "./pieces.ts";
 import { attachedOf, type QuestionOrigin } from "./question.ts";
 import type { InterviewStage } from "./uiEvents.ts";
@@ -82,7 +82,7 @@ export const agreedDraft = (agreed: QuestionsFile["questions"][number], records:
   const origin: QuestionOrigin = { kind: "clarification", id: agreed.id };
   const divided = records.terms.find((t) => t.id === agreed.id);
   const entry = divided ?? { ...agreed, explanations: [] };
-  const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description })));
+  const options = numberedOptions(entry.proposed_answers.map((a) => ({ label: a.label, description: piecesText(a.label) === agreed.default_answer ? markedDefault(a.description) : a.description, figure: a.figure })));
   return { origin, context: agentContext(entry.context, origin), history: entry.history, explanations: entry.explanations, question: entry.question, options, attached: attachedOf("reason", entry.reason), decision: null };
 };
 
@@ -119,7 +119,8 @@ const requestTerms = (task: string, agreed: QuestionsFile["questions"][number], 
     const terms = yield* Effect.uninterruptible(Effect.gen(function* () {
       const all = entries.reduce((all, e) => withTermsEntry(all, e, questions), yield* store.loadTerms());
       yield* store.saveTerms(all);
-      yield* store.converse(`## ${prompts.termsRequestedHeading(number)}\n\n${yield* Effect.fromResult(renderTerms(entries))}\n`);
+      yield* saveOptionFigures(entries.flatMap((e) => e.proposed_answers), "the terms");
+      yield* store.converse(`## ${prompts.termsRequestedHeading(number)}\n\n${yield* Effect.fromResult(renderTerms(entries, "link"))}\n`);
       return all;
     }));
     return agreedDraft(agreed, { questions, terms });

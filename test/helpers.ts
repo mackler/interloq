@@ -279,7 +279,7 @@ export const userQuestion = (
   options: options.map((o) => (typeof o === "string" ? opt(o, "") : opt(o[0], o[1]))),
 });
 /** Legacy-shaped words of a question, as the tests write them: strings, and terms bound to their words in the text. */
-type Words = Readonly<{ context: string; terms?: readonly Readonly<{ term: string; explanation: string }>[]; options: readonly Readonly<{ label: string; description: string }>[] }>;
+type Words = Readonly<{ context: string; terms?: readonly Readonly<{ term: string; explanation: string }>[]; options: readonly Readonly<{ label: string; description: string; figure?: S.FigureReply | null }>[] }>;
 /** A text as pieces, each occurrence of a term's words a piece that refers to that term's explanation (t1, t2, …). */
 const withTerms = (text: string, terms: readonly Readonly<{ term: string; explanation: string }>[]): readonly Piece[] => {
   if (terms.length === 0 || text === "") return plain(text);
@@ -296,7 +296,7 @@ const piecesOfWords = (w: Words, text: string) => {
   const terms = w.terms ?? [];
   const context = withTerms(w.context, terms);
   const question = withTerms(text, terms);
-  const options = w.options.map((o) => ({ label: withTerms(o.label, terms), description: withTerms(o.description, terms) }));
+  const options = w.options.map((o) => ({ label: withTerms(o.label, terms), description: withTerms(o.description, terms), figure: o.figure ?? null }));
   const used = [...context, ...question, ...options.flatMap((o) => [...o.label, ...o.description])];
   return { context: context.length === 0 ? [] : [{ kind: "paragraph" as const, pieces: context }], history: [], question, options, explanations: explanationsOf(terms, used) };
 };

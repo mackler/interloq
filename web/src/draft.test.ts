@@ -158,7 +158,7 @@ describe("a draft whose question expired (issue #185)", () => {
 describe("a draft through Help me decide", () => {
   const question = (number: number): RunEvent => ({
     _tag: "Notified",
-    event: { _tag: "QuestionPresented", question: { number, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: ["A", "B"].map((l, i) => ({ label: plainPieces(l), description: plainPieces(""), answer: { token: String(i + 1) } })), attached: null, decision: null } },
+    event: { _tag: "QuestionPresented", question: { number, origin: { kind: "relayed" }, context: { blocks: [], by: "agent" }, history: [], explanations: [], question: plainPieces("Q?"), options: ["A", "B"].map((l, i) => ({ label: plainPieces(l), description: plainPieces(""), figure: null, answer: { token: String(i + 1) } })), attached: null, decision: null } },
   });
   const offered = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.withOffer(prompts.optionOrTextPrompt)), countdown: null, deciding: null });
   const frame = (prompt: number): RunEvent => ({ _tag: "Asked", prompt, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: 1 });

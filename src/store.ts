@@ -471,6 +471,18 @@ export const makeStore = (projectDir: string, root: RunRoot, ignorePaths: readon
       loadQuestions: () => readText(questions).pipe(Effect.flatMap((text) => Effect.fromResult(readQuestions(questions, text)))),
       writeRequirements: (text) => writeText(requirements, text),
       saveSuiteLog: (n, text) => writeText(path.join(dir, pathOf({ kind: "suiteLog", n })), text),
+      // Issue #98: the markup byte for byte, through a temporary name, so a reader sees no partial picture; the name is
+      // the content's hash, so writing a picture again changes nothing a record links to.
+      saveFigures: (figures) =>
+        Effect.forEach(figures, (figure) =>
+          Effect.gen(function* () {
+            const file = at({ kind: "figure", figure });
+            yield* mkdir(path.dirname(file));
+            const temporary = `${file}.tmp-${process.pid}`;
+            yield* writeText(temporary, figure.svg);
+            yield* renameInto(temporary, file);
+          }),
+        { discard: true }),
       loadLog: (subject) => {
         const prefix = ownPrefixOf(subject);
         if (prefix !== null) return readLogFile(subject).pipe(Effect.map((entries) => entries.filter((e) => e.id.startsWith(prefix))));

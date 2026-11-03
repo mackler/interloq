@@ -418,11 +418,35 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "figure": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "svg": {
+                          "type": "string"
+                        },
+                        "alt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "svg",
+                        "alt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
                 "label",
-                "description"
+                "description",
+                "figure"
               ],
               "additionalProperties": false
             }
@@ -905,11 +929,35 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "figure": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "svg": {
+                          "type": "string"
+                        },
+                        "alt": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "svg",
+                        "alt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
                 "label",
-                "description"
+                "description",
+                "figure"
               ],
               "additionalProperties": false
             }

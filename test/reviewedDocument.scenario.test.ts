@@ -17,7 +17,7 @@ import { finished, issue, questionEntry, respond, runRefinement, runTask, type S
 const read = (dir: string, name: string): string => fs.readFileSync(path.join(dir, name), "utf8");
 const q = (id: string): S.QuestionEntry => questionEntry(id, `question ${id}?`, [["A", "a"], ["B", "b"]], { context: "c", reason: "the codebase does not determine it", default_answer: "A" });
 /** An agreed question as the terms' call returns it, with no term to explain. */
-const termsOf = (e: S.QuestionEntry): S.TermsEntry => ({ id: e.id, explanations: [], context: e.context, history: e.history, question: e.question, reason: e.reason, proposed_answers: e.proposed_answers.map((a) => ({ label: a.label, description: a.description })) });
+const termsOf = (e: S.QuestionEntry): S.TermsEntry => ({ id: e.id, explanations: [], context: e.context, history: e.history, question: e.question, reason: e.reason, proposed_answers: e.proposed_answers.map((a) => ({ label: a.label, description: a.description, figure: a.figure })) });
 const closing = (summary: string) => [{ output: summaryReply(summary, "Complete.") }];
 const noQuestions = { questions_for_user: [] };
 
@@ -74,14 +74,14 @@ test("a refinement shows the question list before its review, the amended list a
   shownBeforeReview(probe.ui, "questions", marks);
   const lists = shownOf(probe.ui, "questions");
   assert.deepEqual(lists.map((d) => d._tag), ["Markdown", "Markdown"]);
-  assert.equal(textOf(lists[0]), renderQuestions({ questions: [q("Q1")] }));
-  assert.equal(textOf(lists[1]), renderQuestions({ questions: [q("Q1"), q("Q2")] }));
+  assert.equal(textOf(lists[0]), renderQuestions({ questions: [q("Q1")] }, "alt"));
+  assert.equal(textOf(lists[1]), renderQuestions({ questions: [q("Q1"), q("Q2")] }, "alt"));
 
   shownBeforeReview(probe.ui, "terms", marks);
   const terms = shownOf(probe.ui, "terms").map(textOf);
   assert.equal(terms.length, 2);
-  assert.equal(terms[0], Result.getOrThrow(renderTerms(initialTerms)));
-  assert.equal(terms[1], Result.getOrThrow(renderTerms(amendedTerms)));
+  assert.equal(terms[0], Result.getOrThrow(renderTerms(initialTerms, "alt")));
+  assert.equal(terms[1], Result.getOrThrow(renderTerms(amendedTerms, "alt")));
   assert.notEqual(terms[0], terms[1]);
   assert.deepEqual(JSON.parse(read(probe.dir, "terms.json")).entries, amendedTerms);
 
@@ -102,7 +102,7 @@ test("unchecked terms are shown once, when written, with no review", async () =>
   });
   await runRefinement(layer, "task", "unchecked");
   assert.equal(shownOf(probe.ui, "terms").length, 1);
-  assert.equal(textOf(shownOf(probe.ui, "terms")[0]), Result.getOrThrow(renderTerms([termsOf(q("Q1"))])));
+  assert.equal(textOf(shownOf(probe.ui, "terms")[0]), Result.getOrThrow(renderTerms([termsOf(q("Q1"))], "alt")));
 });
 
 test("an empty agreed list shows the requirements it writes", async () => {

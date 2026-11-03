@@ -22,6 +22,7 @@
   import { type Ending, endingOf, isDecide, isTermsRequest } from "../../../src/input.ts";
   import ConfirmEndDialog from "./ConfirmEndDialog.svelte";
   import { blocksText, piecesText } from "../../../src/pieces.ts";
+  import OptionFigure from "./OptionFigure.svelte";
   import QuestionText from "./QuestionText.svelte";
   import Disclosure from "./Disclosure.svelte";
   import type { Snippet } from "svelte";
@@ -173,9 +174,9 @@
           {#each question.options as option, i (i)}
             {#if "token" in option.answer}
               {@const token = option.answer.token}
-              <Card variant="outlined" disabled={starting} onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}</span></Card>
+              <Card variant="outlined" disabled={starting} onclick={() => send(token)}><span class="card-text"><span class="option-label"><span class="token">{token}.</span> <strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}{#if option.figure !== null}<OptionFigure figure={option.figure} />{/if}</span></Card>
             {:else}
-              <div class="numeric"><span class="option-label"><strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}<span class="m3-font-body-small">{NUMERIC_OPTION_NOTE}</span></div>
+              <div class="numeric"><span class="option-label"><strong><QuestionText class="markdown" pieces={option.label} explanations={question.explanations} /></strong></span>{#if piecesText(option.description) !== ""}{" "}<span class="option-description"><QuestionText class="markdown" pieces={option.description} explanations={question.explanations} /></span>{/if}{#if option.figure !== null}<OptionFigure figure={option.figure} />{/if}<span class="m3-font-body-small">{NUMERIC_OPTION_NOTE}</span></div>
             {/if}
           {/each}
         </div>

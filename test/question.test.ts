@@ -26,7 +26,7 @@ const good: Question = {
   question: [...plain("The input of a tool is described with "), term("zod", "t1"), ...plain(". Should it be declared as a dependency?")],
   explanations: [zod],
   options: [
-    { label: plain("Declare it"), description: [...plain("Add "), term("zod", "t1"), ...plain(" to package.json.")] },
+    { label: plain("Declare it"), description: [...plain("Add "), term("zod", "t1"), ...plain(" to package.json.")], figure: null },
     opt("Leave it", "Keep it as a dependency of the SDK only."),
   ],
 };
@@ -54,7 +54,7 @@ test("a number with its kind before it is not bare, in a list too", () => {
 // W1-R1-2 (S23): a literal value is shown exactly and is no bare number; the check reads the plain pieces alone.
 test("bareNumber reads plain pieces only: a code piece is no bare number, and it separates the words around it", () => {
   const code = (text: string): Piece => ({ text, ref: "", code: true });
-  assert.deepEqual(kinds({ ...good, options: [...good.options, { label: [code("#123456")], description: [] }] }), []);
+  assert.deepEqual(kinds({ ...good, options: [...good.options, { label: [code("#123456")], description: [], figure: null }] }), []);
   assert.deepEqual(kinds({ ...good, context: [...good.context, { kind: "paragraph", pieces: [...plain("The color "), code("#53")] }] }), []);
   assert.deepEqual(kinds({ ...good, question: [...plain("Keep "), code("#53"), ...plain("?")] }), []);
   assert.deepEqual(kinds({ ...good, context: [...good.context, ...para("Also see #53.")] }), ["bareNumber"]);
@@ -100,7 +100,7 @@ test("a ref in any part counts: the details, a list item and an option's label",
   const bare: Question = { ...good, context: para("Interloq asks this."), history: [], question: plain("Should it be declared?"), options: [opt("A"), opt("B")] };
   assert.deepEqual(onlyIn(bare), ["unusedExplanation"]);
   assert.deepEqual(onlyIn({ ...bare, details: [{ kind: "list", items: [{ level: 1, pieces: [term("zod", "t1")] }] }] }), []);
-  assert.deepEqual(onlyIn({ ...bare, options: [{ label: [term("zod", "t1")], description: [] }, opt("B")] }), []);
+  assert.deepEqual(onlyIn({ ...bare, options: [{ label: [term("zod", "t1")], description: [], figure: null }, opt("B")] }), []);
 });
 
 test("a literal value never refers to an explanation, except a code piece the program supplied with its ref", () => {
@@ -120,13 +120,14 @@ test("every problem kind names a rule or clause, and the repair prompt cites its
   const textOf = (id: string) =>
     prompts.QUESTION_RULES.find((r) => r.id === id)?.rule ??
     prompts.QUESTION_FORMAT.find((c) => c.id === id)?.text ??
-    ({ keepWording: prompts.KEEP_WORDING, keepLiterals: prompts.KEEP_LITERALS, keepOptions: prompts.KEEP_OPTIONS, keepSuppliedRefs: prompts.KEEP_SUPPLIED_REFS } as Record<string, string>)[id];
+    ({ keepWording: prompts.KEEP_WORDING, keepLiterals: prompts.KEEP_LITERALS, keepOptions: prompts.KEEP_OPTIONS, keepSuppliedRefs: prompts.KEEP_SUPPLIED_REFS, keepFigures: prompts.KEEP_FIGURES } as Record<string, string>)[id];
   for (const kind of prompts.QUESTION_PROBLEM_KINDS) {
     const rule = textOf(prompts.QUESTION_PROBLEM_RULE[kind]);
     assert.ok(rule !== undefined && rule !== "", kind);
-    const repair = prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [{ kind, subject: "zod" }] }]);
+    const problem: prompts.QuestionProblem = kind === "figureTooLarge" ? { kind, subject: "zod", bytes: 70_000 } : { kind, subject: "zod" };
+    const repair = prompts.questionRepairPrompt([{ where: "questions_for_user 1", problems: [problem] }]);
     assert.ok(repair.includes(rule), kind);
-    assert.ok(repair.includes(prompts.questionProblemText({ kind, subject: "zod" })), kind);
+    assert.ok(repair.includes(prompts.questionProblemText(problem)), kind);
   }
 });
 
@@ -232,7 +233,7 @@ const arbValid: fc.Arbitrary<Question> = fc.uniqueArray(fc.constantFrom("a", "b"
     question: fc.array(arbPiece(ids), { maxLength: 4 }).map((ps) => [...ps, ...ids.map((ref) => ({ text: `w${ref}`, ref, code: false })), { text: "?", ref: "", code: false }]),
     // Issue #112: one to three senses per explanation, so that the properties over valid questions cover several senses.
     explanations: fc.constant(ids.map((id) => ({ id, term: `term ${id}`, senses: Array.from({ length: 1 + (id.charCodeAt(0) % 3) }, (_, k) => `explains ${id}, sense ${k + 1}`) }))),
-    options: fc.array(fc.record({ label: fc.array(arbPiece(ids), { maxLength: 2 }), description: fc.array(arbPiece(ids), { maxLength: 2 }) }), { maxLength: 3 }),
+    options: fc.array(fc.record({ label: fc.array(arbPiece(ids), { maxLength: 2 }), description: fc.array(arbPiece(ids), { maxLength: 2 }), figure: fc.constant(null) }), { maxLength: 3 }),
   }),
 );
 const REFERENCE_KINDS = ["unknownRef", "unusedExplanation", "duplicateExplanation", "blankTerm", "blankExplanation", "blankTermPiece", "refOnCode"];

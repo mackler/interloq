@@ -23,7 +23,7 @@ export const codePiece = (text: string): Piece => ({ text, ref: "", code: true }
 export const plainBlocks = (...paragraphs: readonly string[]): readonly Block[] =>
   paragraphs.filter((p) => p.trim() !== "").map((p) => ({ kind: "paragraph", pieces: plainPieces(p) }));
 /** An option of the program's own words. */
-export const plainOption = (label: string, description: string): PieceOption => ({ label: plainPieces(label), description: plainPieces(description) });
+export const plainOption = (label: string, description: string): PieceOption => ({ label: plainPieces(label), description: plainPieces(description), figure: null });
 
 /** The words of a sequence of pieces, joined. */
 export const piecesText = (pieces: readonly Piece[]): string => pieces.map((p) => p.text).join("");

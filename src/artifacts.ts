@@ -1,5 +1,6 @@
 // The catalog of the program's records under <project>/plan-review/ (finding 28 of
 // docs/functional-design-review.md): typed identities and one `pathOf`, so that no workflow builds a path. Pure.
+import { type Figure, figureFileOf } from "./figure.ts";
 import type { Brand } from "effect";
 import type { RunMode } from "./runMode.ts";
 
@@ -30,7 +31,9 @@ export type Artifact =
   /** Decision k: the question and its options, the reviewed analysis, the analysis call's raw output, the user's choice. */
   | Readonly<{ kind: "decisionQuestion" | "analysis" | "analysisWrite" | "chosen"; decision: number }>
   /** Issue #186: verdict n, Claude Code's verdict that the item is not refined, the verdict subject's reviewed file. */
-  | Readonly<{ kind: "verdict"; verdict: number }>;
+  | Readonly<{ kind: "verdict"; verdict: number }>
+  /** Issue #98: an option's picture, figures/<sha256 of its markup>.svg, which conversation.md links. */
+  | Readonly<{ kind: "figure"; figure: Figure }>;
 
 /** The directory of the records, relative to the project. */
 export const RECORDS_DIR = "plan-review";
@@ -199,6 +202,9 @@ export const pathOf = (artifact: Artifact): string => {
       return `decision-${artifact.decision}/chosen.json`;
     case "verdict":
       return `verdict-${artifact.verdict}/verdict.json`;
+    case "figure":
+      // The one source of the path, which the record's link uses too (figureMarkdown of src/render.ts).
+      return figureFileOf(artifact.figure);
     default:
       return FIXED[artifact.kind];
   }

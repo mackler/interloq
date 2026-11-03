@@ -32,7 +32,8 @@ const Block = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("code"), text: Str }),
 ]);
 const Blocks = Schema.Array(Block);
-const PieceOption = Schema.Struct({ label: Pieces, description: Pieces });
+// Issue #98: an option's picture, null or its SVG markup and its alternative text.
+const PieceOption = Schema.Struct({ label: Pieces, description: Pieces, figure: Schema.NullOr(Schema.Struct({ svg: Str, alt: Str })) });
 const UserQuestion = Schema.Struct({ context: Blocks, history: Blocks, question: Pieces, explanations: Schema.Array(Explanation), options: Schema.Array(PieceOption) });
 const plannerFields = { dispositions: Schema.Array(Disposition), self_corrections: Schema.Array(SelfCorrection), reviewer_feedback: Str, questions_for_user: Schema.Array(UserQuestion) };
 const markedFields = { ...plannerFields, dispositions: Schema.Array(MarkedDisposition) };

@@ -25,7 +25,7 @@ const block = fc.oneof(
   fc.record({ kind: fc.constant("code" as const), text }),
 );
 const blocks = fc.array(block, { maxLength: 2 });
-const option = fc.record({ label: pieces, description: pieces });
+const option = fc.record({ label: pieces, description: pieces, figure: fc.constant(null) });
 const entry = (id: string): fc.Arbitrary<StoredQuestion> =>
   fc.record({ context: blocks, history: blocks, question: pieces, reason: blocks, proposed_answers: fc.array(option, { maxLength: 3 }), default_answer: fc.option(text, { nil: null }), skip_if: fc.option(fc.record({ question: text, answer: text }), { nil: null }) }).map((e) => ({ id, ...e }));
 const prepared = (id: string): fc.Arbitrary<PreparedQuestion> =>

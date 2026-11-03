@@ -6,7 +6,7 @@ import { QuestionInvalid } from "./errors.ts";
 import * as prompts from "./prompts.ts";
 import type { QuestionProblem, QuestionProblems } from "./prompts.ts";
 import { sameBlocks, samePieces } from "./pieces.ts";
-import { questionProblems } from "./question.ts";
+import { changedFigures, questionProblems } from "./question.ts";
 import type { Validation } from "./review.ts";
 import type { QuestionsFile, TermsEntry } from "./schema.ts";
 
@@ -37,6 +37,8 @@ const termsProblems = (questions: QuestionsFile["questions"], entries: readonly 
     if (q === undefined) return [{ where: entry.id, problems: [{ kind: "unknownQuestion", subject: entry.id }] }];
     const problems = [
       ...wordingChanges(q, entry),
+      // Issue #98: the agreed answers' pictures kept exactly (KEEP_FIGURES).
+      ...changedFigures(q.proposed_answers, entry.proposed_answers),
       ...questionProblems({ context: entry.context, history: entry.history, question: entry.question, explanations: entry.explanations, options: entry.proposed_answers, details: entry.reason }).filter((p) => !LIST_PROBLEMS.includes(p.kind)),
     ];
     return problems.length === 0 ? [] : [{ where: entry.id, problems }];
