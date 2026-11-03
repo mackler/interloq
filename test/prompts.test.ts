@@ -1135,8 +1135,8 @@ test("endMarkOf: a finished run is marked ✓ and every other end ✕", async ()
   assert.equal(prompts.endMarkOf(0), prompts.TITLE_ENDED_MARK);
   for (const code of [1, 2, 130]) assert.equal(prompts.endMarkOf(code), prompts.TITLE_UNFINISHED_MARK);
   fc.assert(fc.property(fc.integer().filter((c) => c !== 0), (c) => prompts.endMarkOf(c) === prompts.TITLE_UNFINISHED_MARK));
-  const marks = new Set([prompts.TITLE_ENDED_MARK, prompts.TITLE_UNFINISHED_MARK, prompts.TITLE_WAITING_MARK]);
-  assert.equal(marks.size, 3);
+  const marks = new Set([prompts.TITLE_ENDED_MARK, prompts.TITLE_UNFINISHED_MARK, prompts.TITLE_WAITING_MARK, prompts.RUNNING_MARK, prompts.LIMIT_PAUSED_MARK]);
+  assert.equal(marks.size, 5);
   for (const code of [0, 1, 2, 130]) assert.equal(prompts.endedTabName("x", code), `${prompts.endMarkOf(code)} x`);
 });
 
@@ -1144,4 +1144,18 @@ test("endMarkOf: a finished run is marked ✓ and every other end ✕", async ()
 test("the terms-on-request note names EXPLAIN_TERMS", () => {
   assert.ok(prompts.TERMS_ON_REQUEST_NOTE.includes(prompts.EXPLAIN_TERMS));
   assert.equal(prompts.TERMS_ON_REQUEST_NOTE, "Each question will offer an Explain the terms button.");
+});
+
+// Issue #139: when a usage-limit pause ends, as a tab shows it.
+test("limitPauseText: until or next try, the day only where it differs", () => {
+  const from = Date.parse("2026-11-03T10:00:00Z");
+  assert.equal(prompts.limitPauseText(from, Date.parse("2026-11-03T23:11:30Z"), true), "until 23:11 UTC");
+  assert.equal(prompts.limitPauseText(from, Date.parse("2026-11-03T10:05:00Z"), false), "next try 10:05 UTC");
+  assert.equal(prompts.limitPauseText(from, Date.parse("2026-11-04T08:00:00Z"), true), "until 4 Nov 08:00 UTC");
+  assert.equal(prompts.limitPauseText(from, Date.parse("2026-12-10T00:30:00Z"), false), "next try 10 Dec 00:30 UTC");
+});
+test("the state texts of a run", () => {
+  assert.equal(prompts.runEndedText(0), "a run finished");
+  assert.equal(prompts.runEndedText(1), "a run halted");
+  assert.ok(prompts.runLimitPausedText("until 23:11 UTC").endsWith("until 23:11 UTC"));
 });

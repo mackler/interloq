@@ -1228,8 +1228,9 @@ describe("App and the draft", () => {
       ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([started, asked(1)]) }] });
       expect(NotificationStub.calls).toHaveLength(1);
       ws.receive({ type: "event", run: 1, seq: 2, time: TIME, event: { _tag: "Answered", prompt: 1, text: "" } });
-      expect(document.title).toBe(tabTitle("/p"));
-      expect(icon()).toBe(faviconHref({ _tag: "Clear" }, schemeColors()));
+      // Issue #139: the run goes on working, which the title and the icon now say.
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Running" }));
+      expect(icon()).toBe(faviconHref({ _tag: "Running" }, schemeColors()));
       expect(NotificationStub.calls[0]!.closed).toBe(true);
     });
 
@@ -1330,8 +1331,8 @@ describe("App and the draft", () => {
         asked.push(value);
         return `rgb(${asked.length}, 0, 0)`;
       });
-      expect(asked).toEqual(["var(--m3c-primary)", "var(--m3c-error)", "var(--m3c-tertiary)"]);
-      expect(colors).toEqual({ base: "rgb(1, 0, 0)", badge: "rgb(2, 0, 0)", ended: "rgb(3, 0, 0)" });
+      expect(asked).toEqual(["var(--m3c-primary)", "var(--m3c-error)", "var(--m3c-tertiary)", "var(--m3c-secondary)"]);
+      expect(colors).toEqual({ base: "rgb(1, 0, 0)", badge: "rgb(2, 0, 0)", ended: "rgb(3, 0, 0)", working: "rgb(4, 0, 0)" });
       for (const c of Object.values(schemeColors())) expect(c).not.toMatch(/light-dark\(|var\(/);
     });
 
@@ -2039,7 +2040,8 @@ describe("App: several refinement runs", () => {
       ws.receive({ type: "event", run: 1, seq: 1, time: TIME, event: { _tag: "Ended", code: 0 } });
       expect(document.title).toBe(tabTitle("/p", { _tag: "Ended", code: 0 }));
       clickRunTab(root, "run-1");
-      expect(document.title).toBe(tabTitle("/p"));
+      // Issue #139: run 2 is still working.
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Running" }));
     });
 
     test("issue #209: a run that ends while shown in a visible page: no notification and no mark", async () => {

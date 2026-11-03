@@ -5,7 +5,7 @@ import * as prompts from "../../src/prompts.ts";
 import type { RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import { type DraftKey, pendingKey, sameKey } from "./draft.ts";
-import { unseenEnds, combinedMark, type Decision, decide, type Mark, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey } from "./notify.ts";
+import { unseenEnds, combinedMark, type Decision, decide, type Mark, defaultPreferences, initialNotifyState, markOf, type NotifyState, type Observation, type Permission, type Preferences, type RunKey, type LimitPause, markRank, markGlyph, markedTabName, markStateText, marksByMode } from "./notify.ts";
 import { initialState, reduce, shownRun, type ViewState } from "./state.ts";
 import { helloChain } from "./testChain.ts";
 
@@ -23,6 +23,7 @@ const observation = (o: Partial<Observation>): Observation => ({
   onScreen: true,
   preferences: ON,
   permission: "granted",
+  limit: null,
   ...o,
 });
 const foldDecisions = (observations: readonly Observation[], from: NotifyState = initialNotifyState): Decision[] =>
@@ -55,7 +56,7 @@ const observations = fc.array(step, { maxLength: 30 }).map((steps) => {
     if (bump === 2) [run, prompt] = [run + 1, 1];
     if (bump === 3) [incarnation, run, prompt] = [incarnation + 1, 1, 1];
     const runKey = { incarnation: `i${incarnation}`, run };
-    return { ...rest, run: runKey, pending: pending ? { ...runKey, prompt } : null };
+    return { ...rest, run: runKey, pending: pending ? { ...runKey, prompt } : null, limit: null };
   });
 });
 const NUM_RUNS = 200;
@@ -112,7 +113,8 @@ describe("decide: properties", () => {
       fc.property(observations, (os) => {
         foldDecisions(os).forEach((d, i) => {
           expect(d._tag === "Waiting").toBe(os[i]!.pending !== null);
-          expect(markOf(d)).toEqual(d._tag === "Idle" ? { _tag: "Clear" } : d._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", code: d.code });
+          const idle = (a: typeof d & { _tag: "Idle" }): Mark => (a.activity._tag === "None" ? { _tag: "Clear" } : a.activity._tag === "Running" ? { _tag: "Running" } : { _tag: "LimitPaused", pause: a.activity.pause });
+          expect(markOf(d)).toEqual(d._tag === "Idle" ? idle(d) : d._tag === "Waiting" ? { _tag: "Waiting" } : { _tag: "Ended", code: d.code });
         });
       }),
       { numRuns: NUM_RUNS },
@@ -193,7 +195,7 @@ describe("decide: examples", () => {
   });
 
   test("a page whose first observation is an ended run alerts nothing", () => {
-    expect(decide(initialNotifyState, observation({ ended: 0 }))).toEqual({ _tag: "Idle", state: expect.anything() });
+    expect(decide(initialNotifyState, observation({ ended: 0 }))).toEqual({ _tag: "Idle", state: expect.anything(), activity: { _tag: "None" } });
   });
 
   test("a run that ends on screen in a visible page is seen at once: Idle, and still Idle when hidden or left later", () => {
@@ -257,25 +259,94 @@ describe("unseenEnds", () => {
   });
 });
 
-// Issue #120, S17: the title and the icon show one mark for the two tabs' runs.
+// Issue #120, S17, and issue #139: the title, the icon and each tab show one mark of several runs, by one precedence.
+const PAUSE: LimitPause = { fromMs: 0, untilMs: 3_600_000, known: true };
+const markArb = fc.oneof(
+  fc.constant<Mark>({ _tag: "Clear" }),
+  fc.constant<Mark>({ _tag: "Running" }),
+  fc.record({ fromMs: fc.nat(), untilMs: fc.nat(), known: fc.boolean() }).map((pause): Mark => ({ _tag: "LimitPaused", pause })),
+  fc.constant<Mark>({ _tag: "Waiting" }),
+  fc.integer({ min: 0, max: 255 }).map((code): Mark => ({ _tag: "Ended", code })),
+);
 describe("combinedMark", () => {
-  const markArb = fc.oneof(fc.constant<Mark>({ _tag: "Clear" }), fc.constant<Mark>({ _tag: "Waiting" }), fc.integer({ min: 0, max: 255 }).map((code): Mark => ({ _tag: "Ended", code })));
-  test("Waiting exactly when some mark waits, Ended when none waits and some ended, Clear otherwise", () => {
+  test("property: an element of maximal rank, the first such, Clear for none", () => {
     fc.assert(
-      fc.property(fc.array(markArb, { maxLength: 4 }), (marks) => {
+      fc.property(fc.array(markArb, { maxLength: 5 }), (marks) => {
         const combined = combinedMark(marks);
-        const waiting = marks.some((m) => m._tag === "Waiting");
-        const ended = marks.find((m) => m._tag === "Ended");
-        if (waiting) expect(combined).toBe(marks.find((m) => m._tag === "Waiting"));
-        else if (ended !== undefined) expect(combined).toBe(ended);
-        else expect(combined).toEqual({ _tag: "Clear" });
+        if (marks.length === 0) expect(combined).toEqual({ _tag: "Clear" });
+        else expect(combined).toBe(marks.find((m) => markRank(m) === Math.max(...marks.map(markRank))));
       }),
     );
   });
-  test("examples: waiting over ended, ended over clear, an empty list clear", () => {
-    expect(combinedMark([{ _tag: "Ended", code: 0 }, { _tag: "Waiting" }])).toEqual({ _tag: "Waiting" });
-    expect(combinedMark([{ _tag: "Clear" }, { _tag: "Ended", code: 130 }])).toEqual({ _tag: "Ended", code: 130 });
-    expect(combinedMark([{ _tag: "Clear" }, { _tag: "Clear" }])).toEqual({ _tag: "Clear" });
-    expect(combinedMark([])).toEqual({ _tag: "Clear" });
+  test("property: its rank does not depend on the order of its input", () => {
+    fc.assert(fc.property(fc.array(markArb, { maxLength: 5 }), (marks) => {
+      expect(markRank(combinedMark([...marks].reverse()))).toBe(markRank(combinedMark(marks)));
+    }));
+  });
+  test("examples: the precedence, pair by pair", () => {
+    const clear: Mark = { _tag: "Clear" };
+    const running: Mark = { _tag: "Running" };
+    const paused: Mark = { _tag: "LimitPaused", pause: PAUSE };
+    const finished: Mark = { _tag: "Ended", code: 0 };
+    const halted: Mark = { _tag: "Ended", code: 1 };
+    const waiting: Mark = { _tag: "Waiting" };
+    expect(combinedMark([clear, running])).toBe(running);
+    expect(combinedMark([running, paused])).toBe(paused);
+    expect(combinedMark([paused, finished])).toBe(finished);
+    expect(combinedMark([finished, halted])).toBe(halted);
+    expect(combinedMark([halted, waiting])).toBe(waiting);
+    expect(combinedMark([{ _tag: "Ended", code: 130 }, finished])).toEqual({ _tag: "Ended", code: 130 });
+    expect(combinedMark([])).toEqual(clear);
+  });
+});
+
+describe("decide: the activity of a run in progress (issue #139)", () => {
+  test("a run in progress is Running, with a limit LimitPaused, none for no run or an ended one", () => {
+    expect(decide(initialNotifyState, observation({}))).toMatchObject({ _tag: "Idle", activity: { _tag: "Running" } });
+    expect(decide(initialNotifyState, observation({ limit: PAUSE }))).toMatchObject({ _tag: "Idle", activity: { _tag: "LimitPaused", pause: PAUSE } });
+    expect(decide(initialNotifyState, observation({ run: null }))).toMatchObject({ _tag: "Idle", activity: { _tag: "None" } });
+    expect(markOf(decide(initialNotifyState, observation({})))).toEqual({ _tag: "Running" });
+    expect(markOf(decide(initialNotifyState, observation({ limit: PAUSE })))).toEqual({ _tag: "LimitPaused", pause: PAUSE });
+  });
+  test("waiting wins over a pending limit; an end wins over activity; a seen end is none", () => {
+    expect(decide(initialNotifyState, observation({ pending: KEY, limit: PAUSE }))._tag).toBe("Waiting");
+    const ended = foldDecisions([observation({}), observation({ ended: 1 })]);
+    expect(last(ended)._tag).toBe("Ended");
+    const seen = decide(last(ended).state, observation({ ended: 1, visible: true }));
+    expect(seen).toMatchObject({ _tag: "Idle", activity: { _tag: "None" } });
+    expect(markOf(seen)).toEqual({ _tag: "Clear" });
+  });
+});
+
+describe("the glyphs and words of the marks (issue #139)", () => {
+  const all: Mark[] = [{ _tag: "Running" }, { _tag: "LimitPaused", pause: PAUSE }, { _tag: "Waiting" }, { _tag: "Ended", code: 0 }, { _tag: "Ended", code: 1 }];
+  test("five distinct glyphs, none for Clear", () => {
+    expect(markGlyph({ _tag: "Clear" })).toBe(null);
+    expect(new Set(all.map(markGlyph)).size).toBe(5);
+    expect(markGlyph({ _tag: "Running" })).toBe(prompts.RUNNING_MARK);
+    expect(markGlyph({ _tag: "LimitPaused", pause: PAUSE })).toBe(prompts.LIMIT_PAUSED_MARK);
+  });
+  test("markedTabName agrees with the second row's names, and carries the pause's end", () => {
+    expect(markedTabName("Tab", { _tag: "Clear" })).toBe("Tab");
+    expect(markedTabName("Tab", { _tag: "Waiting" })).toBe(prompts.waitingTabName("Tab"));
+    for (const code of [0, 1, 2, 130]) expect(markedTabName("Tab", { _tag: "Ended", code })).toBe(prompts.endedTabName("Tab", code));
+    expect(markedTabName("Tab", { _tag: "Running" })).toBe(`${prompts.RUNNING_MARK} Tab`);
+    expect(markedTabName("Tab", { _tag: "LimitPaused", pause: PAUSE })).toBe(`${prompts.LIMIT_PAUSED_MARK} Tab ${prompts.limitPauseText(0, 3_600_000, true)}`);
+  });
+  test("markStateText: words for every mark but Clear", () => {
+    expect(markStateText({ _tag: "Clear" })).toBe(null);
+    expect(markStateText({ _tag: "Running" })).toBe(prompts.RUN_WORKING_TEXT);
+    expect(markStateText({ _tag: "Waiting" })).toBe(prompts.RUN_WAITING_TEXT);
+    expect(markStateText({ _tag: "Ended", code: 1 })).toBe(prompts.runEndedText(1));
+    expect(markStateText({ _tag: "LimitPaused", pause: PAUSE })).toBe(prompts.runLimitPausedText(prompts.limitPauseText(0, 3_600_000, true)));
+  });
+  test("marksByMode: each mode's combined mark", () => {
+    const byMode = marksByMode([
+      { mode: "refinement", mark: { _tag: "Running" } },
+      { mode: "refinement", mark: { _tag: "Waiting" } },
+      { mode: "implementation", mark: { _tag: "LimitPaused", pause: PAUSE } },
+    ]);
+    expect(byMode).toEqual({ refinement: { _tag: "Waiting" }, implementation: { _tag: "LimitPaused", pause: PAUSE } });
+    expect(marksByMode([])).toEqual({ refinement: { _tag: "Clear" }, implementation: { _tag: "Clear" } });
   });
 });

@@ -51,7 +51,7 @@
   import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
-  import { shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -408,6 +408,8 @@
     return {
       // Issue #153: a question whose analysis is being prepared raises no alert; asked beside its analysis, it does.
       pending: awaitedKey(p.shown),
+      // Issue #139: the run's usage-limit wait, which its tab, the title and the icon show as a pause.
+      limit: watched === null ? null : limitPauseOf(watched),
       run: watched === null || view.incarnation === null ? null : { incarnation: view.incarnation, run: watched.id },
       ended: watched?.ended ?? null,
       visible,

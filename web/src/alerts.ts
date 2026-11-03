@@ -116,11 +116,11 @@ export const resolveColor =
     return resolved;
   };
 
-/** The scheme's colors for the icon, resolved: primary for the square, error for the waiting badge, tertiary for the end's. */
+/** The scheme's colors for the icon, resolved: primary for the square, error for the waiting badge, tertiary for a finished end's, secondary for a working or paused run's (issue #139). */
 export const schemeColors = (doc: Document = document, resolve: (cssValue: string) => string = resolveColor(doc)): FaviconColors => {
   const read = (name: string, fallback: string): string => {
     const value = resolve(`var(${name})`).trim();
     return value === "" || /light-dark\(|var\(/.test(value) ? fallback : value;
   };
-  return { base: read("--m3c-primary", "#4f5b92"), badge: read("--m3c-error", "#ba1a1a"), ended: read("--m3c-tertiary", "#715573") };
+  return { base: read("--m3c-primary", "#4f5b92"), badge: read("--m3c-error", "#ba1a1a"), ended: read("--m3c-tertiary", "#715573"), working: read("--m3c-secondary", "#5b5d72") };
 };

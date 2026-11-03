@@ -17,6 +17,7 @@ import { correctionCount } from "../../src/issueLog.ts";
 import { SUITE_OUTCOMES, type SuiteOutcome } from "../../src/suite.ts";
 import { countOfKind, type LoopResult, type Phase, phaseName, type StepReport, type UiEvent } from "../../src/uiEvents.ts";
 import type { LimitWaitBasis } from "../../src/limitReset.ts";
+import type { LimitPause } from "./notify.ts";
 import type { Choice } from "../../src/userPrompts.ts";
 import type { DecisionAnalysis, RecordedPlan, RecordedStep, StepStatus, TermsMode } from "../../src/schema.ts";
 import type { ShownDocument } from "../../src/reviewedDocument.ts";
@@ -1489,6 +1490,9 @@ export type Retry = Readonly<{ agent: "claude" | "codex" | "tracker"; purpose: s
 export const waitedBy = (wait: Readonly<{ agent: string; purpose: string | null }>, call: Readonly<{ agent: string; purpose: string }>): boolean => wait.agent === call.agent && wait.purpose === call.purpose;
 
 /** The activity line of a usage limit's wait, from the wait itself. */
+/** Issue #139: a run's usage-limit wait as its tab shows it, while the run is in progress; its end known only for a stated reset. */
+export const limitPauseOf = (run: RunView): LimitPause | null =>
+  run.ended !== null || run.limitWait === null ? null : { fromMs: run.limitWait.fromMs, untilMs: run.limitWait.untilMs, known: run.limitWait.basis.kind === "reset" };
 const limitWaitLine = (wait: LimitWait): string => `${AGENT[wait.agent]} — ${usageLimitActivity(wait.limitType, wait.basis, wait.untilMs)}`;
 
 /** The activity line of an agent's retry, from the retry itself; a tracker's is built by its own case. */

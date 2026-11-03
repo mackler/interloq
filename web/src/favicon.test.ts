@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import { faviconHref } from "./favicon.ts";
 import type { Mark } from "./notify.ts";
-import { endMarkOf } from "../../src/prompts.ts";
+import { endMarkOf, LIMIT_PAUSED_MARK, RUNNING_MARK } from "../../src/prompts.ts";
 
 // Issue #16: the page's icon carries a badge while a prompt waits, or after a watched run ended unseen.
-const COLORS = { base: "rgb(1, 2, 3)", badge: "rgb(200, 0, 0)", ended: "rgb(0, 100, 0)" };
+const COLORS = { base: "rgb(1, 2, 3)", badge: "rgb(200, 0, 0)", ended: "rgb(0, 100, 0)", working: "rgb(50, 50, 80)" };
 const PREFIX = "data:image/svg+xml,";
 const svgOf = (href: string): string => decodeURIComponent(href.slice(PREFIX.length));
-const mark = fc.oneof(fc.constant<Mark>({ _tag: "Clear" }), fc.constant<Mark>({ _tag: "Waiting" }), fc.constantFrom(0, 1).map((code): Mark => ({ _tag: "Ended", code })));
+const mark = fc.oneof(fc.constant<Mark>({ _tag: "Clear" }), fc.constant<Mark>({ _tag: "Waiting" }), fc.constant<Mark>({ _tag: "Running" }), fc.constant<Mark>({ _tag: "LimitPaused", pause: { fromMs: 0, untilMs: 1, known: true } }), fc.constantFrom(0, 1).map((code): Mark => ({ _tag: "Ended", code })));
 
 describe("faviconHref", () => {
   it("is an SVG data URL with a badge only for a mark, in the mark's color", () => {
@@ -40,5 +40,20 @@ describe("faviconHref", () => {
     for (const code of [0, 130]) expect(svgOf(faviconHref({ _tag: "Ended", code }, COLORS))).toMatch(new RegExp(`<text class="badge-mark"[^>]*>${endMarkOf(code)}</text>`));
     expect(svgOf(faviconHref({ _tag: "Waiting" }, COLORS))).not.toContain("badge-mark");
     expect(svgOf(faviconHref({ _tag: "Clear" }, COLORS))).not.toContain("badge");
+  });
+  // Issue #139: halted is the alert, in the error color with ✕; finished in tertiary with ✓; working and paused in their own color with their glyph.
+  it("draws each of the five marks in its color with its glyph", () => {
+    const halted = svgOf(faviconHref({ _tag: "Ended", code: 1 }, COLORS));
+    expect(halted).toContain(`fill="${COLORS.badge}"`);
+    expect(halted).toContain(`>${endMarkOf(1)}</text>`);
+    const finished = svgOf(faviconHref({ _tag: "Ended", code: 0 }, COLORS));
+    expect(finished).toContain(`fill="${COLORS.ended}"`);
+    expect(finished).not.toContain(`fill="${COLORS.badge}"`);
+    const running = svgOf(faviconHref({ _tag: "Running" }, COLORS));
+    expect(running).toContain(`fill="${COLORS.working}"`);
+    expect(running).toContain(`>${RUNNING_MARK}</text>`);
+    const paused = svgOf(faviconHref({ _tag: "LimitPaused", pause: { fromMs: 0, untilMs: 1, known: true } }, COLORS));
+    expect(paused).toContain(`fill="${COLORS.working}"`);
+    expect(paused).toContain(`>${LIMIT_PAUSED_MARK}</text>`);
   });
 });

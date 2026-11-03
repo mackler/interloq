@@ -2209,6 +2209,26 @@ export const CONNECTION_FAILED_NOTICE =
 // Issue #16: the alerts that a run waits for the user, or that a run he watched has ended.
 /** The title marker of a pending prompt, put in front of the tab's title. */
 export const TITLE_WAITING_MARK = "●";
+/** Issue #139: the mark of a run whose work is under way and needs nothing from the user: the static glyph of the
+ * running indicator, shown in the browser title and under reduced motion. It asserts that work is under way, and not
+ * how much is left or how long it will take. */
+export const RUNNING_MARK = "◌";
+/** Issue #139: the mark of a run that waits out a usage limit and will go on by itself. */
+export const LIMIT_PAUSED_MARK = "‖";
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+/** Issue #139: when a usage-limit pause ends, as a tab shows it: `until HH:MM UTC` where the reset was stated, `next try
+ * HH:MM UTC` otherwise, with the day (`4 Nov`) before the time where the end falls on another UTC day than the start. */
+export const limitPauseText = (fromMs: number, untilMs: number, known: boolean): string => {
+  const until = new Date(untilMs);
+  const sameDay = new Date(fromMs).toISOString().slice(0, 10) === until.toISOString().slice(0, 10);
+  const day = sameDay ? "" : `${until.getUTCDate()} ${MONTH_NAMES[until.getUTCMonth()]} `;
+  return `${known ? "until" : "next try"} ${day}${until.toISOString().slice(11, 16)} UTC`;
+};
+/** Issue #139: the words of a run's state, for the accessible names of the marks. */
+export const RUN_WORKING_TEXT = "a run is working";
+export const runLimitPausedText = (pause: string): string => `a run is paused for a usage limit, ${pause}`;
+export const RUN_WAITING_TEXT = "a run waits for your answer";
+export const runEndedText = (code: number): string => `a run ${endedOutcome(code)}`;
 /** Issue #209: the mark of a run that finished its work (exit 0) and whose end has not been seen since. */
 export const TITLE_ENDED_MARK = "✓";
 /** Issue #209: the mark of a run that ended without doing its work (halted 1, abandoned 2, stopped 130, any code but 0)

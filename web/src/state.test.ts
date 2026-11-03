@@ -18,7 +18,7 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { limitPauseOf, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
 import { tabTitle } from "./title.ts";
@@ -1848,6 +1848,17 @@ describe("a wait for a usage limit", () => {
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted)])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(runOf(s, "implementation")?.limitWait).toBe(null);
     for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(lifted), notified(call)])) expect(statusOf(s)).toBe("Claude — planning");
+  });
+
+  // Issue #139: the pause a run's tab shows, its end known only for a stated reset.
+  test("limitPauseOf: the wait while it lasts, known only for a stated reset; null before, after the call's restart and after the end", () => {
+    for (const s of both([started, notified(call), notified(failed)])) expect(limitPauseOf(runOf(s, "implementation")!)).toBe(null);
+    for (const basis of [{ kind: "reset" }, { kind: "pastReset", namedMs: FROM - 60_000 }, { kind: "noKnownEnd", attempt: 2 }] as const) {
+      const event: UiEvent = { ...waitingFor, basis } as UiEvent;
+      for (const s of both([started, notified(call), notified(failed), notified(event)])) expect(limitPauseOf(runOf(s, "implementation")!)).toEqual({ fromMs: FROM, untilMs: UNTIL, known: basis.kind === "reset" });
+    }
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), notified(call)])) expect(limitPauseOf(runOf(s, "implementation")!)).toBe(null);
+    for (const s of both([started, notified(call), notified(failed), notified(waitingFor), { _tag: "Ended", code: 130 }])) expect(limitPauseOf(runOf(s, "implementation")!)).toBe(null);
   });
 
   test("limitWaitView: the fraction elapsed and the time remaining at an instant", () => {
