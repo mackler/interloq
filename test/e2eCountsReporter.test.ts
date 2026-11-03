@@ -45,6 +45,19 @@ test("only an option Playwright gives a value consumes the next argument, and ev
   assert.equal(scope("--max-failures", "1"), "whole");
 });
 
+test("a short option with an attached value is read as Commander reads it (W1-R1-1 of work review 2)", () => {
+  const scope = (...args: string[]) => scopeOf({}, [...PLAYWRIGHT, ...args]);
+  assert.equal(scope("-gslow"), "selection");
+  assert.equal(scope("-Gslow"), "selection");
+  assert.equal(scope("-g=slow"), "selection");
+  assert.equal(scope("-j4"), "whole");
+  assert.equal(scope("-j4", "e2e/run.spec.ts"), "selection");
+  assert.equal(scope("-cplaywright.config.ts"), "whole");
+  assert.equal(scope("-uall"), "whole");
+  assert.equal(scope("-xgslow"), "selection");
+  assert.equal(scope("-xj4"), "whole");
+});
+
 test("onEnd writes one counted command from the tests' outcomes", () => {
   const dir = mkdtempSync(join(tmpdir(), "e2e-counts-"));
   const saved = { file: process.env[COUNTS_FILE_VARIABLE], scenarios: process.env.E2E_SCENARIOS };

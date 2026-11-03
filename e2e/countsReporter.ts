@@ -46,12 +46,29 @@ const CHOICE_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["--update-snapshots", new Set(["all", "changed", "missing", "none"])],
 ]);
 
+/** A short option with its value or further flags attached (`-gslow`, `-j4`, `-xj4`): its name and the rest. */
+const SHORT_ATTACHED = /^-([A-Za-z0-9])(.+)$/su;
+
+/**
+ * Whether one short option with text attached selects tests, read as Commander's `parseOptions` reads it: an option that
+ * takes a value (required, or optional as `-u` is) takes the attached text as its value; any other is a boolean flag,
+ * and the rest is read as the next short options combined with it (`-xgslow` is `-x` then `-gslow`).
+ */
+const shortSelects = (name: string, rest: string): boolean => {
+  if (SELECTION_OPTIONS.has(name)) return true;
+  if (VALUE_OPTIONS.has(name) || CHOICE_OPTIONS.has(name)) return false;
+  const next = SHORT_ATTACHED.exec(`-${rest}`);
+  return next === null ? false : shortSelects(`-${next[1]}`, next[2]);
+};
+
 /** Whether the arguments from `i` on select tests: a file named, or an option that runs only part of the tests. */
 const selectsFrom = (args: readonly string[], i: number): boolean => {
   if (i >= args.length) return false;
   const arg = args[i];
   if (arg === "--") return i + 1 < args.length;
   if (!arg.startsWith("-")) return true;
+  const short = arg.startsWith("--") ? null : SHORT_ATTACHED.exec(arg);
+  if (short !== null) return shortSelects(`-${short[1]}`, short[2]) || selectsFrom(args, i + 1);
   const eq = arg.indexOf("=");
   const name = eq === -1 ? arg : arg.slice(0, eq);
   if (SELECTION_OPTIONS.has(name)) return true;
