@@ -326,6 +326,19 @@ describe("the glyphs and words of the marks (issue #139)", () => {
     expect(markGlyph({ _tag: "Running" })).toBe(prompts.RUNNING_MARK);
     expect(markGlyph({ _tag: "LimitPaused", pause: PAUSE })).toBe(prompts.LIMIT_PAUSED_MARK);
   });
+  test("property: any pause and any halted code still give five distinct glyphs, none for Clear", () => {
+    const pauseArb = fc.record({ fromMs: fc.integer({ min: 0, max: 4_102_444_800_000 }), untilMs: fc.integer({ min: 0, max: 4_102_444_800_000 }), known: fc.boolean() });
+    const haltedCode = fc.integer({ min: -255, max: 255 }).filter((c) => c !== 0);
+    fc.assert(
+      fc.property(pauseArb, haltedCode, (pause, code) => {
+        const glyphs = ([{ _tag: "Running" }, { _tag: "LimitPaused", pause }, { _tag: "Waiting" }, { _tag: "Ended", code: 0 }, { _tag: "Ended", code }] as Mark[]).map(markGlyph);
+        expect(glyphs.every((g) => g !== null)).toBe(true);
+        expect(new Set(glyphs).size).toBe(5);
+        expect(markGlyph({ _tag: "Clear" })).toBe(null);
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
   test("markedTabName agrees with the second row's names, and carries the pause's end", () => {
     expect(markedTabName("Tab", { _tag: "Clear" })).toBe("Tab");
     expect(markedTabName("Tab", { _tag: "Waiting" })).toBe(prompts.waitingTabName("Tab"));
