@@ -1230,3 +1230,105 @@ suite("issue #196: the chain's queue", () => {
     assert.equal(startedRuns(refusedH).length, 0);
   });
 });
+
+// Issue #249: turning the switch on during an implementation run adopts it, so the chain starts the next refined item after it.
+const heldConverging = (held: Promise<void>): TestOptions => ({ ...converging, steps: [{ output: noQuestions, plan: "v1", gate: () => held }] });
+const planningCalled = (h: Harness, id: number) => until("the planning call", () => h.events.some((b) => b.run === id && b.event._tag === "Notified"));
+const gateOf = () => {
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  return { held, release };
+};
+
+test("#249 a run started with the switch off, adopted when the switch is turned on, finishes and the next refined item starts", async () => {
+  const { held, release } = gateOf();
+  const h = await harness([heldConverging(held), converging], { defaults: OFF_SETTINGS });
+  const id = await begin(h, "1");
+  await planningCalled(h, id);
+  const after = await run(h.manager.setChain(settings(2)));
+  assert.deepEqual(after.chain._tag === "Running" && { run: after.chain.run, item: after.chain.item, count: after.chain.count }, { run: id, item: "1", count: 1 });
+  release();
+  await idle(h);
+  assert.deepEqual(startedRuns(h).map((r) => r.item), ["1", "2"]);
+  assert.equal(await endedReason(h), "RunLimitReached");
+});
+
+test("#249 an adopted run that halts has its work parked and the chain continues", async () => {
+  const { held, release } = gateOf();
+  const h = await harness([(repo) => ({ steps: [{ sessionTooLong: "Prompt is too long", onCall: () => committedWork(repo), gate: () => held }] }), converging], { defaults: OFF_SETTINGS });
+  const id = await begin(h, "1");
+  await planningCalled(h, id);
+  await run(h.manager.setChain(settings(2)));
+  release();
+  await idle(h);
+  assert.equal(endCode(h, id), 1);
+  assert.equal(parkBranches(h, "1").length, 1);
+  assert.equal(await stateOf(h, "1"), "implementing");
+  const history = (await chainOf(h)).chain.history;
+  assert.deepEqual(history.map((e) => [e.item, e.outcome._tag]), [["1", "Halted"], ["2", "Finished"]]);
+  assert.deepEqual(startedRuns(h).map((r) => r.item), ["1", "2"]);
+  assert.equal(await endedReason(h), "RunLimitReached");
+});
+
+test("#249 the adoption is saved before it is acknowledged, and a restart finds it and ends it ServerEnded", async () => {
+  const { held, release } = gateOf();
+  const h = await harness([heldConverging(held), converging], { defaults: OFF_SETTINGS });
+  const id = await begin(h, "1");
+  await planningCalled(h, id);
+  await run(h.manager.setChain(settings(2)));
+  const onDisk = await run(loadChain(h.repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
+  assert.deepEqual(onDisk.chain.chain._tag === "Running" && { run: onDisk.chain.chain.run, item: onDisk.chain.chain.item, count: onDisk.chain.chain.count }, { run: id, item: "1", count: 1 });
+  assert.equal(onDisk.chain.settings.enabled, true);
+  const next = await harness([converging], { repo: h.repo, defaults: OFF_SETTINGS });
+  await idle(next);
+  assert.equal(startedRuns(next).length, 0);
+  const restarted = (await chainOf(next)).chain;
+  assert.deepEqual(restarted._tag === "Idle" && restarted.ended, { _tag: "ServerEnded", item: "1" });
+  release();
+  await idle(h);
+});
+
+test("#249 a run whose ending already asked to claim its parking is not adopted: the switch is only armed", async () => {
+  const { held, release } = gateOf();
+  const only = MANAGER_ITEMS.filter((i) => i.id === "1");
+  const h = await harness([halting(leftover)], { defaults: OFF_SETTINGS, tracker: fakeTrackerOf(only), uiOf: holdingHalt(held) });
+  const id = await begin(h, "1");
+  // The item, labeled implementing before the planning call, is returned refined only after the claim was asked and refused.
+  await planningCalled(h, id);
+  await until("the item returned refined", async () => (await stateOf(h, "1")) === "refined");
+  assert.equal((await run(h.manager.current)).implementation, id);
+  const after = await run(h.manager.setChain(DEFAULT_SETTINGS));
+  assert.deepEqual(after.chain, { _tag: "Idle", ended: null, history: [] });
+  release();
+  await idle(h);
+  await sleep(200);
+  assert.equal(await stateOf(h, "1"), "refined");
+  assert.deepEqual(parkBranches(h, "1"), []);
+  assert.equal(startedRuns(h).length, 1);
+});
+
+test("#249 turning the switch on with no run in progress starts nothing", async () => {
+  const h = await harness([converging], { defaults: OFF_SETTINGS });
+  const after = await run(h.manager.setChain(DEFAULT_SETTINGS));
+  assert.deepEqual(after.chain, { _tag: "Idle", ended: null, history: [] });
+  await idle(h);
+  await sleep(200);
+  assert.equal(startedRuns(h).length, 0);
+});
+
+test("#249 while the server is closing after a fault, a settings change leaves the chain and its file as they are", async () => {
+  const { held } = gateOf();
+  const h = await harness([heldConverging(held)]);
+  const id = await begin(h, "1");
+  await planningCalled(h, id);
+  await run(h.manager.haltAll("write EPIPE"));
+  const after = await run(h.manager.setChain(OFF_SETTINGS));
+  assert.equal(after.chain._tag, "Running");
+  assert.equal(after.settings.enabled, true);
+  const onDisk = await run(loadChain(h.repo, OFF_SETTINGS).pipe(Effect.provide(platformLayer)));
+  assert.equal(onDisk.chain.chain._tag, "Running");
+  assert.equal(onDisk.chain.settings.enabled, true);
+  const next = await harness([converging], { repo: h.repo });
+  await idle(next);
+  assert.equal(await endedReason(next), "ServerEnded");
+});

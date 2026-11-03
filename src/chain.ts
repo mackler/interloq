@@ -290,7 +290,10 @@ const limitReason = (state: ChainState, count: number, nowMs: number): ChainEndR
   return runs !== null && count >= runs ? { _tag: "RunLimitReached", limit: runs } : cutoff !== null && nowMs >= cutoff ? { _tag: "CutoffPassed", cutoff } : null;
 };
 
-/** A start the developer made from an item's button, reserved with id `run`: with the mode on it begins a new chain. */
+/**
+ * A start the developer made from an item's button, reserved with id `run`: with the mode on it begins a new chain.
+ * Issue #249: also the chain that adopts the implementation run in progress when the mode is turned on (`configured`).
+ */
 export const begun = (state: ChainState, run: number, item: ItemId, title: string): ChainState => {
   if (!state.settings.enabled) return state;
   const generation = state.generation + 1;
@@ -517,18 +520,28 @@ export const commandApplies = (state: ChainState, { generation, command }: Chain
   }
 };
 
-/** The developer changed the settings; `running` is the implementation run in progress, if any. */
-export const configured = (state: ChainState, settings: ChainSettings, running: ItemId | null): ChainState => {
+/**
+ * Issue #249: the implementation run in progress when the settings change, as the chain needs it. `adoptable` is false
+ * where the run's ending already asked the chain to claim its parking (issue #192).
+ */
+export type RunInProgress = Readonly<{ run: number; item: ItemId; title: string; adoptable: boolean }>;
+
+/**
+ * The developer changed the settings; `running` is the implementation run in progress, if any. Issue #249: turning the
+ * switch on while an implementation run is in progress whose parking was not yet claimed adopts it, as `begun` would
+ * have; otherwise it only arms the switch.
+ */
+export const configured = (state: ChainState, settings: ChainSettings, running: RunInProgress | null): ChainState => {
   const next = { ...state, settings };
   const chain = state.chain;
   if (!settings.enabled && state.settings.enabled) {
-    const off: ChainEndReason = { _tag: "TurnedOff", running };
+    const off: ChainEndReason = { _tag: "TurnedOff", running: running?.item ?? null };
     if (chain._tag === "Parking") return { ...next, chain: { ...chain, then: off } };
     // Issue #192: a claimed parking is certain, so the chain stays until it, ending TurnedOff after it.
     if (chain._tag === "Running" && chain.claim._tag === "Claimed") return { ...next, chain: { ...chain, claim: { _tag: "Claimed", then: off } } };
     return idle(next, off);
   }
-  if (settings.enabled && !state.settings.enabled && chain._tag === "Idle") return idle(next, null);
+  if (settings.enabled && !state.settings.enabled && chain._tag === "Idle") return running !== null && running.adoptable ? begun(next, running.run, running.item, running.title) : idle(next, null);
   return next;
 };
 

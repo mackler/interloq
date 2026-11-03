@@ -321,3 +321,39 @@ test("in backlog source the queue changes neither due, listed nor the reservatio
     }),
     RUNS,
   ));
+
+// Issue #249: turning the switch on during an implementation run adopts it exactly as a start with the switch on begins a chain.
+const arbIdleOff = fc.record({
+  generation: fc.nat(50),
+  ended: fc.option(arbReason, { nil: null }),
+  history: fc.array(arbEntry, { maxLength: 4 }),
+  queue: arbQueued.map((entries) => ({ source: "backlog" as const, entries, applied: [] })),
+}).map(({ generation, ended: reason, history, queue }): ChainState => ({ settings: OFF_SETTINGS, generation, queue, chain: { _tag: "Idle", ended: reason, history } }));
+const arbOn = arbSettings.map((s) => ({ ...s, enabled: true }));
+const arbRunEnd = fc.record({ code: fc.constantFrom(0, 1, 130, 2), rooted: fc.boolean(), own: fc.option(arbOwnNote, { nil: null }) }).map(({ code, rooted, own }) => ({
+  code,
+  root: rooted ? ("runs/r" as RunRoot) : null,
+  parked: own,
+  abandoned: code === 2 && rooted ? ({ _tag: "SetRefined" } as const) : null,
+}));
+
+test("#249 property: adoption equals begun after arming, and so does every end after it", () =>
+  fc.assert(
+    fc.property(arbIdleOff, arbOn, fc.nat(100), arbItemId, fc.string(), arbRunEnd, (s, on, run, item, title, end) => {
+      const adopted = configured(s, on, { run, item, title, adoptable: true });
+      const chained = begun(configured(s, on, null), run, item, title);
+      assert.deepEqual(adopted, chained);
+      assert.deepEqual(ended(adopted, run, end), ended(chained, run, end));
+    }),
+    RUNS,
+  ));
+
+test("#249 property: with no adoptable run, off to on never yields a going chain", () =>
+  fc.assert(
+    fc.property(arbIdleOff, arbOn, fc.option(fc.record({ run: fc.nat(100), item: arbItemId, title: fc.string(), adoptable: fc.constant(false) }), { nil: null }), (s, on, running) => {
+      const next = configured(s, on, running);
+      assert.equal(next.chain._tag, "Idle");
+      assert.equal(next.generation, s.generation);
+    }),
+    RUNS,
+  ));

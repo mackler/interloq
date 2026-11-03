@@ -6,7 +6,7 @@ import { Result, Schema } from "effect";
 import {
   begun, blocksImplementationStart, type ChainSettings, type ChainState, ChainFileSchema, configured, cutoffOf, DEFAULT_SETTINGS, due, ended, initialState,
   listed, OFF_SETTINGS, abandonedItems, parked, refused, restored, runLimitOf, saveFailed, started, startGuard, parkingAbandoned, commandApplies, type ChainCommand, claimParking, itemReturned,
-  consumed, movedAtStart, queueEdited, reselected, startCheck, startRefused,
+  consumed, movedAtStart, queueEdited, reselected, startCheck, startRefused, type RunInProgress,
 } from "../src/chain.ts";
 import { editIdOf, type QueueChange } from "../src/chainQueue.ts";
 import type { ItemId } from "../src/tracker.ts";
@@ -17,6 +17,8 @@ const root = (s: string) => `runs/2026-10-20T00-00-00-000Z-implementation-${s}` 
 const limit = (n: number) => Result.getOrThrow(runLimitOf(n));
 const cutoff = (iso: string) => Result.getOrThrow(cutoffOf(iso));
 const withRuns = (n: number | null): ChainSettings => ({ enabled: true, limits: { runs: n === null ? null : limit(n), cutoff: null } });
+/** Issue #249: an implementation run in progress as the manager passes it when the settings change. */
+const inProgress = (item: string, run = 1, adoptable = true, title = "t"): RunInProgress => ({ run, item: id(item), title, adoptable });
 const gen = (s: ChainState) => (s.chain._tag === "Idle" ? -1 : s.chain.generation);
 
 /** The developer starts item 1 as run 1. */
@@ -151,7 +153,7 @@ test("startGuard refuses at the limit, after the mode was turned off, and for an
 });
 
 test("turning the mode off ends a going chain saying which run goes on; during parking the parking finishes first", () => {
-  const off = (s: ChainState, running: string | null) => configured(s, OFF_SETTINGS, running === null ? null : id(running));
+  const off = (s: ChainState, running: string | null) => configured(s, OFF_SETTINGS, running === null ? null : inProgress(running));
   const s = off(startedChain(), "1");
   assert.deepEqual(s.chain._tag === "Idle" && s.chain.ended, { _tag: "TurnedOff", running: "1" });
   const [p] = ended(startedChain(), 1, { code: 1, root: root("1"), parked: null, abandoned: null });
@@ -302,7 +304,7 @@ test("claimParking grants and records the claim exactly for the chain's running 
 
 test("the mode turned off after a claim keeps the run's chain until its parking, which ends it TurnedOff; without a claim, Idle", () => {
   const [claimed] = claimParking(startedChain(), 1);
-  const off = configured(claimed, OFF_SETTINGS, id("1"));
+  const off = configured(claimed, OFF_SETTINGS, inProgress("1"));
   assert.equal(off.chain._tag, "Running");
   assert.deepEqual(off.chain._tag === "Running" && off.chain.claim, { _tag: "Claimed", then: { _tag: "TurnedOff", running: id("1") } });
   const [parking, command] = ended(off, 1, { code: 1, root: root("1"), parked: null, abandoned: null });
@@ -312,7 +314,7 @@ test("the mode turned off after a claim keeps the run's chain until its parking,
   const [after, next] = parked(parking, gen(parking), { _tag: "NothingParked" });
   assert.deepEqual(after.chain._tag === "Idle" && after.chain.ended, { _tag: "TurnedOff", running: id("1") });
   assert.equal(next, null);
-  assert.equal(configured(startedChain(), OFF_SETTINGS, id("1")).chain._tag, "Idle");
+  assert.equal(configured(startedChain(), OFF_SETTINGS, inProgress("1")).chain._tag, "Idle");
 });
 
 test("a claimed run halted the second time parks and then ends HaltedTwice", () => {
@@ -320,7 +322,7 @@ test("a claimed run halted the second time parks and then ends HaltedTwice", () 
   const [r1] = parked(p1, gen(p1), { _tag: "NothingParked" });
   const again = chainStart(r1, 2, "1");
   const [claimed] = claimParking(configured(again, again.settings, null), 2);
-  const [p2] = ended(configured(claimed, OFF_SETTINGS, id("1")), 2, { code: 1, root: root("2"), parked: null, abandoned: null });
+  const [p2] = ended(configured(claimed, OFF_SETTINGS, inProgress("1")), 2, { code: 1, root: root("2"), parked: null, abandoned: null });
   assert.deepEqual(p2.chain._tag === "Parking" && p2.chain.then, { _tag: "HaltedTwice", item: id("1") });
 });
 
@@ -352,7 +354,7 @@ test("itemReturned sets the outcome on the item's newest halted entry of its gen
 // Work review 1 of issue #192 (W1-R1-1): a failed save after the claim keeps the claim, so the parking still runs.
 test("W1-R1-1 saveFailed keeps a claimed Running chain with its claim ending SaveFailed", () => {
   const claimed = claimParking(startedChain(), 1)[0];
-  const off = configured(claimed, OFF_SETTINGS, id("1"));
+  const off = configured(claimed, OFF_SETTINGS, inProgress("1"));
   for (const before of [claimed, off]) {
     const s = saveFailed(before, "disk full");
     assert.equal(s.chain._tag, "Running");
@@ -582,4 +584,63 @@ test("an abandoned item in the queue is skipped as Abandoned", () => {
   const [l] = listed(r, gen(r), listing196);
   assert.equal(l.chain._tag === "Starting" && l.chain.item, queued196[1]?.item);
   assert.deepEqual(l.chain.history.at(-1)?.outcome, { _tag: "Skipped", reason: { _tag: "Abandoned" } });
+});
+
+// Issue #249: turning the switch on during an implementation run adopts it, as a start with the switch on would have.
+const adopted = (): ChainState => configured(initialState(OFF_SETTINGS), DEFAULT_SETTINGS, inProgress("5", 7, true, "T"));
+
+test("#249 turning the switch on with an adoptable run in progress begins a chain with that run, count 1", () => {
+  const before = initialState(OFF_SETTINGS);
+  const s = adopted();
+  assert.deepEqual(s.settings, DEFAULT_SETTINGS);
+  assert.equal(s.generation, before.generation + 1);
+  assert.deepEqual(s.chain, { _tag: "Running", run: 7, item: "5", title: "T", claim: { _tag: "Unclaimed" }, generation: before.generation + 1, count: 1, halts: [], history: [] });
+});
+
+test("#249 a run whose claim was asked, or no run, is not adopted: the switch is only armed", () => {
+  for (const running of [inProgress("5", 7, false), null]) {
+    const s = configured(initialState(OFF_SETTINGS), DEFAULT_SETTINGS, running);
+    assert.deepEqual(s.chain, { _tag: "Idle", ended: null, history: [] });
+    assert.equal(s.generation, 0);
+    assert.deepEqual(s.settings, DEFAULT_SETTINGS);
+  }
+});
+
+test("#249 only off to on adopts: a settings change with the switch on leaves the chain as it is", () => {
+  const going = startedChain();
+  const changed = configured(going, withRuns(3), inProgress("1"));
+  assert.equal(changed.chain, going.chain);
+  assert.deepEqual(changed.settings, withRuns(3));
+  const idleOn = initialState(DEFAULT_SETTINGS);
+  const armed = configured(idleOn, withRuns(3), inProgress("1"));
+  assert.equal(armed.chain, idleOn.chain);
+  assert.equal(armed.generation, idleOn.generation);
+});
+
+test("#249 turning an adopted chain off ends it TurnedOff naming its run; a claimed parking still runs", () => {
+  const off = configured(adopted(), OFF_SETTINGS, inProgress("5", 7));
+  assert.deepEqual(off.chain._tag === "Idle" && off.chain.ended, { _tag: "TurnedOff", running: "5" });
+  const [claimed] = claimParking(adopted(), 7);
+  const offClaimed = configured(claimed, OFF_SETTINGS, inProgress("5", 7));
+  assert.deepEqual(offClaimed.chain._tag === "Running" && offClaimed.chain.claim, { _tag: "Claimed", then: { _tag: "TurnedOff", running: "5" } });
+});
+
+test("#249 an adopted run's end gives what the end of a run the chain began gives", () => {
+  const chained = begun(initialState(DEFAULT_SETTINGS), 7, id("5"), "T");
+  const ends = [
+    { code: 0, root: root("7"), parked: null, abandoned: null },
+    { code: 130, root: root("7"), parked: null, abandoned: null },
+    { code: 1, root: root("7"), parked: null, abandoned: null },
+    { code: 1, root: null, parked: null, abandoned: null },
+    { code: 2, root: root("7"), parked: null, abandoned: { _tag: "SetRefined" as const } },
+    { code: 0, root: root("7"), parked: { _tag: "Parked" as const, branch: "b", commit: "c" }, abandoned: null },
+  ];
+  const tags = ["Ready", "Idle", "Parking", "Ready", "Ready", "Ready"];
+  ends.forEach((end, i) => {
+    const [a, ac] = ended(adopted(), 7, end);
+    const [c, cc] = ended(chained, 7, end);
+    assert.equal(a.chain._tag, tags[i]);
+    assert.deepEqual({ ...a, settings: null }, { ...c, settings: null });
+    assert.deepEqual(ac, cc);
+  });
 });

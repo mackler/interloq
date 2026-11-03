@@ -1109,6 +1109,27 @@ test.describe("the tests of the chainQueue server, in order", () => {
   });
 });
 
+// Issue #249: the chain adopts a run in progress. The developer starts the first item with the switch off and turns it
+// on while the run waits on its question; when the run ends, the next refined item starts by itself.
+test.describe("the tests of the chainAdopt server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(41) turning the switch on during a run adopts it, and the next refined item starts after it", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const first = await startFromTab(page, url("chainAdopt"), "implementation");
+    await expect(asking(page, DATABASE)).toBeVisible();
+    const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
+    await expect(control.getByRole("status")).toContainText("Off. No run starts by itself.");
+    await control.locator("label.switch").click();
+    await expect(control.getByRole("status")).toContainText(`Run 1 of the chain: item #${first}`);
+    await pane(page).locator("input[name=answer], textarea[name=answer]").fill("PostgreSQL");
+    await pane(page).locator("input[name=answer], textarea[name=answer]").press("Enter");
+    await expect(control.getByRole("status")).toContainText(/Run 2 of the chain: item #(\d+)/, { timeout: 60_000 });
+    const second = /Run 2 of the chain: item #(\d+)/.exec((await control.getByRole("status").textContent()) ?? "")?.[1];
+    expect(second).not.toBe(first);
+  });
+});
+
 // Issue #131: the preparation over the real server. The switch on the Refinement tab prepares the marked item
 // unattended; its row then says its questions are prepared, and Refine shows the first question with no list-writing step.
 test.describe("the tests of the prepare server, in order", () => {

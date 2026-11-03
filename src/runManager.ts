@@ -26,7 +26,7 @@ import { listedItemOf } from "./protocol.ts";
 import { sentBackCount } from "./itemComments.ts";
 import {
   consumed, movedAtStart, queueEdited, reselected, startCheck, startRefused,
-  type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, saveFailed, started as chainStarted,
+  type AbandonLabel, begun, blocksImplementationStart, claimParking, itemReturned, type ItemReturnOutcome, type ChainCommand, commandApplies, parkingAbandoned, type ChainSettings, type ChainState, configured, due, ended as chainEnded, listed as listedNext, parked, type ParkNote, refused as chainRefused, restored, type RunInProgress, saveFailed, started as chainStarted,
   type KeptState,
 } from "./chain.ts";
 import type { QueueEdit } from "./chainQueue.ts";
@@ -176,7 +176,11 @@ export const makeStepper = <S, B>(state: Ref.Ref<S>, listeners: Ref.Ref<Readonly
 
 /** A run: its events (the record), its web Ui and fiber, and beside the record the shared state of its page (issue #87). */
 /** Issue #44: `allocated`, the run's records directory once allocated, which an ending the manager publishes names. */
-type Run = Readonly<{ id: number; item: ItemId; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal; allocated: Ref.Ref<Option.Option<RunRoot>> }>;
+/**
+ * Issue #249: `title`, the item's title at the reservation, which an adopting chain records, and `claimAsked`, true once
+ * the run's ending asked the chain to claim its parking, granted or not, after which turning the chain on adopts it no more.
+ */
+type Run = Readonly<{ id: number; item: ItemId; title: string; claimAsked: boolean; events: readonly Stamped[]; ui: WebUi; fiber: Fiber.Fiber<number>; shared: RunUiState; signal: FaultSignal; allocated: Ref.Ref<Option.Option<RunRoot>> }>;
 /** A mode's runs in progress and its ended runs kept for the replay (issue #191, src/runSlots.ts). */
 type Slot = RunSlot<Run>;
 /**
@@ -191,6 +195,8 @@ const MANUAL: Origin = { _tag: "manual" };
 const chainChange = (before: ChainState, after: ChainState): readonly ChainBroadcast[] => (before === after ? [] : [{ _tag: "chain", state: after }]);
 /** What a save of the chain's state came to: saved; failed and the file removed; or failed and not removed either. */
 type Saved = "saved" | "removed" | "lost";
+/** Issue #249: an implementation run in progress as the chain's settings change sees it. */
+const inProgressOf = (r: Run | undefined): RunInProgress | null => (r === undefined ? null : { run: r.id, item: r.item, title: r.title, adoptable: !r.claimAsked });
 const record = (r: Run): RunRecord => ({ id: r.id, events: r.events });
 const EMPTY: Slot = EMPTY_SLOT;
 /** The mode whose slot holds the run with that id as `which`, or null. */
@@ -643,9 +649,11 @@ export const makeRunManager = (
         const claim = Ref.get(idRef).pipe(
           Effect.flatMap((rid) =>
             step((s): readonly [boolean, readonly Broadcast[], State] => {
-              if (s.closing) return [false, [], s];
-              const [chain, granted] = claimParking(s.chain, rid);
-              return [granted, chainChange(s.chain, chain), { ...s, chain }];
+              // Issue #249: the claim was asked, whatever its answer, so turning the chain on no longer adopts the run.
+              const asked = withSlot(s, mode, changedIn(s.runs[mode], rid, (r) => ({ ...r, claimAsked: true })));
+              if (asked.closing) return [false, [], asked];
+              const [chain, granted] = claimParking(asked.chain, rid);
+              return [granted, chainChange(asked.chain, chain), { ...asked, chain }];
             }),
           ),
         );
@@ -702,7 +710,7 @@ export const makeRunManager = (
               // Issue #196: a started item leaves the queue, manual or chained, the mode on or off.
               const kept = mode === "implementation" ? consumed(s.chain, item.id) : s.chain;
               const chain = mode !== "implementation" ? s.chain : origin._tag === "chain" ? chainStarted(kept, origin.generation, id, item.id, item.title) : begun(kept, id, item.id, item.title);
-              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, reserved(mode, s.runs[mode], { id, item: item.id, events: [], ui, fiber, shared: emptyUiState, signal, allocated }));
+              const next = withSlot({ ...s, nextId: id + 1, chain }, mode, reserved(mode, s.runs[mode], { id, item: item.id, title: item.title, claimAsked: false, events: [], ui, fiber, shared: emptyUiState, signal, allocated }));
               return [{ id, consumed: kept !== s.chain }, chainChange(s.chain, chain), next];
             });
             if (typeof reservation === "string") {
@@ -822,11 +830,14 @@ export const makeRunManager = (
       // The change and its save are one uninterruptible region (work review 1 of 28 Oct 2026, W1-R1-2), as start's
       // reservation, persist of Running and gate release are: the server forks setChain in the tab's scope, and a tab
       // closed meanwhile must not leave settings applied and broadcast but missing from plan-review/chain.json. persist
-      // never fails, so the region always ends, and an interruption waits for at most one save of a small file.
+      // never fails, so the region always ends, and an interruption waits for at most one save of a small file. Issue #249:
+      // turning the switch on adopts the implementation run in progress, saved in this region before it is acknowledged.
       setChain: (settings) =>
         Effect.uninterruptible(
           Effect.gen(function* () {
-            yield* chainStep((s) => [configured(s.chain, settings, s.runs.implementation.current[0]?.item ?? null), null]);
+            // Issue #249: the implementation run in progress is adopted unless its claim was asked; while closing after a
+            // fault the chain is left as it is, so the restart finds its Running and ends it ServerEnded.
+            yield* chainStep((s) => [s.closing ? s.chain : configured(s.chain, settings, inProgressOf(s.runs.implementation.current[0])), null]);
             yield* persist;
             return (yield* Ref.get(state)).chain;
           }),

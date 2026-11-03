@@ -552,7 +552,11 @@ const prepareScript = (): TestOptions => (++prepareWirings === 1 ? PREPARE_LIST 
 // Issue #120: the server of a project whose tracker cannot be reached: no tracker is configured, so each tab shows a notice.
 SCENARIOS.noTracker = SCENARIOS.converge;
 const name = process.env.SCENARIO ?? "converge";
-const scenarioOf = (mode: RunMode): TestOptions => (name === "chain" ? chainScript() : name === "chainQueue" ? chainQueueScript() : name === "prepare" ? prepareScript() : (BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge));
+// Issue #249: the switch off at the start; the first run waits on the plan writer's question, so the test turns the
+// switch on during it, and every later run waits in its planning call.
+let chainAdoptRuns = 0;
+const chainAdoptScript = (): TestOptions => (++chainAdoptRuns === 1 ? SCENARIOS.decision! : CHAIN_LATER);
+const scenarioOf = (mode: RunMode): TestOptions => (name === "chain" ? chainScript() : name === "chainQueue" ? chainQueueScript() : name === "chainAdopt" ? chainAdoptScript() : name === "prepare" ? prepareScript() : (BY_MODE[name]?.[mode] ?? SCENARIOS[name] ?? SCENARIOS.converge));
 const port = Number(process.env.PORT ?? "8101");
 const repo = tempRepo();
 const distDir = fileURLToPath(new URL("../web/dist", import.meta.url));
