@@ -58,6 +58,19 @@ test("a short option with an attached value is read as Commander reads it (W1-R1
   assert.equal(scope("-xj4"), "whole");
 });
 
+test("a value option at the end of a combined group takes the next argument, as Commander reads it (W1-R1-1 of work review 3)", () => {
+  const scope = (...args: string[]) => scopeOf({}, [...PLAYWRIGHT, ...args]);
+  assert.equal(scope("-xg", "-slow"), "selection");
+  assert.equal(scope("-xG", "slow"), "selection");
+  assert.equal(scope("-xj", "4"), "whole");
+  assert.equal(scope("-xc", "playwright.config.ts"), "whole");
+  assert.equal(scope("-xj", "4", "e2e/run.spec.ts"), "selection");
+  assert.equal(scope("-xu", "all"), "whole");
+  assert.equal(scope("-xu", "e2e/run.spec.ts"), "selection");
+  assert.equal(scope("-g", "-slow"), "selection");
+  assert.equal(scope("-j", "4"), "whole");
+});
+
 test("onEnd writes one counted command from the tests' outcomes", () => {
   const dir = mkdtempSync(join(tmpdir(), "e2e-counts-"));
   const saved = { file: process.env[COUNTS_FILE_VARIABLE], scenarios: process.env.E2E_SCENARIOS };

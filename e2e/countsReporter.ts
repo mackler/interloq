@@ -46,19 +46,27 @@ const CHOICE_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["--update-snapshots", new Set(["all", "changed", "missing", "none"])],
 ]);
 
-/** A short option with its value or further flags attached (`-gslow`, `-j4`, `-xj4`): its name and the rest. */
-const SHORT_ATTACHED = /^-([A-Za-z0-9])(.+)$/su;
+/** A short option, bare or with its value or further flags attached (`-g`, `-gslow`, `-xj4`): its name and the rest. */
+const SHORT = /^-([A-Za-z0-9])(.*)$/su;
+
+/** What a short option, alone or at the head of a combined group, does to the reading of the arguments. */
+type ShortReading = Readonly<{ _tag: "Selects" }> | Readonly<{ _tag: "ConsumesNext" }> | Readonly<{ _tag: "Nothing" }>;
+const SELECTS: ShortReading = { _tag: "Selects" };
+const CONSUMES_NEXT: ShortReading = { _tag: "ConsumesNext" };
+const NOTHING: ShortReading = { _tag: "Nothing" };
 
 /**
- * Whether one short option with text attached selects tests, read as Commander's `parseOptions` reads it: an option that
- * takes a value (required, or optional as `-u` is) takes the attached text as its value; any other is a boolean flag,
- * and the rest is read as the next short options combined with it (`-xgslow` is `-x` then `-gslow`).
+ * A short option read as Commander's `parseOptions` reads it, `next` being the argument after it. An option that takes a
+ * value (required, or optional as `-u` is) takes the attached text as its value, or, bare, the next argument: a required
+ * one whatever it is, an optional one only when it is one of its choices. Any other is a boolean flag, and the rest is
+ * read as the next short options combined with it (`-xgslow` is `-x` then `-gslow`, `-xj 4` is `-x` then `-j 4`).
  */
-const shortSelects = (name: string, rest: string): boolean => {
-  if (SELECTION_OPTIONS.has(name)) return true;
-  if (VALUE_OPTIONS.has(name) || CHOICE_OPTIONS.has(name)) return false;
-  const next = SHORT_ATTACHED.exec(`-${rest}`);
-  return next === null ? false : shortSelects(`-${next[1]}`, next[2]);
+const shortReading = (name: string, rest: string, next: string | undefined): ShortReading => {
+  if (SELECTION_OPTIONS.has(name)) return SELECTS;
+  const choices = CHOICE_OPTIONS.get(name);
+  if (VALUE_OPTIONS.has(name)) return rest === "" ? CONSUMES_NEXT : NOTHING;
+  if (choices !== undefined) return rest === "" && next !== undefined && choices.has(next) ? CONSUMES_NEXT : NOTHING;
+  return rest === "" ? NOTHING : shortReading(`-${rest[0]}`, rest.slice(1), next);
 };
 
 /** Whether the arguments from `i` on select tests: a file named, or an option that runs only part of the tests. */
@@ -67,12 +75,22 @@ const selectsFrom = (args: readonly string[], i: number): boolean => {
   const arg = args[i];
   if (arg === "--") return i + 1 < args.length;
   if (!arg.startsWith("-")) return true;
-  const short = arg.startsWith("--") ? null : SHORT_ATTACHED.exec(arg);
-  if (short !== null) return shortSelects(`-${short[1]}`, short[2]) || selectsFrom(args, i + 1);
+  const next = args[i + 1];
+  const short = arg.startsWith("--") ? null : SHORT.exec(arg);
+  if (short !== null) {
+    const reading = shortReading(`-${short[1]}`, short[2], next);
+    switch (reading._tag) {
+      case "Selects":
+        return true;
+      case "ConsumesNext":
+        return selectsFrom(args, i + 2);
+      case "Nothing":
+        return selectsFrom(args, i + 1);
+    }
+  }
   const eq = arg.indexOf("=");
   const name = eq === -1 ? arg : arg.slice(0, eq);
   if (SELECTION_OPTIONS.has(name)) return true;
-  const next = args[i + 1];
   const consumes =
     eq === -1 && next !== undefined && (VALUE_OPTIONS.has(name) || (CHOICE_OPTIONS.get(name)?.has(next) ?? false));
   return selectsFrom(args, consumes ? i + 2 : i + 1);

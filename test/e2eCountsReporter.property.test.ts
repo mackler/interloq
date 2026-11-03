@@ -28,3 +28,14 @@ test("an attached worker count consumes no following file filter", () => {
     { numRuns: 200 },
   );
 });
+
+// W1-R1-1 of work review 3: a value option at the end of a combined group takes the next argument.
+test("-xj with any worker count is whole, and -xg with any pattern is a selection", () => {
+  fc.assert(
+    fc.property(fc.integer({ min: 1 }), fc.string({ minLength: 1 }), (n, v) => {
+      assert.equal(scopeOf({}, [...PLAYWRIGHT, "-xj", String(n)]), "whole");
+      assert.equal(scopeOf({}, [...PLAYWRIGHT, "-xg", v]), "selection");
+    }),
+    { numRuns: 200 },
+  );
+});
