@@ -3,7 +3,7 @@
 import { type SubjectId, subjectDir } from "./artifacts.ts";
 import type { LimitWaitBasis } from "./limitReset.ts";
 import type { NetworkCode } from "./transport.ts";
-import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
+import { agentReconnectingLine, cycleHeading, modelLine, type NamedModel, networkRetryLine, phaseLabel, runningNote, trackerRecoveredLine, trackerRetryLine, transportRecoveredLine, transportRetryLine, usageLimitLiftedLine, usageLimitWaitLine } from "./prompts.ts";
 import type { PresentedQuestion } from "./question.ts";
 import type { LoopResponse } from "./schema.ts";
 import type { DecisionAnalysis, ExecOutcome, RecordedPlan, Review, UserQuestion, EffectReview } from "./schema.ts";
@@ -74,8 +74,13 @@ export type UiEvent =
   | Readonly<{ _tag: "QuestionsAgreed"; count: number }>
   /** The interview begins; each interface renders its own help (finding 8 of docs/gui-review.md). */
   | Readonly<{ _tag: "InterviewOpened"; heading: string; stage: InterviewStage; total: number }>
-  /** Claude Code's prose during an execution call, attributed as data (issue #5); the page shows it as Claude's message. */
-  | Readonly<{ _tag: "ClaudeSaid"; text: string }>
+  /**
+   * Claude Code's prose during an execution call, attributed as data (issue #5); the page shows it as Claude's message.
+   * Issue #40: `running` is the names of Claude Code's own processes of the same call (foreground Bash commands,
+   * background tasks, Monitor watches) open when the message arrived, in the order the live panel registered them,
+   * empty where none ran. It asserts only that the message was written while those had not ended.
+   */
+  | Readonly<{ _tag: "ClaudeSaid"; text: string; running: readonly string[] }>
   /**
    * A question the user is to answer, presented the same way whatever produced it (S5): the page shows it with its
    * options, and conversation.md records it (`renderQuestionRecord` in src/render.ts). The prompt that asks it follows.
@@ -196,8 +201,10 @@ export const describeEvent = (event: UiEvent): string => {
       return `agreed question list: ${plural(event.count, "question")}`;
     case "InterviewOpened":
       return `${event.heading} opened, ${plural(event.total, "question")}`;
-    case "ClaudeSaid":
-      return `Claude Code said: ${event.text}`;
+    case "ClaudeSaid": {
+      const note = runningNote(event.running);
+      return `Claude Code said: ${event.text}${note === null ? "" : ` (${note})`}`;
+    }
     case "QuestionPresented":
       return `question ${event.question.number}: ${piecesText(event.question.question)} (${plural(event.question.options.length, "option")})`;
     case "QuestionExplained":

@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { platformLayer } from "../src/platform.ts";
 import { makeRunManager } from "../src/runManager.ts";
 import { makeWebServer } from "../src/webServer.ts";
-import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_STEP_LABEL } from "./longAnswers.ts";
+import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LIVE_TICK_MS, LONG_ANSWERS, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import type { OutputEvent, ProcessKey } from "../src/liveOutput.ts";
 import { E2E_ITEMS, PREPARED_ITEM } from "./ports.ts";
 import { NoTracker } from "../src/errors.ts";
@@ -389,6 +389,13 @@ SCENARIOS.liveOutput = {
   steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }],
   reviews: [{ issues: [] }],
   execScripts: [{ output: LIVE_EVENTS, ticks: LIVE_MARKED_TICKS, hang: true }],
+};
+// Issue #40: an execution whose one message was written while two commands ran, the second a long command line, then
+// hanging, so the dashboard holds the note under Claude Code's latest message.
+SCENARIOS.narrationNote = {
+  steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }],
+  reviews: [{ issues: [] }],
+  execScripts: [{ said: [{ text: "Running the tests now.", running: ["npm test", NARRATION_LONG_COMMAND] }], hang: true }],
 };
 // Issue #221: the compact panel under a question: four plan questions answered first, whose answers fill the compact
 // dashboard above the panel, then an execution with one running process that asks a permission while it prints.

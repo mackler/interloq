@@ -1228,6 +1228,19 @@ export const BLOCKED_STATUS_SENTENCE = "Return status 'blocked' only for a failu
  * Issue #162 (requirements Q4): the report lists each check command the call ran, by the fields of S.StepCheckRun;
  * Interloq does not measure the duration, Claude Code reports it.
  */
+/**
+ * Issue #40: what Claude Code may claim of a command's outcome in its messages. It discourages a premature claim and
+ * cannot guarantee against one; the results Interloq observes itself are what a reader relies on.
+ */
+export const NARRATION_OUTCOME_SENTENCE = "When you write about a command's outcome in your messages, state that it passed or failed only after the command has exited and you have read its result. Name a count or verdict from an earlier run as that earlier run's, never as the verification of the current step. Describe a command that is still running as running, not as passing.";
+/**
+ * Issue #40: the lead of the note on a message written while `count` of Claude Code's commands had not ended. The note
+ * asserts only that the message was written while those commands had not ended, nothing about what the message claims
+ * (decision Q1 of the issue's requirements).
+ */
+export const runningNoteLead = (count: number): string => (count === 1 ? "Written while this command had not ended:" : "Written while these commands had not ended:");
+/** Issue #40: the note on a message written while the named commands had not ended, or null where none ran. */
+export const runningNote = (names: readonly string[]): string | null => (names.length === 0 ? null : `${runningNoteLead(names.length)} ${names.join("; ")}`);
 export const REPORT_CHECKS_SENTENCE = "In the report's 'checks', list each check command you ran in this call, in the order you ran them: the step's id in 'step', the command exactly as you ran it in 'command', and how long it took in seconds in 'seconds'. List none if you ran none.";
 /**
  * When an execution call asks the user (issue #186, work review 1, W1-R1-1): a decision or information about how to
@@ -1249,6 +1262,7 @@ ${RELAYED_SHAPE}
 ${questionWritingRules()}
 ${planStepCheckRule(checks)}
 ${REPORT_CHECKS_SENTENCE}
+${NARRATION_OUTCOME_SENTENCE}
 ${EXECUTION_COMMIT_SENTENCE}
 ${BACKGROUND_SUITE_SENTENCE}
 ${CONTINUING_STATUS_SENTENCE}

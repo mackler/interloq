@@ -27,3 +27,9 @@ export const monitorUse = (toolUseId: string, input: Readonly<{ description: str
   ({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: MONITOR_TOOL_NAME, input }] }, parent_tool_use_id: null, ...base }) as unknown as SDKMessage;
 export const monitorResult = (toolUseId: string, output: Readonly<{ taskId: string; timeoutMs: number; persistent: boolean }>): SDKMessage =>
   ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content: `Monitor started (task ${output.taskId})` }] }, tool_use_result: output, parent_tool_use_id: null, ...base }) as unknown as SDKMessage;
+
+// Issue #49: a Bash tool use and its result (moved here from test/claude.test.ts for issue #40's property test).
+export const bashUse = (id: string, command: string, background = false): SDKMessage =>
+  ({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input: background ? { command, run_in_background: true } : { command } }] }, parent_tool_use_id: null, session_id: "s" }) as unknown as SDKMessage;
+export const bashResult = (id: string, text: string): SDKMessage =>
+  ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: text }] }, parent_tool_use_id: null, session_id: "s" }) as unknown as SDKMessage;

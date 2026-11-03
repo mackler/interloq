@@ -325,8 +325,21 @@ export const claudeOutputOf = (state: ClaudeOutputState, message: SDKMessage): r
   return [s, out];
 };
 
+/** Every command and task of the call open on the panel, with its key, in the order the panel registered them by kind. */
+const openEntries = (state: ClaudeOutputState): readonly (readonly [ProcessKey, string])[] => [
+  ...[...state.commands].flatMap(([id, name]) => keyedName({ kind: "claude", id }, name)),
+  ...[...state.openTasks].flatMap(([id, name]) => keyedName({ kind: "task", id }, name)),
+];
+const keyedName = (source: Parameters<typeof processKeyOf>[0], name: string): readonly (readonly [ProcessKey, string])[] => {
+  const built = processKeyOf(source);
+  return Result.isSuccess(built) ? [[built.success, name]] : [];
+};
+/**
+ * Issue #40: the names of every command and task of the call open on the panel, in the order `claudeOpenProcesses`
+ * ends them; the processes a message of Claude Code's was written beside.
+ */
+export const claudeRunningNames = (state: ClaudeOutputState): readonly string[] => openEntries(state).map(([, name]) => name);
+
 /** The end of every command and task of the call still open on the panel (issue #49), for the call's end. */
-export const claudeOpenProcesses = (state: ClaudeOutputState): readonly OutputEvent[] => [
-  ...[...state.commands].flatMap(([id, name]) => keyed({ kind: "claude", id }, (key) => [emit({ _tag: "Finished", key, name, status: { _tag: "Unknown" } })])),
-  ...[...state.openTasks].flatMap(([id, name]) => keyed({ kind: "task", id }, (key) => [emit({ _tag: "Finished", key, name, status: { _tag: "Unknown" } })])),
-].flatMap((c) => (c._tag === "Emit" ? [c.event] : []));
+export const claudeOpenProcesses = (state: ClaudeOutputState): readonly OutputEvent[] =>
+  openEntries(state).map(([key, name]) => ({ _tag: "Finished", key, name, status: { _tag: "Unknown" } }));

@@ -48,7 +48,7 @@ const examples: { [K in UiEvent["_tag"]]: [Extract<UiEvent, { _tag: K }>, RegExp
   // Issue #205: the agreed question list is known.
   QuestionsAgreed: [{ _tag: "QuestionsAgreed", count: 2 }, /^agreed question list: 2 questions$/],
   InterviewOpened: [{ _tag: "InterviewOpened", heading, stage: "clarification", total: 3 }, headed(" opened, 3 questions")],
-  ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done" }, /Claude Code said: done/],
+  ClaudeSaid: [{ _tag: "ClaudeSaid", text: "done", running: [] }, /Claude Code said: done/],
   QuestionPresented: [
     { _tag: "QuestionPresented", question: { number: 3, origin: { kind: "relayed" }, context: { blocks: para("c"), by: "agent" }, history: [], explanations: [], question: plain("Which?"), options: [{ label: plain("A"), description: [], figure: null, answer: { token: "1" } }, { label: plain("B"), description: [], figure: null, answer: { token: "2" } }], attached: null, decision: null } },
     /question 3: Which\? \(2 options\)/,
@@ -139,4 +139,11 @@ test("networkRetryLine and networkRetryActivity name what is waited for, with no
   const activity = prompts.networkRetryActivity("ENETUNREACH", 3);
   for (const part of ["ENETUNREACH", "try 3"]) assert.ok(activity.includes(part), `${part} in ${activity}`);
   assert.doesNotMatch(activity, /\bof \d/);
+});
+
+// Issue #40: a message written while Claude Code's commands ran is described with the note the page shows.
+test("a ClaudeSaid with running processes is described with its note; one without carries none", () => {
+  assert.equal(describeEvent({ _tag: "ClaudeSaid", text: "done", running: [] }), "Claude Code said: done");
+  const note = prompts.runningNote(["npm test"]) ?? "";
+  assert.ok(describeEvent({ _tag: "ClaudeSaid", text: "tests passed", running: ["npm test"] }).includes(note));
 });

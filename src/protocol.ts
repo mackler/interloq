@@ -283,7 +283,8 @@ export const UiEventSchema = Schema.Union([
   // Issue #205: the agreed question list known, with its count.
   tagged("QuestionsAgreed", { count: Int }),
   tagged("InterviewOpened", { heading: Str, stage: Schema.Literals(["clarification", "followUp"]), total: Int }),
-  tagged("ClaudeSaid", { text: Str }),
+  // Issue #40: the processes of the call open when the message arrived; a record written before it has none.
+  tagged("ClaudeSaid", { text: Str, running: Schema.Array(Str).pipe(Schema.withDecodingDefaultKey(Effect.succeed([] as readonly string[]))) }),
   tagged("QuestionPresented", { question: PresentedQuestionSchema }),
   tagged("QuestionExplained", { question: PresentedQuestionSchema }),
   tagged("AnswerRejected", {}),

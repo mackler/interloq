@@ -3,6 +3,8 @@
 // e2e/layout.spec.ts.
 
 /** A plan step's label long enough to wrap in the rail's 14rem column, as the live run's labels did (issue #116). */
+/** Issue #40: a long command line with a long run without spaces or hyphens, which the note on Claude Code's message must wrap. */
+export const NARRATION_LONG_COMMAND = `npx playwright test e2e/layout.spec.ts --grep=${"/workspace/scratch/a_very_long_path_segment_without_any_space_or_hyphen".repeat(6)}`;
 export const LONG_STEP_LABEL = "The store, which keeps the plan and its records on disk between two runs";
 
 /**

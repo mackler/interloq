@@ -21,7 +21,7 @@ import { Decider, type DeciderShape, Planner, type PlannerShape, RunConfig, RunK
 import { runRootOf } from "../src/artifacts.ts";
 import { platformLayer } from "../src/platform.ts";
 import { makeStore } from "../src/store.ts";
-import { changed, monitorResult, monitorUse, noTasksChanged, notification, started, watchChanged, watchNotification, watchStarted, watchSummary, watchUpdated } from "./backgroundMessages.ts";
+import { bashResult, bashUse, changed, monitorResult, monitorUse, noTasksChanged, notification, started, watchChanged, watchNotification, watchStarted, watchSummary, watchUpdated } from "./backgroundMessages.ts";
 import { assistantText, assistantTool, failure, FakeSdk, init, limitError, limitResult, messages, rateLimit, reportStep, success, type Script } from "./fakeSdk.ts";
 import { noDecider, noReporter, ScriptedUi, steppingClock, tempRepo, questionOf, para, plain, term , TEST_ROOT } from "./helpers.ts";
 import { planningCall } from "../src/review.ts";
@@ -291,7 +291,7 @@ test("an invalid execution report without a stop yields aborted, and no repair p
 test("Claude Code's prose in an execution call is a ClaudeSaid event, trimmed, and no line is said with the [claude] prefix", async () => {
   const fake = await planner([messages(init(), assistantText("  working  "), success(null, "text only"))]);
   await run(fake.planner.executing("implement the plan", noReporter));
-  assert.deepEqual(fake.ui.notified.filter((e) => e._tag === "ClaudeSaid"), [{ _tag: "ClaudeSaid", text: "working" }]);
+  assert.deepEqual(fake.ui.notified.filter((e) => e._tag === "ClaudeSaid"), [{ _tag: "ClaudeSaid", text: "working", running: [] }]);
   assert.ok(!fake.ui.said.some((l) => l.startsWith("[claude]")), "Claude Code's prose was said with the prefix");
 });
 
@@ -1968,10 +1968,6 @@ test("a credential of the inherited environment named in the error result is red
 });
 
 // ---- issue #49: the live output of an execution call -----------------------------------------------------------------
-const bashUse = (id: string, command: string, background = false): SDKMessage =>
-  ({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Bash", input: background ? { command, run_in_background: true } : { command } }] }, parent_tool_use_id: null, session_id: "s" }) as unknown as SDKMessage;
-const bashResult = (id: string, text: string): SDKMessage =>
-  ({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: text }] }, parent_tool_use_id: null, session_id: "s" }) as unknown as SDKMessage;
 
 test("issue #49: an execution call's command and background task reach the live panel, the task's tail from its output file", async () => {
   const fake = await planner([messages(init(), bashUse("t1", "git status"), bashResult("t1", "clean\n"), bashUse("t2", "npm test", true), started("b1"), notification("b1", "completed", "/tmp/b1.out"), success(report))]);
@@ -1979,6 +1975,41 @@ test("issue #49: an execution call's command and background task reach the live 
   await run(fake.planner.executing("implement the plan", noReporter));
   const brief = fake.ui.outputs.map((e) => (e._tag === "Printed" ? `Printed ${e.key} ${e.text}` : e._tag === "Finished" ? `Finished ${e.key} ${e.status._tag}` : e._tag === "Touched" ? `Touched ${e.name}` : `${e._tag} ${e.key}`));
   assert.deepEqual(brief, ["Started claude:t1", "Printed claude:t1 clean\n", "Finished claude:t1 Succeeded", "Started task:b1", "Printed task:b1 \u001b[32mall 12 passed\u001b[0m\n", "Finished task:b1 Succeeded"]);
+});
+
+// ---- issue #40: a message carries the processes of its call open when it arrived -------------------------------------
+const said = (fake: Awaited<ReturnType<typeof planner>>) => fake.ui.notified.flatMap((e) => (e._tag === "ClaudeSaid" ? [{ text: e.text, running: e.running }] : []));
+
+test("issue #40: a message written while a foreground command runs names it, and one after its result names none", async () => {
+  const fake = await planner([messages(init(), bashUse("t1", "npm test"), assistantText("waiting for the tests"), bashResult("t1", "ok\n"), assistantText("tests passed"), success(report))]);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(said(fake), [
+    { text: "waiting for the tests", running: ["npm test"] },
+    { text: "tests passed", running: [] },
+  ]);
+});
+
+test("issue #40: a message written while a background task runs names it as the live panel does", async () => {
+  const fake = await planner([messages(init(), bashUse("t2", "npm test", true), started("b1"), assistantText("npm test passes"), notification("b1", "completed", "/tmp/b1.out"), assistantText("done"), success(report))]);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  const panelName = fake.ui.outputs.flatMap((e) => (e._tag === "Started" && e.key === "task:b1" ? [e.name] : []));
+  assert.equal(panelName.length, 1);
+  assert.deepEqual(said(fake), [
+    { text: "npm test passes", running: panelName },
+    { text: "done", running: [] },
+  ]);
+});
+
+test("issue #40 (Q1's accepted limitation): a text before the tool use of its own command in one message names none", async () => {
+  const message = {
+    type: "assistant",
+    message: { content: [{ type: "text", text: "npm test passes in full" }, { type: "tool_use", id: "t3", name: "Bash", input: { command: "npm test" } }] },
+    parent_tool_use_id: null,
+    session_id: "s",
+  } as unknown as SDKMessage;
+  const fake = await planner([messages(init(), message, bashResult("t3", "ok\n"), success(report))]);
+  await run(fake.planner.executing("implement the plan", noReporter));
+  assert.deepEqual(said(fake), [{ text: "npm test passes in full", running: [] }]);
 });
 
 test("issue #49: an interrupted execution call ends its open command Unknown on the live panel", async () => {

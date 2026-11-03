@@ -129,7 +129,7 @@ describe("Claude's messages", () => {
     const state = [
       { type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [1], implementation: null }, incarnation: "a" },
       { type: "event", run: 1, seq: 0, time, event: { _tag: "Started", project: "/p", location: "/p", task: "t", mode: "refinement", item: { id: "11", title: "t" } } },
-      { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } },
+      { type: "event", run: 1, seq: 1, time, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done", running: [] } } },
     ].reduce((s, m) => reduce(s, m as Parameters<typeof reduce>[1]), initialState);
     const run = runOf(state, "refinement");
     if (run === null) throw new Error("no run");
@@ -1627,7 +1627,7 @@ describe("App and the draft", () => {
   // Issue #22: the "You and Interloq" panel is a dashboard; its status line is the activity line, moved from the right column.
   describe("the dashboard in the run view (issue #22)", () => {
     const said = (text: string) => ({ _tag: "Said", text });
-    const claude = (text: string) => ({ _tag: "Notified", event: { _tag: "ClaudeSaid", text } });
+    const claude = (text: string) => ({ _tag: "Notified", event: { _tag: "ClaudeSaid", text, running: [] } });
     const left = (root: HTMLElement) => one(root, ".left");
     const right = (root: HTMLElement) => one(root, ".right");
 

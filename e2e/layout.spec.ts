@@ -2,7 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
 import { TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
 import { markedTabName } from "../web/src/notify.ts";
-import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
+import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL, NARRATION_LONG_COMMAND } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
 
@@ -1957,6 +1957,41 @@ test.describe("the tests of the figureChoices server, in order", () => {
       await picturesOnCards(page);
       expect(await analysis.locator(".column [data-option-figure]").count(), "the columns show no picture").toBe(0);
       await answerDismisses(page, analysis);
+    });
+  }
+});
+
+// Issue #40: the note on Claude Code's latest message, naming the commands running when it was written, in a browser: it
+// lies inside the message, holds each name whole, wraps a long one, and makes the page scroll sideways at no size.
+test.describe("the tests of the narrationNote server, in order", () => {
+  test.describe.configure({ mode: "default" });
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L46) ${width}×${height}: the note of commands running under Claude Code's message`, async ({ page }) => {
+      const size = `${width} × ${height}`;
+      await page.setViewportSize({ width, height });
+      await startTask(page, layoutUrl("narrationNote"));
+      const claude = page.locator("[data-claude]").first();
+      const note = claude.locator("[data-claude-running]");
+      await expect(note).toBeVisible({ timeout: 60_000 });
+      await claude.scrollIntoViewIfNeeded();
+      const outer = await box(claude);
+      const inner = await box(note);
+      expect(inner.x, `the note inside the message at ${size}`).toBeGreaterThanOrEqual(outer.x - 1);
+      expect(inner.x + inner.width, `the note inside the message at ${size}`).toBeLessThanOrEqual(outer.x + outer.width + 1);
+      expect(inner.y + inner.height, `the note inside the message at ${size}`).toBeLessThanOrEqual(outer.y + outer.height + 1);
+      const items = note.locator("li");
+      expect(await items.allTextContents()).toEqual(["npm test", NARRATION_LONG_COMMAND]);
+      const long = items.nth(1);
+      const wrap = await long.evaluate((el) => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, line: parseFloat(getComputedStyle(el).lineHeight), over: el.scrollWidth - el.clientWidth }));
+      expect(wrap.over, `the long name's text within its line at ${size}`).toBeLessThanOrEqual(0);
+      const room = await claude.evaluate((el) => el.clientWidth);
+      expect(wrap.width, `the long name no wider than the message at ${size}`).toBeLessThanOrEqual(room);
+      expect(wrap.height, `the long name wraps at ${size}`).toBeGreaterThan(2 * wrap.line);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `no sideways scroll at ${size}`).toBe(true);
+      if (width !== 640) {
+        const over = await LIVE_SECTION(page).evaluate((el) => el.scrollHeight - el.clientHeight);
+        expect(over, `the dashboard's section not overflowing at ${size}`).toBeLessThanOrEqual(1);
+      }
     });
   }
 });

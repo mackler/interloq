@@ -6,7 +6,7 @@ import { Clock, Deferred, Duration, Effect, Exit, Layer, Ref, Result } from "eff
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import { pathOf } from "./artifacts.ts";
-import { type BackgroundState, type CallOutcome, checkBackground, claudeOpenProcesses, claudeOutputOf, EMPTY_CLAUDE_OUTPUT, type OutputCommand, toolTarget, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
+import { type BackgroundState, type CallOutcome, checkBackground, claudeOpenProcesses, claudeOutputOf, claudeRunningNames, EMPTY_CLAUDE_OUTPUT, type OutputCommand, toolTarget, decodeQuestions, decodeToolTarget, execReport, foldBackground, interpretExecution, nameTasks, NO_BACKGROUND, type Question, reduceMessages, type Stop, type NamedEnd, taskName, waitingOn } from "./claudeEvents.ts";
 import { sanitizedOutput } from "./liveOutput.ts";
 import { ClaudeCallFailed, ClaudeSessionTooLong, ProcessEnded, type RunError, TransportFault, UsageLimited } from "./errors.ts";
 import { type ClaudeFailure, classifyClaude, errorCode, networkCodeOf, type ProcessEnd, processEndOf } from "./transport.ts";
@@ -401,9 +401,11 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
           seen.push(message);
           yield* observe(message);
           const received = message;
-          const commands = yield* Ref.modify(output, (state) => {
+          // Issue #40: the processes open before the message is folded, since a message's text is written before the
+          // tool uses that follow it in the same message start their commands.
+          const [commands, running] = yield* Ref.modify(output, (state) => {
             const [nextState, emitted] = claudeOutputOf(state, received);
-            return [emitted, nextState] as const;
+            return [[emitted, claudeRunningNames(state)] as const, nextState] as const;
           });
           yield* Effect.forEach(commands, live, { discard: true });
           if (message.type === "system" && message.subtype === "init") {
@@ -414,7 +416,7 @@ export const makeClaudePlannerWith = (plannerOptions: ClaudePlannerOptions): Eff
             }
           } else if (message.type === "assistant") {
             for (const block of message.message.content) {
-              if (show === "text" && block.type === "text" && block.text.trim() !== "") yield* ui.notify({ _tag: "ClaudeSaid", text: block.text.trim() });
+              if (show === "text" && block.type === "text" && block.text.trim() !== "") yield* ui.notify({ _tag: "ClaudeSaid", text: block.text.trim(), running });
               if (block.type === "tool_use" && block.name !== "StructuredOutput") {
                 const target = toolTarget(block.input);
                 yield* ui.notify({ _tag: "ToolUsed", agent: "claude", tool: block.name, target, callId });

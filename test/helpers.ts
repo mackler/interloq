@@ -368,7 +368,7 @@ export type PlanningStep = { /** Issue #193: fails the call with a defect, `Effe
  * was emptied by a hello still receives every marker within the ticks.
  */
 export type TickMarks = Readonly<{ every: number; texts: readonly ((n: number) => string)[]; restate: readonly OutputEvent[] }>;
-export type ExecScript = { output?: readonly OutputEvent[]; ticks?: Readonly<{ key: ProcessKey; name: string; everyMs: number; marks?: TickMarks }>; uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
+export type ExecScript = { output?: readonly OutputEvent[]; /** Issue #40: Claude Code's messages during the call, notified as the adapter notifies them, each with the processes it names. */ said?: readonly Readonly<{ text: string; running: readonly string[] }>[]; ticks?: Readonly<{ key: ProcessKey; name: string; everyMs: number; marks?: TickMarks }>; uncommitted?: boolean; usage?: boolean; sessionTooLong?: string; reports?: readonly (readonly [string, "started" | "done"])[]; onCall?: () => void; after?: () => void; hang?: boolean; unreachable?: boolean; permission?: Readonly<{ tool: string; input: Record<string, unknown> }> };
 /** The events of tick n: its restated events where `marks` restates on it, then its line, marked or plain. */
 const markedTick = (ticks: NonNullable<ExecScript["ticks"]>, n: number): readonly OutputEvent[] => {
   const marks = ticks.marks;
@@ -611,6 +611,7 @@ export class ScriptedPlanner implements PlannerShape {
       // Issue #221: the call's live output, then its ticks on the Clock, a child that ends with the call.
       if (ui !== null) {
         for (const event of script.output ?? []) yield* ui.output(event);
+        for (const message of script.said ?? []) yield* ui.notify({ _tag: "ClaudeSaid", ...message });
         const ticks = script.ticks;
         if (ticks !== undefined) {
           const tick = (n: number): Effect.Effect<never> =>
@@ -773,10 +774,13 @@ export const workExecution: WorkExecution = { outcome: finished, plan: "# Plan\n
  * Issue #162: the runner of the whole suite, scripted: each run takes the next result of its queue (Passed when it is
  * empty), and "hang" never completes, so a test can stop the run during it. Every run's command, directory and ceiling is kept.
  */
+/** Issue #40: a suite run held until its gate resolves (interruptibly), then completing with its result. */
+export type GatedSuiteResult = Readonly<{ gate: () => Promise<void>; result: SuiteResult }>;
+export type ScriptedSuiteResult = SuiteResult | "hang" | GatedSuiteResult;
 export class ScriptedSuite implements SuiteRunnerShape {
   readonly runs: Array<Readonly<{ command: string; cwd: string; ceilingMs: number }>> = [];
-  readonly results: Array<SuiteResult | "hang">;
-  constructor(results: ReadonlyArray<SuiteResult | "hang">) {
+  readonly results: Array<ScriptedSuiteResult>;
+  constructor(results: ReadonlyArray<ScriptedSuiteResult>) {
     this.results = [...results];
   }
   /** Issue #49: the chunks each run prints through `onOutput` before its result, in order. */
@@ -786,13 +790,18 @@ export class ScriptedSuite implements SuiteRunnerShape {
       this.runs.push({ command, cwd, ceilingMs });
       for (const chunk of this.printed.shift() ?? []) onOutput(chunk);
       const next = this.results.shift() ?? { _tag: "Passed", output: "all passed\n", ms: 1 };
-      return next === "hang" ? Effect.never : Effect.succeed(next);
+      if (next === "hang") return Effect.never;
+      if ("gate" in next) {
+        const { gate, result } = next;
+        return Effect.callback<void>((resume) => void gate().then(() => resume(Effect.void))).pipe(Effect.as(result));
+      }
+      return Effect.succeed(next);
     });
   }
 }
 
 /** `store` wraps the live store of the test layer (a test that changes the project between the agents' calls). */
-export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** Issue #216: the checks of Bring Up to Date. */ updateChecks?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162). */ suite?: ReadonlyArray<SuiteResult | "hang"> };
+export type TestOptions = { answers?: readonly ScriptedAnswer[]; steps?: PlanningStep[]; /** Issue #184: the first interview's replies, and its closing replies (the summary). */ replies?: PlanningStep[]; closings?: PlanningStep[]; /** The replies of the context calls (S9), in order. */ contexts?: PlanningStep[]; /** The replies of the calls about the terms and their reviews (S17). */ terms?: PlanningStep[]; termsReviews?: ReviewStep[]; /** Issue #216: the checks of Bring Up to Date. */ updateChecks?: ReviewStep[]; /** The confirmation before an answer ends the run, as the page's dialog asks it (S24, S25). */ confirmEnds?: boolean; reviews?: ReviewStep[]; execs?: ExecCallOutcome[]; execScripts?: readonly ExecScript[]; config?: Partial<Config>; platform?: Layer.Layer<Platform>; store?: (store: StoreShape) => StoreShape; /** Issue #153: a Ui in place of the ScriptedUi (the real web Ui of a seam test); the Decider and the planner's call events use it too. */ ui?: UiShape; /** The project's tracker (issue #120): a fake, or null for none configured (NoTracker); by default a fake holding scriptedItem. */ tracker?: FakeTracker | null; /** The run's mode as testLayer provides it (issue #120; by default implementation), which the planning guard reads. */ mode?: RunMode; /** The whole suite's results, in order (issue #162); a gated one is held (issue #40). */ suite?: ReadonlyArray<ScriptedSuiteResult> };
 
 /**
  * The live platform with a file system whose writes and renames can fail: `shouldFail(method, count)` is asked

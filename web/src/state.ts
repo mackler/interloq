@@ -165,7 +165,7 @@ export type Expired = Readonly<{ prompt: number; seconds: number; then: OnExpiry
  */
 export type Status = Readonly<{ _tag: "Idle" }> | Readonly<{ _tag: "Activity"; text: string }> | Readonly<{ _tag: "Interloq"; text: string }>;
 /** Claude Code's latest message (issue #22): its prose while it works, an interview message, a plan's result text; Markdown. */
-export type ClaudeLatest = Readonly<{ heading: string | null; body: string }>;
+export type ClaudeLatest = Readonly<{ heading: string | null; body: string; running: readonly string[] }>;
 /**
  * What the page showed of the prompt an answer answers: the question as it was presented, the prompt's hint where it
  * presented none, or nothing where this page never held the prompt pending.
@@ -900,7 +900,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     case "PlanWritten": {
       // Issue #46 (S19): the plan writer's questions are presented one by one after this message, never listed in it.
       // Issue #22: the plan has its place in the rail; only its result text is Claude Code's latest message.
-      return event.resultText === "" ? run : withClaude(run, { heading: planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }))), body: event.resultText });
+      return event.resultText === "" ? run : withClaude(run, { heading: planWrittenHeading(phaseName({ kind: "planning", n: event.phase }, countIn(run, { kind: "planning", n: event.phase }))), body: event.resultText, running: [] });
     }
     case "InterviewTurn": {
       const turn = event.summary === null ? { kind: "continuing" as const, message: event.message } : { kind: "summary_proposed" as const, message: event.message, summary: event.summary };
@@ -908,7 +908,7 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
       // Issue #5: the interview's turns are Claude's words, so they are Claude's messages.
       // Issue #21: the turn's count is the active clarification step's.
       const timeline = counted(run.timeline, { answered: event.answered, total: event.total });
-      return { ...withClaude({ ...run, timeline }, { heading: event.heading, body }), absorb: interviewSays(turn) };
+      return { ...withClaude({ ...run, timeline }, { heading: event.heading, body, running: [] }), absorb: interviewSays(turn) };
     }
     case "InterviewCounted":
       // Issue #184: Interloq counts each answer as it is given; the count alone changes, and no message is added.
@@ -1071,7 +1071,8 @@ const notifiedEvent = (run: RunView, event: UiEvent, time: string): RunView => {
     }
     case "ClaudeSaid":
       // Issue #5: Claude's prose is attributed as data, not by a prefix in its text.
-      return withClaude(run, { heading: null, body: event.text });
+      // Issue #40: with the processes of the call open when it was written.
+      return withClaude(run, { heading: null, body: event.text, running: event.running });
     case "ModelNamed":
       // Issue #22: the agent's model line, in its place at the dashboard's top; a later model of the agent replaces it.
       return { ...run, dashboard: { ...run.dashboard, models: { ...run.dashboard.models, [event.model.agent]: modelLine(event.model) } } };

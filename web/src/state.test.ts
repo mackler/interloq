@@ -188,10 +188,10 @@ describe("ordering and the panels", () => {
     const turn: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Hello", summary: null, answered: 0, total: 1 };
     const summary: UiEvent = { _tag: "InterviewTurn", heading: "Interview", message: "Done.", summary: "# R", answered: 0, total: 1 };
     const first: RunEvent[] = [started, notified(turn), said("\nHello\n")];
-    for (const s of [fold(live(first)), replayed(first)]) expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Hello" });
+    for (const s of [fold(live(first)), replayed(first)]) expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Hello", running: [] });
     const events: RunEvent[] = [...first, notified(summary), said("\nDone.\n"), said("Summary proposed by Claude Code:\n\n# R\n"), said("\nHello\n")];
     for (const s of [fold(live(events)), replayed(events)]) {
-      expect(claudeOf(s)).toEqual({ heading: "Interview", body: `Done.\n\n**${prompts.SUMMARY_PROPOSED_HEADING}**\n\n# R` });
+      expect(claudeOf(s)).toEqual({ heading: "Interview", body: `Done.\n\n**${prompts.SUMMARY_PROPOSED_HEADING}**\n\n# R`, running: [] });
       // The line said after the absorbed ones is Interloq's, the status.
       expect(statusOf(s)).toBe("Hello");
     }
@@ -203,10 +203,10 @@ describe("ordering and the panels", () => {
     const events: RunEvent[] = [started, notified({ _tag: "PlanWritten", phase: 1, resultText: "I wrote the plan." })];
     for (const s of [fold(live(events)), replayed(events)]) {
       // Issue #6: the run holds one planning phase, so it carries no number.
-      expect(claudeOf(s)).toEqual({ heading: prompts.planWrittenHeading("Planning"), body: "I wrote the plan." });
+      expect(claudeOf(s)).toEqual({ heading: prompts.planWrittenHeading("Planning"), body: "I wrote the plan.", running: [] });
     }
-    const claudeSaid = notified({ _tag: "ClaudeSaid", text: "before" });
-    expect(claudeOf(fold(live([started, claudeSaid, notified({ _tag: "PlanWritten", phase: 1, resultText: "" })])))).toEqual({ heading: null, body: "before" });
+    const claudeSaid = notified({ _tag: "ClaudeSaid", text: "before", running: [] });
+    expect(claudeOf(fold(live([started, claudeSaid, notified({ _tag: "PlanWritten", phase: 1, resultText: "" })])))).toEqual({ heading: null, body: "before", running: [] });
   });
 
   test("reviews and responses go to the right panel as Codex and Claude Code messages", () => {
@@ -233,14 +233,22 @@ describe("ordering and the panels", () => {
 // Issue #5: what Claude Code writes is attributed to Claude, as data; the page names it "Claude". Issue #22: it is the
 // dashboard's latest message of Claude Code, replaced by the next.
 describe("Claude Code's latest message and the answers on the dashboard (issue #22)", () => {
-  const claudeSaid = (text: string) => notified({ _tag: "ClaudeSaid", text });
+  const claudeSaid = (text: string) => notified({ _tag: "ClaudeSaid", text, running: [] });
   const both = (events: readonly RunEvent[]) => [fold(live(events)), replayed(events)];
 
   test("Claude's prose is Claude Code's latest message, without a prefix, and a newer one replaces it", () => {
-    for (const s of both([started, claudeSaid("**done**")])) expect(claudeOf(s)).toEqual({ heading: null, body: "**done**" });
-    for (const s of both([started, claudeSaid("first"), claudeSaid("second")])) expect(claudeOf(s)).toEqual({ heading: null, body: "second" });
+    for (const s of both([started, claudeSaid("**done**")])) expect(claudeOf(s)).toEqual({ heading: null, body: "**done**", running: [] });
+    for (const s of both([started, claudeSaid("first"), claudeSaid("second")])) expect(claudeOf(s)).toEqual({ heading: null, body: "second", running: [] });
     // Nothing of Claude Code's prose goes to the right panel.
     for (const s of both([started, claudeSaid("first")])) expect(runOf(s, "implementation")?.right).toEqual([]);
+  });
+
+  // Issue #40: the processes open when the message arrived travel with it, live and in a replay.
+  test("a message written while commands ran carries their names; a later one without any clears them", () => {
+    const withRunning = notified({ _tag: "ClaudeSaid", text: "waiting", running: ["npm test"] });
+    for (const s of both([started, withRunning])) expect(claudeOf(s)).toEqual({ heading: null, body: "waiting", running: ["npm test"] });
+    for (const s of both([started, withRunning, claudeSaid("done")])) expect(claudeOf(s)).toEqual({ heading: null, body: "done", running: [] });
+    for (const s of both([started, withRunning, notified({ _tag: "PlanWritten", phase: 1, resultText: "I wrote the plan." })])) expect(claudeOf(s)?.running).toEqual([]);
   });
 
   test("the activity line and the page's prompts say Claude", () => {
@@ -970,7 +978,7 @@ describe("a replay of a question phase", () => {
     expect(right[0]).toMatch(/^codex:.*The list does not ask for the database\./s);
     expect(right[1]).toMatch(/^claude:.*\[Q-R1-1\]\*\* accepted: Added the database question\./s);
     expect(runOf(s, "implementation")?.dashboard.interviewHelp).toBe(prompts.interviewHelp("Interview"));
-    expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Which database should the service use?\n1. PostgreSQL\n2. SQLite" });
+    expect(claudeOf(s)).toEqual({ heading: "Interview", body: "Which database should the service use?\n1. PostgreSQL\n2. SQLite", running: [] });
     expect(runOf(s, "implementation")?.dashboard.models).toEqual({ claude: null, codex: prompts.modelLine({ agent: "codex", name: null }) });
     expect(runOf(s, "implementation")?.pending?.asked.kind).toBe("interviewMessage");
     expect(runOf(s, "implementation")?.pending?.options.map((c) => `${c.label}=${c.sends}`)).toEqual(["PostgreSQL=1", "SQLite=2"]);

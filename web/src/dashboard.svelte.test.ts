@@ -73,12 +73,23 @@ describe("the dashboard", () => {
   });
 
   test("Claude Code's latest message is rendered Markdown with its heading", () => {
-    const { target } = mountDashboard(runWith({ claude: { heading: "Interview", body: "**bold**" } }));
+    const { target } = mountDashboard(runWith({ claude: { heading: "Interview", body: "**bold**", running: [] } }));
     const region = target.querySelector("[data-claude]");
     expect(region?.querySelector("strong")?.textContent).toBe("bold");
     expect(region?.textContent).toMatch(/Claude/);
     expect(region?.textContent).toMatch(/Interview/);
     expect(mountDashboard(runWith({})).target.querySelector("[data-claude]")).toBe(null);
+  });
+
+  // Issue #40: the note on a message written while Claude Code's commands had not ended.
+  test("Claude Code's latest message carries the note naming the commands running when it was written, and none otherwise", () => {
+    const { target } = mountDashboard(runWith({ claude: { heading: null, body: "tests passed", running: ["npm test", "watch log"] } }));
+    const note = target.querySelector("[data-claude] [data-claude-running]");
+    expect(note?.querySelector("p")?.textContent).toBe(prompts.runningNoteLead(2));
+    expect([...(note?.querySelectorAll("li") ?? [])].map((li) => li.textContent)).toEqual(["npm test", "watch log"]);
+    const none = mountDashboard(runWith({ claude: { heading: null, body: "done", running: [] } }));
+    expect(none.target.querySelector("[data-claude]")).not.toBe(null);
+    expect(none.target.querySelector("[data-claude-running]")).toBe(null);
   });
 
   test("the last answer shows its question as presented, its attached material and its explanations, and the answer as Markdown", () => {
@@ -113,7 +124,7 @@ describe("the dashboard", () => {
   });
 
   test("compact: the status, ellipsized with its whole text as its title, and the heading of every answer, nothing else", () => {
-    const run = runWith({ status: { _tag: "Interloq", text: "A long line" }, models: { claude: "m", codex: null }, claude: { heading: null, body: "c" }, interviewHelp: "h", answers: [entry(1), entry(2)] });
+    const run = runWith({ status: { _tag: "Interloq", text: "A long line" }, models: { claude: "m", codex: null }, claude: { heading: null, body: "c", running: [] }, interviewHelp: "h", answers: [entry(1), entry(2)] });
     const { target } = mountDashboard(run, { compact: true });
     const status = target.querySelector("[data-status]");
     expect(status?.textContent).toBe("A long line");

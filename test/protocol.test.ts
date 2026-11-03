@@ -116,7 +116,7 @@ const uiEvent: fc.Arbitrary<UiEvent> = fc.oneof(
   fc.record({ _tag: fc.constant("AgentCallEnded" as const), agent, ok: fc.boolean(), callId: text }),
   fc.record({ _tag: fc.constant("InterviewTurn" as const), heading: text, message: text, summary: fc.option(text, { nil: null }), answered: nat, total: nat }),
   fc.record({ _tag: fc.constant("InterviewOpened" as const), heading: text, stage: fc.constantFrom("clarification" as const, "followUp" as const), total: nat }),
-  fc.record({ _tag: fc.constant("ClaudeSaid" as const), text }),
+  fc.record({ _tag: fc.constant("ClaudeSaid" as const), text, running: fc.array(text, { maxLength: 3 }) }),
   // Issue #205: the agreed question list known, with its count.
   fc.record({ _tag: fc.constant("QuestionsAgreed" as const), count: nat }),
   // The dashboard's model lines: an agent's model as data, not a line of text.
@@ -427,10 +427,20 @@ fails<Carried<PlannerResponse & { extra: string }>>();
 
 // Issue #5: Claude Code's prose travels to the page as data, attributed to Claude.
 test("a ClaudeSaid event survives the round trip, live and in a replay", () => {
-  const event: RunEvent = { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "**done**" } };
+  const event: RunEvent = { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "**done**", running: [] } };
   for (const m of [{ type: "event", run: 1, seq: 0, time: T, event }, { type: "replay", ui: [], runs: [{ id: 1, events: [{ time: T, event }] }] }] as ServerMessage[]) {
     assert.deepEqual(decoded(decodeServer(JSON.stringify(m))), m);
   }
+});
+
+// Issue #40: the processes open when the message arrived survive the round trip; a record without them decodes with none.
+test("a ClaudeSaid's running processes survive the round trip, and a ClaudeSaid written before issue #40 decodes with none", () => {
+  const event: RunEvent = { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "tests passed", running: ["npm test", "watch log"] } };
+  for (const m of [{ type: "event", run: 1, seq: 0, time: T, event }, { type: "replay", ui: [], runs: [{ id: 1, events: [{ time: T, event }] }] }] as ServerMessage[]) {
+    assert.deepEqual(decoded(decodeServer(JSON.stringify(m))), m);
+  }
+  const old = { type: "event", run: 1, seq: 0, time: T, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done" } } };
+  assert.deepEqual(decoded(decodeServer(JSON.stringify(old))), { ...old, event: { _tag: "Notified", event: { _tag: "ClaudeSaid", text: "done", running: [] } } });
 });
 
 // Issue #53 (G-R1-1): PlanChanged carries the report that caused it, or null for a plan the program wrote.

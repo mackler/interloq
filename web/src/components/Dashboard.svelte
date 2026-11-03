@@ -15,7 +15,7 @@
   // showing only its latest version; in the compact form, the same heading with a decision's draft analysis, only while
   // that decision is being prepared. Its open state is the run's shared state, as the answers' heading is.
   import { render } from "../markdown.ts";
-  import { allAnswersHeading, documentLabel, DASHBOARD_CLAUDE_LABEL, DASHBOARD_COMPACT_NAME, itemHeadline, LAST_ANSWER_LABEL, YOU_LABEL } from "../../../src/prompts.ts";
+  import { allAnswersHeading, documentLabel, DASHBOARD_CLAUDE_LABEL, DASHBOARD_COMPACT_NAME, itemHeadline, LAST_ANSWER_LABEL, runningNoteLead, YOU_LABEL } from "../../../src/prompts.ts";
   import { type AnsweredEntry, lastAnswer, type RunView, shownDraft } from "../state.ts";
   import ReviewedDocument from "./ReviewedDocument.svelte";
   import type { SubjectId } from "../../../src/artifacts.ts";
@@ -82,6 +82,12 @@
         <article class="surface claude" data-claude>
           <header class="m3-font-label-medium">{DASHBOARD_CLAUDE_LABEL}{#if d.claude.heading !== null} · {d.claude.heading}{/if}</header>
           <div class="markdown m3-font-body-medium">{@html render(d.claude.body)}</div>
+          {#if d.claude.running.length > 0}
+            <div class="running m3-font-body-small" data-claude-running>
+              <p>{runningNoteLead(d.claude.running.length)}</p>
+              <ul>{#each d.claude.running as name, i (i)}<li><code>{name}</code></li>{/each}</ul>
+            </div>
+          {/if}
         </article>
       {/if}
       {#if last !== null}
@@ -137,6 +143,10 @@
   .help { margin: 0; white-space: pre-wrap; color: var(--m3c-on-surface-variant); }
   .surface { padding: 0.5rem 0.875rem; border-radius: var(--m3-shape-large); margin: 0; }
   .claude { background: var(--m3c-secondary-container); color: var(--m3c-on-secondary-container); }
+  /* Issue #40: a statement of what the program observed, not an error; it wraps on its own, whatever its ancestors set. */
+  .running { margin-top: 0.375rem; font-size: 0.75rem; line-height: 1rem; overflow-wrap: anywhere; }
+  .running p { margin: 0; }
+  .running ul { margin: 0.125rem 0 0; padding-left: 1.25rem; }
   .answer { background: var(--m3c-surface-container-high); color: var(--m3c-on-surface); }
   .surface header { opacity: 0.8; margin-bottom: 0.25rem; }
   .hint { margin: 0 0 0.5rem; white-space: pre-wrap; }
