@@ -22,7 +22,7 @@ import { decodeServer, listedItemOf, type ServerMessage } from "../../src/protoc
 import { Result, Schema } from "effect";
 import { GithubIssue, itemOf } from "../../src/githubIssues.ts";
 import { GitlabIssue, itemOfIssue } from "../../src/gitlabIssues.ts";
-import type { TrackerItem } from "../../src/tracker.ts";
+import type { ItemId, TrackerItem } from "../../src/tracker.ts";
 import { countOfKind, foreseenPhases, iterationsOf, phaseName, type UiEvent } from "../../src/uiEvents.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
 import type { Block } from "../../src/schema.ts";
@@ -1057,6 +1057,35 @@ describe("App and the draft", () => {
       next.receive({ type: "hello", preparation: PREPARATION_VIEW_OFF, chain: helloChain, location: "/p", current: { refinement: [], implementation: null }, incarnation: "b" });
       commitField(root, "chain-cutoff", "07:00");
       expect(chainFrames(next)).toEqual([{ enabled: true, runs: 3, cutoff: null }, { enabled: true, runs: 3, cutoff: hourIso() }]);
+    });
+
+    // Issue #229 (S5): the chain's runs line is open per tab, kept by the page across every remount of the control.
+    test("chain runs line open across the list view and the run", async () => {
+      const { root, ws } = await begin();
+      const entry = (item: string) => ({ item: item as ItemId, title: `item ${item}`, root: null, outcome: { _tag: "Finished" as const }, returned: null });
+      const history = [entry("7"), entry("8")];
+      ws.receive({ type: "chain", state: { ...helloChain, chain: { _tag: "Running", run: 3, item: "9" as ItemId, title: "nine", claim: { _tag: "Unclaimed" }, generation: 1, count: 3, halts: [], history } } });
+      ws.receive({ type: "replay", ui: [], runs: [{ id: 1, events: stamp([startedIn("implementation", "9")]) }] });
+      select(root, "implementation");
+      const line = () => one(root, "[data-chain-runs] button") as HTMLButtonElement;
+      const items = () => root.querySelectorAll("[data-chain-runs] ol.runs li").length;
+      expect(line().textContent?.trim()).toBe("2 runs ended in this chain");
+      expect(line().getAttribute("aria-expanded")).toBe("false");
+      expect(items()).toBe(0);
+      line().click();
+      flushSync();
+      expect(items()).toBe(2);
+      const listTab = [...root.querySelectorAll<HTMLInputElement>("nav.run-tabs input[type=radio]")][0]!;
+      listTab.click();
+      flushSync();
+      expect(root.querySelector("section.items, main.list")).not.toBe(null);
+      expect(items()).toBe(2);
+      const runTab = [...root.querySelectorAll<HTMLInputElement>("nav.run-tabs input[type=radio]")][1]!;
+      runTab.click();
+      flushSync();
+      expect(root.querySelector("main.run")).not.toBe(null);
+      expect(line().getAttribute("aria-expanded")).toBe("true");
+      expect(items()).toBe(2);
     });
 
     test("chain pending withdrawn when unsent", async () => {

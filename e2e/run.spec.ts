@@ -1032,11 +1032,24 @@ test.describe("the tests of the chain server, in order", () => {
   test.describe.configure({ mode: "default" });
 
   test("(31) a finished run starts the next refined item, and turning the mode off during it keeps it going", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
     const first = await startFromTab(page, url("chain"), "implementation");
     const control = page.getByRole("region", { name: CHAIN_SWITCH_LABEL });
     await expect(control.getByRole("status")).toContainText(/Run 2 of the chain: item #(\d+)/, { timeout: 60_000 });
     const second = /item #(\d+)/.exec((await control.getByRole("status").textContent()) ?? "")?.[1];
     expect(second).not.toBe(first);
+    // Issue #229: the rail's column shows the chain's runs as one closed line, not the list, inside the column.
+    const inRail = page.locator("div.rail-column").getByRole("region", { name: CHAIN_SWITCH_LABEL });
+    const runsLine = inRail.locator("[data-chain-runs] button");
+    await expect(runsLine).toBeVisible();
+    await expect(runsLine).toHaveText("1 run ended in this chain");
+    await expect(runsLine).toHaveAttribute("aria-expanded", "false");
+    await expect(inRail.locator("ol.runs li")).toHaveCount(0);
+    await chainWithinRail(page);
+    await runsLine.click();
+    await expect(inRail.locator("ol.runs li")).toHaveCount(1);
+    await expect(inRail.locator("ol.runs li").first()).toContainText("Item #");
+    await chainWithinRail(page);
     await expect(rail(page).getByText("Planning", { exact: true })).toBeVisible();
     await expect(page.locator("button[name=stop]")).toBeEnabled();
     await control.locator("label.switch").click();
@@ -1044,6 +1057,26 @@ test.describe("the tests of the chain server, in order", () => {
     await expect(page.locator("button[name=stop]")).toBeEnabled();
   });
 });
+
+/** Issue #229: every part of the chain's control with a box lies within the rail's column, and the control does not overflow. */
+const chainWithinRail = async (page: Page) => {
+  const m = await page.locator("div.rail-column").evaluate((column) => {
+    const chain = column.querySelector(".chain");
+    if (chain === null) return null;
+    const c = column.getBoundingClientRect();
+    const outside: string[] = [];
+    for (const el of chain.querySelectorAll("*")) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0) continue;
+      if (r.left < c.left - 0.5 || r.right > c.right + 0.5) outside.push(`${el.tagName.toLowerCase()}.${[...el.classList].join(".")}: ${r.left}–${r.right} outside ${c.left}–${c.right}`);
+    }
+    return { scroll: chain.scrollWidth, client: chain.clientWidth, outside };
+  });
+  expect(m, "the chain's control is in the rail's column").not.toBe(null);
+  if (m === null) return;
+  expect(m.scroll, `the chain's control overflows: ${JSON.stringify(m)}`).toBeLessThanOrEqual(m.client + 0.5);
+  expect(m.outside, m.outside.join("\n")).toEqual([]);
+};
 
 // Issue #196: the chain's queue over the real server. While the first run waits on its question, the developer chooses
 // the queue, adds two refined items and reorders them from the list; when the run ends, the chain starts the queue's

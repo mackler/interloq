@@ -20,11 +20,11 @@ import { attachedOf, type PresentedQuestion, shownExplanations } from "../../src
 import { Result } from "effect";
 import { piecesText, plainBlocks, plainPieces } from "../../src/pieces.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
-import { limitPauseOf, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
+import { limitPauseOf, queueSent, queueShown, queueUnsent, shownDraft, refreshSent, shownMark, abandonedInChain, closeRun, focusList, focusRun, modeWaiting, presented, refinementInProgress, runTabs, startableOf, startRequested, shownRun, emptyDashboard, lastAnswer, type RunView, statusText, chainRunsToggled, chainSent, chainShown, chainUnsent, chooseTerms, shownTerms, type ItemsView as ItemsViewOf, itemsRequested, selectMode, bandKey, countdownView, emptyRun, type TimelineEntry, begun as entryBegun, limitWaitView, type ShownPlan, shownPlan, type Band, bandsOf, callStartedAt, currentPlanStep, dismissUnsent, executing, initialState, keepUnsent, planStepState, progressOf, protocolError, reduce, showsTime, type ViewState } from "./state.ts";
 import { newEdit } from "./queuePending.ts";
 import { helloChain } from "./testChain.ts";
 import { tabTitle } from "./title.ts";
-import { begun, type ChainState, configured, ended, OFF_SETTINGS, queueEdited } from "../../src/chain.ts";
+import { begun, type ChainEntry, type ChainState, configured, ended, OFF_SETTINGS, queueEdited } from "../../src/chain.ts";
 import type { ItemId } from "../../src/tracker.ts";
 
 // Plan step 4.2: the page's reducer.
@@ -2546,12 +2546,38 @@ describe("chainShown", () => {
   });
   test("each chain gives its status, and an ended chain its reason and its runs", () => {
     const running = begun(helloChain, 4, "7" as ItemId, "seven");
-    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, effective: { enabled: running.settings.enabled, runs: running.settings.limits.runs, cutoff: null }, reset: { version: 0, fields: [] }, status: prompts.chainStatusText(running), ended: null, runs: [] });
+    expect(chainShown(withChain(running), time)).toEqual({ settings: running.settings, effective: { enabled: running.settings.enabled, runs: running.settings.limits.runs, cutoff: null }, reset: { version: 0, fields: [] }, status: prompts.chainStatusText(running), ended: null, runs: [], runsLine: null });
     const [stopped] = ended(running, 4, { code: 130, root: null, parked: null, abandoned: null });
     const shown = chainShown(withChain(stopped), time);
     expect(shown?.ended).toBe(prompts.chainEndedText({ _tag: "StoppedByDeveloper", item: "7" as ItemId }, time));
     expect(shown?.runs).toEqual([prompts.chainEntryText({ item: "7" as ItemId, title: "seven", root: null, outcome: { _tag: "Stopped", park: null }, returned: null })]);
     expect(chainShown(withChain(helloChain), time)?.ended).toBeNull();
+  });
+  // Issue #229: the runs line derived from the same history as the list.
+  test("the runs line names the runs and the skipped items of the list it opens to", () => {
+    const entry = (outcome: ChainEntry["outcome"]): ChainEntry => ({ item: "7" as ItemId, title: "seven", root: null, outcome, returned: null });
+    const history = [entry({ _tag: "Finished" }), entry({ _tag: "Stopped", park: null }), entry({ _tag: "Finished" }), entry({ _tag: "Skipped", reason: { _tag: "NotListed" } })];
+    const shown = chainShown(withChain({ ...helloChain, chain: { _tag: "Idle", ended: null, history } }), time);
+    expect(shown?.runsLine).toBe("3 runs ended in this chain, 1 queued item skipped");
+    expect(shown?.runs.length).toBe(4);
+    expect(chainShown(withChain({ ...helloChain, chain: { _tag: "Idle", ended: null, history: [] } }), time)?.runsLine).toBeNull();
+  });
+});
+
+// Issue #229 (requirements Q1): whether the chain's runs line is open is the page's alone.
+describe("chain runs open", () => {
+  test("closed on every page load", () => {
+    expect(initialState.chainRunsOpen).toBe(false);
+  });
+  test("chainRunsToggled sets the open state and nothing else", () => {
+    const opened = chainRunsToggled(initialState, true);
+    expect(opened).toEqual({ ...initialState, chainRunsOpen: true });
+    expect(chainRunsToggled(opened, false)).toEqual(initialState);
+  });
+  test("a hello of the same or another incarnation keeps it open", () => {
+    const opened = chainRunsToggled(reduce(initialState, hello()), true);
+    expect(reduce(opened, hello()).chainRunsOpen).toBe(true);
+    expect(reduce(opened, { ...hello(), incarnation: "b" } as ServerMessage).chainRunsOpen).toBe(true);
   });
 });
 

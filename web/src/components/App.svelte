@@ -53,7 +53,7 @@
   import ColumnSeparator from "./ColumnSeparator.svelte";
   import { Result } from "effect";
   import { ownName } from "../../../src/hostDir.ts";
-  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
+  import { limitPauseOf, shownMark as preparationMarkOf, abandonedInChain, closeRun, focusList, focusRun, type Presented, presented, runTabs, startableOf, startRequested, type RunView, chainRunsToggled, chainSent, chainShown, chainUnsent, queueSent, queueShown, queueUnsent, chooseTerms, shownTerms, callStartedAt, dismissUnsent, executing, initialState, itemsRequested, keepUnsent, refreshSent, notice, progressOf, protocolError, reduce, selectMode, shownRun, type ViewState } from "../state.ts";
   import Dashboard from "./Dashboard.svelte";
   import ChatPanel from "./ChatPanel.svelte";
   import DecisionView from "./DecisionView.svelte";
@@ -213,6 +213,10 @@
   // Issue #147 (the work review of 21 Oct 2026, W1-R1-1): every chain frame sent or queued is recorded in the view until
   // the server acknowledges it, so the control composes from it whatever remounts it; one handed back is not recorded,
   // since `onUnsent` has already run.
+  // Issue #229: the chain's runs line opened or closed; the page's alone, sent to no server.
+  const toggleChainRuns = (open: boolean) => {
+    view = chainRunsToggled(view, open);
+  };
   const setChain = (settings: ChainFrameSettings) => {
     const delivery = connection?.send(chainFrame(settings));
     if (delivery === "sent" || delivery === "queued") view = chainSent(view, settings, delivery === "queued");
@@ -504,7 +508,7 @@
            notice is shown here at every width and with an ended run attached [help users recognize, diagnose, and
            recover from errors; visibility of system status]. -->
       {#if latestNotice !== null}<p class="notice m3-font-body-small" role="alert">{latestNotice}</p>{/if}
-      {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} />{/if}
+      {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} runsOpen={view.chainRunsOpen} onRunsToggle={toggleChainRuns} />{/if}
       {#if preparation !== null}<PreparationControl view={preparation} onChange={setPreparation} />{/if}
       {#if queue !== null && queue.source === "queue"}<QueueEditor {queue} listed={listedIds} {offline} onEdit={editQueue} />{/if}
       <ItemList {mode} queued={queue?.entries.map((e) => e.item) ?? []} onQueue={mode === "implementation" ? addToQueue : null} items={tab.items} startable={startableOf(view, mode)} abandoned={view.chain === null ? new Set() : abandonedInChain(view.chain)} markOf={(item: ListedItem) => preparationMarkOf(view, item)} {offline} terms={shownTerms(view)} onTerms={(t: TermsMode) => (view = chooseTerms(view, t))} onStart={(item: ListedItem) => startItem(mode, item)} onRefresh={() => requestItems(mode)} />
@@ -516,7 +520,7 @@
       {#if compact}
         <details class="progress">
           <Button summary variant="text">{progressOf(run)}</Button>
-          {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} />{/if}
+          {#if chain !== null}<ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} runsOpen={view.chainRunsOpen} onRunsToggle={toggleChainRuns} />{/if}
           <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
         </details>
         <!-- While the analysis is shown both panels are hidden, so the buttons would select nothing; "Show the
@@ -536,7 +540,7 @@
         <!-- Issue #147: the chain's control at the top of the rail's column, which holds no question, so the question
              pane and the decision page keep their room. The column takes the rail's place in the grid. -->
         <div class="rail rail-column">
-          <ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} />
+          <ChainControl shown={chain} onChange={setChain} {queue} onQueueEdit={editQueue} runsOpen={view.chainRunsOpen} onRunsToggle={toggleChainRuns} />
           <TimelineRail timeline={run.timeline} busy={run.busy} executing={executing(run)} callStartedAt={callStartedAt(run)} rail={railView(run, executing(run), run.busy)} onToggle={toggleRail} />
         </div>
       {:else}

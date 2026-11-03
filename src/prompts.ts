@@ -4262,6 +4262,16 @@ const abandonedEntryText = (park: ParkNote | null, label: AbandonLabel): string 
       return `${waited} while sending the item back to refinement; ${work}; the send-back's ${label.step === "comment" ? "comment" : "setting of the label `unrefined`"} was left undone, and Interloq set no label after it.`;
   }
 };
+/**
+ * Issue #229: the one line the chain's control shows in place of its list of runs: how many runs ended in the chain, and
+ * how many queued items it skipped without a run (issue #196), counted from the same history the list shows.
+ */
+export const chainRunsLine = (history: ReadonlyArray<ChainEntry>): string => {
+  const skips = history.filter((entry) => entry.outcome._tag === "Skipped").length;
+  const runs = history.length - skips;
+  const ran = `${runs === 0 ? "No" : runs} ${runs <= 1 ? "run" : "runs"} ended in this chain`;
+  return skips === 0 ? ran : `${ran}, ${skips} ${skips === 1 ? "queued item" : "queued items"} skipped`;
+};
 export const chainEntryText = (entry: ChainEntry): string => {
   const outcome = chainOutcomeText(entry);
   // Issue #192: where the parking kept nothing, the manager's return of the item to refined, or why it failed.

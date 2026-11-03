@@ -10,7 +10,7 @@ import type { SubjectId } from "../../src/artifacts.ts";
 import type { Asked, Countdown as AnswerCountdown, OnExpiry, ChainFrameSettings, CurrentRuns, ItemsResult, ListedItem, RefinementItemsResult, RunEvent, ServerMessage, Stamped } from "../../src/protocol.ts";
 import { RUN_MODES, type RunMode } from "../../src/runMode.ts";
 import type { PresentedQuestion } from "../../src/question.ts";
-import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, NO_UNANSWERED_QUESTIONS, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
+import { LIST_TAB, runTabName, waitingTabName, endedTabName, chainEndedText, chainEntryText, chainRunsLine, chainStatusText, type TimeText, usageLimitActivity, analysisProgressLine, clarificationProgress, cycleHeading, reconnectingActivity, retryActivity, networkRetryActivity, cycleLine, interviewHelp, pagePromptText, progressLine, purposeLabel, stepLabel, stepOfPhase, planWrittenHeading, modelLine, NO_UNANSWERED_QUESTIONS, protocolErrorNotice, SERVER_CLOSED_NOTICE, SUMMARY_PROPOSED_HEADING, noIssueLine } from "../../src/prompts.ts";
 import { interviewSays, renderResponse, renderReview, subjectHeading } from "../../src/render.ts";
 import { piecesText } from "../../src/pieces.ts";
 import { isDecide, isTermsRequest } from "../../src/input.ts";
@@ -344,6 +344,11 @@ export type ViewState = Readonly<{
   /** A change of what the control shows that leaves the server's settings equal, which the control cannot see. */
   chainReset: ChainReset;
   /**
+   * Issue #229: whether the chain's runs line is open, the page's alone: per tab, kept across every remount of the chain's
+   * control, never sent to the server, closed on every page load.
+   */
+  chainRunsOpen: boolean;
+  /**
    * Issue #196: this page's queue edits sent or queued and not yet seen in the server's `queue.applied`, oldest first,
    * and how many of the last are still in the socket's queue. No edit is ever sent twice.
    */
@@ -385,6 +390,7 @@ export const initialState: ViewState = {
   chainPending: NO_IN_FLIGHT,
   chainQueued: 0,
   chainReset: { version: 0, fields: [] },
+  chainRunsOpen: false,
   queuePending: NO_PENDING_EDITS,
   queueQueued: 0,
   preparation: null,
@@ -1534,12 +1540,15 @@ export const countdownView = (wait: Countdown, nowMs: number): Readonly<{ percen
  * the last chain ended where it did, and one line per run of the chain; null before the first hello. The cutoff is
  * formatted by `time`, the page's own formatter of an instant.
  */
-export type ChainShown = Readonly<{ settings: ChainSettings; effective: ChainFrameSettings; reset: ChainReset; status: string; ended: string | null; runs: readonly string[] }>;
+export type ChainShown = Readonly<{ settings: ChainSettings; effective: ChainFrameSettings; reset: ChainReset; status: string; ended: string | null; runs: readonly string[]; runsLine: string | null }>;
 export const chainShown = (view: ViewState, time: TimeText): ChainShown | null => {
   if (view.chain === null) return null;
   const chain = view.chain.chain;
-  return { settings: view.chain.settings, effective: effective(view.chainPending, view.chain.settings), reset: view.chainReset, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText) };
+  return { settings: view.chain.settings, effective: effective(view.chainPending, view.chain.settings), reset: view.chainReset, status: chainStatusText(view.chain), ended: chain._tag === "Idle" && chain.ended !== null ? chainEndedText(chain.ended, time) : null, runs: chain.history.map(chainEntryText), runsLine: chain.history.length === 0 ? null : chainRunsLine(chain.history) };
 };
+
+/** Issue #229: the chain's runs line opened or closed in this tab. */
+export const chainRunsToggled = (state: ViewState, open: boolean): ViewState => ({ ...state, chainRunsOpen: open });
 
 /** Issue #185: the items the chain abandoned for want of an answer, which the Implementation tab's list marks. */
 export const abandonedInChain = (chain: ChainState): ReadonlySet<string> => abandonedItems(chain);

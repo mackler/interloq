@@ -21,14 +21,15 @@ afterEach(() => {
   mounted = [];
   document.body.innerHTML = "";
 });
-const control = (state: ChainState, now = new Date(2026, 9, 20, 22, 0)) => {
+const control = (state: ChainState, now = new Date(2026, 9, 20, 22, 0), runsOpen?: boolean) => {
   const sent: ChainFrameSettings[] = [];
+  const toggled: boolean[] = [];
   const root = document.createElement("div");
   document.body.appendChild(root);
   const shown = chainShown({ ...initialView, chain: state }, (iso) => fullTime(iso))!;
-  mounted.push(mount(ChainControl, { target: root, props: { shown, onChange: (s: ChainFrameSettings) => void sent.push(s), now: () => now } }));
+  mounted.push(mount(ChainControl, { target: root, props: { shown, onChange: (s: ChainFrameSettings) => void sent.push(s), now: () => now, ...(runsOpen === undefined ? {} : { runsOpen }), onRunsToggle: (open: boolean) => void toggled.push(open) } }));
   flushSync();
-  return { root, sent };
+  return { root, sent, toggled };
 };
 const input = (root: HTMLElement, name: string) => root.querySelector<HTMLInputElement>(`input[name=${name}]`)!;
 const commit = (field: HTMLInputElement, value: string) => {
@@ -87,8 +88,44 @@ describe("ChainControl's returned items", () => {
     chain: { _tag: "Idle" as const, ended: null, history: [{ item: "7" as never, title: "seven", root: null, outcome: { _tag: "Halted" as const, park: { _tag: "ParkFailed" as const, message: "m" } }, returned }] },
   });
   test("an entry returned shows itemReturnedLine; one not returned shows itemNotReturnedLine with its cause", () => {
-    expect(control(halted({ _tag: "Returned" })).root.textContent).toContain(prompts.itemReturnedLine("7"));
-    expect(control(halted({ _tag: "NotReturned", cause: "the tracker could not be reached" })).root.textContent).toContain(prompts.itemNotReturnedLine("7", "the tracker could not be reached", null));
+    expect(control(halted({ _tag: "Returned" }), undefined, true).root.textContent).toContain(prompts.itemReturnedLine("7"));
+    expect(control(halted({ _tag: "NotReturned", cause: "the tracker could not be reached" }), undefined, true).root.textContent).toContain(prompts.itemNotReturnedLine("7", "the tracker could not be reached", null));
+  });
+});
+
+// Issue #229: the chain's runs are one line, a disclosure opening to the list as it was shown before.
+describe("ChainControl's runs line", () => {
+  const entry = (item: string, title: string, outcome: ChainState["chain"]["history"][number]["outcome"]) => ({ item: item as ItemId, title, root: null, outcome, returned: null });
+  const history = [entry("7", "seven", { _tag: "Finished" }), entry("8", "eight", { _tag: "Stopped", park: null }), entry("9", "nine", { _tag: "Finished" })];
+  const three: ChainState = { ...initialState(DEFAULT_SETTINGS), chain: { _tag: "Idle", ended: null, history } };
+  const button = (root: HTMLElement) => root.querySelector<HTMLButtonElement>("[data-chain-runs] button");
+  const items = (root: HTMLElement) => [...root.querySelectorAll("ol.runs li")].map((li) => li.textContent);
+  test("(a) with three entries the line shows the count, closed, and the list is hidden", () => {
+    const { root } = control(three);
+    expect(button(root)?.textContent?.trim()).toBe("3 runs ended in this chain");
+    expect(button(root)?.getAttribute("aria-expanded")).toBe("false");
+    expect(items(root)).toEqual([]);
+  });
+  test("(b) clicking the line asks to open it; open, the entries show their present text in order", () => {
+    const closed = control(three);
+    button(closed.root)!.click();
+    flushSync();
+    expect(closed.toggled).toEqual([true]);
+    const { root } = control(three, undefined, true);
+    expect(button(root)?.getAttribute("aria-expanded")).toBe("true");
+    expect(items(root)).toEqual(history.map(prompts.chainEntryText));
+  });
+  test("(c) with no entries neither the line nor the list is shown", () => {
+    const { root } = control(initialState(DEFAULT_SETTINGS));
+    expect(root.querySelector("[data-chain-runs]")).toBeNull();
+    expect(root.querySelector("ol.runs")).toBeNull();
+  });
+  test("(d) remounted with the page's open state it is open; a fresh mount is closed", () => {
+    const first = control(three, undefined, true);
+    expect(items(first.root).length).toBe(3);
+    unmount(mounted.pop()!);
+    expect(items(control(three, undefined, true).root).length).toBe(3);
+    expect(items(control(three).root)).toEqual([]);
   });
 });
 

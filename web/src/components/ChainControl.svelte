@@ -14,6 +14,7 @@
   import type { ChainFrameSettings } from "../../../src/protocol.ts";
   import type { ChainShown } from "../state.ts";
   import { cutoffAt } from "../cutoff.ts";
+  import Disclosure from "./Disclosure.svelte";
   import { fullTime } from "../time.ts";
 
   // Issue #196: `queue`, the queue the page shows (the server's with this page's pending edits), and `onQueueEdit`, which
@@ -26,7 +27,20 @@
     now = () => new Date(),
     queue = null,
     onQueueEdit = () => undefined,
-  }: { shown: ChainShown; onChange: (settings: ChainFrameSettings) => void; now?: () => Date; queue?: ChainQueue | null; onQueueEdit?: (change: QueueChange) => void } = $props();
+    runsOpen = false,
+    onRunsToggle = () => undefined,
+  }: {
+    shown: ChainShown;
+    onChange: (settings: ChainFrameSettings) => void;
+    now?: () => Date;
+    queue?: ChainQueue | null;
+    onQueueEdit?: (change: QueueChange) => void;
+    /** Issue #229: whether the runs line is open, held by the page so that it survives this control's remounts. */
+    runsOpen?: boolean;
+    onRunsToggle?: (open: boolean) => void;
+  } = $props();
+  const uid = $props.id();
+  const runsListId = `${uid}-runs`;
 
   const pad = (n: number) => String(n).padStart(2, "0");
   const hourOf = (ms: number) => {
@@ -140,10 +154,17 @@
     {/if}
   {/if}
   <p class="status m3-font-body-medium" role="status">{shown.status}{#if shown.ended !== null}<br /><span class="ended">{shown.ended}</span>{/if}</p>
-  {#if shown.runs.length > 0}
-    <ol class="runs m3-font-body-small">
-      {#each shown.runs as line, i (i)}<li>{line}</li>{/each}
-    </ol>
+  <!-- Issue #229: the chain's runs are one line, which opens to the list as it was shown before, so that a long chain
+       never pushes the progress rail down. -->
+  {#if shown.runsLine !== null}
+    <div class="runs-line" data-chain-runs>
+      <Disclosure expanded={runsOpen} controls={runsListId} onToggle={onRunsToggle}>
+        {#snippet title()}<span class="m3-font-label-large">{shown.runsLine}</span>{/snippet}
+        <ol class="runs m3-font-body-small" id={runsListId}>
+          {#each shown.runs as line, i (i)}<li>{line}</li>{/each}
+        </ol>
+      </Disclosure>
+    </div>
   {/if}
 </section>
 
@@ -164,5 +185,6 @@
   .source :global(.m3-container > *) { min-width: 0; white-space: normal; height: auto; min-height: 2.5rem; }
   .queue { margin: 0; padding-left: 1.25rem; overflow-wrap: anywhere; }
   .queue-empty { margin: 0; color: var(--m3c-on-surface-variant); overflow-wrap: anywhere; }
+  .runs-line { min-width: 0; overflow-wrap: anywhere; }
   .runs { margin: 0; padding-left: 1.25rem; color: var(--m3c-on-surface-variant); overflow-wrap: anywhere; }
 </style>

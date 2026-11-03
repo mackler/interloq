@@ -2,11 +2,12 @@
 // the reader's time, and no cost anywhere (requirements Q2).
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import fc from "fast-check";
 import type { AbandonLabel, Chain, ChainEndReason, ChainEntry, ChainState, Cutoff, ParkNote, RunLimit, SkipReason } from "../src/chain.ts";
 import { DEFAULT_SETTINGS, OFF_SETTINGS } from "../src/chain.ts";
 import { EMPTY_QUEUE } from "../src/chainQueue.ts";
 import {
-  CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, chainEndedText, chainEntryText, chainParkingText, chainReselectText, chainSaveRefusedText, chainStatusText, earlierRunParkedLine,
+  CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, chainEndedText, chainRunsLine, chainEntryText, chainParkingText, chainReselectText, chainSaveRefusedText, chainStatusText, earlierRunParkedLine,
   QUEUE_ADD, QUEUE_BACKLOG_NOTE, QUEUE_EMPTY, QUEUE_HEADING, QUEUE_STALE, QUEUE_SUPPORT, queuedMarkText, queueHandleName, queueMoveDownName, queueMoveUpName, queueRemoveName,
 } from "../src/prompts.ts";
 import type { ItemId } from "../src/tracker.ts";
@@ -137,4 +138,37 @@ test("the queue's texts", () => {
   for (const text of [QUEUE_HEADING, QUEUE_EMPTY, QUEUE_SUPPORT, QUEUE_ADD, QUEUE_STALE, QUEUE_BACKLOG_NOTE, chainReselectText("7")]) assert.notEqual(text.trim(), "");
   assert.ok(chainReselectText("7").includes("#7"));
   assert.equal(new Set([queueMoveUpName("x"), queueMoveDownName("x"), queueRemoveName("x"), queueHandleName("x")]).size, 4);
+});
+
+// Issue #229: the one line in place of the chain's list of runs, counted from the same history the list shows.
+const runEntry = (outcome: ChainEntry["outcome"]): ChainEntry => ({ item, title: "t", root: null, outcome, returned: null });
+const finished = runEntry({ _tag: "Finished" });
+const skippedEntry = runEntry({ _tag: "Skipped", reason: { _tag: "NotListed" } });
+test("chainRunsLine: each form of the line", () => {
+  assert.equal(chainRunsLine([finished]), "1 run ended in this chain");
+  assert.equal(chainRunsLine([finished, finished, finished]), "3 runs ended in this chain");
+  assert.equal(chainRunsLine([finished, finished, finished, skippedEntry]), "3 runs ended in this chain, 1 queued item skipped");
+  assert.equal(chainRunsLine([finished, skippedEntry, skippedEntry]), "1 run ended in this chain, 2 queued items skipped");
+  assert.equal(chainRunsLine([skippedEntry]), "No run ended in this chain, 1 queued item skipped");
+  assert.equal(chainRunsLine([skippedEntry, skippedEntry]), "No run ended in this chain, 2 queued items skipped");
+  assert.equal(chainRunsLine([]), "No run ended in this chain");
+});
+test("chainRunsLine: the counts are the entries that are runs and those skipped (property)", () => {
+  const outcome = fc.constantFrom<ChainEntry["outcome"]>(
+    { _tag: "Finished" },
+    { _tag: "Stopped", park: null },
+    { _tag: "Skipped", reason: { _tag: "Abandoned" } },
+    { _tag: "Skipped", reason: { _tag: "NotListed" } },
+  );
+  fc.assert(fc.property(fc.array(outcome, { maxLength: 30 }), (outcomes) => {
+    const history = outcomes.map(runEntry);
+    const runs = outcomes.filter((o) => o._tag !== "Skipped").length;
+    const skips = outcomes.length - runs;
+    const line = chainRunsLine(history);
+    const match = /^(No|\d+) runs? ended in this chain(?:, (\d+) queued items? skipped)?$/.exec(line);
+    assert.ok(match !== null, line);
+    assert.equal(match[1], runs === 0 ? "No" : String(runs));
+    assert.equal(match[2] === undefined ? 0 : Number(match[2]), skips);
+    assert.equal(match[2] !== undefined, skips > 0);
+  }));
 });
