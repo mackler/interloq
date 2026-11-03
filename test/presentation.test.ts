@@ -213,7 +213,7 @@ test("S18: an accepted requirements issue in the second interview is validated, 
     answers: ["1", "1"],
     steps: [
       { output: { questions: [entry("Q1")] } },
-      { output: respond([["G-R1-1", "accepted"]]) },
+      { output: { ...respond([["G-R1-1", "accepted"]]), findings: [{ id: "G-R1-1", kind: "unresolved" }], requirements: null } },
       { output: gap(" ") },
       { output: gap("The service, a web server, listens on a port for requests while it runs.") },
       { output: { ...done, asked_ids: ["G-R1-1"], answered_ids: ["G-R1-1"], summary: "# Requirements\n\nQ1: A; port 8080" } },

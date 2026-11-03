@@ -80,7 +80,7 @@ test("every prompt that states the question format carries the figure clause", a
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     questionApplyDecisionsPrompt: prompts.questionApplyDecisionsPrompt(TEST_ROOT),
     interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
-    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
+    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]),
     clarificationOpenPrompt: prompts.clarificationOpenPrompt(TEST_ROOT),
     termsPrompt: prompts.termsPrompt(TEST_ROOT, "t"),
     termsOnRequestPrompt: prompts.termsOnRequestPrompt(TEST_ROOT, "t", "Q1"),

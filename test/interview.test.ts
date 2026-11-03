@@ -258,7 +258,7 @@ test("the interview's prompts exclude the skipped questions from completion and 
   assert.match(prompts.interviewOpenPrompt(TEST_ROOT), /complete: true only when every agreed question has been answered or the program has reported it skipped/);
   assert.match(prompts.interviewDonePrompt, /skipped/);
   assert.match(prompts.requirementsReviewPrompt(TEST_ROOT, 1, "continued"), /Skipped questions/);
-  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]), /premise the user denied/);
+  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]), /premise the user denied/);
 });
 
 // W1-R1-1: a summary that names Q20 does not name the skipped Q2; it gets the repair turn.

@@ -42,7 +42,7 @@ test("the log rules explain file_change with the keys the log entries carry", ()
 // S16 and S18: the interview asks for a question's parts in current_question under the rules of every question; an
 // agreed question of questions.json is named by its id alone, since the program shows it as it was reviewed.
 test("the interview prompts ask for the current question's parts under the rules, and for an agreed question its id alone", () => {
-  const texts = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", ["G-R1-1"])];
+  const texts = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", [{ id: "G-R1-1", kind: "unresolved" }])];
   for (const text of texts) {
     assert.ok(text.includes(prompts.questionWritingRules()));
     assert.match(text, /For an agreed question of plan-review\/runs\/[^/\s]+\/questions\.json, give only its id/);
@@ -222,11 +222,11 @@ test("a further question's origin line does not borrow \"more\"", () => {
 
 // Issue #21 (Q6 follow-up): Claude reports every question asked, follow-ups with ids of their own, and the answered ones.
 test("the interview rules define asked_ids with follow-up ids, and answered_ids over both", () => {
-  for (const text of [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", ["G-R1-1"])]) {
+  for (const text of [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "plan-review/requirements-review/review-1.json", [{ id: "G-R1-1", kind: "unresolved" }])]) {
     assert.match(text, /asked_ids: the ids of every question you have asked so far: the agreed questions you have asked, and an id F1, F2, … that you assign to each follow-up question/);
     assert.match(text, /answered_ids: the ids of the questions, agreed or follow-up, that the user has answered so far/);
   }
-  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]), /use the issue ids in asked_ids and answered_ids/);
+  assert.match(prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]), /use the issue ids in asked_ids and answered_ids/);
 });
 
 // W1-R1-1: the error texts the user reads at a halt are in src/prompts.ts too.
@@ -304,7 +304,7 @@ test("the offer's label reads Help me decide, and the offer line carries that la
 test("the ids the prompts assign to agreed and follow-up questions", () => {
   const agreed = `${prompts.AGREED_QUESTION_PREFIX}1, ${prompts.AGREED_QUESTION_PREFIX}2, and so on`;
   assert.ok(prompts.questionListPrompt("t").includes(`id: ${agreed}`), "the question list prompt assigns other ids");
-  const rules = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "f", ["G-R1-1"])];
+  const rules = [prompts.interviewOpenPrompt(TEST_ROOT), prompts.interviewGapsPrompt(TEST_ROOT, "f", [{ id: "G-R1-1", kind: "unresolved" }])];
   for (const text of rules) {
     assert.ok(text.includes(`${prompts.FOLLOW_UP_PREFIX}1, ${prompts.FOLLOW_UP_PREFIX}2, …`), "the interview rules assign other follow-up ids");
     assert.match(text, /current_question: the question this message asks the user to answer now/);
@@ -813,7 +813,7 @@ test("no prompt that asks for a question states an inclusion test of its own", (
     earlierPlanPrompt: prompts.earlierPlanPrompt(TEST_ROOT, "t", true, EARLIER_ROOT, NO_STEP_CHECKS),
     planRespondPrompt: prompts.planRespondPrompt(TEST_ROOT, 1, 1, NO_STEP_CHECKS),
     interviewOpenPrompt: prompts.interviewOpenPrompt(TEST_ROOT),
-    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", ["G-R1-1"]),
+    interviewGapsPrompt: prompts.interviewGapsPrompt(TEST_ROOT, "r.json", [{ id: "G-R1-1", kind: "unresolved" }]),
     termsPrompt: prompts.termsPrompt(TEST_ROOT, "t"),
     executePrompt: prompts.executePrompt(TEST_ROOT, "t", true, NO_STEP_CHECKS),
   };

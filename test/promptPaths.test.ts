@@ -32,7 +32,7 @@ const cases: ReadonlyArray<readonly [string, string, readonly Artifact[]]> = [
   ["termsRespondPrompt", prompts.termsRespondPrompt(store.root, 2), [{ kind: "review", subject: "terms", round: 2 }, { kind: "terms" }]],
   ["termsApplyDecisionsPrompt", prompts.termsApplyDecisionsPrompt(store.root), [{ kind: "decisions" }, { kind: "terms" }]],
   ["interviewOpenPrompt", prompts.interviewOpenPrompt(store.root), [{ kind: "questions" }]],
-  ["interviewGapsPrompt", prompts.interviewGapsPrompt(store.root, recordPath(store.root, { kind: "review", subject: "requirements", round: 1 }), ["G-R1-1"]), [{ kind: "requirements" }, { kind: "review", subject: "requirements", round: 1 }]],
+  ["interviewGapsPrompt", prompts.interviewGapsPrompt(store.root, recordPath(store.root, { kind: "review", subject: "requirements", round: 1 }), [{ id: "G-R1-1", kind: "unresolved" }]), [{ kind: "requirements" }, { kind: "review", subject: "requirements", round: 1 }]],
   ["requirementsReviewPrompt", prompts.requirementsReviewPrompt(store.root, 1, "continued"), [{ kind: "requirements" }, { kind: "questions" }, { kind: "log", subject: "requirements" }]],
   ["requirementsRespondPrompt", prompts.requirementsRespondPrompt(store.root, 1), [{ kind: "review", subject: "requirements", round: 1 }, { kind: "requirements" }]],
   ["requirementsApplyDecisionsPrompt", prompts.requirementsApplyDecisionsPrompt(store.root), [{ kind: "decisions" }, { kind: "requirements" }]],

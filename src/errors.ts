@@ -7,10 +7,11 @@ import type { LimitReset } from "./limitReset.ts";
 import { ItemState } from "./tracker.ts";
 import { type ParkNote, ParkNoteSchema } from "./chain.ts";
 import { type ManifestProblem, ManifestProblemSchema } from "./manifestCheck.ts";
+import { FINDING_PROBLEM_KINDS, type FindingProblem } from "./requirementsFindings.ts";
 import { type SkipProblem, SkipProblemSchema, type TurnProblem, TurnProblemSchema } from "./premises.ts";
 import type { OnExpiry } from "./protocol.ts";
 import type { TrackerError } from "./services.ts";
-import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText } from "./prompts.ts";
+import { noAnswerText, sendBackUnansweredText, notRefinedStoppedText, sendBackIncompleteText, sendBackNotParkedText, type VerdictProblem, verdictInvalidText, TRACKER_FAILURE_TEXTS, TRACKER_STEPS, type TrackerStep, trackerStepFailedText, interviewTurnInvalidText, skipConditionInvalidText, agentUnreachableText, serverFaultText, suiteStoppedText, analysisInvalidText, sessionTooLongText, checkCommandInvalidText, correctionInvalidText, cycleInvalidText, roundInvalidParts, cycleLimitStopText, decisionFormatUnreadableText, planInvalidText, SUBJECT_PROBLEM_KINDS, type QuestionProblems, questionInvalidText, ISSUE_TEXT_PROBLEM_KINDS, type IssueTextProblem, passageMissingText, findingsInvalidText } from "./prompts.ts";
 
 export class UserStopped extends Data.TaggedError("UserStopped")<{ readonly where: string }> {}
 export class ProjectChanged extends Data.TaggedError("ProjectChanged")<{ readonly during: "planning" | "review"; readonly fileLabel: string | null; readonly changes: readonly Change[] }> {}
@@ -149,6 +150,11 @@ export class SkipConditionInvalid extends Data.TaggedError("SkipConditionInvalid
  * program otherwise refused, twice (the validation repair turn of behavior 10 first).
  */
 export class PassageMissing extends Data.TaggedError("PassageMissing")<{ readonly problems: readonly IssueTextProblem[] }> {}
+/**
+ * Issue #47: Claude Code's classification of the requirements review's accepted findings that the program refused
+ * twice (the validation repair turn of behavior 10 first).
+ */
+export class FindingsInvalid extends Data.TaggedError("FindingsInvalid")<{ readonly problems: readonly FindingProblem[] }> {}
 /** An interview turn that asks a skipped question or one before its premise, or omits a skipped one from its summary (issue #99). */
 export class InterviewTurnInvalid extends Data.TaggedError("InterviewTurnInvalid")<{ readonly problems: readonly TurnProblem[] }> {}
 /** A report of report_step that names no step of the plan (Q3): an error for Claude Code, not a halt. */
@@ -273,6 +279,7 @@ export type RunError =
   | QuestionInvalid
   | SkipConditionInvalid
   | PassageMissing
+  | FindingsInvalid
   | InterviewTurnInvalid
   | AgentUnreachable
   | TrackerStepFailed
@@ -360,6 +367,8 @@ export const describe = (error: RunErrorFields): string => {
       return skipConditionInvalidText(error.problems);
     case "PassageMissing":
       return passageMissingText(error.problems);
+    case "FindingsInvalid":
+      return findingsInvalidText(error.problems);
     case "InterviewTurnInvalid":
       return interviewTurnInvalidText(error.problems);
     case "TrackerStepFailed":
@@ -443,6 +452,10 @@ const RunErrorData = Schema.Union([
   }),
   Schema.Struct({ _tag: Schema.Literal("SkipConditionInvalid"), problems: Schema.Array(SkipProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("PassageMissing"), problems: Schema.Array(Schema.Struct({ kind: Schema.Literals(ISSUE_TEXT_PROBLEM_KINDS), subject: Schema.String })) }),
+  Schema.Struct({
+    _tag: Schema.Literal("FindingsInvalid"),
+    problems: Schema.Array(Schema.Union([Schema.Struct({ kind: Schema.Literals(FINDING_PROBLEM_KINDS.filter((k) => k !== "documentUnchanged") as readonly Exclude<(typeof FINDING_PROBLEM_KINDS)[number], "documentUnchanged">[]), id: Schema.String }), Schema.Struct({ kind: Schema.Literal("documentUnchanged"), ids: Strings })])),
+  }),
   Schema.Struct({ _tag: Schema.Literal("InterviewTurnInvalid"), problems: Schema.Array(TurnProblemSchema) }),
   Schema.Struct({ _tag: Schema.Literal("AgentUnreachable"), agent: Schema.Literals(["claude", "codex"]), attempts: Schema.Number, lastFault: Schema.String }),
   Schema.Struct({ _tag: Schema.Literal("TrackerStepFailed"), item: Schema.String, step: Schema.Literals(TRACKER_STEPS), cause: Schema.String, done: Schema.NullOr(Schema.String), check: Schema.NullOr(WriteCheckSchema) }),

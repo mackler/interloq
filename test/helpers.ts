@@ -746,6 +746,13 @@ export const respond = (
   }));
   return { self_corrections: [], reviewer_feedback: "", questions_for_user: [], ...extra, dispositions: extra.dispositions?.map((d) => ({ [TASK_DISPUTE_FIELD]: false, [S.WORK_EFFECT_FIELD]: SCRIPTED_WORK_EFFECT, ...d })) ?? marked };
 };
+/** Issue #47: a response to the requirements review, with Claude Code's classification of its accepted findings and the amended document. */
+export const requirementsRespond = (
+  dispositions: [string, PlannerResponse["dispositions"][number]["action"]][],
+  findings: readonly S.RequirementFinding[],
+  requirements: string | null,
+  extra: Partial<PlannerResponse> = {},
+) => ({ ...respond(dispositions, extra), findings, requirements });
 /**
  * Dispositions as the plan's and the work's responses decode them: their schemas drop `task_dispute` (issue #156) and keep
  * the statement of the effect on the work (issue #183).

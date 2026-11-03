@@ -377,7 +377,7 @@ test("every subject's response, as its own schema decodes it, survives the round
   const effectResponse = { ...plannerResponse, dispositions: plannerResponse.dispositions.map((d) => ({ ...d, work_effect: { kind: "differs", difference: "a test" } })) };
   const subjects = [
     { subject: "questions" as SubjectId, schema: questionSubject("t").respond.schema, example: questionListResponse },
-    { subject: "requirements" as const, schema: requirementsSubject().respond.schema, example: plannerResponse },
+    { subject: "requirements" as const, schema: requirementsSubject().respond.schema, example: { ...plannerResponse, findings: [], requirements: null } },
     // Issue #6: the plan's response carries the whole plan.
     { subject: { plan: 1 }, schema: planSubject(TEST_ROOT, 1, true, null, NO_STEP_CHECKS).respond.schema, example: { ...effectResponse, plan: { stages: [{ number: 1, title: "t", steps: [{ id: "S1", number: 1, label: "l", text: "x" }] }] } } },
     { subject: { work: 1 }, schema: workSubject("t", 1, true, workExecution, NO_STEP_CHECKS).respond.schema, example: effectResponse },

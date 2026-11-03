@@ -120,6 +120,21 @@ export const protoSchemas: Record<string, Schema.Top> = {
   termsResponse: Schema.Struct({ ...markedFields, entries: Schema.Array(TermsEntry) }),
   // Issue #216: Claude Code's response to a check of the issue in Bring Up to Date, and the application of the developer's answers.
   updateResponse: Schema.Struct({ ...markedFields, issue: IssueText, outcome: UpdateOutcome, developer_passages: Strings }),
+  // Issue #47: Claude Code's response to a review of the requirements, with the classification of each accepted finding
+  // and the amended requirements.md, and the application of the developer's decisions to it.
+  requirementsResponse: Schema.Struct({
+    ...plannerFields,
+    findings: Schema.Array(
+      Schema.Union([
+        Schema.Struct({ id: Str, kind: Schema.Literal("answered"), source: Str }),
+        Schema.Struct({ id: Str, kind: Schema.Literal("corrected") }),
+        Schema.Struct({ id: Str, kind: Schema.Literal("unresolved") }),
+        Schema.Struct({ id: Str, kind: Schema.Literal("reopened"), changed: Str }),
+      ]),
+    ),
+    requirements: Schema.NullOr(Str),
+  }),
+  requirementsWrite: Schema.Struct({ requirements: Schema.NullOr(Str) }),
   updateWrite: Schema.Struct({ issue: IssueText, outcome: UpdateOutcome, developer_passages: Strings, decided: Schema.Array(Schema.Struct({ before: Str, after: Str })), questions_for_user: Schema.Array(UserQuestion) }),
 };
 

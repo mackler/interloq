@@ -59,7 +59,7 @@ test("a refinement shows the question list before its review, the amended list a
     steps: [
       { output: { questions: [q("Q1")] } },
       { output: { ...respond([["Q-R1-1", "accepted"]]), questions: [q("Q1"), q("Q2")] } },
-      { output: respond([["G-R1-1", "accepted"]]) },
+      { output: { ...respond([["G-R1-1", "accepted"]]), findings: [{ id: "G-R1-1", kind: "unresolved" }], requirements: null } },
       { output: { message_to_user: "How many retries?", current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: [], answered_ids: [], complete: false, summary: "" } },
       { output: { message_to_user: "Complete.", current_question: { id: "", context: [], history: [], text: [], explanations: [], options: [] }, asked_ids: ["G-R1-1"], answered_ids: ["G-R1-1"], complete: true, summary: "Q1: A\nRetries: 3" } },
     ],

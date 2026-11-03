@@ -13,7 +13,8 @@ import type { ShownDocument } from "./reviewedDocument.ts";
 import { bothValidations, questionsValidation, type Subject, userQuestionsValidation, type Validation } from "./review.ts";
 import * as S from "./schema.ts";
 import type { DecisionAnalysis, DecisionApplied, DecisionResponse, Plan, PlannerResponse, PlanResponse, PlanWrite, PlanWriteResult, QuestionList, QuestionListResponse, QuestionsFile, RecordedPlan, TermsEntry, TermsResponse, TermsWrite } from "./schema.ts";
-import { QuestionInvalid, SkipConditionInvalid } from "./errors.ts";
+import { FindingsInvalid, QuestionInvalid, SkipConditionInvalid } from "./errors.ts";
+import { findingsProblems, interviewedOf } from "./requirementsFindings.ts";
 import { skipConditionProblems } from "./premises.ts";
 import type { QuestionProblem, QuestionProblems } from "./prompts.ts";
 import { sameBlocks, samePieces } from "./pieces.ts";
@@ -171,8 +172,27 @@ export function termsSubject(questions: QuestionsFile["questions"]): Subject<Ter
   };
 }
 
-/** The interview's result, written from Claude Code's summary. An accepted issue is put to the user in a second interview. */
-export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult> {
+/** Issue #47: the validation of the classification of the requirements review's accepted findings against requirements.md as it stands. */
+export const findingsValidation =
+  (current: string): Validation<S.RequirementsResponse> =>
+  (output) => {
+    const problems = findingsProblems(output.dispositions, output.findings, output.requirements, current);
+    return problems.length > 0 ? Result.fail({ error: new FindingsInvalid({ problems }), repair: prompts.findingsRepairPrompt(problems) }) : Result.succeed({ value: output, notes: [] });
+  };
+
+/** Issue #47: requirements.md amended outside an interview, the one mechanism a response and the application of decisions share. */
+const writeRequirements = (requirements: string | null): Effect.Effect<void, RunError, Store> =>
+  requirements === null ? Effect.void : Effect.flatMap(Store, (store) => store.writeRequirements(requirements.trimEnd() + "\n"));
+/** requirements.md as it stands, "" where it does not exist. */
+const currentRequirements: Effect.Effect<string, RunError, Store> = Effect.map(Effect.flatMap(Store, (store) => store.readContext()), ({ requirements }) => requirements ?? "");
+
+/**
+ * The interview's result, written from Claude Code's summary. Issue #47: Claude Code classifies each accepted finding of
+ * its review (`findings`); the answers the user already gave and the corrections that need none are written into
+ * requirements.md from the response, and only the unresolved and the reopened findings are put to the user in a second
+ * interview, so where every finding is answered or corrected the requirements are reviewed again with no interview.
+ */
+export function requirementsSubject(): Subject<S.RequirementsResponse, S.RequirementsWrite> {
   const id = "requirements" as const;
   return {
     id,
@@ -180,18 +200,39 @@ export function requirementsSubject(): Subject<PlannerResponse, PlanWriteResult>
     heading: subjectHeading(id),
     fileLabel: "requirements.md",
     reviewPrompt: prompts.requirementsReviewPrompt,
-    respond: { prompt: prompts.requirementsRespondPrompt, schema: S.PlannerResponse, after: null, capability: "records", validate: userQuestionsValidation() },
-    applyDecisions: { prompt: prompts.requirementsApplyDecisionsPrompt, schema: S.PlanWriteResult, after: null, validate: userQuestionsValidation() },
+    respond: {
+      prompt: prompts.requirementsRespondPrompt,
+      schema: S.RequirementsResponse,
+      after: (output) =>
+        Effect.gen(function* () {
+          const ui = yield* Ui;
+          const store = yield* Store;
+          for (const finding of output.findings) {
+            const line = prompts.requirementsFindingLine(finding);
+            yield* ui.say(line);
+            yield* store.converse(`${line}\n\n`);
+          }
+          yield* writeRequirements(output.requirements);
+        }),
+      capability: "records",
+      validate: { _tag: "Loaded", load: Effect.map(currentRequirements, (current) => bothValidations(findingsValidation(current), userQuestionsValidation<S.RequirementsResponse>())) },
+    },
+    applyDecisions: { prompt: prompts.requirementsApplyDecisionsPrompt, schema: S.RequirementsWrite, after: (output) => writeRequirements(output.requirements), validate: null },
     amend: (_review, response, round) =>
       Effect.gen(function* () {
-        const ids = response.dispositions.filter((d) => d.action === "accepted" || d.action === "partially_accepted").map((d) => d.id);
-        if (ids.length === 0) return;
+        const interviewed = interviewedOf(response.findings);
+        if (interviewed.length === 0) return;
         const { root } = yield* Store;
-        yield* interview(prompts.interviewGapsPrompt(root, recordPath(root, { kind: "review", subject: id, round }), ids), ids);
+        yield* interview(
+          prompts.interviewGapsPrompt(root, recordPath(root, { kind: "review", subject: id, round }), interviewed),
+          interviewed.map((f) => f.id),
+        );
       }),
     proceed: prompts.PROCEED_TO_PLANNING,
     leaveOnAcceptance: false,
     leaveOnDecision: false,
+    // Issue #47: findingsValidation requires a changed document wherever a finding is answered or corrected, so the
+    // unchanged pause arises only where the interviewed findings left the file as it was; its Retry is another interview.
     onUnchanged: "pause",
     disputesSettledBy: "user",
     reviewSchema: S.Review,

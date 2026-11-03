@@ -84,7 +84,7 @@ test("a gap that Claude Code accepts produces a second interview whose summary i
     closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
-      { output: respond([["G-R1-1", "accepted"]]) },                      // requirements review response
+      { output: { ...respond([["G-R1-1", "accepted"]]), findings: [{ id: "G-R1-1", kind: "unresolved" }], requirements: null } },                      // requirements review response
       { output: turn("How many retries?", []) },                          // second interview
       { output: turn("Complete.", ["G-R1-1"], "Q1: A\nRetries: 3") },
       { output: noQuestions, plan: "v1" },
@@ -120,7 +120,7 @@ test("a gap accepted but the summary unchanged: the pause, and Retry holds anoth
     closings: closing("Q1: A"),
     steps: [
       { output: { questions: [q("Q1")] } },
-      { output: respond([["G-R1-1", "accepted"]]) },
+      { output: { ...respond([["G-R1-1", "accepted"]]), findings: [{ id: "G-R1-1", kind: "unresolved" }], requirements: null } },
       { output: turn("How many retries?", []) },
       { output: turn("Complete.", ["G-R1-1"], "Q1: A") }, // the summary unchanged
       { output: turn("How many retries, then?", []) }, // Retry: another interview

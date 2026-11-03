@@ -14,6 +14,7 @@ import type { AttachedKind, PassNoun, PauseOrigin, QuestionOrigin } from "./ques
 export type { PassNoun } from "./question.ts";
 import type { Skipped, SkipProblem, TurnProblem } from "./premises.ts";
 import type { RunMode } from "./runMode.ts";
+import type { FindingProblem, InterviewedFinding, WrittenFinding } from "./requirementsFindings.ts";
 import type { ItemState } from "./tracker.ts";
 import type { NamedEnd } from "./claudeEvents.ts";
 import type { NetworkCode, ProcessEnd } from "./transport.ts";
@@ -855,9 +856,12 @@ export const interviewOpenPrompt = (root: RunRoot): string => `Conduct an interv
 ${interviewRules(root)}
 Begin now with your first message to the user.`;
 
-export function interviewGapsPrompt(root: RunRoot, reviewFile: string, ids: string[]): string {
-  return `The reviewer has examined ${runDir(root)}/requirements.md, the result of the interview. ${reviewFile} contains the review. You accepted these issues: ${ids.join(", ")}.
-Conduct a second interview with the user on those points only. Treat each accepted issue as an agreed question; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in ${runDir(root)}/requirements.md.
+export function interviewGapsPrompt(root: RunRoot, reviewFile: string, interviewed: readonly InterviewedFinding[]): string {
+  const list = interviewed.map((f) => (f.kind === "reopened" ? `- ${f.id} (reopened: ${f.changed})` : `- ${f.id}`)).join("\n");
+  return `The reviewer has examined ${runDir(root)}/requirements.md, the result of the interview. ${reviewFile} contains the review. You classified these accepted issues as needing the user:
+${list}
+${runDir(root)}/requirements.md already holds the answers and corrections you wrote for the other accepted issues; do not ask about them.
+Conduct a second interview with the user on the points listed only, each under the rule on whether to ask. For a reopened point, state in the question's history what changed since the user's earlier answer before asking anew; use the issue ids in asked_ids and answered_ids. Do not raise again a question of the first interview whose premise the user denied: it is listed under 'Skipped questions' in ${runDir(root)}/requirements.md.
 ${interviewRules(root)}
 When complete is true, summary contains the complete revised requirements document, not only the changes.
 Begin now with your first message to the user.`;
@@ -937,7 +941,7 @@ export const unnecessaryLine = (id: string, reason: string): string => `Claude C
 
 export function requirementsReviewPrompt(root: RunRoot, round: number, thread: ReviewThread): string {
   const log = pathOf({ kind: "log", subject: "requirements" });
-  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the planner's summary of an interview between the planner and the user, written from the user's answers, each of which is final when given; the user did not confirm the summary itself. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
+  return byThread(round, thread, log, root, () => laterRound(root, pathOf({ kind: "requirements" }), log, "G", round), () => `Review ${runDir(root)}/requirements.md. It is the planner's summary of an interview between the planner and the user, written from the user's answers, each of which is final when given; the user did not confirm the summary itself. Between interviews the planner also writes into it, from its responses, answers the user gave and corrections that need no answer of his; review them like the rest. ${runDir(root)}/questions.json contains the task and the questions that were agreed before the interview. Do not modify any file.
 The planner will write an implementation plan from the task and this file.
 Raise an issue when: an agreed question has no clear answer in the file; two statements in the file contradict each other; a statement cannot be followed in this codebase (name the file); a decision that the plan needs is still absent. An agreed question listed under 'Skipped questions' was not put to the user because his answer to another question denied its premise; it is not an issue unless you name what in the task, the codebase or the file establishes that premise.
 Put the question id or the heading in the location field.
@@ -946,12 +950,13 @@ ${logRules(root, log, "G", round)}`);
 
 export function requirementsRespondPrompt(root: RunRoot, round: number): string {
   return `${runDir(root)}/requirements-review/review-${round}.json contains a review of ${runDir(root)}/requirements.md.
-${respondRules(root, "the point must be put to the user; the program will conduct a second interview on the accepted issues, so do not amend the file yourself")}
+${respondRules(root, "classify it in findings as the rules below state")}
+${FINDINGS_RULES}
+Never put the point of an accepted finding in questions_for_user: classify it, and the program asks an unresolved or reopened one in the second interview.
 Do not modify any file.`;
 }
 
-export const requirementsApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file and amend ${runDir(root)}/requirements.md where a decision requires it. Do not modify any other file.
-Return an empty questions_for_user array.`;
+export const requirementsApplyDecisionsPrompt = (root: RunRoot): string => `${runDir(root)}/user-decisions.md has new entries. Read the file. Return in 'requirements' the complete ${runDir(root)}/requirements.md amended where a decision requires it, or null where none does; the program writes it. Do not modify any file.`;
 
 // ---- plan ---------------------------------------------------------------------------------------
 
@@ -4515,6 +4520,52 @@ const issueTextProblemText = (p: IssueTextProblem): string => {
   }
 };
 /** The halt after a second refused reply (PassageMissing). */
+/** The halt of a classification of the requirements review's findings refused twice (issue #47). */
+/** Issue #47: one problem of the classification of the requirements review's accepted findings, in words. */
+export function findingProblemText(problem: FindingProblem): string {
+  switch (problem.kind) {
+    case "missing":
+      return `the accepted issue ${problem.id} has no entry in findings`;
+    case "notAccepted":
+      return `findings has an entry for ${problem.id}, which is not an issue you accepted or partially accepted in this response`;
+    case "duplicate":
+      return `findings has more than one entry for ${problem.id}`;
+    case "blankSource":
+      return `the 'answered' entry for ${problem.id} has a blank source`;
+    case "blankChange":
+      return `the 'reopened' entry for ${problem.id} has a blank changed`;
+    case "documentUnchanged":
+      return `requirements is null or unchanged, although findings classifies ${problem.ids.join(", ")} as 'answered' or 'corrected'`;
+  }
+}
+/** The halt of a classification of the requirements review's findings refused twice (issue #47). */
+export const findingsInvalidText = (problems: readonly FindingProblem[]): string =>
+  `the classification of the requirements review's accepted findings is invalid: ${problems.map(findingProblemText).join("; ")}`;
+/**
+ * Issue #47: how Claude Code classifies each accepted finding of the requirements review, shared by the response prompt
+ * and the repair prompt, which findingsValidation checks.
+ */
+export const FINDINGS_RULES = `For each issue you accepted or partially accepted, return exactly one entry in findings with its id, and none for any other issue:
+- 'answered': the user already answered the point, in user-decisions.md or in the interview recorded in conversation.md; set source to the file and quote his answer, and write his answer into requirements. Nothing is asked.
+- 'corrected': the document needs a correction that needs no answer of the user's (a contradiction, a wording, a fact of the codebase, a point the rule on whether to ask lets you settle); write the correction into requirements. Nothing is asked.
+- 'unresolved': the rule on whether to ask requires the user's knowledge or decision; the program puts it to him in a second interview.
+- 'reopened': the user answered the point, but what his answer rested on changed; set changed to what changed; the program puts it to him again in the second interview.
+requirements is the complete requirements.md with every 'answered' and 'corrected' finding written in, or null where there is none; the program writes it.`;
+/** The validation repair turn of a refused classification (issue #47). */
+export const findingsRepairPrompt = (problems: readonly FindingProblem[]): string => validationRepairPrompt(problems.map(findingProblemText), [FINDINGS_RULES]);
+/** Issue #47: what became of one accepted finding of the requirements review, said and written. */
+export function requirementsFindingLine(finding: InterviewedFinding | WrittenFinding): string {
+  switch (finding.kind) {
+    case "answered":
+      return `${finding.id}: you answered this already (${finding.source}); your answer is written into requirements.md and not asked again.`;
+    case "corrected":
+      return `${finding.id}: corrected in requirements.md; nothing for you to decide.`;
+    case "unresolved":
+      return `${finding.id}: put to you in the second interview.`;
+    case "reopened":
+      return `${finding.id}: put to you again, because ${finding.changed}.`;
+  }
+}
 export const passageMissingText = (problems: readonly IssueTextProblem[]): string =>
   `Claude Code's issue brought up to date was refused twice: ${problems.map(issueTextProblemText).join("; ")}.`;
 /** The validation repair turn of the phase, built from the failure. */

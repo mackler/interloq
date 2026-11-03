@@ -181,6 +181,33 @@ const markedResponseFields = { ...plannerResponseFields, dispositions: Schema.Ar
 
 export const PlanWriteResult = Schema.Struct({ questions_for_user: Schema.Array(UserQuestion) });
 
+// ---- the requirements review's accepted findings (issue #47) -----------------------------------------------------
+
+/**
+ * Claude Code's classification of one accepted or partially accepted finding of the requirements review (issue #47):
+ * `answered`, the developer already answered the point (`source` names where, with his answer), written into
+ * requirements.md and not asked; `corrected`, a correction of the document no answer of his is needed for (issue #220's
+ * case), written in; `unresolved`, which needs his knowledge or decision and is asked in the second interview; and
+ * `reopened`, an answer of his whose ground changed (`changed` states what), asked again. Plain strings, as the facts of
+ * acceptance require; a blank one is refused by findingsValidation with its repair turn.
+ */
+export const RequirementFinding = Schema.Union([
+  Schema.Struct({ id: Schema.String, kind: Schema.Literal("answered"), source: Schema.String }),
+  Schema.Struct({ id: Schema.String, kind: Schema.Literal("corrected") }),
+  Schema.Struct({ id: Schema.String, kind: Schema.Literal("unresolved") }),
+  Schema.Struct({ id: Schema.String, kind: Schema.Literal("reopened"), changed: Schema.String }),
+]);
+export type RequirementFinding = typeof RequirementFinding.Type;
+/**
+ * Claude Code's response to a review of the requirements (issue #47): a response's fields, the classification of each
+ * accepted finding, and the complete amended requirements.md, or null where no finding is answered or corrected.
+ */
+export const RequirementsResponse = Schema.Struct({ ...plannerResponseFields, findings: Schema.Array(RequirementFinding), requirements: Schema.NullOr(Schema.String) });
+export type RequirementsResponse = typeof RequirementsResponse.Type;
+/** The application of the user's decisions to the requirements: the complete amended requirements.md, or null where none requires it. */
+export const RequirementsWrite = Schema.Struct({ requirements: Schema.NullOr(Schema.String) });
+export type RequirementsWrite = typeof RequirementsWrite.Type;
+
 // ---- Bring Up to Date (issue #216) ------------------------------------------------------------------
 
 /** The developer's title and text as Claude Code returns them, its section left out; plain strings, as Codex's strict mode wants. */
@@ -367,7 +394,7 @@ export const DecisionResponse = Schema.Struct({ ...plannerResponseFields, analys
  * decodes it, src/uiEvents.ts types it). Its order is the decoder's: a response with more fields comes before the
  * planner's, which every other one extends.
  */
-export const LoopResponse = Schema.Union([QuestionListResponse, TermsResponse, DecisionResponse, PlanResponse, WorkResponse, UpdateResponse, VerdictResponse, PlannerResponse]);
+export const LoopResponse = Schema.Union([QuestionListResponse, TermsResponse, DecisionResponse, PlanResponse, WorkResponse, UpdateResponse, VerdictResponse, RequirementsResponse, PlannerResponse]);
 export type LoopResponse = typeof LoopResponse.Type;
 /** The output of applying the user's decisions to an analysis. */
 export const DecisionApplied = Schema.Struct({ analysis: DecisionAnalysis });
