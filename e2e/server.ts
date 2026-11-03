@@ -80,6 +80,17 @@ export const SCENARIOS: Record<string, TestOptions> = {
     execs: [finished],
   }),
   stop: { steps: [{ output: noQuestions, plan: "1. [ ] the step\n" }, { hang: true }], reviews: [{ issues: [issue("P1-R1-1")] }] },
+  // Issue #139: the decision scenario with its first planning call held 20 s, so the implementation run works before it
+  // waits on the plan writer's question; a timed gate, since the test cannot reach into the server to release one.
+  tabStates: askedInPlanReview({
+    steps: [
+      { output: { questions_for_user: [questionOf({ context: "c", question: "Which database should the service use?", terms: [], options: [] })] }, plan: "1. [ ] the step\n", gate: () => new Promise<void>((r) => setTimeout(r, 20_000)) },
+      { output: noQuestions },
+    ],
+    reviews: [{ issues: [] }, { issues: [] }],
+    execs: [finished],
+  }),
+
   // Finding 10 of docs/gui-review.md: the scenarios the review names.
   // The question phase: a question list, an interview message, /done, a proposed summary.
   interview: {

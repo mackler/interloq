@@ -4,6 +4,7 @@ import { phaseName } from "../src/uiEvents.ts";
 import { modeOf, type RunScenario, runUrl } from "./ports.ts";
 import { ownName } from "../src/hostDir.ts";
 import { tabTitle } from "../web/src/title.ts";
+import { markedTabName } from "../web/src/notify.ts";
 import { CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, QUEUE_HEADING, queueMoveUpName, EXPLAIN_TERMS, TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, documentLabel, PREPARATION_SWITCH_LABEL, preparedMarkText, analysisProgressLine, CLOSE_RUN_TAB, ITEM_IN_PROGRESS, allAnswersHeading, CHAIN_SWITCH_LABEL, TAB_TEXTS, waitingTabName, endedTabName, endNotificationTitle, pauseNotificationTitle, clarificationHeading, interviewHelp, ENTRY_DISPUTED_LABEL, attachedHeading, CONTEXT_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, confirmEndText, questionTitle, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, loopSummary, SHOW_CONVERSATION, SHOW_QUESTION, UNCHANGED_PROCEED, PLAN_STEP_STATE_LABEL, planStepLabel, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, NO_UNANSWERED_QUESTIONS } from "../src/prompts.ts";
 
 // Plan step 5.2: the page against the server over scripted agents (e2e/server.ts), one server per scenario. Every test
@@ -1120,5 +1121,24 @@ test.describe("the tests of the termsWait server, in order", () => {
     await option(page, /PostgreSQL/).click();
     await expect(dashboard(page).locator("[data-last-answer]")).toContainText("PostgreSQL");
     await toHaveEnded(page, 0);
+  });
+});
+
+// Issue #139: a run's state shows in its mode's tab, seen from the other tab.
+test.describe("the tests of the tabStates server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  test("(40) a run working in Implementation shows in its tab from the Refinement tab, and the mark changes when it stops for an answer", async ({ page }) => {
+    await startFromTab(page, url("tabStates"), "implementation");
+    await tabOf(page, "refinement").click();
+    const implementation = tabOf(page, "implementation");
+    await expect(implementation).toHaveText(markedTabName(TAB_TEXTS.implementation.tab, { _tag: "Running" }));
+    await expect(implementation.locator("[role=progressbar]")).toHaveCount(1);
+    await expect(implementation).toHaveText(markedTabName(TAB_TEXTS.implementation.tab, { _tag: "Waiting" }));
+    await expect(implementation.locator("[role=progressbar]")).toHaveCount(0);
+    await implementation.click();
+    await page.locator("button[name=stop]").click();
+    await confirmEnd(page);
+    await toHaveEnded(page, 130);
   });
 });
