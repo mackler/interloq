@@ -9,6 +9,7 @@ import * as prompts from "../../src/prompts.ts";
 import { plainPieces } from "../../src/pieces.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import { helloChain } from "./testChain.ts";
+import App from "./components/App.svelte";
 
 class FakeWebSocket {
   static last: FakeWebSocket | null = null;
@@ -63,7 +64,6 @@ const buttons = (root: ParentNode) => [...root.querySelectorAll<HTMLButtonElemen
 describe("the control that ends a wait, through the page", () => {
   test("one frame per wait: the compact dashboard's press sends it, the full dashboard's sends no second, a second run's sends its own", async () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
-    const { default: App } = await import("./components/App.svelte");
     const root = document.createElement("div");
     document.body.appendChild(root);
     mounted.push(mount(App, { target: root, props: {} }));

@@ -35,11 +35,12 @@ export default defineConfig({
   // testTimeout sized for a loaded machine (a shared CI runner): a passing test is no slower, only a hang reports later.
   // It is 120 s because under npm test's load two property tests took 41 s and 51 s (the suite run of 18 Oct 2026 in
   // issue #172's implementation run), past the earlier 30 s.
-  // maxWorkers is half the cores because npm test runs this stage beside the others, and Vitest waits only a fixed 60 s
-  // for a forked worker to start, which a fork per core missed under that load (the suite run of 18 Oct 2026 in issue
-  // #172's implementation run); testTimeout does not govern that wait. test/ci.test.ts checks it is set here alone.
+  // maxWorkers is a quarter of the cores because npm test runs this stage beside the others, and Vitest waits only a
+  // fixed 60 s for a forked worker to start, which a fork per core missed on 18 Oct 2026 (issue #172's implementation
+  // run) and half the cores missed in issue #41's suite run of 3 Nov 2026; testTimeout does not govern that wait.
+  // test/ci.test.ts checks it is set here alone.
   test: {
-    environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 120_000, maxWorkers: "50%",
+    environment: "jsdom", include: ["src/**/*.test.ts"], setupFiles: ["src/test-setup.ts"], testTimeout: 120_000, maxWorkers: "25%",
     reporters: STAGE_REPORT_DIR === undefined || STAGE_REPORT_DIR === "" ? ["default"] : ["default", ["json", { outputFile: resolve(process.cwd(), STAGE_REPORT_DIR, "vitest.json") }]],
   },
 });

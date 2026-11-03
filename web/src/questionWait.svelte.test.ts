@@ -8,6 +8,7 @@ import { plainPieces } from "../../src/pieces.ts";
 import { promptOf } from "../../src/userPrompts.ts";
 import { writePreferences } from "./storage.ts";
 import { helloChain } from "./testChain.ts";
+import App from "./components/App.svelte";
 import { NotificationStub } from "./test-setup.ts";
 import { tabTitle } from "./title.ts";
 
@@ -42,7 +43,6 @@ afterEach(() => {
 });
 const openPage = async () => {
   vi.stubGlobal("WebSocket", FakeWebSocket);
-  const { default: App } = await import("./components/App.svelte");
   const root = document.createElement("div");
   document.body.appendChild(root);
   mounted.push(mount(App, { target: root, props: {} }));

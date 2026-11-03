@@ -106,10 +106,10 @@ const noOverride = (script: string, override: RegExp, what = "the worker count")
 
 // Issue #172 (the suite run of 18 Oct 2026): npm test runs the component tests beside the other stages, and Vitest
 // waits a fixed 60 s for each forked worker to start, which a fork per core missed under that load. The one source of
-// their worker count is web/vite.config.ts.
-test("the component tests' worker count is 50% of the cores, set in web/vite.config.ts alone", async () => {
+// their worker count is web/vite.config.ts. Issue #41's suite run of 3 Nov 2026: half the cores missed that wait too.
+test("the component tests' worker count is 25% of the cores, set in web/vite.config.ts alone", async () => {
   const config = (await import("../web/vite.config.ts")).default as { test?: { maxWorkers?: number | string } };
-  assert.equal(config.test?.maxWorkers, "50%", "web/vite.config.ts does not set maxWorkers to 50%");
+  assert.equal(config.test?.maxWorkers, "25%", "web/vite.config.ts does not set maxWorkers to 25%");
   noOverride("test:web", /--maxWorkers|--max-workers|VITEST_MAX_WORKERS/);
 });
 
