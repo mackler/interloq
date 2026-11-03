@@ -1,6 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { dashboard, expect, listOf, listTabOf, runTabOf, runTabsOf, startFromTab, tabOf, test, toHaveEnded, toTheList } from "./fixtures.ts";
-import { TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION } from "../src/prompts.ts";
+import { TERMS_CHOICE_LABEL, TERMS_CHOICE_TEXTS, TERMS_ON_REQUEST_NOTE, CHAIN_SOURCE_LABEL, CHAIN_SOURCE_TEXTS, CHAIN_SWITCH_LABEL, QUEUE_EMPTY, QUEUE_HEADING, queueRemoveName, attachedHeading, CONTEXT_HEADING, QUESTION_HISTORY_HEADING, RECOMMENDATION_HEADING, YOUR_CHOICE, PANEL_SPLIT_LABEL, RAIL_WIDTH_LABEL, CHAIN_INVALID_RUNS, clarificationProgress, progressLine, RAIL_CONDITION_LABEL, railToggleName, stageHeading, stepLabel, stepOfPhase, CONTINUE_WITHOUT_DECIDING, END_CLARIFICATION, HELP_ME_DECIDE, SHOW_CONVERSATION, SHOW_QUESTION, LIMIT_PAUSED_MARK, TAB_TEXTS } from "../src/prompts.ts";
+import { markedTabName } from "../web/src/notify.ts";
 import { LIVE_LONG_LINE, LIVE_LONG_NAME, LIVE_RED_TEXT, LONG_ANSWERS, LONG_ITEM_TITLE, LONG_STEP_LABEL } from "./longAnswers.ts";
 import { LAYOUT_PORTS, type LayoutScenario, layoutUrl, modeOf } from "./ports.ts";
 import { floorPx, IN_VIEW_MIN_HEIGHT } from "../web/src/layout.ts";
@@ -1868,4 +1869,47 @@ test.describe("the tests of the liveOutputQuestion server, in order", () => {
       expect(await atEnd(screen), `the screen follows the end at ${size}`).toBe(true);
     }
   });
+});
+
+// Issue #139: the primary tabs hold a paused and a running run's mark, the glyph, the name and the pause's time on one
+// row of the 48 px bar, at every width, with nothing outside its tab and no sideways scroll.
+test.describe("the tests of the tabStatesLayout server, in order", () => {
+  test.describe.configure({ mode: "default" });
+
+  for (const [width, height] of [[1280, 800], [640, 400], [390, 844]] as const) {
+    test(`(L44) the primary tabs hold a paused and a running run's mark on one row at ${width} × ${height}`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await startFromTab(page, layoutUrl("tabStatesLayout"), "implementation");
+      await tabOf(page, "refinement").click();
+      const implementation = tabOf(page, "implementation");
+      const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      await expect(implementation).toHaveText(new RegExp(`^\\s*${escaped(LIMIT_PAUSED_MARK)} ${escaped(TAB_TEXTS.implementation.tab)} until `));
+      const checkRow = async (what: string) => {
+        expect((await box(page.locator("nav.tabs"))).height, `the bar's height, ${what}`).toBeCloseTo(48, 0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), `sideways overflow, ${what}`).toBeLessThanOrEqual(0);
+        for (const label of await page.locator("nav.tabs label").all()) {
+          const outer = await box(label);
+          const spans = await label.locator(":scope > span:not(.indicator)").all();
+          const centers: number[] = [];
+          for (const span of spans) {
+            const inner = await box(span);
+            expect(inner.x >= outer.x - 1 && inner.x + inner.width <= outer.x + outer.width + 1, `a span within its tab horizontally, ${what}`).toBe(true);
+            expect(inner.y >= outer.y - 1 && inner.y + inner.height <= outer.y + outer.height + 1, `a span within its tab vertically, ${what}`).toBe(true);
+            centers.push(inner.y + inner.height / 2);
+          }
+          if (centers.length > 0) expect(Math.max(...centers) - Math.min(...centers), `one row, ${what}`).toBeLessThan(2);
+        }
+      };
+      await checkRow(`paused at ${width} × ${height}`);
+      await implementation.click();
+      await page.locator("button[name=end-wait]").first().click();
+      await tabOf(page, "refinement").click();
+      await expect(implementation).toHaveText(markedTabName(TAB_TEXTS.implementation.tab, { _tag: "Running" }));
+      await checkRow(`running at ${width} × ${height}`);
+      await implementation.click();
+      await page.locator("button[name=stop]").click();
+      await confirmEnd(page);
+      await toHaveEnded(page, 130);
+    });
+  }
 });

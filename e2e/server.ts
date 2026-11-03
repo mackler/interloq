@@ -377,6 +377,12 @@ const LIVE_QUESTION_OPTIONS = LONG_ANSWERS.slice(0, 2).map((a) => {
   const [label, ...rest] = a.replace(/^\d+\. /, "").split(": ");
   return { label: label ?? "", description: rest.join(": ") };
 });
+// Issue #139: a layout server whose implementation run waits out a usage limit with a stated reset an hour after the
+// server starts (its tab paused, with the reset's time), and once the developer ends the wait early works on, held in
+// its planning call (its tab running).
+SCENARIOS.tabStatesLayout = {
+  steps: [{ limit: { reset: { kind: "instant", atMs: Date.now() + 3_600_000 }, limitType: "seven_day" } }, { hang: true }],
+};
 SCENARIOS.liveOutputQuestion = askedInPlanReview({
   steps: [
     { output: { questions_for_user: Array.from({ length: 4 }, (_, i) => questionOf({ context: "The plan leaves this open.", question: `How should message ${i + 1} show its time?`, terms: [], options: LIVE_QUESTION_OPTIONS })) }, plan: "1. [ ] the step\n" },
