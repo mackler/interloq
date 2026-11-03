@@ -13,3 +13,8 @@ test("the three marks are distinct single code points", () => {
   for (const mark of marks) assert.equal([...mark].length, 1, mark);
   assert.equal(new Set(marks).size, marks.length);
 });
+
+// Issue #41: at the second judgment (3 Nov 2026) the developer chose the black diamond over ⚑.
+test("the reason's mark is the black diamond the developer chose", () => {
+  assert.equal(REASON_MARK, "◆");
+});

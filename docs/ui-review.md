@@ -515,3 +515,18 @@ default) for an answer, after which the run stops waiting for it.
   assert what M3's list item asserts and nothing more. M3 has no reorderable list, so the drag is built by hand with
   pointer events: the handle (⠿) asserts only that the row can be dragged, and the drop line in `primary` only where it
   would go. The handle is out of the tab order, since the buttons cover the keyboard.
+
+## The parts of an argument in a decision's analysis (issue #41, 3 Nov 2026)
+
+- **Match between the system and the real world; recognition rather than recall.** An entry's elements show their parts
+  by layout, as the developer judged on a rendered example twice: the comparative condition in italic; the chain of
+  causes as one ordered list, the starting cause with a bullet and the intermediate steps and the effect on persons with
+  a rightward arrow (➔) in one column; the threshold bold and inset, with no arrow; the reason the effect matters with a
+  black diamond (◆); the extent's four statements as one group in the larger body size.
+- **What the marks assert.** An arrow asserts a causal link in the chain the agent wrote, and nothing about its
+  certainty. The diamond asserts that the statement says why the effect matters, and not that it follows by proof; the
+  developer rejected ∴ because it may read as a proved conclusion. The italic, the bold and the size assert which part a
+  statement is, and nothing more. A counterargument under any element keeps its own plain style, so no style claims it.
+- **Accessibility (WCAG 2.1, 1.3.1).** No mark or style is the only means of conveying the relation: the chain and the
+  extent are lists named for assistive technology, and each element's part is named to assistive technology alone, not
+  shown on screen (the developer's decision Q1 of the refinement).

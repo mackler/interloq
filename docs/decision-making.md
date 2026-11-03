@@ -36,7 +36,7 @@ Two arguments are equivalent when they concern the same option and state the sam
 
 ## Elements of an advantage or disadvantage
 
-Every advantage and every disadvantage contains the following elements. If an element is absent or false, the argument does not apply. The names and numbers of the elements are not shown in the representation; each element is written as one or more complete sentences, and each element may be written as a separate bullet item.
+Every advantage and every disadvantage contains the following elements. If an element is absent or false, the argument does not apply. The names and numbers of the elements are not written in the representation; the program that displays it marks each element's part by its layout and gives the part's name to assistive technology alone, which is the developer's decision Q1 of the refinement of issue #41. Each element is written as one or more complete sentences, and each element may be written as a separate bullet item.
 
 1. Comparative condition. State what the option in whose column the entry appears does or does not do that makes the argument specific to that option. Write this element in terms of that option only; do not describe what the other options do.
 2. Starting cause. State the property of the option, or the action required to adopt it, that begins the sequence of causes leading to the outcome.
@@ -69,6 +69,20 @@ The representation contains one column for each option. Each column lists the ad
 Each advantage and each disadvantage begins with a title. The title is one complete sentence that states the outcome and its effect on persons.
 
 The representation is written for a reader who has no knowledge of formal argument, of the terms defined in this prompt, or of the system the decision concerns. This program writes code, so the reader is almost never familiar with the internals of the codebase under discussion, and everything he needs must be in the representation itself. Name a file, a function, a prompt, a tool, a record or a state the first time it appears, and say in ordinary words what it is and whose it is: not "the prompt" but "the instructions the program sends to the coding agent before it starts work"; not "open a step" but "report that work on a step has begun". Do not refer to a numbered issue, question or option without restating what it says. A reader who has never seen the codebase must be able to follow every argument without looking anything up. Write every item as complete sentences. Write so that each sentence reads naturally when read aloud. Within a paragraph, when a sentence has the same grammatical subject as the sentence before it and follows from it, refer to the subject with a pronoun instead of repeating the noun, unless the pronoun could refer to more than one noun in that sentence. This rule does not apply across bullet items. Bullet items are read separately and one does not follow from another, so a pronoun in one does not take its subject from the item before it. Every bullet item names its own subject. Do not use abbreviations, labels, or names of categories of argument. Do not use the words "counterargument," "defense," "reversal," or "rebuttal" in the representation. Introduce the advantages of an option, which are the arguments for choosing that option, with the heading "Advantages:", and the disadvantages of an option, which are the arguments against choosing it, with the heading "Disadvantages:". Number the entries under each heading and label them: "Advantage 1:", "Advantage 2:", "Disadvantage 1:", and so on, numbered from one within each heading of each column, so that a reader can see which elements belong to which entry. Where a person is referred to in the singular and the person's identity is not known, use "he" and "his".
+
+## How the program displays the elements
+
+These are rules of the display, which the program applies to the elements as they are written:
+
+- The comparative condition is set apart in italic.
+- The chain of causes (the starting cause, the intermediate steps, the threshold and the effect on persons) is one ordered list. The starting cause carries a bullet, and the intermediate steps and the effect on persons carry a rightward arrow (➔), the arrows in one column.
+- The threshold is set apart in bold and inset, with no arrow.
+- The reason the effect matters carries a black diamond (◆), which marks why the effect counts and claims no proved conclusion.
+- The four statements of the extent of the effect are one group, in the larger body size.
+- A statement that disputes an element keeps its own plain style under any element.
+- None of these marks or styles is the only way the relation is conveyed: the reading order, the page's structure and the parts' names given to assistive technology convey it too.
+
+This section requires nothing of the writer of the representation.
 
 ## Placement of advantages and disadvantages
 
