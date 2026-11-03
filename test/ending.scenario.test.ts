@@ -140,7 +140,7 @@ test("(h) a return refused with the item read back implementing is not returned,
   assert.deepEqual(ending.item.check, { _tag: "Held", state: "implementing" });
 });
 
-test("(h2) a return applied whose answer never came is not returned and unchecked, never the label it held before", async () => {
+test("(h2) a return applied whose answer was lost, with nothing read back, is not returned and unchecked", async () => {
   // The write lands and its answer is lost, so nothing is read back: the item is in fact refined, unconfirmed.
   const tracker = fakeTrackerOf([scriptedItem]);
   for (let i = 0; i < 2; i++) Effect.runSync(tracker.failAfterNext("setState", unreachable(), "refined"));
@@ -148,6 +148,29 @@ test("(h2) a return applied whose answer never came is not returned and unchecke
   assert.equal(ending._tag, "Halted");
   if (ending._tag !== "Halted" || ending.item?._tag !== "NotReturned") return assert.fail(JSON.stringify(ending));
   assert.deepEqual(ending.item.check, { _tag: "Unchecked" });
+});
+
+test("(h2b) a return applied and answered with a server error, whose read-back fails, is not returned and unchecked, never the label it held before", async () => {
+  // The write lands and is answered 500, so the item is read back; the read-back fails, so nothing is confirmed. The read
+  // failures are queued only once the halting planning call holds, so the run's own first read of its item takes none.
+  const tracker = fakeTrackerOf([scriptedItem]);
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const { wiring, probe } = testWiring(tempRepo(), { steps: [{ sessionTooLong: "Prompt is too long", gate: () => held }], tracker, config: quickTracker });
+  const { concluded, fiber } = started(probe, wiring);
+  await whenPlanning(probe);
+  for (let i = 0; i < 2; i++) {
+    Effect.runSync(tracker.failAfterNext("setState", unreachable(500), "refined"));
+    Effect.runSync(tracker.failNext("read", unreachable()));
+  }
+  const readsBefore = Effect.runSync(tracker.reads).length;
+  release();
+  assert.equal(exitCodeOf(await Effect.runPromise(Fiber.await(fiber))), 1);
+  const ending = Option.getOrNull(Effect.runSync(Ref.get(concluded)))?.ending;
+  if (ending?._tag !== "Halted" || ending.item?._tag !== "NotReturned") return assert.fail(JSON.stringify(ending));
+  assert.deepEqual(ending.item.check, { _tag: "Unchecked" });
+  assert.equal(Effect.runSync(tracker.items).find((i) => i.id === scriptedItem.id)?.state, "refined");
+  assert.ok(Effect.runSync(tracker.reads).length >= readsBefore + 2, "the item was not read back after each write");
 });
 
 test("(h3) after the server's fault, a return the tracker never answers is not returned and unchecked", async () => {
