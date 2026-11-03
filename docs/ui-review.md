@@ -283,7 +283,10 @@ too, with its own words.
 
 - The tab's title carries a marker in front of the project's name (● while a prompt waits, ✓ after an unseen end), so
   two waiting windows are still told apart, and the page's icon carries a dot in the scheme's error color (waiting) or
-  tertiary color (ended), resolved for the scheme the page is shown in, dark or light, and drawn again when it changes. They assert that a prompt is pending, or that a watched run ended while the tab was hidden
+  tertiary color (ended), resolved for the scheme the page is shown in, dark or light, and drawn again when it changes.
+  Since issue #139 the title also carries ◌ while a run works and ‖ while it waits out a usage limit, the icon's dot
+  is the secondary color with that glyph for both, and a halted end's dot (✕) is in the error color, a finished end's
+  (✓) in the tertiary color: the title and the icon show the mark the mode tabs show. They assert that a prompt is pending, or that a watched run ended while the tab was hidden
   and has not been seen since, and nothing more. They need no permission, are always on, and are not a preference.
 - A desktop notification asserts the same, once per prompt and once per end. It is opt-in, from the "Desktop alerts"
   switch in the top bar, whose click alone asks the browser's permission; turning the switch off stops it at once
@@ -320,7 +323,8 @@ Q1 in the interview of 9 Oct 2026).
   label in place of M3's badge, which m3-svelte's `Tabs` does not take. Under the substitution rule: it asserts that
   the run of that tab waits for an answer, and nothing more; it is not a count and does not claim how long the run has
   waited, which a badge with a number would. The browser tab's title and icon carry the same mark when either run
-  waits [visibility of system status].
+  waits [visibility of system status]. Since issue #139 it is one of five marks a primary tab carries (see "The state
+  of each mode's run in its tab" below).
 - **The list's start button.** Each item of a tab's list is laid out by hand after an M3 list item (issue #125; see the deviations above), its id and title as the headline, a link to the item's page in its tracker, and its
   excerpt as supporting text, with a trailing text button ("Refine", "Implement") that starts the tab's run. Selecting
   or scrolling through the list starts nothing; only the button does [error prevention without a confirmation, which
@@ -366,8 +370,8 @@ Refinement tab holds a second row of tabs: the items first, then one tab per run
   work (halted, abandoned or stopped), until the developer shows that run; Close this run removes the tab. ✓ asserts
   that the run finished and its end has not been seen since; ✕ asserts that it ended without doing its work and its
   end has not been seen since; neither asserts anything more. The same mark (`endMarkOf`) stands in front of the
-  browser title and in the icon's badge while no run waits. The primary tabs carry no end mark, which is left to
-  issue #139 [visibility of system status].
+  browser title and in the icon's badge while no run waits. Since issue #139 the primary tabs carry it too, with the
+  other states of their run (see "The state of each mode's run in its tab" below) [visibility of system status].
 - **No switch away.** Moving between two runs, or between a run and the items, takes one click, and a prompt arriving in
   another run never changes the run shown [user control and freedom]. Before the user has chosen, the page shows a
   waiting run.
@@ -375,6 +379,37 @@ Refinement tab holds a second row of tabs: the items first, then one tab per run
   enabled [error prevention without a confirmation].
 - **An ended run's tab.** It stays until the developer closes it in that page ("Close this run") or the server restarts;
   "Back to the list" shows the items and keeps the tab.
+
+## The state of each mode's run in its tab (issue #139, 3 Nov 2026)
+
+By the developer's instruction of 11 Oct 2026, a tab whose run is in progress shows it, visibly from the other tab,
+and says which of five states its run is in [visibility of system status].
+
+- **The five states and their marks.** Working: ◌, drawn as the circular indeterminate indicator
+  (`CircularIndeterminate`, the rail's, whose glyph shows under reduced motion). Paused for a usage limit: ‖ with when
+  the pause ends. Waiting for an answer: ●. Finished (exit 0): ✓. Halted (any other end: halted, abandoned, stopped):
+  ✕ in the scheme's error color and bold.
+- **The precedence.** A tab answering for several runs (the Refinement tab), the browser title and the icon show one
+  mark, by one order: waiting, then halted, then finished, then paused, then working. Waiting comes first because it
+  is the only state whose meaning expires: in a chain a question counts down and an unanswered one abandons the run
+  (issue #185), while a halt is final and its mark stays until the run is seen (issue #209), so being outranked delays
+  it and loses nothing. Halted outranks every report because it says something went wrong and the developer has to
+  look; finished outranks the two states in progress because it is news that clears once seen; a pause outranks
+  working because a paused run is the one that looks like a hang. Within one run only waiting and a pending limit
+  coexist, and waiting wins.
+- **One mark for the tab, the title and the icon.** All three take their mark from one decision per run (`decide`,
+  `markOf` and `combinedMark` of `web/src/notify.ts`) and their glyph from one function (`markGlyph`), so they never
+  disagree.
+- **The substitution.** The primary tabs are written by hand (`ModeTabs.svelte`) after M3's primary tabs and
+  m3-svelte's own, because m3-svelte's `Tabs` takes a name and an icon alone, no badge or indicator. Each label keeps
+  the glyph, the name and the pause's time on one row of the 48 px bar, only the time shrinking where the row is
+  narrow; the radio's accessible name carries the state in words.
+- **What each asserts.** The running indicator asserts that work is under way, and not how much is left or how long it
+  will take. The pause asserts that the run waits out a usage limit and will go on by itself; it asserts its end only
+  where the reset was stated ("until 23:11 UTC"), and otherwise only the next try ("next try 10:05 UTC"). The end marks
+  assert an end not yet seen, cleared when the run is shown (issue #209). Halted is the one alert, told apart from the
+  four reports by its color and its glyph.
+- Whether any of it is seen is covered by no test.
 
 ## The chain's control (issue #147, 20 Oct 2026)
 
