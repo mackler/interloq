@@ -52,6 +52,25 @@ describe("what is removed", () => {
     expect(out).toContain("<rect");
     expect(out).not.toMatch(/fill=|clip-path=/u);
   });
+  test("data-* and aria-* attributes, which the allow-list does not name (W2-R1-1)", () => {
+    const top = parsed(clean('<rect width="10" height="10" fill="#123456" data-extra="kept" aria-describedby="outside"/>', 'viewBox="0 0 10 10" data-extra="kept" aria-labelledby="outside"'));
+    const rect = top.querySelector("rect")!;
+    for (const element of [top, rect]) {
+      const names = [...element.attributes].map((a) => a.name.toLowerCase());
+      expect(names.filter((n) => n.startsWith("data-") || n.startsWith("aria-"))).toEqual([]);
+    }
+    expect(top.getAttribute("viewBox") ?? top.getAttribute("viewbox")).toBe("0 0 10 10");
+    expect(rect.getAttribute("width")).toBe("10");
+    expect(rect.getAttribute("height")).toBe("10");
+    expect(rect.getAttribute("fill")).toBe("#123456");
+  });
+  test("every attribute of the result is in the allow-list (W2-R1-1)", () => {
+    const allowed = new Set(FIGURE_ALLOWED_ATTRS.map((a) => a.toLowerCase()));
+    const top = parsed(clean('<g data-a="1" aria-hidden="true"><rect width="10" height="10" fill="#123456" data-extra="kept" aria-describedby="outside"/></g>', 'viewBox="0 0 10 10" data-extra="kept" aria-labelledby="outside"'));
+    for (const element of [top, ...top.querySelectorAll("*")]) {
+      for (const attribute of element.attributes) expect(allowed.has(attribute.name.toLowerCase()), attribute.name).toBe(true);
+    }
+  });
   test("markup whose root is not svg is nothing", () => {
     expect(sanitizeFigure("<div>x</div>", "p1")).toBe("");
     expect(sanitizeFigure("", "p1")).toBe("");

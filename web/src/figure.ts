@@ -3,7 +3,10 @@
 // makeFigureSanitizer, its hook registered on that instance only; the imported DOMPurify singleton is never configured.
 //
 // The policy is written out, not inherited from DOMPurify's profiles: what is permitted is exactly what the two lists
-// below hold. A picture is shapes, text and paint servers.
+// below hold. A picture is shapes, text and paint servers. DOMPurify's ALLOW_DATA_ATTR and ALLOW_ARIA_ATTR default to
+// true and would admit every data-* and aria-* attribute beside the list (an aria-labelledby may name an id outside the
+// picture, which the prefixing below does not rewrite), so both are turned off; the accessible name of a picture is its
+// wrapper's aria-label in OptionFigure, never the SVG's own.
 // - Excluded because they run code: script, every event-handler attribute, foreignObject (which hosts HTML).
 // - Excluded because they fetch: image, feImage, an href or xlink:href that is not a reference inside the image, and
 //   any url(...) or src(...) in an attribute value that does not name a fragment of the image.
@@ -16,7 +19,7 @@
 // url(#shape) resolve to the other's definition, and the difference the question turns on would disappear. So every id
 // of a picture is prefixed with its instance's prefix, and every reference inside it with the same prefix; a reference
 // to an id the picture does not define then dangles within its own picture and never reaches another.
-import DOMPurify, { type WindowLike } from "dompurify";
+import DOMPurify, { type Config, type WindowLike } from "dompurify";
 
 /** The elements a picture may hold: shapes, text and paint servers. */
 export const FIGURE_ALLOWED_TAGS: readonly string[] = [
@@ -59,6 +62,16 @@ export const prefixedReference = (value: string, prefix: string): string =>
 const prefixedAttribute = (name: string, value: string, prefix: string): string =>
   name === "id" ? `${prefix}-${value}` : name === "href" || name === "xlink:href" ? prefixedReference(value, prefix) : prefixedUrls(value, prefix);
 
+/** The whole sanitizing policy as DOMPurify's options: the two lists, text, and no attribute outside them. */
+const FIGURE_SANITIZE_OPTIONS: Config & { readonly RETURN_DOM_FRAGMENT: true } = {
+  ALLOWED_TAGS: [...FIGURE_ALLOWED_TAGS, TEXT_NODE],
+  ALLOWED_ATTR: [...FIGURE_ALLOWED_ATTRS],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  KEEP_CONTENT: false,
+  RETURN_DOM_FRAGMENT: true,
+};
+
 /** The sanitizer of a window: the picture's markup with the instance's prefix, or "" where its root is not svg. */
 export const makeFigureSanitizer = (root: WindowLike): ((svg: string, prefix: string) => string) => {
   const purify = DOMPurify(root);
@@ -66,7 +79,7 @@ export const makeFigureSanitizer = (root: WindowLike): ((svg: string, prefix: st
     if (!keepsValue(data.attrName, data.attrValue)) data.keepAttr = false;
   });
   return (svg, prefix) => {
-    const fragment = purify.sanitize(svg, { ALLOWED_TAGS: [...FIGURE_ALLOWED_TAGS, TEXT_NODE], ALLOWED_ATTR: [...FIGURE_ALLOWED_ATTRS], KEEP_CONTENT: false, RETURN_DOM_FRAGMENT: true });
+    const fragment = purify.sanitize(svg, FIGURE_SANITIZE_OPTIONS);
     const top = fragment.firstElementChild;
     if (top === null || top.tagName.toLowerCase() !== "svg") return "";
     for (const element of [top, ...top.querySelectorAll("*")]) {
