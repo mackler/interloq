@@ -41,17 +41,23 @@ export const FIGURE_ALLOWED_ATTRS: readonly string[] = [
 const TEXT_NODE = "#text";
 /** A url(...) or src(...) whose argument is not a fragment of the picture: it would fetch. */
 const OUTSIDE_REFERENCE = /(?:url|src)\s*\((?!\s*['"]?\s*#)/iu;
-/** A url(#id) in any quoting and whitespace. */
-const FRAGMENT_URL = /url\(\s*(['"]?)\s*#([^'")\s]+)\s*\1\s*\)/giu;
+/** A url(#id) in any case, quoting and whitespace, as CSS reads it. */
+const FRAGMENT_URL = /url\s*\(\s*(['"]?)\s*#([^'")\s]+)\s*\1\s*\)/giu;
 /** Whether an attribute may keep its value: references stay inside the picture, and nothing can spell a fetch. */
 const keepsValue = (name: string, value: string): boolean => {
   if (value.includes("\\")) return false;
   if ((name === "href" || name === "xlink:href") && !value.startsWith("#")) return false;
   return !OUTSIDE_REFERENCE.test(value);
 };
-/** A reference value with the instance's prefix: `#x` becomes `#<prefix>-x`, and every url(#x) url(#<prefix>-x). */
+/** A paint or other attribute value with every url(#x) written url(#<prefix>-x); a color such as #123456 is unchanged. */
+export const prefixedUrls = (value: string, prefix: string): string =>
+  value.replace(FRAGMENT_URL, (_m, _q: string, id: string) => `url(#${prefix}-${id})`);
+/** An href value with the instance's prefix: `#x` becomes `#<prefix>-x`; any other value as prefixedUrls writes it. */
 export const prefixedReference = (value: string, prefix: string): string =>
-  value.startsWith("#") ? `#${prefix}-${value.slice(1)}` : value.replace(FRAGMENT_URL, (_m, _q: string, id: string) => `url(#${prefix}-${id})`);
+  value.startsWith("#") ? `#${prefix}-${value.slice(1)}` : prefixedUrls(value, prefix);
+/** An attribute's value with the instance's prefix: an id prefixed, an href as a reference, every other value's url(#…). */
+const prefixedAttribute = (name: string, value: string, prefix: string): string =>
+  name === "id" ? `${prefix}-${value}` : name === "href" || name === "xlink:href" ? prefixedReference(value, prefix) : prefixedUrls(value, prefix);
 
 /** The sanitizer of a window: the picture's markup with the instance's prefix, or "" where its root is not svg. */
 export const makeFigureSanitizer = (root: WindowLike): ((svg: string, prefix: string) => string) => {
@@ -65,9 +71,8 @@ export const makeFigureSanitizer = (root: WindowLike): ((svg: string, prefix: st
     if (top === null || top.tagName.toLowerCase() !== "svg") return "";
     for (const element of [top, ...top.querySelectorAll("*")]) {
       for (const attribute of [...element.attributes]) {
-        const name = attribute.name;
-        const value = name === "id" ? `${prefix}-${attribute.value}` : name === "href" || name === "xlink:href" || attribute.value.includes("url(") ? prefixedReference(attribute.value, prefix) : attribute.value;
-        if (value !== attribute.value) element.setAttribute(name, value);
+        const value = prefixedAttribute(attribute.name, attribute.value, prefix);
+        if (value !== attribute.value) element.setAttribute(attribute.name, value);
       }
     }
     return top.outerHTML;

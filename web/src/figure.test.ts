@@ -86,6 +86,22 @@ describe("what is kept", () => {
   });
 });
 
+describe("fragment references in any case and spacing (W1-R1-1)", () => {
+  test.each(['URL(#g)', "Url( '#g' )", 'url (#g)'])("fill=%s is prefixed", (fill) => {
+    const out = parsed(clean(`<defs><linearGradient id="g"/></defs><rect width="1" height="1" fill="${fill}"/>`));
+    expect(out.querySelector("[id=p1-g]")).not.toBeNull();
+    expect(out.querySelector("rect")?.getAttribute("fill")).toBe("url(#p1-g)");
+  });
+  test("hexadecimal colors are left unchanged", () => {
+    const rect = parsed(clean('<rect width="1" height="1" fill="#123456" stroke="#abc"/>')).querySelector("rect");
+    expect(rect?.getAttribute("fill")).toBe("#123456");
+    expect(rect?.getAttribute("stroke")).toBe("#abc");
+  });
+  test.each(["URL(#a)", 'Url( "#a" )', "url (#a)"])("prefixedReference(%s)", (value) => {
+    expect(prefixedReference(value, "p1")).toBe("url(#p1-a)");
+  });
+});
+
 describe("prefixedReference", () => {
   test.each([
     ["#a", "#p-a"],

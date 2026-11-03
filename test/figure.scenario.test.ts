@@ -69,9 +69,15 @@ const visualEntry = (id: string) => {
   return { ...e, proposed_answers: [{ ...e.proposed_answers[0]!, figure: NARROW }, { ...e.proposed_answers[1]!, figure: WIDE }] };
 };
 
-test("a terms entry that changes an agreed question's picture is refused with figureChanged", () => {
+/** The agreed visual question Q1 and its terms entry, which divides it with no explanations and keeps its pictures. */
+const visualTerms = () => {
   const agreed = visualEntry("Q1");
   const entry: TermsEntry = { id: "Q1", explanations: [], context: agreed.context, history: agreed.history, question: agreed.question, reason: agreed.reason, proposed_answers: agreed.proposed_answers };
+  return { agreed, entry };
+};
+
+test("a terms entry that changes an agreed question's picture is refused with figureChanged", () => {
+  const { agreed, entry } = visualTerms();
   const validate = termsValidation<{ entries: readonly TermsEntry[] }>([agreed]);
   assert.ok(Result.isSuccess(validate({ entries: [entry] })));
   const changed = { ...entry, proposed_answers: [{ ...entry.proposed_answers[0]!, figure: WIDE }, entry.proposed_answers[1]!] };
@@ -81,8 +87,7 @@ test("a terms entry that changes an agreed question's picture is refused with fi
 });
 
 test("an agreed question is presented with the pictures of questions.json and terms.json", async () => {
-  const agreed = visualEntry("Q1");
-  const entry: TermsEntry = { id: "Q1", explanations: [], context: agreed.context, history: agreed.history, question: agreed.question, reason: agreed.reason, proposed_answers: agreed.proposed_answers };
+  const { agreed, entry } = visualTerms();
   for (const terms of [[], [{ output: { entries: [entry] } }]]) {
     const { layer, probe } = testLayer(tempRepo(), { answers: ["1"], steps: [{ output: { questions: [agreed] } }], terms, closings: [{ output: summaryReply("# Requirements\n\nNarrow.") }], reviews: [{ issues: [] }, { issues: [] }] });
     await runRefinement(layer);
@@ -114,8 +119,7 @@ test("a planner question's pictures are written to the files conversation.md lin
 });
 
 test("the agreed question list and the terms link pictures whose files exist", async () => {
-  const agreed = visualEntry("Q1");
-  const entry: TermsEntry = { id: "Q1", explanations: [], context: agreed.context, history: agreed.history, question: agreed.question, reason: agreed.reason, proposed_answers: agreed.proposed_answers };
+  const { agreed, entry } = visualTerms();
   const { layer, probe } = testLayer(tempRepo(), { answers: ["1"], steps: [{ output: { questions: [agreed] } }], terms: [{ output: { entries: [entry] } }], closings: [{ output: summaryReply("# Requirements\n\nNarrow.") }], reviews: [{ issues: [] }, { issues: [] }] });
   await runRefinement(layer);
   const text = fs.readFileSync(path.join(probe.dir, "conversation.md"), "utf8");
@@ -126,4 +130,22 @@ test("the agreed question list and the terms link pictures whose files exist", a
     for (const link of links) assert.ok(fs.existsSync(path.join(probe.dir, link)), `${heading}: ${link}`);
   }
   assertLinksResolve(probe.dir, [NARROW, WIDE]);
+});
+
+test("a terms write that changes a picture takes the validation repair turn, and the agreed pictures are kept (W1-R1-2)", async () => {
+  const { agreed, entry } = visualTerms();
+  const changed: TermsEntry = { ...entry, proposed_answers: [{ ...entry.proposed_answers[0]!, figure: WIDE }, entry.proposed_answers[1]!] };
+  const refused = termsValidation<{ entries: readonly TermsEntry[] }>([agreed])({ entries: [changed] });
+  assert.ok(Result.isFailure(refused));
+  const repair = refused.failure.repair;
+  assert.ok(repair.includes(prompts.questionProblemText({ kind: "figureChanged", subject: "option 1" })), "the repair names the changed picture");
+  const { layer, probe } = testLayer(tempRepo(), { answers: ["1"], steps: [{ output: { questions: [agreed] } }], terms: [{ output: { entries: [changed] } }, { output: { entries: [entry] } }], closings: [{ output: summaryReply("# Requirements\n\nNarrow.") }], reviews: [{ issues: [] }, { issues: [] }] });
+  await runRefinement(layer);
+  assert.equal(probe.planner.termsPrompts.length, 2);
+  assert.equal(probe.planner.termsPrompts[1], repair);
+  assert.ok(probe.planner.termsPrompts[0]!.includes(prompts.KEEP_FIGURES));
+  const stored = JSON.parse(fs.readFileSync(path.join(probe.dir, "terms.json"), "utf8")) as { entries: readonly TermsEntry[] };
+  assert.deepEqual(stored.entries[0]!.proposed_answers.map((a) => a.figure), [NARROW, WIDE]);
+  const [q] = presentedQuestions(probe.ui).filter((x) => x.origin.kind === "clarification");
+  assert.deepEqual(q!.options.map((o) => o.figure), [NARROW, WIDE]);
 });
