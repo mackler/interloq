@@ -728,13 +728,18 @@ test("a run that never ends does not hold haltAll: past its bounds the manager p
   assert.deepEqual(await run(h.manager.current), NONE);
 });
 
+// The interrupted run must write its halt record and return its item within the interrupt window,
+// which on a loaded machine took longer than SHORT's 1 s (suite run 1 of issue #139). The grace stays
+// SHORT's, so the turn still outlasts it and haltAll interrupts the run from outside.
+const OUTSIDE: HaltBounds = { graceMs: 400, interruptMs: 10_000 };
+
 test("a faulted run that ends by interruption is recorded with code 1, not 130", async () => {
   const repo = tempRepo();
   let reach = (): void => undefined;
   const reached = new Promise<void>((resolve) => (reach = resolve));
   // The turn cannot be interrupted for longer than the grace, so haltAll interrupts the run from outside.
-  const turn = Effect.uninterruptible(Effect.sleep(`${SHORT.graceMs + 200} millis`)).pipe(Effect.andThen(Effect.never));
-  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => reach(), turn), [], undefined, SHORT);
+  const turn = Effect.uninterruptible(Effect.sleep(`${OUTSIDE.graceMs + 200} millis`)).pipe(Effect.andThen(Effect.never));
+  const h = await harness(repo, [{ steps: [{ output: noQuestions, plan: "v1" }] }], reviewing(repo, () => reach(), turn), [], undefined, OUTSIDE);
   const id = await started(h);
   await reached;
   const report = await run(h.manager.haltAll("write EPIPE"));

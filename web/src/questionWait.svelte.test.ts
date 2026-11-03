@@ -156,7 +156,7 @@ describe("the question while its analysis is prepared", () => {
     expect(root.querySelector("section.decision")).not.toBe(null);
   });
 
-  test("a question being analyzed raises no notification and no title mark; asked beside its analysis it does", async () => {
+  test("a question being analyzed raises no notification and no waiting mark (the title shows the run working); asked beside its analysis it does", async () => {
     seq = 3;
     let visibility: DocumentVisibilityState = "hidden";
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
@@ -169,7 +169,7 @@ describe("the question while its analysis is prepared", () => {
       event(ws, { _tag: "Answered", prompt: 1, text: "/decide" });
       event(ws, frame(prompts.optionOrTextPrompt));
       expect(NotificationStub.calls).toHaveLength(1);
-      expect(document.title).toBe(tabTitle("/p"));
+      expect(document.title).toBe(tabTitle("/p", { _tag: "Running" }));
       event(ws, { _tag: "PromptWithdrawn", prompt: 2 });
       event(ws, presented);
       event(ws, { _tag: "Asked", prompt: 3, ...promptOf(prompts.optionOrTextPrompt), countdown: null, deciding: null });
