@@ -3290,8 +3290,9 @@ export const ELEMENT_GROUP_NAMES: Readonly<Record<"chain" | "extent", string>> =
 export const CHAIN_LINK_MARK = "➔";
 /** The mark of the chain's starting cause (issue #41). */
 export const CHAIN_START_MARK = "•";
-/** The mark of the reason the effect matters (issue #41, proposed; judged on a rendered example). */
-export const REASON_MARK = "∴";
+/** The mark of the reason the effect matters (issue #41): a flag, which marks why the effect counts and claims no inference;
+ * the developer rejected ∴ on 3 Nov 2026 because it may read as a proved conclusion, which that statement is not. */
+export const REASON_MARK = "⚑";
 /** The start of a decision page's heading, before the question (issue #133, the developer's instruction of 11 Oct 2026). */
 export const YOUR_CHOICE = "Your Choice:";
 /** The accessible name of a decision's analysis: its heading, "Your Choice: " and the question (issue #133). */

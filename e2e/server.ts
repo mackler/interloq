@@ -91,11 +91,11 @@ const ARGUMENT_STRUCTURE_ANALYSIS = {
           id: "E1",
           title: "Developers set up the service sooner, because no database server has to be installed or configured.",
           comparative_condition: element("If the service keeps its data in SQLite, its database is one file beside the service, whereas with PostgreSQL it is a separate server that must be installed, started and given a user before the service can start. Nothing else about the service's setup differs between the two options."),
-          starting_cause: element("A developer who clones the repository can run the service at once, because the database file is created on its first start."),
+          starting_cause: element("A developer who clones the repository can run the service at once, because the database file is created on its first start. The schema is applied by the service itself when it finds the file empty, so no migration command has to be run by hand. Nothing outside the repository has to exist first."),
           intermediate_steps: element("No server has to be installed, no port opened and no password shared, so the developer's first hour goes to the service itself. Each new developer repeats the setup, so the saving recurs with every person who joins.", [
             { id: "A1", text: "But the development container already includes a PostgreSQL server, so installing it costs nothing extra.", equivalent_to: "", replies: [] },
           ]),
-          threshold: element("This matters only if setting up a database server takes long enough to delay the developer's first working run, which is the case when the server needs a configuration of its own.", [
+          threshold: element("This matters only if setting up a database server takes long enough to delay the developer's first working run, which is the case when the server needs a configuration of its own. A server that started with defaults and accepted the service's connection unchanged would not delay anyone. The service needs its own user, database and extension, so the defaults are not enough.", [
             {
               id: "A2",
               text: "But a configured server takes only a few minutes to start, which is too short to delay anyone's first run.",
@@ -110,14 +110,14 @@ const ARGUMENT_STRUCTURE_ANALYSIS = {
               ],
             },
           ]),
-          effect_on_persons: element("Each developer reaches a running service on the first day instead of spending part of it on a database server's setup."),
-          reason_the_effect_matters: element("A developer who sees the service run early understands it sooner and makes fewer mistakes in the first changes they write."),
+          effect_on_persons: element("Each developer reaches a running service on the first day instead of spending part of it on a database server's setup. The first change they make is tried against a service that runs, rather than against one they are still trying to start. Questions about the setup stop reaching the developers who already know it."),
+          reason_the_effect_matters: element("A developer who sees the service run early understands it sooner and makes fewer mistakes in the first changes they write. Those first changes are the ones most often reviewed by someone else, so a mistake in them costs two people's time. A slow start also tends to be remembered as a reason the project is hard to work on."),
           extent: {
-            per_person: element("About one hour saved per developer, once, at the start; more where the developer has never configured PostgreSQL before, less where they have."),
-            persons_affected: element("Every developer who joins the project, which is three people this year and perhaps ten over the service's life.", [
+            per_person: element("About one hour saved per developer, once, at the start; more where the developer has never configured PostgreSQL before, less where they have. The estimate comes from the time the last two developers spent before their first run. It does not count the time other people spent answering their questions."),
+            persons_affected: element("Every developer who joins the project, which is three people this year and perhaps ten over the service's life. Contributors who change only the documentation are not counted, since they never run the service. Operators are not counted either, since they set up the production database whichever option is chosen.", [
               { id: "A5", text: "But only one developer joins this year, so the number affected is small.", equivalent_to: "", replies: [] },
             ]),
-            likelihood: element("Certain for every new developer, since every one of them has to reach a running service before changing it."),
+            likelihood: element("Certain for every new developer, since every one of them has to reach a running service before changing it. No developer can skip the setup by working on another part of the project, because every part of it calls the database. Only a developer who already has a configured PostgreSQL server would not benefit."),
             timing: element(`At once, on each developer's first day, and for as long as the service keeps its data in one file. The saving does not grow or shrink later. ${ARGUMENT_TIMING_MARKER}`),
           },
         },
